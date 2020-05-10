@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Callable, Union
 import bitcoinx
 
 import utils
-from commands import VERSION, GETHEADERS, GETBLOCKS
+from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
 from handlers import Handlers
 import logging
 import struct
@@ -257,9 +257,15 @@ class BufferedSession(BitcoinFramer):
                 self.serializer.getblocks(hash_count, block_locator_hashes, ZERO_HASH),
             )  # responds via inv with up to 500 blocks
 
-            block_hash, block_height = await self._pending_blocks_queue.get()
+            # NOTE: these inv packets will be handled by the standard 'handlers.py'
+            # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
+            inv_vects = await self._pending_blocks_queue.get()
 
-
+            # NOW -> requests the blocks via GETDATA messages
+            await self.send_request(
+                GETDATA,
+                self.serializer.getdata(inv_vects=inv_vects),
+            )  # responds via inv with up to 500 blocks
 
             await self.wait_for_block_parsing()
 

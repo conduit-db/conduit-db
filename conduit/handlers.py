@@ -74,9 +74,13 @@ class Handlers:
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
         # logger.debug(f"inv: {inv_vects}")
 
-        # temporary for testing - request all relayed txs without checking if we have it already
-        getdata_msg = self.serializer.getdata(inv_vects)
-        await self.session.send_request(GETDATA, getdata_msg)
+        for inv in inv_vects:
+            if inv_vects['inv_type'] == 2: # BLOCK
+                self.session._pending_blocks_queue.put_nowait(inv)
+            else:
+                # temporary for testing - request all relayed txs without checking db
+                getdata_msg = self.serializer.getdata(inv_vects)
+                await self.session.send_request(GETDATA, getdata_msg)
 
     async def on_getdata(self, message):
         logger.debug("handling getdata...")
