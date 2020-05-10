@@ -135,9 +135,10 @@ class NetworkConfig:
         if isinstance(network, RegTestNet):
             self.peers = [Peer("127.0.0.1", 18444)]
         else:
-            self.peers = [
-                Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
-            ]
+            self.peers = [Peer("127.0.0.1", 8333)]
+            # self.peers = [
+            #     Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
+            # ]
 
 
 NETWORKS = {

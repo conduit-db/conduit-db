@@ -91,6 +91,3 @@ class Handlers:
         if self.deserializer.headers(io.BytesIO(message)):
             logger.debug("setting _headers_msg_processed_event")
             self.session._headers_msg_processed_event.set()
-
-    async def on_block(self, message: bytes):
-        logger.debug("handling block...")

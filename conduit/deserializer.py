@@ -188,17 +188,3 @@ class Deserializer:
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)
-
-    def block(self, buffer_view: Union[memoryview, bytes]):
-        """earliest, naive implementation - single cpu for entire buffer"""
-        f = io.BytesIO(buffer_view)
-        header = bitcoinx.unpack_header(f.read(80))
-        logger.debug("block_header = %s", header)
-        tx_count = bitcoinx.read_varint(f.read)
-        txs = []
-        for i in range(tx_count):
-            txs.append(
-                bitcoinx.Tx.read(f.read)
-            )  # maybe could speed up by avoiding python objects and use regex on raw
-            #  binary to find pubkeys in inputs and outputs
-        return txs

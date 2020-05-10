@@ -88,7 +88,7 @@ def calc_bloom_filter_size(n_elements, false_positive_rate):
     return filter_size
 
 
-def read_varint(buffer) -> Tuple[int, int]:
+def unpack_varint_from_mv(buffer) -> Tuple[int, int]:
     """buffer argument should be a memory view ideally and returns the value and how many bytes
     were read as a tuple"""
     (n,) = struct.unpack_from("B", buffer)
