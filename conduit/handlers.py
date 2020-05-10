@@ -6,6 +6,7 @@ from constants import LOGGING_FORMAT
 from deserializer import Deserializer
 from networks import NetworkConfig
 from serializer import Serializer
+from store import Storage
 
 logging.basicConfig(
     format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
@@ -14,11 +15,14 @@ logger = logging.getLogger("handlers")
 
 
 class Handlers:
-    def __init__(self, session: "BufferedSession", net_config: NetworkConfig):
+    def __init__(
+        self, session: "BufferedSession", net_config: NetworkConfig, storage: Storage
+    ):
         self.net_config = net_config
         self.session = session
-        self.serializer = Serializer(self.net_config)
-        self.deserializer = Deserializer(self.net_config)
+        self.serializer = Serializer(self.net_config, storage)
+        self.deserializer = Deserializer(self.net_config, storage)
+        self.storage = storage
 
     async def on_version(self, message):
         logger.debug("handling version...")

@@ -29,6 +29,7 @@ from commands import (
     GETDATA_BIN,
 )
 from networks import NetworkConfig
+from store import Storage
 from utils import (
     payload_to_checksum,
     ipv4_to_mapped_ipv6,
@@ -51,8 +52,9 @@ class Serializer:
     # hash_stop for as many headers as possible
     ZERO_HASH = b"00" * 32
 
-    def __init__(self, net_config: NetworkConfig):
+    def __init__(self, net_config: NetworkConfig, storage: Storage):
         self.net_config = net_config
+        self.storage = storage
 
     # ----- ADD HEADER ----- #
 

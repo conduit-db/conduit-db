@@ -1,11 +1,18 @@
 import asyncio
 import logging
+from typing import Optional
+
+import bitcoinx
+from bitcoinx import Headers
 
 from constants import LOGGING_FORMAT
-from networks import NetworkConfig, NETWORKS
+from networks import (
+    NetworkConfig,
+    NETWORKS,
+)
 from peers import Peer
 from session import BufferedSession
-
+from store import Storage
 
 logging.basicConfig(
     format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
@@ -14,24 +21,27 @@ logger = logging.getLogger("session")
 
 
 class SessionManager:
+    """Coordinates startup and shutdown of all components"""
+
     def __init__(self, network, host, port):
-        self.network = network
-        self.session = None
+        self.network: str = network
+        self.session: Optional[BufferedSession] = None
         self.transport = None
         self.config = NetworkConfig(NETWORKS[network]())
         self.peers = self.config.peers
         self.host = host
         self.port = port
+        self.storage: Optional[Storage] = None
 
     def get_peer(self) -> Peer:
         return self.peers[0]
 
-    async def connect(self):
+    async def connect_session(self):
         loop = asyncio.get_event_loop()
         peer = self.get_peer()
         logger.debug("[connect] connecting to (%s, %s)", peer.host, peer.port)
         protocol_factory = lambda: BufferedSession(
-            self.config, peer, self.host, self.port
+            self.config, peer, self.host, self.port, self
         )
         self.transport, self.session = await loop.create_connection(
             protocol_factory, peer.host, peer.port
@@ -40,19 +50,31 @@ class SessionManager:
 
     async def run(self):
         try:
-            await self.connect()
+            self.setup_storage()
+            await self.connect_session()
             init_handshake = asyncio.create_task(
                 self.session.send_version(
-                    recv_host=self.session.peer.host,
-                    recv_port=self.session.peer.port,
-                    send_host=self.session.host,
-                    send_port=self.session.port,
+                    self.session.peer.host,
+                    self.session.peer.port,
+                    self.session.host,
+                    self.session.port,
                 )
             )
-            wait_untiL_conn_lost = asyncio.create_task(
+            wait_until_conn_lost = asyncio.create_task(
                 self.session.con_lost_event.wait()
             )
-            await asyncio.wait([init_handshake, wait_untiL_conn_lost])
+            await asyncio.wait([init_handshake, wait_until_conn_lost])
         finally:
             if self.transport:
                 self.transport.close()
+
+    def setup_storage(self):
+        # Headers
+        headers = bitcoinx.Headers.from_file(
+            self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
+        )
+        # PG
+        # -- NotImplemented
+        # Memcached
+        # -- NotImplemented
+        return Storage(headers, None, None)

@@ -36,9 +36,11 @@ class BufferedSession(BufferedProtocol):
 
     WORKER_COUNT = 1
 
-    def __init__(self, config: NetworkConfig, peer: Peer, host, port):
+    def __init__(self, config: NetworkConfig, peer: Peer, host, port, storage):
         self.logger = logging.getLogger("session")
         self.loop = asyncio.get_event_loop()
+
+        self.storage = storage
 
         # Framer
         self.buffer: Optional[bytearray] = None
@@ -57,9 +59,9 @@ class BufferedSession(BufferedProtocol):
         )  # waited on by session manager at higher LOA
 
         # Serialization/Deserialization
-        self.handlers = Handlers(self, self.config)
-        self.serializer = Serializer(self.config)
-        self.deserializer = Deserializer(self.config)
+        self.handlers = Handlers(self, self.config, self.storage)
+        self.serializer = Serializer(self.config, self.storage)
+        self.deserializer = Deserializer(self.config, self.storage)
 
         # Block processing events (in sequential order) - for multiprocessing
         self._block_read_event = asyncio.Event()

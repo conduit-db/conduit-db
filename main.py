@@ -8,7 +8,7 @@ logging.basicConfig(format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%
 logger = logging.getLogger("main")
 
 async def main():
-    session_manager = SessionManager(network='regtest', host='127.0.0.1', port=8000)
+    session_manager = SessionManager(network='main', host='127.0.0.1', port=8000)
     await session_manager.run()
 
 if __name__ == "__main__":

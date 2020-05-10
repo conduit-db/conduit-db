@@ -2,6 +2,7 @@ import io
 import logging
 import time
 import socket
+from typing import Union, Tuple
 
 import bitcoinx
 from bitcoinx import (
@@ -13,11 +14,14 @@ from bitcoinx import (
     read_varint,
     read_le_uint16,
     hash_to_hex_str,
+    Header,
+    Chain,
 )
 
 import utils
 from constants import CCODES, LOGGING_FORMAT, HEADER_LENGTH
 from networks import NetworkConfig
+from store import Storage
 from utils import mapped_ipv6_to_ipv4
 
 logging.basicConfig(
@@ -27,8 +31,9 @@ logger = logging.getLogger("deserializer")
 
 
 class Deserializer:
-    def __init__(self, net_config: NetworkConfig):
+    def __init__(self, net_config: NetworkConfig, storage: Storage):
         self.net_config = net_config
+        self.storage = storage
 
     def deserialize_message_header(self, stream):
         magic = utils.bytes_to_hex(stream.read(4))
@@ -164,63 +169,31 @@ class Deserializer:
         }
         return message
 
-    def headers(self, f):
-        """deserialize block headers into a list of dicts"""
-        lst_headers = []
-        headers_stream = io.BytesIO()
-        hashes_stream = io.BytesIO()
-        # Store headers temporarily to memory as binary stream
-        headers_stream.seek(0)
-        headers_stream.write(f.read())
-
-        # make a list of block hashes for validating
-        headers_stream.seek(0)
-        count = read_varint(headers_stream.read)  # count of headers
+    def headers(self, f) -> None:
+        count = bitcoinx.read_varint(f.read)
         for i in range(count):
-            header = headers_stream.read(80)  # minus final txn count (1 byte)
-            headers_stream.read(1)  # discard txn count
-            _hash = utils.get_block_hash(
-                header
-            )  # calculates hash as part of validation
-            hashes_stream.write(_hash + "\n")
-
-        f.seek(0)
-        number_headers = read_varint(f.read)
-        for i in range(number_headers):
-            # TODO make into single function call for readability and reuse
-            version = read_le_int32(f.read)
-            prev_block = hash_to_hex_str(f.read(32))
-            merkle_root = hash_to_hex_str(f.read(32))
-            timestamp = read_le_uint32(f.read)
-            bits = utils.int_to_hex(read_le_uint32(f.read))
-            nonce = read_le_uint32(f.read)
-            txn_count = read_varint(f.read)
-
-            block_header = {
-                "version": version,
-                "prev_block_hash": prev_block,
-                "merkle_root": merkle_root,
-                "timestamp": timestamp,
-                "bits": bits,
-                "nonce": nonce,
-                "txn_count": txn_count,
-            }
-
-            lst_headers.append(block_header)
-
-        return lst_headers
+            header, chain = self.storage.headers.connect(f.read(80))
+            _tx_count = bitcoinx.read_varint(f.read)
+            logger.debug(
+                "deserialized header hash: %s, height: %s, tx_count: %s",
+                header.hash,
+                header.height,
+                _tx_count,
+            )
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)
 
-    def getblocks(self, buffer_view: memoryview):
-        """earliest, naive implementation!"""
-        raw_block_header = bitcoinx.unpack_header(buffer_view[0:HEADER_LENGTH])
-        logger.debug("raw_block_header = %s", raw_block_header)
-        tx_count, offset = bitcoinx.read_varint(buffer_view[80:])
-        stream: io.BytesIO = io.BytesIO.read(buffer_view[80 + offset :])
+    def block(self, buffer_view: Union[memoryview, bytes]):
+        """earliest, naive implementation - single cpu for entire buffer"""
+        f = io.BytesIO(buffer_view)
+        header = bitcoinx.unpack_header(f.read(80))
+        logger.debug("block_header = %s", header)
+        tx_count = bitcoinx.read_varint(f.read)
         txs = []
-        stream.seek(0)
         for i in range(tx_count):
-            txs.append(bitcoinx.Tx.read(stream.read))
+            txs.append(
+                bitcoinx.Tx.read(f.read)
+            )  # maybe could speed up by avoiding python objects and use regex on raw
+            #  binary to find pubkeys in inputs and outputs
         return txs
