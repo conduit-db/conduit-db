@@ -67,19 +67,21 @@ class BufferedSession(BufferedProtocol):
             asyncio.Event()
         )  # waited on by session manager at higher LOA
 
-        # - Syncing of chain events
+        # - Syncing of chain
+        self._headers_msg_processed_event = asyncio.Event()
         self._headers_synced_event = asyncio.Event()
         self._blocks_synced_event = asyncio.Event()  # -> listen for inv type 2
+        self.remote_start_height: Optional[int] = None
+        self.local_tip_height: int = self.get_local_tip_height()
 
-        # - Block processing events (in sequential order) - for multiprocessing
+        # - Parallel block processing (events in sequential order)
         self._block_read_event = asyncio.Event()
         self._block_parsed_event = asyncio.Event()
         self._merkle_tree_done_event = asyncio.Event()
         self._block_committed_event = asyncio.Event()
         self._new_tip_event = asyncio.Event()  # buffer reset
 
-        # - managing processes
-        self.partition_size: Optional[int] = None
+        self.block_partition_size: Optional[int] = None
 
     def connection_made(self, transport):
         self.transport = transport
@@ -89,26 +91,43 @@ class BufferedSession(BufferedProtocol):
 
         _fut = asyncio.create_task(self.start_jobs())
 
+    def get_local_tip_height(self):
+        return self.storage.headers.longest_chain().tip.height
+
+    def update_local_tip_height(self) -> int:
+        self.local_tip_height = self.storage.headers.longest_chain().tip.height
+        return self.local_tip_height
+
+    def set_remote_start_height(self, version) -> None:
+        self.remote_start_height = version["start_height"]
+
     async def start_jobs(self):
         _sync_headers_task = asyncio.create_task(self.sync_headers_job())
 
     async def sync_headers_job(self):
         await self.handshake_complete_event.wait()
 
-        block_locator_hashes = [ZERO_HASH]  # todo - calculate from self.storage
-        hash_count = len(block_locator_hashes)
+        while self.local_tip_height < self.remote_start_height:
+            block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
+            hash_count = len(block_locator_hashes)
+            await self.send_request(
+                GETHEADERS,
+                self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
+            )
+            await self._headers_msg_processed_event.wait()
+            self._headers_msg_processed_event.clear()
+            self.storage.headers.flush()
+            self.local_tip_height = self.update_local_tip_height()
+            self.logger.debug(
+                "headers message processed - new chain tip height: %s, " "hash: %s",
+                self.local_tip_height,
+                self.storage.headers.longest_chain().tip.hash,
+            )
 
-        # incomplete...
-        await self.send_request(
-            GETHEADERS,
-            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
+        self._headers_synced_event.set()
+        self.logger.debug(
+            "headers synced. new chain tip height is: %s", self.local_tip_height
         )
-        await self.
-        chain_tip = self.storage.headers.longest_chain().tip
-        self.logger.debug("new chain tip is: %s", chain_tip)
-
-        # self._headers_synced_event.set()
-
 
     async def sync_blocks(self):
         pass
@@ -171,7 +190,7 @@ class BufferedSession(BufferedProtocol):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     def message_received(self, command: bytes, message: bytes):
-        self.logger.debug("client received message type: %s", command.decode("ascii"))
+        self.logger.debug("received msg type: %s", command.decode("ascii"))
         self.run_coro_threadsafe(self.handle, command, message)
 
     async def handle(self, command, message=None):
@@ -188,7 +207,7 @@ class BufferedSession(BufferedProtocol):
         self.transport.write(message)
 
     async def send_request(self, command_name: str, message: bytes):
-        self.logger.debug(f"Sending: {command_name} message to {self.peer}")
+        self.logger.debug(f"sending to {self.peer}, msg type: {command_name}")
         self.send_message(message)
 
     def send_request_nowait(self, command_name, message):
@@ -219,8 +238,8 @@ class BufferedSession(BufferedProtocol):
 
         # Todo - defer multiprocessing component - just wait until whole block is in buffer
         # if the partition size is 50MB and pos = 70MB then only 1 worker can begin parsing
-        self.partition_size = math.floor(payload_size / self.WORKER_COUNT)
-        ready_partitions = math.floor(self.pos / self.partition_size)
+        self.block_partition_size = math.floor(payload_size / self.WORKER_COUNT)
+        ready_partitions = math.floor(self.pos / self.block_partition_size)
         if ready_partitions > 0:
             from_worker_id, to_worker_id = 1, ready_partitions
 

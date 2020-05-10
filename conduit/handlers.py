@@ -26,6 +26,9 @@ class Handlers:
 
     async def on_version(self, message):
         logger.debug("handling version...")
+        version = self.session.deserializer.version(io.BytesIO(message))
+        self.session.set_remote_start_height(version)
+        logger.debug("received version message: %s", version)
         verack_message = self.session.serializer.verack()
         await self.session.send_request(VERACK, verack_message)
 
@@ -67,9 +70,9 @@ class Handlers:
         to int to categorise it - rather just match to corresponding byte string.
         payload_len/36 == count and the index in bytearray of each hash is just every 36th byte
         with an offset of 4."""
-        logger.debug("handling inv...")
+        # logger.debug("handling inv...")
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
-        logger.debug(f"inv: {inv_vects}")
+        # logger.debug(f"inv: {inv_vects}")
 
         # temporary for testing - request all relayed txs without checking if we have it already
         getdata_msg = self.serializer.getdata(inv_vects)
@@ -77,14 +80,17 @@ class Handlers:
 
     async def on_getdata(self, message):
         logger.debug("handling getdata...")
-        # rawtx = "01000000013d4baa6084b3e3ecc4bde56ee0bf617395991124a3d0f61597cd8dd0189d84b1010000006a473044022066ab98bad401393c558b85582e3af35f1f0686bf4dcd5bf5aff06a1d2dc39a870220572aa26b308c9692405c7d55fbbca0be2602586eceda4ca9b5cd29cd2157f0344121036d6b9802775bd330cae7080961b8dccf3589926e8553ff33efae66a6c69a371dffffffff02000000000000000009006a0648656c6c6f0ace850100000000001976a914df149def93f09dbc53ce09b2d2cd3dbccc4d712088ac797f0900"
-        # await self.session.send_request(TX, rawtx=rawtx)
 
     async def on_tx(self, message):
-        logger.debug("handling tx...")
+        # logger.debug("handling tx...")
         tx = self.session.deserializer.tx(io.BytesIO(message))
-        logger.debug(f"tx: {tx}")
+        # logger.debug(f"tx: {tx}")
 
     async def on_headers(self, message: bytes):
         logger.debug("handing headers...")
-        self.deserializer.headers(io.BytesIO(message))
+        if self.deserializer.headers(io.BytesIO(message)):
+            logger.debug("setting _headers_msg_processed_event")
+            self.session._headers_msg_processed_event.set()
+
+    async def on_block(self, message: bytes):
+        logger.debug("handling block...")

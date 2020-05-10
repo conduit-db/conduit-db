@@ -171,7 +171,7 @@ class Deserializer:
         }
         return message
 
-    def headers(self, f) -> None:
+    def headers(self, f) -> bool:
         count = bitcoinx.read_varint(f.read)
 
         for i in range(count):
@@ -179,17 +179,12 @@ class Deserializer:
                 raw_block = f.read(80)
                 _tx_count = bitcoinx.read_varint(f.read)
                 header, chain = self.storage.headers.connect(raw_block)
-                logger.debug(
-                    "deserialized header hash: %s, height: %s, tx_count: %s",
-                    header.hash,
-                    header.height,
-                    _tx_count,
-                )
             except MissingHeader as e:
                 if str(e).find(GENESIS_BLOCK) != -1:
                     logger.debug("skipping prev_out == genesis block")
                     continue
                 raise
+        return True
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)
