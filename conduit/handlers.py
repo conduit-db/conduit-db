@@ -27,7 +27,7 @@ class Handlers:
     async def on_version(self, message):
         logger.debug("handling version...")
         version = self.session.deserializer.version(io.BytesIO(message))
-        self.session.set_remote_start_height(version)
+        self.session.set_target_header_height(version)
         logger.debug("received version message: %s", version)
         verack_message = self.session.serializer.verack()
         await self.session.send_request(VERACK, verack_message)

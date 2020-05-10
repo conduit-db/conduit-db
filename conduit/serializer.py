@@ -27,6 +27,7 @@ from commands import (
     INV_BIN,
     TX_BIN,
     GETDATA_BIN,
+    GETBLOCKS_BIN,
 )
 from networks import NetworkConfig
 from store import Storage
@@ -129,10 +130,20 @@ class Serializer:
         hash_count = pack_varint(hash_count)
         hashes = bytearray()
         for _hash in block_locator_hashes:
-            # hashes += hex_str_to_hash(flip_hex_byte_order(_hash))
             hashes += _hash
         payload = version + hash_count + hashes + hash_stop
         return self.payload_to_message(GETHEADERS_BIN, payload)
+
+    def getblocks(
+        self, hash_count: int, block_locator_hashes: List[bytes], hash_stop=ZERO_HASH
+    ):
+        version = pack_le_uint32(70015)
+        hash_count = pack_varint(hash_count)
+        hashes = bytearray()
+        for _hash in block_locator_hashes:
+            hashes += _hash
+        payload = version + hash_count + hashes + hash_stop
+        return self.payload_to_message(GETBLOCKS_BIN, payload)
 
     def getaddr(self):
         return self.payload_to_message(GETADDR_BIN, b"")
@@ -167,7 +178,4 @@ class Serializer:
         return NotImplementedError
 
     def sendheaders(self):
-        return NotImplementedError
-
-    def getblock(self):
         return NotImplementedError

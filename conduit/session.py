@@ -4,12 +4,13 @@ import math
 from asyncio import BufferedProtocol
 from collections import namedtuple
 from functools import partial
+import queue
 from typing import Optional, List, Dict, Callable, Union
 
 import bitcoinx
 
 import utils
-from commands import VERSION, GETHEADERS
+from commands import VERSION, GETHEADERS, GETBLOCKS
 from handlers import Handlers
 import logging
 import struct
@@ -30,7 +31,6 @@ logging.basicConfig(
 
 
 class BitcoinFramer(BufferedProtocol):
-
     def _new_buffer(self, size):
         # not sure if new buf is necessary each msg. can maybe re-use if pos maintained
         self.buffer = bytearray(size)
@@ -52,8 +52,9 @@ class BitcoinFramer(BufferedProtocol):
 
     def allocate_block_fragment(self):
         loop = asyncio.get_running_loop()
-        coro = self.allocate_work(self.buffer_view, self.pos, self._payload_size,
-            self.current_command)
+        coro = self.allocate_work(
+            self.buffer_view, self.pos, self._payload_size, self.current_command
+        )
         _fut = asyncio.run_coroutine_threadsafe(coro, loop)
 
     def buffer_updated(self, nbytes):
@@ -128,17 +129,23 @@ class BufferedSession(BitcoinFramer):
         )  # waited on by session manager at higher LOA
 
         # - Syncing of chain
-        self._headers_msg_processed_event = asyncio.Event()
-        self._block_msg_processed_event = asyncio.Event()
-        self._headers_synced_event = asyncio.Event()
-        self._blocks_synced_event = asyncio.Event()  # -> listen for inv type 2
-        self.remote_start_height: Optional[int] = None
+        self._all_headers_synced_event = asyncio.Event()
+        self._all_blocks_synced_event = asyncio.Event()  # -> listen for inv type 2
+        self.target_header_height: Optional[int] = None
+        self.target_block_height: Optional[int] = None
         self.local_tip_height: int = self.get_local_tip_height()
+        self.local_block_tip_height: int = self.get_local_block_tip_height()
+        self._pending_blocks_queue = asyncio.Queue()
+
+        self._headers_msg_processed_event = asyncio.Event()
 
         # - Parallel block processing (events in sequential order)
         self._block_parsed_event = asyncio.Event()
         self._merkle_tree_done_event = asyncio.Event()
         self._block_committed_event = asyncio.Event()
+
+        self._work_done_queue = asyncio.Queue()
+
         self.block_partition_size: Optional[int] = None
         self.workers_map: Dict[int:Callable] = {}
 
@@ -148,7 +155,7 @@ class BufferedSession(BitcoinFramer):
         self._new_buffer(HEADER_LENGTH)  # bitcoin message header size
         self.logger.info("connection made")
 
-        _fut = asyncio.create_task(self.start_jobs())
+        _fut = asyncio.create_task(self.manage_jobs())
 
     def connection_lost(self, exc):
         self.con_lost_event.set()
@@ -181,20 +188,32 @@ class BufferedSession(BitcoinFramer):
     def get_local_tip_height(self):
         return self.storage.headers.longest_chain().tip.height
 
+    def get_local_block_tip_height(self):
+        # Todo - find out from database
+        return 0
+
     def update_local_tip_height(self) -> int:
         self.local_tip_height = self.storage.headers.longest_chain().tip.height
         return self.local_tip_height
 
-    def set_remote_start_height(self, version) -> None:
-        self.remote_start_height = version["start_height"]
+    def set_target_header_height(self, height) -> None:
+        self.target_header_height = height
 
-    async def start_jobs(self):
+    async def manage_jobs(self):
         _sync_headers_task = asyncio.create_task(self.sync_headers_job())
+        await self._all_headers_synced_event.wait()
+        self._all_headers_synced_event.clear()
+
+        self.target_block_height = self.get_local_tip_height()  # blocks lag headers
+        _sync_blocks_task = asyncio.create_task(self.sync_blocks_job())
+        await self._all_blocks_synced_event.wait()
 
     async def sync_headers_job(self):
+        """supervises completion of syncing all headers to target height"""
+
         await self.handshake_complete_event.wait()
 
-        while self.local_tip_height < self.remote_start_height:
+        while self.local_tip_height < self.target_header_height:
             block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
             hash_count = len(block_locator_hashes)
             await self.send_request(
@@ -211,14 +230,43 @@ class BufferedSession(BitcoinFramer):
                 self.storage.headers.longest_chain().tip.hash,
             )
 
-        self._headers_synced_event.set()
+        self._all_headers_synced_event.set()
         self.logger.debug(
             "headers synced. new chain tip height is: %s", self.local_tip_height
         )
 
+    async def wait_for_block_parsing(self):
+        """wait for a *single" block to complete the parsing stage"""
+        for i in range(self.WORKER_COUNT):
+            # needs changed to a multiprocessing queue type later...
+            _worker_id = await self._work_done_queue.get()
+            self.logger.debug(f"worker: {_worker_id} done!")
+        self._block_parsed_event.set()
+
     async def sync_blocks_job(self):
-        pass
-        # self._blocks_synced_event.set()
+        """supervises completion of syncing all blocks to target height"""
+
+        while self.local_block_tip_height < self.target_block_height:
+            chain = self.storage.headers.longest_chain()
+            block_locator_hashes = [
+                self.storage.headers.header_at_height(chain, self.target_block_height)
+            ]
+            hash_count = len(block_locator_hashes)
+            await self.send_request(
+                GETBLOCKS,
+                self.serializer.getblocks(hash_count, block_locator_hashes, ZERO_HASH),
+            )  # responds via inv with up to 500 blocks
+
+            block_hash, block_height = await self._pending_blocks_queue.get()
+
+
+
+            await self.wait_for_block_parsing()
+
+        self._all_blocks_synced_event.set()
+        self.logger.debug(
+            "blocks synced. new local block height is: %s", self.local_tip_height
+        )
 
     # -- Message Types -- #
     async def send_version(
@@ -256,16 +304,16 @@ class BufferedSession(BitcoinFramer):
                 start_pos,
                 stop_pos,
             )
-            self.workers_map.update({i: func})
+            self.workers_map.update({worker_id: func})
 
-    def start_workers(self, from_worker_id, to_worker_id):
+    def ensure_workers_started(self, from_worker_id, to_worker_id):
         for i in range(from_worker_id, to_worker_id + 1):
             try:
                 func = self.workers_map.pop(i)
 
                 # Todo this function is the target for multiprocessing
                 #  but at present it will just run on the same core
-                func()
+                func()  # this cpu-intensive work will block the event loop until fixed
             except KeyError:
                 # work already allocated to this worker
                 pass
@@ -304,20 +352,24 @@ class BufferedSession(BitcoinFramer):
                 f"therefore allocating work from worker id={from_worker_id} to worker "
                 f"id={to_worker_id}"
             )
-            self.start_workers(from_worker_id, to_worker_id)
+            self.ensure_workers_started(from_worker_id, to_worker_id)
 
-        # buffer_updated won't be called again until we tell it to via self.reset_buffer()
-        if self.pos == self._payload_size:
+        if self.pos == payload_size:
             await self._block_parsed_event.wait()
+            self.logger.debug("block parsing complete")
             # Todo - trigger workers to calculate merkle tree
-            await self._merkle_tree_done_event.wait()
-            # Todo - trigger commits to database
-            await self._block_committed_event.wait()
-            # Todo - trigger the aiorpcx-based API server (not built yet) to update
-            #  to the new chain tip so that wallets can get tx confirmations etc.
-            self.reset_buffer()
+
+            # await self._merkle_tree_done_event.wait()
+            # self.logger.debug("merkle tree calculation complete")
+            # # Todo - trigger commits to database
+            #
+            # await self._block_committed_event.wait()
+            # self.logger.debug("block txs and merkle tree committed to database")
+            # # Todo - trigger the aiorpcx-based API server (not built yet) to update
+            # #  to the new chain tip so that wallets can get tx confirmations etc.
+
+            self.reset_buffer()  # and get next blocks/messages
             self.workers_map = {}
-        pass
 
     def parse_block_partition(
         self,
@@ -327,6 +379,7 @@ class BufferedSession(BitcoinFramer):
         start_pos: int,
         stop_pos: int,
     ):
+        """Where all the cpu intensive work gets done (ideally across many cores)"""
         # NOTE: The workers can overrun their stop_pos to complete their last tx
         #  and similarly the start_pos is only indicative - the worker needs to
         #  run an algorithm to finding it's "initial binding location" (not implemented)
@@ -336,9 +389,11 @@ class BufferedSession(BitcoinFramer):
         )
 
         if worker_id == 1:
-            raw_block_header = bitcoinx.unpack_header(buffer_view[0:80])
+            header_hash = bitcoinx.double_sha256(buffer_view[0:80].tobytes())
+            current_block_header = self.storage.headers.lookup(header_hash)
+
             tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
-            self.logger.debug("raw_block_header = %s", raw_block_header)
+            self.logger.debug("current_block_header = %s", current_block_header)
 
             first_tx_pos = HEADER_LENGTH + varint_size + start_pos
             stream: io.BytesIO = io.BytesIO(buffer_view[first_tx_pos:stop_pos])
@@ -346,9 +401,14 @@ class BufferedSession(BitcoinFramer):
             stream: io.BytesIO = io.BytesIO(buffer_view[start_pos:stop_pos])
 
         txs = []
+
+        # Todo - add logic for finding "binding location" so that can increase from
+        #  1 worker to many workers
         stream.seek(start_pos)
         while stream.tell() >= stop_pos:
             txs.append(bitcoinx.Tx.read(stream.read))
 
         with open("block1.json", "w") as f:
             f.write(json.dumps(txs))
+
+        self._work_done_queue.put_nowait(worker_id)
