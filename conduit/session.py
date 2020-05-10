@@ -6,14 +6,15 @@ from collections import namedtuple
 from typing import Optional, List, Dict
 
 import bitcoinx
+from bitcoinx import hash_to_hex_str
 
-from commands import VERSION
+from commands import VERSION, HEADERS, GETHEADERS
 from handlers import Handlers
 import logging
 import struct
 import asyncio
 
-from constants import LOGGING_FORMAT, HEADER_LENGTH
+from constants import LOGGING_FORMAT, HEADER_LENGTH, ZERO_HASH
 from deserializer import Deserializer
 from networks import NetworkConfig
 from peers import Peer
@@ -54,23 +55,30 @@ class BufferedSession(BufferedProtocol):
         self.port = port
         self.protocol: BufferedProtocol = None
         self.protocol_factory = None
-        self.con_lost_event = (
-            asyncio.Event()
-        )  # waited on by session manager at higher LOA
 
         # Serialization/Deserialization
         self.handlers = Handlers(self, self.config, self.storage)
         self.serializer = Serializer(self.config, self.storage)
         self.deserializer = Deserializer(self.config, self.storage)
 
-        # Block processing events (in sequential order) - for multiprocessing
+        # Events
+        self.handshake_complete_event = asyncio.Event()
+        self.con_lost_event = (
+            asyncio.Event()
+        )  # waited on by session manager at higher LOA
+
+        # - Syncing of chain events
+        self._headers_synced_event = asyncio.Event()
+        self._blocks_synced_event = asyncio.Event()  # -> listen for inv type 2
+
+        # - Block processing events (in sequential order) - for multiprocessing
         self._block_read_event = asyncio.Event()
         self._block_parsed_event = asyncio.Event()
         self._merkle_tree_done_event = asyncio.Event()
         self._block_committed_event = asyncio.Event()
         self._new_tip_event = asyncio.Event()  # buffer reset
 
-        # managing processes
+        # - managing processes
         self.partition_size: Optional[int] = None
 
     def connection_made(self, transport):
@@ -78,6 +86,33 @@ class BufferedSession(BufferedProtocol):
         self._payload_size = None
         self._new_buffer(HEADER_LENGTH)  # bitcoin message header size
         self.logger.info("connection made")
+
+        _fut = asyncio.create_task(self.start_jobs())
+
+    async def start_jobs(self):
+        _sync_headers_task = asyncio.create_task(self.sync_headers_job())
+
+    async def sync_headers_job(self):
+        await self.handshake_complete_event.wait()
+
+        block_locator_hashes = [ZERO_HASH]  # todo - calculate from self.storage
+        hash_count = len(block_locator_hashes)
+
+        # incomplete...
+        await self.send_request(
+            GETHEADERS,
+            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
+        )
+        await self.
+        chain_tip = self.storage.headers.longest_chain().tip
+        self.logger.debug("new chain tip is: %s", chain_tip)
+
+        # self._headers_synced_event.set()
+
+
+    async def sync_blocks(self):
+        pass
+        # self._blocks_synced_event.set()
 
     def connection_lost(self, exc):
         self.con_lost_event.set()
@@ -140,9 +175,14 @@ class BufferedSession(BufferedProtocol):
         self.run_coro_threadsafe(self.handle, command, message)
 
     async def handle(self, command, message=None):
-        handler_func_name = "on_" + command.decode("ascii")
-        handler_func = getattr(self.handlers, handler_func_name)
-        await handler_func(message)
+        logger = logging.getLogger("handle")
+        try:
+            handler_func_name = "on_" + command.decode("ascii")
+            handler_func = getattr(self.handlers, handler_func_name)
+            await handler_func(message)
+        except Exception as e:
+            logger.exception(e)
+            raise
 
     def send_message(self, message):
         self.transport.write(message)

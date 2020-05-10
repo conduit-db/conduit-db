@@ -41,7 +41,7 @@ class SessionManager:
         peer = self.get_peer()
         logger.debug("[connect] connecting to (%s, %s)", peer.host, peer.port)
         protocol_factory = lambda: BufferedSession(
-            self.config, peer, self.host, self.port, self
+            self.config, peer, self.host, self.port, self.storage
         )
         self.transport, self.session = await loop.create_connection(
             protocol_factory, peer.host, peer.port
@@ -68,7 +68,7 @@ class SessionManager:
             if self.transport:
                 self.transport.close()
 
-    def setup_storage(self):
+    def setup_storage(self) -> None:
         # Headers
         headers = bitcoinx.Headers.from_file(
             self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
@@ -77,4 +77,4 @@ class SessionManager:
         # -- NotImplemented
         # Memcached
         # -- NotImplemented
-        return Storage(headers, None, None)
+        self.storage = Storage(headers, None, None)

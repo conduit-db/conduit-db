@@ -37,6 +37,7 @@ class Handlers:
         logger.debug("handling protoconf...")
         protoconf = self.session.deserializer.protoconf(io.BytesIO(message))
         logger.debug(f"protoconf: {protoconf}")
+        self.session.handshake_complete_event.set()
 
         # temporary for testing
         # inv_vects = [{'inv_type': 1, 'inv_hash': '72bb98f5436fe20fe033303e12783841b16e04036c6e0c29581cf17a61d4c12c'}]
@@ -83,3 +84,7 @@ class Handlers:
         logger.debug("handling tx...")
         tx = self.session.deserializer.tx(io.BytesIO(message))
         logger.debug(f"tx: {tx}")
+
+    async def on_headers(self, message: bytes):
+        logger.debug("handing headers...")
+        self.deserializer.headers(io.BytesIO(message))

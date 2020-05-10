@@ -2,6 +2,7 @@ import io
 import logging
 import time
 import socket
+from os import SEEK_CUR
 from typing import Union, Tuple
 
 import bitcoinx
@@ -16,10 +17,11 @@ from bitcoinx import (
     hash_to_hex_str,
     Header,
     Chain,
+    MissingHeader,
 )
 
 import utils
-from constants import CCODES, LOGGING_FORMAT, HEADER_LENGTH
+from constants import CCODES, LOGGING_FORMAT, HEADER_LENGTH, GENESIS_BLOCK
 from networks import NetworkConfig
 from store import Storage
 from utils import mapped_ipv6_to_ipv4
@@ -171,15 +173,23 @@ class Deserializer:
 
     def headers(self, f) -> None:
         count = bitcoinx.read_varint(f.read)
+
         for i in range(count):
-            header, chain = self.storage.headers.connect(f.read(80))
-            _tx_count = bitcoinx.read_varint(f.read)
-            logger.debug(
-                "deserialized header hash: %s, height: %s, tx_count: %s",
-                header.hash,
-                header.height,
-                _tx_count,
-            )
+            try:
+                raw_block = f.read(80)
+                _tx_count = bitcoinx.read_varint(f.read)
+                header, chain = self.storage.headers.connect(raw_block)
+                logger.debug(
+                    "deserialized header hash: %s, height: %s, tx_count: %s",
+                    header.hash,
+                    header.height,
+                    _tx_count,
+                )
+            except MissingHeader as e:
+                if str(e).find(GENESIS_BLOCK) != -1:
+                    logger.debug("skipping prev_out == genesis block")
+                    continue
+                raise
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)

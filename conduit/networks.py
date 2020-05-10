@@ -39,11 +39,12 @@ class MainNet(AbstractNetwork):
     BITCOINX_COIN = Bitcoin
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
-            "000000201ff55a51c860352808114e52a9b09ae65dd9156a24e75e01000000000000000033320991"
-            "190dcb5a86159e56b9ba2da6bca4e515d9dcbab6878471f8fcdf4039cd98425d7dee0518c5322529"
+            "010000006fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000"
+            "982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e61bc6649"
+            "ffff001d01e36299"
         ),
-        height=593660,
-        prev_work=0xE5EEF982B80AF19DBEB052,
+        height=1,
+        prev_work=0,
     )
 
 

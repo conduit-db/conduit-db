@@ -37,7 +37,7 @@ from utils import (
     calc_bloom_filter_size,
     hex_to_bytes,
 )
-from constants import LOGGING_FORMAT
+from constants import LOGGING_FORMAT, ZERO_HASH
 
 logging.basicConfig(
     format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
@@ -48,9 +48,6 @@ logger = logging.getLogger("serializer")
 class Serializer:
     """Generates serialized messages for the 'outbound_queue'.
     - Only message types that make sense for a client are implemented here."""
-
-    # hash_stop for as many headers as possible
-    ZERO_HASH = b"00" * 32
 
     def __init__(self, net_config: NetworkConfig, storage: Storage):
         self.net_config = net_config
@@ -126,13 +123,14 @@ class Serializer:
         return self.payload_to_message(GETDATA_BIN, payload)
 
     def getheaders(
-        self, hash_count: int, block_locator_hashes: str, hash_stop=ZERO_HASH
+        self, hash_count: int, block_locator_hashes: List[bytes], hash_stop=ZERO_HASH
     ):
         version = pack_le_uint32(70015)
         hash_count = pack_varint(hash_count)
         hashes = bytearray()
         for _hash in block_locator_hashes:
-            hashes += hex_str_to_hash(flip_hex_byte_order(_hash))
+            # hashes += hex_str_to_hash(flip_hex_byte_order(_hash))
+            hashes += _hash
         payload = version + hash_count + hashes + hash_stop
         return self.payload_to_message(GETHEADERS_BIN, payload)
 
@@ -166,4 +164,10 @@ class Serializer:
         return NotImplementedError
 
     def getblocktxn(self):
+        return NotImplementedError
+
+    def sendheaders(self):
+        return NotImplementedError
+
+    def getblock(self):
         return NotImplementedError
