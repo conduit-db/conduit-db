@@ -1,17 +1,13 @@
 import logging
 import io
-
 from commands import TX, VERACK, GETDATA, PING, SENDCMPCT
-from constants import LOGGING_FORMAT
 from deserializer import Deserializer
+from logs import logs
 from networks import NetworkConfig
 from serializer import Serializer
 from store import Storage
 
-logging.basicConfig(
-    format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
-)
-logger = logging.getLogger("handlers")
+logger = logs.get_logger("handlers")
 
 
 class Handlers:

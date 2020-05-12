@@ -1,11 +1,13 @@
 import asyncio
 import logging
+import time
 from typing import Optional
 
 import bitcoinx
 from bitcoinx import Headers
 
 from constants import LOGGING_FORMAT
+from logs import logs
 from networks import (
     NetworkConfig,
     NETWORKS,
@@ -14,10 +16,7 @@ from peers import Peer
 from session import BufferedSession
 from store import Storage
 
-logging.basicConfig(
-    format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
-)
-logger = logging.getLogger("session")
+logger = logs.get_logger("session-manager")
 
 
 class SessionManager:

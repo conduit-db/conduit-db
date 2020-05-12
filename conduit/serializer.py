@@ -29,6 +29,7 @@ from commands import (
     GETDATA_BIN,
     GETBLOCKS_BIN,
 )
+from logs import logs
 from networks import NetworkConfig
 from store import Storage
 from utils import (
@@ -40,10 +41,7 @@ from utils import (
 )
 from constants import LOGGING_FORMAT, ZERO_HASH
 
-logging.basicConfig(
-    format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
-)
-logger = logging.getLogger("serializer")
+logger = logs.get_logger("serializer")
 
 # ----- MESSAGES ----- #
 class Serializer:

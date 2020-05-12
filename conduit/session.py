@@ -4,19 +4,19 @@ import math
 from asyncio import BufferedProtocol
 from collections import namedtuple
 from functools import partial
-import queue
 from typing import Optional, List, Dict, Callable, Union
 
 import bitcoinx
 
+from logs import logs
 import utils
-from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
+from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
 from handlers import Handlers
 import logging
 import struct
 import asyncio
 
-from constants import LOGGING_FORMAT, HEADER_LENGTH, ZERO_HASH
+from constants import HEADER_LENGTH, ZERO_HASH
 from deserializer import Deserializer
 from networks import NetworkConfig
 from peers import Peer
@@ -25,9 +25,8 @@ from utils import is_block_msg
 
 Header = namedtuple("Header", "magic command payload_size checksum")
 
-logging.basicConfig(
-    format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
-)
+
+logger = logs.get_logger("session")
 
 
 class BitcoinFramer(BufferedProtocol):
@@ -160,7 +159,7 @@ class BufferedSession(BitcoinFramer):
 
     def connection_lost(self, exc):
         self.con_lost_event.set()
-        self.logger.info("The server closed the connection:", exc)
+        self.logger.exception("The server closed the connection:", exc)
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
@@ -260,6 +259,10 @@ class BufferedSession(BitcoinFramer):
                     self.storage.block_headers.longest_chain().tip.hash
                 ]
                 hash_count = len(block_locator_hashes)
+                self.logger.debug(
+                    "requesting for chain tip height=%s",
+                    self.storage.block_headers.longest_chain().tip.height,
+                )
                 await self.send_request(
                     GETBLOCKS,
                     self.serializer.getblocks(
@@ -286,7 +289,8 @@ class BufferedSession(BitcoinFramer):
 
             self._all_blocks_synced_event.set()
             self.logger.debug(
-                "blocks synced. new local block height is: %s", self.local_tip_height
+                "blocks synced. new local block height is: %s",
+                self.local_block_tip_height,
             )
         except Exception as e:
             self.logger.exception(e)

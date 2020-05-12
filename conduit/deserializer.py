@@ -1,9 +1,6 @@
-import io
 import logging
 import time
 import socket
-from os import SEEK_CUR
-from typing import Union, Tuple
 
 import bitcoinx
 from bitcoinx import (
@@ -25,11 +22,10 @@ from constants import CCODES, LOGGING_FORMAT, HEADER_LENGTH, GENESIS_BLOCK
 from networks import NetworkConfig
 from store import Storage
 from utils import mapped_ipv6_to_ipv4
+from logs import logs
 
-logging.basicConfig(
-    format=LOGGING_FORMAT, level=logging.DEBUG, datefmt="%Y-%m-%d %H-%M-%S"
-)
-logger = logging.getLogger("deserializer")
+
+logger = logs.get_logger("deserializer")
 
 
 class Deserializer:
