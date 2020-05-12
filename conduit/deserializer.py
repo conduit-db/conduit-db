@@ -1,6 +1,7 @@
 import logging
 import time
 import socket
+from typing import Union
 
 import bitcoinx
 from bitcoinx import (
@@ -168,6 +169,8 @@ class Deserializer:
         return message
 
     def headers(self, f) -> bool:
+        """Two mmap files - one for "headers-first download" and the other for the
+        blocks we then download."""
         count = bitcoinx.read_varint(f.read)
 
         for i in range(count):
@@ -175,12 +178,26 @@ class Deserializer:
                 raw_block = f.read(80)
                 _tx_count = bitcoinx.read_varint(f.read)
                 header, chain = self.storage.headers.connect(raw_block)
+                return header
             except MissingHeader as e:
                 if str(e).find(GENESIS_BLOCK) != -1:
                     logger.debug("skipping prev_out == genesis block")
                     continue
-                raise
+                else:
+                    logger.exception(e)
+                    raise
         return True
+
+    def block_header(self, raw_header: bytes):
+        try:
+            header, chain = self.storage.block_headers.connect(raw_header)
+            return header
+        except MissingHeader as e:
+            if str(e).find(GENESIS_BLOCK) != -1:
+                logger.debug("skipping prev_out == genesis block")
+            else:
+                logger.exception(e)
+                raise
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)

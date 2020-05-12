@@ -1,8 +1,12 @@
 import asyncio
+import selectors
 
 from logs import logs
 from session_manager import SessionManager
 
+selector = selectors.SelectSelector()
+loop = asyncio.SelectorEventLoop(selector)
+asyncio.set_event_loop(loop)
 
 logger = logs.get_logger("main")
 
@@ -13,4 +17,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(), debug=True)
