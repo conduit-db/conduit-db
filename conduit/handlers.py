@@ -27,7 +27,7 @@ class Handlers:
     async def on_version(self, message):
         logger.debug("handling version...")
         version = self.session.deserializer.version(io.BytesIO(message))
-        self.session.set_target_header_height(version['start_height'])
+        self.session.set_target_header_height(version["start_height"])
         logger.debug("received version message: %s", version)
         verack_message = self.session.serializer.verack()
         await self.session.send_request(VERACK, verack_message)
@@ -79,7 +79,7 @@ class Handlers:
         logger.debug(f"inv: {inv_vects}")
 
         for inv in inv_vects:
-            if inv['inv_type'] == 2: # BLOCK
+            if inv["inv_type"] == 2:  # BLOCK
                 logger.debug(f"received a block inv: {inv}")
                 self.session._pending_blocks_queue.put_nowait(inv)
             else:

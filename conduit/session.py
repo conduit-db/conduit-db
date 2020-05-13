@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Callable, Union
 import bitcoinx
 
 import utils
-from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
+from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
 from handlers import Handlers
 import logging
 import struct
@@ -31,6 +31,8 @@ logging.basicConfig(
 
 
 class BitcoinFramer(BufferedProtocol):
+    logger = logging.getLogger("bitcoin-framer")
+
     def _new_buffer(self, size):
         # not sure if new buf is necessary each msg. can maybe re-use if pos maintained
         self.buffer = bytearray(size)
@@ -73,13 +75,12 @@ class BitcoinFramer(BufferedProtocol):
         # get payload
         else:
             self.current_command = self.msg_header.command.rstrip(b"\0")
-
             # blocks never pass through "message_received" - handled as a special case
             # in theory can start work early on memory view of the block
+
             if is_block_msg(self.current_command):
                 self.allocate_block_fragment()
-                if self.pos == self._payload_size:
-                    return  # buffer is reset when block is parsed and committed
+                return
 
             # full payload in buffer
             if self.pos == self._payload_size:
@@ -255,11 +256,8 @@ class BufferedSession(BitcoinFramer):
         """supervises completion of syncing all blocks to target height"""
         try:
             while self.local_block_tip_height < self.target_block_height:
-                chain = self.storage.headers.longest_chain()
                 block_locator_hashes = [
-                    self.storage.headers.header_at_height(
-                        chain, self.target_block_height
-                    ).hash
+                    self.storage.block_headers.longest_chain().tip.hash
                 ]
                 hash_count = len(block_locator_hashes)
                 await self.send_request(
@@ -271,14 +269,20 @@ class BufferedSession(BitcoinFramer):
 
                 # NOTE: these inv packets will be handled by the standard 'handlers.py'
                 # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
-                inv = await self._pending_blocks_queue.get()
+                while True:
+                    # one loop per block retrieval and parsing
+                    inv = await self._pending_blocks_queue.get()
+                    await self.send_request(
+                        GETDATA, self.serializer.getdata(inv_vects=[inv]),
+                    )  # responds via inv with up to 500 blocks
+                    await self.wait_for_block_parsing()  # waits for worker feedback
 
-                # NOW -> requests the blocks via GETDATA messages
-                await self.send_request(
-                    GETDATA, self.serializer.getdata(inv_vects=[inv]),
-                )  # responds via inv with up to 500 blocks
-
-                await self.wait_for_block_parsing()
+                    self.logger.debug(
+                        f"_pending_blocks_queue size="
+                        f"{self._pending_blocks_queue.qsize()}"
+                    )
+                    if self._pending_blocks_queue.empty():
+                        break
 
             self._all_blocks_synced_event.set()
             self.logger.debug(
@@ -411,7 +415,10 @@ class BufferedSession(BitcoinFramer):
         if worker_id == 1:
             header_hash = bitcoinx.double_sha256(buffer_view[0:80].tobytes())
             current_block_header = self.storage.headers.lookup(header_hash)
+            if current_block_header[0].height == 498:
+                import pdb
 
+                pdb.set_trace()
             tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
             self.logger.debug("current_block_header = %s", current_block_header)
 

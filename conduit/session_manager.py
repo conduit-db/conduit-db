@@ -73,8 +73,13 @@ class SessionManager:
         headers = bitcoinx.Headers.from_file(
             self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
         )
+
+        # Blocks
+        block_headers = bitcoinx.Headers.from_file(
+            self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
+        )
         # PG
         # -- NotImplemented
         # Memcached
         # -- NotImplemented
-        self.storage = Storage(headers, None, None)
+        self.storage = Storage(headers, block_headers, None, None)

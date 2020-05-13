@@ -13,7 +13,7 @@ from bitcoinx import (
     pack_le_uint32,
 )
 
-from commands import BLOCK
+from commands import BLOCK, BLOCK_BIN
 
 
 def payload_to_checksum(payload):
@@ -29,11 +29,11 @@ def payload_to_message(command, payload):
 
 
 def is_block_msg(command: bytes):
-    return command == BLOCK
+    return command == BLOCK_BIN.rstrip(b"\0")
 
 
 def pack_null_padded_ascii(string, num_bytes):
-    return struct.pack("%ss" % num_bytes, string.encode("ASCII"))
+    return struct.pack("%s" % num_bytes, string.encode("ASCII"))
 
 
 def ipv4_to_mapped_ipv6(ipv4: str) -> bytes:
