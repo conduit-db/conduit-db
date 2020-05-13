@@ -6,6 +6,7 @@ from typing import Optional
 import bitcoinx
 from bitcoinx import Headers
 
+import database
 from constants import LOGGING_FORMAT
 from logs import logs
 from networks import (
@@ -22,7 +23,7 @@ logger = logs.get_logger("session-manager")
 class SessionManager:
     """Coordinates startup and shutdown of all components"""
 
-    def __init__(self, network, host, port):
+    def __init__(self, network, host, port, env_vars, db):
         self.network: str = network
         self.session: Optional[BufferedSession] = None
         self.transport = None
@@ -31,6 +32,8 @@ class SessionManager:
         self.host = host
         self.port = port
         self.storage: Optional[Storage] = None
+        self.env_vars = env_vars
+        self.db = db
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -77,8 +80,8 @@ class SessionManager:
         block_headers = bitcoinx.Headers.from_file(
             self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
         )
-        # PG
-        # -- NotImplemented
+        # Postgres db
+        pg_db = database
         # Memcached
         # -- NotImplemented
-        self.storage = Storage(headers, block_headers, None, None)
+        self.storage = Storage(headers, block_headers, pg_db, None)

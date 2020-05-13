@@ -7,8 +7,10 @@ from functools import partial
 from typing import Optional, List, Dict, Callable, Union
 
 import bitcoinx
+import peewee
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
+import database
 from logs import logs
 import utils
 from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
@@ -51,7 +53,6 @@ class BitcoinFramer(BufferedProtocol):
         return Header(*struct.unpack_from("<4s12sI4s", self.buffer_view, offset=0))
 
     def allocate_block_fragment(self):
-        self.transport.pause_reading()
         loop = asyncio.get_running_loop()
         coro = self.allocate_work(
             self.buffer_view, self.pos, self._payload_size, self.current_command
@@ -79,6 +80,8 @@ class BitcoinFramer(BufferedProtocol):
             # in theory can start work early on memory view of the block
 
             if is_block_msg(self.current_command):
+                if self.pos == self._payload_size:
+                    self.transport.pause_reading()
                 self.allocate_block_fragment()
                 return
 
@@ -484,7 +487,7 @@ class BufferedSession(BitcoinFramer):
         while stream.tell() >= stop_pos:
             txs.append(bitcoinx.Tx.read(stream.read))
 
-        with open("block1.json", "w") as f:
-            f.write(json.dumps(txs))
+        with self.storage.pg_database.atomic():
+            self.storage.insert_many_txs(txs)
 
         self._work_done_queue.put_nowait(worker_id)

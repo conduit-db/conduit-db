@@ -21,3 +21,11 @@ LOGGING_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 HEADER_LENGTH = 24
 ZERO_HASH = b"00" * 32
 GENESIS_BLOCK = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+
+BITCOIN_NETWORK_VARNAME = 'network'
+DATABASE_NAME_VARNAME = 'database_name'
+DATABASE_USER_VARNAME = 'database_username'
+DATABASE_HOST_VARNAME = 'database_host'
+DATABASE_PORT_VARNAME = 'database_port'
+DATABASE_PASSWORD_VARNAME = 'database_password'
+LOGGING_LEVEL_VARNAME = 'logging_level'
