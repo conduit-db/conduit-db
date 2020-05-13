@@ -72,16 +72,18 @@ class Handlers:
         with an offset of 4."""
         # logger.debug("handling inv...")
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
-        logger.debug(f"inv: {inv_vects}")
+        # logger.debug(f"inv: {inv_vects}")
 
         for inv in inv_vects:
             if inv["inv_type"] == 2:  # BLOCK
-                logger.debug(f"received a block inv: {inv}")
+                # logger.info(f"received a block inv: {inv}")
                 self.session._pending_blocks_queue.put_nowait(inv)
             else:
-                # temporary for testing - request all relayed txs without checking db
-                getdata_msg = self.serializer.getdata(inv_vects)
-                await self.session.send_request(GETDATA, getdata_msg)
+                if self.session.is_synchronized():
+                    # temporary for testing - request all relayed txs without checking db
+                    getdata_msg = self.serializer.getdata(inv_vects)
+                    await self.session.send_request(GETDATA, getdata_msg)
+                # else ignore mempool activity
 
     async def on_getdata(self, message):
         logger.debug("handling getdata...")

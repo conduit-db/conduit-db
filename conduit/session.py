@@ -34,7 +34,7 @@ class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
 
     def _new_buffer(self, size):
-        self.logger.debug(f"_new_buffer called with size={size}")
+        # self.logger.debug(f"_new_buffer called with size={size}")
         # not sure if new buf is necessary each msg. can maybe re-use if pos maintained
         self.buffer = bytearray(size)
         # can swap to shared_memory for multi-cpu reads
@@ -42,9 +42,9 @@ class BitcoinFramer(BufferedProtocol):
         self.pos = 0
 
     def get_buffer(self, sizehint):
-        self.logger.debug(
-            f"get_buffer called with size={sizehint} and " f"self.pos={self.pos}"
-        )
+        # self.logger.debug(
+        #     f"get_buffer called with size={sizehint} and " f"self.pos={self.pos}"
+        # )
         return self.buffer_view[self.pos :]
 
     def _unpack_msg_header(self) -> Header:
@@ -167,7 +167,7 @@ class BufferedSession(BitcoinFramer):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     def message_received(self, command: bytes, message: bytes):
-        self.logger.debug("received msg type: %s", command.decode("ascii"))
+        # self.logger.debug("received msg type: %s", command.decode("ascii"))
 
         # copy is fine for non-block messages
         # if we "yield" on the event loop - my (possibly wrong) understanding is that
@@ -189,11 +189,14 @@ class BufferedSession(BitcoinFramer):
             logger.exception(e)
             raise
 
+    def is_synchronized(self):
+        return self.get_local_block_tip_height() == self.target_block_height
+
     def send_message(self, message):
         self.transport.write(message)
 
     async def send_request(self, command_name: str, message: bytes):
-        self.logger.debug(f"sending to {self.peer}, msg type: {command_name}")
+        # self.logger.debug(f"sending to {self.peer}, msg type: {command_name}")
         self.send_message(message)
 
     def get_local_tip_height(self):
@@ -283,15 +286,34 @@ class BufferedSession(BitcoinFramer):
                 # NOTE: these inv packets will be handled by the standard 'handlers.py'
                 # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
                 while True:
+                    # 500 invs -> 500 getdatas and 500 block x block parsing
+                    # BUT - NOTE: random new block invs can come for the latest block
+                    # tip - just ignore them until we are sync'd and these are at (or
+                    # below (for reorgs) our chain tip.
                     if self._pending_blocks_queue.qsize() == 1:
                         pass  # debugging
 
                     # one loop per block retrieval and parsing
                     inv = await self._pending_blocks_queue.get()
-                    known_header = self.storage.headers.lookup(
+                    header, chain = self.storage.headers.lookup(
                         hex_str_to_hash(inv.get("inv_hash"))
                     )
-                    logger.debug(f"got inv: {inv} from queue ({known_header})")
+                    logger.debug(f"got inv: {inv} from queue ({header})")
+
+                    def is_at_or_below_block_headers_tip(header) -> bool:
+                        block_headers_tip = self.get_local_block_tip_height()
+                        if header.height <= block_headers_tip + 1:
+                            return True  # we are ready to get this block and connect it to block  # headers
+                        else:
+                            self.logger.debug(
+                                f"inv for block with height={header.height} which "
+                                f"is > "
+                                f"block_headers tip={block_headers_tip} - not ready for "
+                                f"this one yet - still syncing earlier blocks...")
+                            return False
+                    if not is_at_or_below_block_headers_tip(header):
+                        continue  # i.e. ignore these blocks - do not request them
+
                     await self.send_request(
                         GETDATA, self.serializer.getdata(inv_vects=[inv]),
                     )  # responds via inv with up to 500 blocks
