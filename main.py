@@ -19,8 +19,9 @@ from constants import (
     LOGGING_LEVEL_VARNAME,
 )
 
-selector = selectors.SelectSelector()
-loop = asyncio.SelectorEventLoop(selector)
+# selector = selectors.SelectSelector()
+# loop = asyncio.SelectorEventLoop(selector)
+loop = asyncio.ProactorEventLoop()
 asyncio.set_event_loop(loop)
 
 logger = logs.get_logger("main")
@@ -107,4 +108,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main(), debug=True)
+    asyncio.run(main(), debug=False)

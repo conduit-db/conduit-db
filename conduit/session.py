@@ -1,24 +1,19 @@
-import io
-import json
-import math
+import asyncio
 from asyncio import BufferedProtocol
+import bitcoinx
+from bitcoinx import hex_str_to_hash
 from collections import namedtuple
 from functools import partial
+import io
+import logging
+import math
+import struct
 from typing import Optional, List, Dict, Callable, Union
 
-import bitcoinx
-import peewee
-from bitcoinx import hex_str_to_hash, hash_to_hex_str
-
-import database
 from logs import logs
 import utils
 from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
 from handlers import Handlers
-import logging
-import struct
-import asyncio
-
 from constants import HEADER_LENGTH, ZERO_HASH, BLOCK_HEADER_LENGTH
 from deserializer import Deserializer
 from networks import NetworkConfig
@@ -36,17 +31,11 @@ class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
 
     def _new_buffer(self, size):
-        # self.logger.debug(f"_new_buffer called with size={size}")
-        # not sure if new buf is necessary each msg. can maybe re-use if pos maintained
         self.buffer = bytearray(size)
-        # can swap to shared_memory for multi-cpu reads
         self.buffer_view = memoryview(self.buffer)
         self.pos = 0
 
     def get_buffer(self, sizehint):
-        # self.logger.debug(
-        #     f"get_buffer called with size={sizehint} and " f"self.pos={self.pos}"
-        # )
         return self.buffer_view[self.pos :]
 
     def _unpack_msg_header(self) -> Header:
@@ -106,7 +95,6 @@ class BufferedSession(BitcoinFramer):
     def __init__(self, config: NetworkConfig, peer: Peer, host, port, storage):
         self.logger = logging.getLogger("session")
         self.loop = asyncio.get_event_loop()
-
         self.storage = storage
 
         # Framer
@@ -127,30 +115,25 @@ class BufferedSession(BitcoinFramer):
         self.serializer = Serializer(self.config, self.storage)
         self.deserializer = Deserializer(self.config, self.storage)
 
-        # Events
+        # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
-        self.con_lost_event = (
-            asyncio.Event()
-        )  # waited on by session manager at higher LOA
+        self.con_lost_event = asyncio.Event()
 
-        # - Syncing of chain
+        # Syncing of chain
+        self._headers_msg_processed_event = asyncio.Event()
         self._all_headers_synced_event = asyncio.Event()
-        self._all_blocks_synced_event = asyncio.Event()  # -> listen for inv type 2
+        self._all_blocks_synced_event = asyncio.Event()
         self.target_header_height: Optional[int] = None
         self.target_block_height: Optional[int] = None
-        self.local_tip_height: int = self.get_local_tip_height()
+        self.local_tip_height: int = self.update_local_tip_height()
         self.local_block_tip_height: int = self.get_local_block_tip_height()
         self._pending_blocks_queue = asyncio.Queue()
 
-        self._headers_msg_processed_event = asyncio.Event()
-
-        # - Parallel block processing (events in sequential order)
+        # Parallel block processing related
         self._block_parsed_event = asyncio.Event()
         self._merkle_tree_done_event = asyncio.Event()
         self._block_committed_event = asyncio.Event()
-
         self._work_done_queue = asyncio.Queue()
-
         self.block_partition_size: Optional[int] = None
         self.workers_map: Dict[int:Callable] = {}
 
@@ -170,21 +153,14 @@ class BufferedSession(BitcoinFramer):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     def message_received(self, command: bytes, message: bytes):
-        # self.logger.debug("received msg type: %s", command.decode("ascii"))
-
-        # copy is fine for non-block messages
-        # if we "yield" on the event loop - my (possibly wrong) understanding is that
-        # the underlying event loop will keep pushing data into the buffer and can cause
-        # Runtime error... the copy is fine for small messages imo.
-
-        # for a block - we should "pause reading" thereby avoiding copies for memory
-        # efficiency + allowing us to make full use of the event loop's concurrency
-        # in dealing with the block before -> "resume reading".
         self.run_coro_threadsafe(self.handle, command, message)
 
     async def handle(self, command, message=None):
         logger = logging.getLogger("handle")
         try:
+            # ignore mempool activity until headers sync'd
+            if command == b"inv" and not self._all_headers_synced_event.is_set():
+                return
             handler_func_name = "on_" + command.decode("ascii")
             handler_func = getattr(self.handlers, handler_func_name)
             await handler_func(message)
@@ -203,7 +179,7 @@ class BufferedSession(BitcoinFramer):
         self.send_message(message)
 
     def get_local_tip_height(self):
-        return self.storage.headers.longest_chain().tip.height
+        return self.local_tip_height
 
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
@@ -220,9 +196,9 @@ class BufferedSession(BitcoinFramer):
             await self.handshake_complete_event.wait()
             _sync_headers_task = asyncio.create_task(self.sync_headers_job())
 
-            if not self.get_local_tip_height() == self.target_header_height:
+            if self.get_local_tip_height() != self.target_header_height:
+                self.logger.debug("pre-waiting for _all_headers_synced_event")
                 await self._all_headers_synced_event.wait()
-                self._all_headers_synced_event.clear()
 
             self.target_block_height = self.get_local_tip_height()  # blocks lag headers
 
@@ -244,14 +220,12 @@ class BufferedSession(BitcoinFramer):
                 self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
             )
             await self._headers_msg_processed_event.wait()
-            self._headers_msg_processed_event.clear()
-            self.storage.connect_headers.flush()
             self.local_tip_height = self.update_local_tip_height()
             self.logger.debug(
-                "headers message processed - new chain tip height: %s, " "hash: %s",
+                "headers message processed - new chain tip height: %s",
                 self.local_tip_height,
-                hash_to_hex_str(self.storage.headers.longest_chain().tip.hash),
             )
+            self._headers_msg_processed_event.clear()
 
         self._all_headers_synced_event.set()
         self.logger.debug(
@@ -277,22 +251,17 @@ class BufferedSession(BitcoinFramer):
                 self.logger.debug(
                     "requesting max number of blocks (up to 500) for chain tip "
                     "height=%s",
-                    self.storage.block_headers.longest_chain().tip.height,
+                    self.get_local_block_tip_height(),
                 )
                 await self.send_request(
                     GETBLOCKS,
                     self.serializer.getblocks(
                         hash_count, block_locator_hashes, ZERO_HASH
                     ),
-                )  # responds via inv with up to 500 blocks
-
-                # NOTE: these inv packets will be handled by the standard 'handlers.py'
-                # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
+                )
                 while True:
-                    # 500 invs -> 500 getdatas and 500 block x block parsing
-                    # BUT - NOTE: random new block invs can come for the latest block
-                    # tip - just ignore them until we are sync'd and these are at (or
-                    # below (for reorgs) our chain tip.
+                    # 500 invs -> 500 getdatas and block parsing
+                    # random block invs e.g. for the latest block get ignored for now
                     if self._pending_blocks_queue.qsize() == 1:
                         pass  # debugging
 
@@ -301,29 +270,26 @@ class BufferedSession(BitcoinFramer):
                     header, chain = self.storage.headers.lookup(
                         hex_str_to_hash(inv.get("inv_hash"))
                     )
-                    logger.debug(f"got inv: {inv} from queue ({header})")
+                    logger.debug(f"got inv from queue for block height={header.height}")
 
                     def is_at_or_below_block_headers_tip(header) -> bool:
                         block_headers_tip = self.get_local_block_tip_height()
                         if header.height <= block_headers_tip + 1:
-                            return True  # we are ready to get this block and connect it to block  # headers
+                            return True
                         else:
                             self.logger.debug(
-                                f"inv for block with height={header.height} which "
-                                f"is > "
-                                f"block_headers tip={block_headers_tip} - not ready for "
-                                f"this one yet - still syncing earlier blocks...")
+                                f"ignoring block with height={header.height} until "
+                                f"initial block download completed"
+                            )
                             return False
+
                     if not is_at_or_below_block_headers_tip(header):
-                        continue  # i.e. ignore these blocks - do not request them
+                        continue
 
                     await self.send_request(
-                        GETDATA, self.serializer.getdata(inv_vects=[inv]),
-                    )  # responds via inv with up to 500 blocks
-                    await self.wait_for_block_parsing()  # waits for worker feedback
-
-                    if self._pending_blocks_queue.qsize() == 1:
-                        pass  # debugging
+                        GETDATA, self.serializer.getdata([inv]),
+                    )
+                    await self.wait_for_block_parsing()
                     self.logger.debug(
                         f"_pending_blocks_queue size="
                         f"{self._pending_blocks_queue.qsize()}"
@@ -368,7 +334,7 @@ class BufferedSession(BitcoinFramer):
                 stop_pos = payload_size
 
             worker_id = i
-            func = partial(
+            parse_block_part = partial(
                 self.parse_block_partition,
                 worker_id,
                 worker_count,
@@ -376,16 +342,16 @@ class BufferedSession(BitcoinFramer):
                 start_pos,
                 stop_pos,
             )
-            self.workers_map.update({worker_id: func})
+            self.workers_map.update({worker_id: parse_block_part})
 
     def ensure_workers_started(self, from_worker_id, to_worker_id):
         for i in range(from_worker_id, to_worker_id + 1):
             try:
-                func = self.workers_map.pop(i)
+                parse_block_part = self.workers_map.pop(i)
 
                 # Todo this function is the target for multiprocessing
-                #  but at present it will just run on the same core
-                func()  # this cpu-intensive work will block the event loop until fixed
+                #  but at present it will just run on the same core (on the event loop!)
+                parse_block_part()
             except KeyError:
                 # work already allocated to this worker
                 pass
@@ -396,23 +362,13 @@ class BufferedSession(BitcoinFramer):
         """purely for parallel block processing using the multiprocessing module
         - this function will be called multiple times for a large block as the buffer is
         filled."""
-        # NOTE1: at present deferring multiprocessing implementation
-        # NOTE2: also deferring "early" processing of the block on the memory
-        # view before the full block is in the buffer. Instead just waits until the
-        # whole block is in the buffer for a simple, first implementation.
+        # NOTE: at present deferring multiprocessing implementation
         from_worker_id = None
         to_worker_id = None
         if len(self.workers_map) == 0:  # first receipt of block fragment
             self.init_workers_map(payload_size, self.WORKER_COUNT)
-            self.logger.debug(f"received message type: {current_command}")
-            self.logger.debug(
-                f"payload size={payload_size}, current pos={pos}, "
-                f"workers={self.WORKER_COUNT}"
-            )
-            self.logger.debug(f"block_partition_size={self.block_partition_size} bytes")
 
         ready_partitions = math.floor(self.pos / self.block_partition_size)
-        self.logger.debug(f"ready_partitions count={ready_partitions}")
         if ready_partitions > 0:
             from_worker_id = 1
             to_worker_id = ready_partitions
@@ -420,30 +376,18 @@ class BufferedSession(BitcoinFramer):
         if ready_partitions == 0:
             self.logger.debug("no work can be allocated yet. need to 'recv' more block")
         else:
-            self.logger.debug(
-                f"therefore allocating work from worker id={from_worker_id} to worker "
-                f"id={to_worker_id}"
-            )
             self.ensure_workers_started(from_worker_id, to_worker_id)
 
         if self.pos == payload_size:
             await self._block_parsed_event.wait()
             self.transport.resume_reading()
-
-            self.logger.debug("block parsing complete")
-            # Todo - trigger workers to calculate merkle tree
-
             # await self._merkle_tree_done_event.wait()
-            # self.logger.debug("merkle tree calculation complete")
-            # # Todo - trigger commits to database
-            #
             # await self._block_committed_event.wait()
-            # self.logger.debug("block txs and merkle tree committed to database")
-            # # Todo - trigger the aiorpcx-based API server (not built yet) to update
-            # #  to the new chain tip so that wallets can get tx confirmations etc.
+            # signal to aiorpcx-based API server (not built yet) mew chain tip fit for
+            # consumption -> pub-subs etc.
 
-            self._new_buffer(HEADER_LENGTH)  # header size
-            self._payload_size = None  # and get next blocks/messages
+            self._new_buffer(HEADER_LENGTH)
+            self._payload_size = None
             self.workers_map = {}
 
     def parse_block_partition(
@@ -454,16 +398,12 @@ class BufferedSession(BitcoinFramer):
         start_pos: int,
         stop_pos: int,
     ):
-        try:
-            """Where all the cpu intensive work gets done (ideally across many cores)"""
-            # NOTE: The workers can overrun their stop_pos to complete their last tx
-            #  and similarly the start_pos is only indicative - the worker needs to
-            #  run an algorithm to finding it's "initial binding location" (not implemented)
-            self.logger.debug(
-                f"called with arguments: worker_id={worker_id}, worker_count={worker_count}, "
-                f"buffer_view={buffer_view}, start_pos={start_pos}, stop_pos={stop_pos}"
-            )
+        """Where all the cpu intensive work gets done (ideally across many cores)
 
+        NOTE: The workers can overrun their stop_pos to complete *their last tx*
+        and similarly the start_pos is only indicative - the worker needs to run an
+        algorithm to finding it's "initial binding location" (not implemented)"""
+        try:
             header_hash = bitcoinx.double_sha256(buffer_view[0:80].tobytes())
             current_block_header, chain = self.storage.headers.lookup(header_hash)
 

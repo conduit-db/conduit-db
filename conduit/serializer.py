@@ -1,5 +1,4 @@
 """https://en.bitcoin.it/wiki/Protocol_documentation#Message_structure"""
-import logging
 import math
 import random
 import time
@@ -35,11 +34,10 @@ from store import Storage
 from utils import (
     payload_to_checksum,
     ipv4_to_mapped_ipv6,
-    flip_hex_byte_order,
     calc_bloom_filter_size,
     hex_to_bytes,
 )
-from constants import LOGGING_FORMAT, ZERO_HASH
+from constants import ZERO_HASH
 
 logger = logs.get_logger("serializer")
 

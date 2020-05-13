@@ -23,12 +23,12 @@ class Transaction(BaseModel):
     rawtx = BlobField()
 
 
-def load(config) -> PostgresqlDatabase:
-    database_name = config[DATABASE_NAME_VARNAME]
-    database_user = config[DATABASE_USER_VARNAME]
-    host = config[DATABASE_HOST_VARNAME]
-    port = config[DATABASE_PORT_VARNAME]
-    password = config[DATABASE_PASSWORD_VARNAME]
+def load(env_vars) -> PostgresqlDatabase:
+    database_name = env_vars[DATABASE_NAME_VARNAME]
+    database_user = env_vars[DATABASE_USER_VARNAME]
+    host = env_vars[DATABASE_HOST_VARNAME]
+    port = env_vars[DATABASE_PORT_VARNAME]
+    password = env_vars[DATABASE_PASSWORD_VARNAME]
 
     db.init(
         database=database_name,

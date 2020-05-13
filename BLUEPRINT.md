@@ -54,7 +54,7 @@ Transactions table) you would for example... let's say there are 2048 txs in the
 full merkle tree. So we use the header_id + depth + position where depth = 11 and position is the range 0 to 2047. 
 The postgres db would be indexed on this key and so would be a sequential readout of rows in bulk.
 
-NOTE: The most recent 20 blocks would be stored in the memcached key-value store anyway so a big db query to postgres
+NOTE: The most recent 20 blocks would be stored in the redis key-value store anyway so a big db query to postgres
 would rarely if ever occur - making reorg handling very fast. This postgres table would only be read from 
 for serving up old (> 20 blocks old) merkle proofs for individual txs (client queries).
 
@@ -136,7 +136,7 @@ so that a merkle proof calculation requires fetching of only 8 transaction hashe
 pre-calculated level. - the MVP would probably just store the entire merkle tree for simplicity of 
 implementation.
 - merkle tree calculation is easily parallelisable - just divide the block across an even number of processors
-e.g. into quarters and have them each calculate their quarter and update the memcached LRU cache + DB.
+e.g. into quarters and have them each calculate their quarter and update the redis LRU cache + DB.
 - the way it is stored is as a dictionary as follows:
         
 see MerkleTree db above
@@ -160,7 +160,7 @@ Can handle a variety of workload types
 variety of bitcoin messages).
 
 
-## 3) Memcached LRU cache + in-memory merkle tree cache for last 20 blocks
+## 3) Redis LRU cache + in-memory merkle tree cache for last 20 blocks
 
 This would serve two main functions.
 
@@ -172,7 +172,7 @@ This would serve two main functions.
 The WorkerProcs are designed to process whatever transactions they are allocated as fast as possible (probably in 
 batches of 100 contiguous transactions or so). But when all txs in a block are parsed and they need to 'switch modes'
 to merkle proof calculation, they will need rapid access to all of transactions for their designated partition (which
-would have been parsed by a different process). The memcached in-memory cache (not LRU for this bit) is the place they 
+would have been parsed by a different process). The redis in-memory cache (not LRU for this bit) is the place they 
 will first go looking for all of these transaction hashes that they need as well as the place they will store the result
 
 The in-memory cache would be set to keep the last 20 blocks worth of merkle trees (as an arbitrary limit on memory use).
@@ -195,7 +195,7 @@ shut it down and load it backup several times in the ensuing 10-30 minutes...
 
 ## 4) Server
 
-The 3rd process type not including a memcached instance would be for responding to client requests. Would be based on
+The 3rd process type not including a redis instance would be for responding to client requests. Would be based on
 kyuupichan's aiorpcx JSON-RPC protocol to work with ElectrumSV.
 
 It would first attempt to hit the cache and fallback to a db query. One of these Servers should be enough but more could

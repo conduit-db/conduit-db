@@ -9,7 +9,7 @@ from bitcoinx import (
     BitcoinRegtest,
 )
 
-from peers import get_seed_peers, Peer
+from peers import Peer
 
 
 class AbstractNetwork:

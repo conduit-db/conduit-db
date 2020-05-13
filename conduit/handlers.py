@@ -1,6 +1,5 @@
-import logging
 import io
-from commands import TX, VERACK, GETDATA, PING, SENDCMPCT
+from commands import VERACK, GETDATA, PING, SENDCMPCT
 from deserializer import Deserializer
 from logs import logs
 from networks import NetworkConfig
@@ -37,11 +36,6 @@ class Handlers:
         protoconf = self.session.deserializer.protoconf(io.BytesIO(message))
         logger.debug(f"protoconf: {protoconf}")
         self.session.handshake_complete_event.set()
-
-        # temporary for testing
-        # inv_vects = [{'inv_type': 1, 'inv_hash': '72bb98f5436fe20fe033303e12783841b16e04036c6e0c29581cf17a61d4c12c'}]
-        # getdata_msg = self.serializer.getdata(inv_vects)
-        # await self.session.send_request(GETDATA, getdata_msg)
 
     async def on_sendheaders(self, message):
         logger.debug("handling sendheaders...")
@@ -94,7 +88,6 @@ class Handlers:
         # logger.debug(f"tx: {tx}")
 
     async def on_headers(self, message: bytes):
-        logger.debug("handing headers...")
+        # logger.debug("handling headers...")
         if self.deserializer.connect_headers(io.BytesIO(message)):
-            logger.debug("setting _headers_msg_processed_event")
             self.session._headers_msg_processed_event.set()

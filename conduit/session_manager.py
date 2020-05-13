@@ -1,13 +1,9 @@
 import asyncio
-import logging
-import time
 from typing import Optional
 
 import bitcoinx
-from bitcoinx import Headers
 
 import database
-from constants import LOGGING_FORMAT
 from logs import logs
 from networks import (
     NetworkConfig,
@@ -75,13 +71,12 @@ class SessionManager:
         headers = bitcoinx.Headers.from_file(
             self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
         )
-
         # Blocks
         block_headers = bitcoinx.Headers.from_file(
             self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
         )
         # Postgres db
         pg_db = database
-        # Memcached
+        # Redis
         # -- NotImplemented
         self.storage = Storage(headers, block_headers, pg_db, None)
