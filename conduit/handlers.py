@@ -93,6 +93,6 @@ class Handlers:
 
     async def on_headers(self, message: bytes):
         logger.debug("handing headers...")
-        if self.deserializer.headers(io.BytesIO(message)):
+        if self.deserializer.connect_headers(io.BytesIO(message)):
             logger.debug("setting _headers_msg_processed_event")
             self.session._headers_msg_processed_event.set()

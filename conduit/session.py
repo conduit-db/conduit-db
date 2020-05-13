@@ -42,8 +42,9 @@ class BitcoinFramer(BufferedProtocol):
         self.pos = 0
 
     def get_buffer(self, sizehint):
-        self.logger.debug(f"get_buffer called with size={sizehint} and "
-                          f"self.pos={self.pos}")
+        self.logger.debug(
+            f"get_buffer called with size={sizehint} and " f"self.pos={self.pos}"
+        )
         return self.buffer_view[self.pos :]
 
     def _unpack_msg_header(self) -> Header:
@@ -198,9 +199,8 @@ class BufferedSession(BitcoinFramer):
     def get_local_tip_height(self):
         return self.storage.headers.longest_chain().tip.height
 
-    def get_local_block_tip_height(self):
-        # Todo - find out from database
-        return 0
+    def get_local_block_tip_height(self) -> int:
+        return self.storage.block_headers.longest_chain().tip.height
 
     def update_local_tip_height(self) -> int:
         self.local_tip_height = self.storage.headers.longest_chain().tip.height
@@ -218,10 +218,9 @@ class BufferedSession(BitcoinFramer):
                 await self._all_headers_synced_event.wait()
                 self._all_headers_synced_event.clear()
 
+            self.target_block_height = self.get_local_tip_height()  # blocks lag headers
+
             if not self.get_local_block_tip_height() == self.target_block_height:
-                self.target_block_height = (
-                    self.get_local_tip_height()
-                )  # blocks lag headers
                 _sync_blocks_task = asyncio.create_task(self.sync_blocks_job())
                 await self._all_blocks_synced_event.wait()
         except Exception as e:
@@ -240,7 +239,7 @@ class BufferedSession(BitcoinFramer):
             )
             await self._headers_msg_processed_event.wait()
             self._headers_msg_processed_event.clear()
-            self.storage.headers.flush()
+            self.storage.connect_headers.flush()
             self.local_tip_height = self.update_local_tip_height()
             self.logger.debug(
                 "headers message processed - new chain tip height: %s, " "hash: %s",
@@ -264,7 +263,7 @@ class BufferedSession(BitcoinFramer):
     async def sync_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
         try:
-            while self.local_block_tip_height < self.target_block_height:
+            while self.get_local_block_tip_height() < self.target_block_height:
                 block_locator_hashes = [
                     self.storage.block_headers.longest_chain().tip.hash
                 ]
@@ -446,7 +445,9 @@ class BufferedSession(BitcoinFramer):
                 pass  # debugging...
             tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
             self.logger.debug("current_block_header = %s", current_block_header)
-            self.deserializer.block_header(buffer_view[0:80].tobytes())
+
+            # updates local_block_tip
+            self.deserializer.connect_block_header(buffer_view[0:80].tobytes())
 
             first_tx_pos = HEADER_LENGTH + varint_size + start_pos
             stream: io.BytesIO = io.BytesIO(buffer_view[first_tx_pos:stop_pos])

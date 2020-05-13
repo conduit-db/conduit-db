@@ -168,7 +168,7 @@ class Deserializer:
         }
         return message
 
-    def headers(self, f) -> bool:
+    def connect_headers(self, f) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         count = bitcoinx.read_varint(f.read)
@@ -188,7 +188,7 @@ class Deserializer:
                     raise
         return True
 
-    def block_header(self, raw_header: bytes):
+    def connect_block_header(self, raw_header: bytes):
         try:
             header, chain = self.storage.block_headers.connect(raw_header)
             return header
