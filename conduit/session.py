@@ -19,7 +19,7 @@ import logging
 import struct
 import asyncio
 
-from constants import HEADER_LENGTH, ZERO_HASH
+from constants import HEADER_LENGTH, ZERO_HASH, BLOCK_HEADER_LENGTH
 from deserializer import Deserializer
 from networks import NetworkConfig
 from peers import Peer
@@ -454,40 +454,43 @@ class BufferedSession(BitcoinFramer):
         start_pos: int,
         stop_pos: int,
     ):
-        """Where all the cpu intensive work gets done (ideally across many cores)"""
-        # NOTE: The workers can overrun their stop_pos to complete their last tx
-        #  and similarly the start_pos is only indicative - the worker needs to
-        #  run an algorithm to finding it's "initial binding location" (not implemented)
-        self.logger.debug(
-            f"called with arguments: worker_id={worker_id}, worker_count={worker_count}, "
-            f"buffer_view={buffer_view}, start_pos={start_pos}, stop_pos={stop_pos}"
-        )
+        try:
+            """Where all the cpu intensive work gets done (ideally across many cores)"""
+            # NOTE: The workers can overrun their stop_pos to complete their last tx
+            #  and similarly the start_pos is only indicative - the worker needs to
+            #  run an algorithm to finding it's "initial binding location" (not implemented)
+            self.logger.debug(
+                f"called with arguments: worker_id={worker_id}, worker_count={worker_count}, "
+                f"buffer_view={buffer_view}, start_pos={start_pos}, stop_pos={stop_pos}"
+            )
 
-        if worker_id == 1:
             header_hash = bitcoinx.double_sha256(buffer_view[0:80].tobytes())
-            current_block_header = self.storage.headers.lookup(header_hash)
-            if current_block_header[0].height == 498:
-                pass  # debugging...
-            tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
-            self.logger.debug("current_block_header = %s", current_block_header)
+            current_block_header, chain = self.storage.headers.lookup(header_hash)
 
-            # updates local_block_tip
-            self.deserializer.connect_block_header(buffer_view[0:80].tobytes())
+            if worker_id == 1:
+                tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
+                self.logger.debug("current_block_header = %s", current_block_header)
 
-            first_tx_pos = HEADER_LENGTH + varint_size + start_pos
-            stream: io.BytesIO = io.BytesIO(buffer_view[first_tx_pos:stop_pos])
-        else:
-            stream: io.BytesIO = io.BytesIO(buffer_view[start_pos:stop_pos])
+                # updates local_block_tip
+                self.deserializer.connect_block_header(buffer_view[0:80].tobytes())
 
-        txs = []
+                first_tx_pos = BLOCK_HEADER_LENGTH + varint_size
+                len_stream = stop_pos - first_tx_pos
+                stream: io.BytesIO = io.BytesIO(buffer_view[first_tx_pos:stop_pos])
 
-        # Todo - add logic for finding "binding location" so that can increase from
-        #  1 worker to many workers
-        stream.seek(start_pos)
-        while stream.tell() >= stop_pos:
-            txs.append(bitcoinx.Tx.read(stream.read))
+                txs = []
+                while stream.tell() < len_stream:
+                    tx = bitcoinx.Tx.read(stream.read)
+                    txn_tuple = (tx.hash(), current_block_header.height, tx.to_bytes())
+                    txs.append(txn_tuple)
 
-        with self.storage.pg_database.atomic():
-            self.storage.insert_many_txs(txs)
+                with self.storage.pg_database.atomic():
+                    self.storage.insert_many_txs(txs)
+            else:
+                # these workers have the tough job of finding a "binding location"
+                stream: io.BytesIO = io.BytesIO(buffer_view[start_pos:stop_pos])
+                raise NotImplementedError
 
-        self._work_done_queue.put_nowait(worker_id)
+            self._work_done_queue.put_nowait(worker_id)
+        except Exception as e:
+            self.logger.exception(e)
