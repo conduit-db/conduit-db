@@ -26,6 +26,7 @@ SENDHEADERS = "sendheaders"
 FEEFILTER = "feefilter"
 GETBLOCKTXN = "getblocktxn"
 BLOCKTXN = "blocktxn"
+SENDCMPCT = "sendcmpct"
 
 
 VERSION_BIN = struct.pack("12s", "version".encode("ASCII"))
@@ -56,3 +57,4 @@ SENDHEADERS_BIN = struct.pack("12s", "sendheaders".encode("ASCII"))
 FEEFILTER_BIN = struct.pack("12s", "feefilter".encode("ASCII"))
 GETBLOCKTXN_BIN = struct.pack("12s", "getblocktxn".encode("ASCII"))
 BLOCKTXN_BIN = struct.pack("12s", "blocktxn".encode("ASCII"))
+SENDCMPCT_BIN = struct.pack("12s", "sendcmpct".encode("ASCII"))

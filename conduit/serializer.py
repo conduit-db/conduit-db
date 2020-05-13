@@ -179,3 +179,7 @@ class Serializer:
 
     def sendheaders(self):
         return NotImplementedError
+
+    def sendcmpct(self):
+        payload = pack_byte(0) + pack_le_uint64(1)
+        return self.payload_to_message(GETADDR_BIN, payload)

@@ -200,18 +200,26 @@ class BufferedSession(BitcoinFramer):
         self.target_header_height = height
 
     async def manage_jobs(self):
-        _sync_headers_task = asyncio.create_task(self.sync_headers_job())
-        await self._all_headers_synced_event.wait()
-        self._all_headers_synced_event.clear()
+        try:
+            await self.handshake_complete_event.wait()
+            _sync_headers_task = asyncio.create_task(self.sync_headers_job())
 
-        self.target_block_height = self.get_local_tip_height()  # blocks lag headers
-        _sync_blocks_task = asyncio.create_task(self.sync_blocks_job())
-        await self._all_blocks_synced_event.wait()
+            if not self.get_local_tip_height() == self.target_header_height:
+                await self._all_headers_synced_event.wait()
+                self._all_headers_synced_event.clear()
+
+            if not self.get_local_block_tip_height() == self.target_block_height:
+                self.target_block_height = (
+                    self.get_local_tip_height()
+                )  # blocks lag headers
+                _sync_blocks_task = asyncio.create_task(self.sync_blocks_job())
+                await self._all_blocks_synced_event.wait()
+        except Exception as e:
+            self.logger.exception(e)
+            raise
 
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
-
-        await self.handshake_complete_event.wait()
 
         while self.local_tip_height < self.target_header_height:
             block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
@@ -245,34 +253,40 @@ class BufferedSession(BitcoinFramer):
 
     async def sync_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
+        try:
+            while self.local_block_tip_height < self.target_block_height:
+                chain = self.storage.headers.longest_chain()
+                block_locator_hashes = [
+                    self.storage.headers.header_at_height(
+                        chain, self.target_block_height
+                    ).hash
+                ]
+                hash_count = len(block_locator_hashes)
+                await self.send_request(
+                    GETBLOCKS,
+                    self.serializer.getblocks(
+                        hash_count, block_locator_hashes, ZERO_HASH
+                    ),
+                )  # responds via inv with up to 500 blocks
 
-        while self.local_block_tip_height < self.target_block_height:
-            chain = self.storage.headers.longest_chain()
-            block_locator_hashes = [
-                self.storage.headers.header_at_height(chain, self.target_block_height)
-            ]
-            hash_count = len(block_locator_hashes)
-            await self.send_request(
-                GETBLOCKS,
-                self.serializer.getblocks(hash_count, block_locator_hashes, ZERO_HASH),
-            )  # responds via inv with up to 500 blocks
+                # NOTE: these inv packets will be handled by the standard 'handlers.py'
+                # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
+                inv = await self._pending_blocks_queue.get()
 
-            # NOTE: these inv packets will be handled by the standard 'handlers.py'
-            # MSG_BLOCK type == 2 -> fills the _pending_blocks_queue
-            inv_vects = await self._pending_blocks_queue.get()
+                # NOW -> requests the blocks via GETDATA messages
+                await self.send_request(
+                    GETDATA, self.serializer.getdata(inv_vects=[inv]),
+                )  # responds via inv with up to 500 blocks
 
-            # NOW -> requests the blocks via GETDATA messages
-            await self.send_request(
-                GETDATA,
-                self.serializer.getdata(inv_vects=inv_vects),
-            )  # responds via inv with up to 500 blocks
+                await self.wait_for_block_parsing()
 
-            await self.wait_for_block_parsing()
-
-        self._all_blocks_synced_event.set()
-        self.logger.debug(
-            "blocks synced. new local block height is: %s", self.local_tip_height
-        )
+            self._all_blocks_synced_event.set()
+            self.logger.debug(
+                "blocks synced. new local block height is: %s", self.local_tip_height
+            )
+        except Exception as e:
+            self.logger.exception(e)
+            raise
 
     # -- Message Types -- #
     async def send_version(

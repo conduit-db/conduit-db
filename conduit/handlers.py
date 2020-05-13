@@ -1,7 +1,7 @@
 import logging
 import io
 
-from commands import TX, VERACK, GETDATA, PING
+from commands import TX, VERACK, GETDATA, PING, SENDCMPCT
 from constants import LOGGING_FORMAT
 from deserializer import Deserializer
 from networks import NetworkConfig
@@ -27,7 +27,7 @@ class Handlers:
     async def on_version(self, message):
         logger.debug("handling version...")
         version = self.session.deserializer.version(io.BytesIO(message))
-        self.session.set_target_header_height(version)
+        self.session.set_target_header_height(version['start_height'])
         logger.debug("received version message: %s", version)
         verack_message = self.session.serializer.verack()
         await self.session.send_request(VERACK, verack_message)
@@ -52,6 +52,10 @@ class Handlers:
 
     async def on_sendcmpct(self, message):
         logger.debug("handling sendcmpct...")
+        logger.debug("received sendcmpct message: %s", message)
+        sendcmpct = self.session.serializer.sendcmpct()
+        logger.debug("responding with message: %s", message)
+        await self.session.send_request(SENDCMPCT, sendcmpct)
 
     async def on_ping(self, message):
         logger.debug("handling ping...")
@@ -72,10 +76,11 @@ class Handlers:
         with an offset of 4."""
         # logger.debug("handling inv...")
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
-        # logger.debug(f"inv: {inv_vects}")
+        logger.debug(f"inv: {inv_vects}")
 
         for inv in inv_vects:
-            if inv_vects['inv_type'] == 2: # BLOCK
+            if inv['inv_type'] == 2: # BLOCK
+                logger.debug(f"received a block inv: {inv}")
                 self.session._pending_blocks_queue.put_nowait(inv)
             else:
                 # temporary for testing - request all relayed txs without checking db
