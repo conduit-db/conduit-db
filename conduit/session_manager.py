@@ -72,6 +72,8 @@ class SessionManager:
                 self.transport.close()
 
     def setup_storage(self) -> None:
+        Headers.max_cache_size = 2_000_000  # 2 million headers - only 160MB
+        HeadersRegTestMod.max_cache_size = 2_000_000
         if self.network == REGTEST:
             headers = HeadersRegTestMod.from_file(
                 self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT

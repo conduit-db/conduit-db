@@ -1,7 +1,7 @@
 import asyncio
 from asyncio import BufferedProtocol
 import bitcoinx
-from bitcoinx import hex_str_to_hash
+from bitcoinx import hex_str_to_hash, MissingHeader
 from collections import namedtuple
 from functools import partial
 import io
@@ -260,17 +260,21 @@ class BufferedSession(BitcoinFramer):
                     ),
                 )
                 while True:
-                    # 500 invs -> 500 getdatas and block parsing
-                    # random block invs e.g. for the latest block get ignored for now
-                    if self._pending_blocks_queue.qsize() == 1:
-                        pass  # debugging
-
                     # one loop per block retrieval and parsing
                     inv = await self._pending_blocks_queue.get()
-                    header, chain = self.storage.headers.lookup(
-                        hex_str_to_hash(inv.get("inv_hash"))
-                    )
-                    logger.debug(f"got inv from queue for block height={header.height}")
+                    try:
+                        header, chain = self.storage.headers.lookup(
+                            hex_str_to_hash(inv.get("inv_hash"))
+                        )
+                        logger.debug(
+                            f"got inv from queue for block height={header.height}")
+                    except MissingHeader as e:
+                        logger.warning("could not find header with hash=%s",
+                            inv.get("inv_hash"))
+                        if self._pending_blocks_queue.empty():
+                            break
+                        else:
+                            continue
 
                     def is_at_or_below_block_headers_tip(header) -> bool:
                         block_headers_tip = self.get_local_block_tip_height()

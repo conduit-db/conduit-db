@@ -1,6 +1,5 @@
 import logging
 from typing import Sequence, Tuple, List
-
 from bitcoinx import Headers
 
 from . import database
@@ -25,11 +24,13 @@ class Storage:
         self._txs.insert(tx_hash=tx_hash, height=height, rawtx=rawtx).execute()
 
     def insert_many_txs(self, txs: Sequence[Tuple[bytes, int, bytes]]):
+        """ignores duplicate inserts (same txid) - not suitable for reorg handling
+        where height needs to be changed"""
         try:
             with self.pg_database.atomic():
                 self._txs.insert_many(
                     txs, fields=[self._txs.tx_hash, self._txs.height, self._txs.rawtx]
-                ).execute()
+                ).on_conflict_ignore().execute()
         except Exception as e:
             self.logger.exception(e)
 

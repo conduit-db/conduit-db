@@ -181,7 +181,7 @@ class Deserializer:
                 else:
                     logger.exception(e)
                     raise
-        # self.storage.headers.flush()
+        self.storage.headers.flush()
         return True
 
     def connect_block_header(self, raw_header: bytes):
