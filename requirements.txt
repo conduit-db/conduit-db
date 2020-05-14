@@ -1,1 +1,5 @@
 bitcoinx>=0.2.4
+requests>=2.21.0
+peewee>=3.9.6
+psycopg2-binary
+dnspython
