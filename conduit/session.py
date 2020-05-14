@@ -65,17 +65,17 @@ class BitcoinFramer(BufferedProtocol):
         # get payload
         else:
             self.current_command = self.msg_header.command.rstrip(b"\0")
-            # blocks never pass through "message_received" - handled as a special case
-            # in theory can start work early on memory view of the block
-
-            if is_block_msg(self.current_command):
-                if self.pos == self._payload_size:
-                    self.transport.pause_reading()
-                self.allocate_block_fragment()
-                return
 
             # full payload in buffer
             if self.pos == self._payload_size:
+                # blocks never pass through "message_received" - handled as a special case
+
+                if is_block_msg(self.current_command):
+                    if self.pos == self._payload_size:
+                        self.transport.pause_reading()
+                    self.allocate_block_fragment()
+                    return
+
                 message = self.buffer
                 self.message_received(self.current_command, message)
                 self._new_buffer(HEADER_LENGTH)  # header size
@@ -267,10 +267,12 @@ class BufferedSession(BitcoinFramer):
                             hex_str_to_hash(inv.get("inv_hash"))
                         )
                         logger.debug(
-                            f"got inv from queue for block height={header.height}")
+                            f"got inv from queue for block height={header.height}"
+                        )
                     except MissingHeader as e:
-                        logger.warning("could not find header with hash=%s",
-                            inv.get("inv_hash"))
+                        logger.warning(
+                            "could not find header with hash=%s", inv.get("inv_hash")
+                        )
                         if self._pending_blocks_queue.empty():
                             break
                         else:
@@ -306,6 +308,8 @@ class BufferedSession(BitcoinFramer):
                 "blocks synced. new local block height is: %s",
                 self.get_local_block_tip_height(),
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception", e)
             raise

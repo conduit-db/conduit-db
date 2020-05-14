@@ -56,24 +56,24 @@ To run conduit (Windows)
     git clone https://github.com/AustEcon/conduit.git
     cd conduit
     py -m pip install -r .\requirements.txt
-    py .\main.py
+    py .\conduit_server.py
 
 To run conduit (Linux)
 
     git clone https://github.com/AustEcon/conduit.git
     cd conduit
     python -m pip install -r requirements.txt
-    python .\main.py
+    python .\conduit_server.py
 
 That's basically it.
 
 ## Testnet / Regtest / Scaling-Testet
 
-    python .\main.py --testnet
+    python .\conduit_server.py --testnet
 
-    python .\main.py --regtest
+    python .\conduit_server.py --regtest
 
-    python .\main.py --scaling-testnet
+    python .\conduit_server.py --scaling-testnet
 
 currently the peers are hardcoded so the host / port cannot be
 passed in via commandline (yet).

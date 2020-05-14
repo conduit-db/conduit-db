@@ -1,5 +1,5 @@
 import io
-from .commands import VERACK, GETDATA, PING, SENDCMPCT
+from .commands import VERACK, GETDATA, PING, SENDCMPCT, PONG
 from .deserializer import Deserializer
 from .logs import logs
 from .networks import NetworkConfig
@@ -50,7 +50,7 @@ class Handlers:
     async def on_ping(self, message):
         logger.debug("handling ping...")
         pong_message = self.session.serializer.pong()
-        await self.session.send_request(PING, pong_message)
+        await self.session.send_request(PONG, pong_message)
 
     async def on_addr(self, message):
         logger.debug("handling addr...")
