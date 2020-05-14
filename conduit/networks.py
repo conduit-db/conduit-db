@@ -13,8 +13,8 @@ import logging
 import requests
 from typing import Optional
 
-from constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
-from peers import Peer, get_seed_peers
+from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
+from .peers import Peer, get_seed_peers
 
 logger = logging.getLogger("networks")
 

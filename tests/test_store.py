@@ -3,11 +3,10 @@ import shutil
 from pathlib import Path
 
 import bitcoinx
-
-import database
-from logs import logs
-from networks import NetworkConfig, NETWORKS
-from store import Storage
+from conduit import database
+from conduit.logs import logs
+from conduit.networks import NetworkConfig, NETWORKS
+from conduit.store import Storage
 
 
 class TestStorage:

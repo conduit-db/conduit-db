@@ -4,17 +4,17 @@ from typing import Optional
 import bitcoinx
 from bitcoinx import Headers
 
-import database
-from constants import REGTEST
-from logs import logs
-from networks import (
+from . import database
+from .constants import REGTEST
+from .logs import logs
+from .networks import (
     NetworkConfig,
     NETWORKS,
     HeadersRegTestMod,
 )
-from peers import Peer
-from session import BufferedSession
-from store import Storage
+from .peers import Peer
+from .session import BufferedSession
+from .store import Storage
 
 logger = logs.get_logger("session-manager")
 

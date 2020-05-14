@@ -1,6 +1,6 @@
 from peewee import PostgresqlDatabase, Model, BlobField, IntegerField
 
-from constants import (
+from .constants import (
     DATABASE_NAME_VARNAME,
     DATABASE_USER_VARNAME,
     DATABASE_HOST_VARNAME,

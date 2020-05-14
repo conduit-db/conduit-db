@@ -16,7 +16,7 @@ from bitcoinx import (
     pack_byte,
 )
 
-from commands import (
+from .commands import (
     VERSION_BIN,
     VERACK_BIN,
     GETADDR_BIN,
@@ -28,16 +28,16 @@ from commands import (
     GETDATA_BIN,
     GETBLOCKS_BIN,
 )
-from logs import logs
-from networks import NetworkConfig
-from store import Storage
-from utils import (
+from .logs import logs
+from .networks import NetworkConfig
+from .store import Storage
+from .utils import (
     payload_to_checksum,
     ipv4_to_mapped_ipv6,
     calc_bloom_filter_size,
     hex_to_bytes,
 )
-from constants import ZERO_HASH
+from .constants import ZERO_HASH
 
 logger = logs.get_logger("serializer")
 

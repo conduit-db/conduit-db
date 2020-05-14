@@ -1,10 +1,10 @@
 import io
-from commands import VERACK, GETDATA, PING, SENDCMPCT
-from deserializer import Deserializer
-from logs import logs
-from networks import NetworkConfig
-from serializer import Serializer
-from store import Storage
+from .commands import VERACK, GETDATA, PING, SENDCMPCT
+from .deserializer import Deserializer
+from .logs import logs
+from .networks import NetworkConfig
+from .serializer import Serializer
+from .store import Storage
 
 logger = logs.get_logger("handlers")
 

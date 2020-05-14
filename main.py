@@ -7,10 +7,10 @@ import sys
 import time
 from typing import Dict
 
-import database
-from logs import logs
-from session_manager import SessionManager
-from constants import (
+from conduit import database
+from conduit.logs import logs
+from conduit.session_manager import SessionManager
+from conduit.constants import (
     DATABASE_NAME_VARNAME,
     BITCOIN_NETWORK_VARNAME,
     DATABASE_USER_VARNAME,

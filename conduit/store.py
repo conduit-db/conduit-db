@@ -3,8 +3,8 @@ from typing import Sequence, Tuple, List
 
 from bitcoinx import Headers
 
-import database
-from logs import logs
+from . import database
+from .logs import logs
 
 
 class Storage:

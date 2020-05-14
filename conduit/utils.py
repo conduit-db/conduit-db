@@ -13,7 +13,7 @@ from bitcoinx import (
     pack_le_uint32,
 )
 
-from commands import BLOCK, BLOCK_BIN
+from .commands import BLOCK, BLOCK_BIN
 
 
 def payload_to_checksum(payload):

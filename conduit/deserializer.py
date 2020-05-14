@@ -1,6 +1,3 @@
-import time
-import socket
-
 import bitcoinx
 from bitcoinx import (
     read_le_int32,
@@ -13,13 +10,15 @@ from bitcoinx import (
     hash_to_hex_str,
     MissingHeader,
 )
+import socket
+import time
 
-import utils
-from constants import CCODES, GENESIS_BLOCK
-from networks import NetworkConfig
-from store import Storage
-from utils import mapped_ipv6_to_ipv4
-from logs import logs
+from . import utils
+from .constants import CCODES, GENESIS_BLOCK
+from .networks import NetworkConfig
+from .store import Storage
+from .utils import mapped_ipv6_to_ipv4
+from .logs import logs
 
 
 logger = logs.get_logger("deserializer")

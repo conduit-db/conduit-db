@@ -10,16 +10,16 @@ import math
 import struct
 from typing import Optional, List, Dict, Callable, Union
 
-from logs import logs
-import utils
-from commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
-from handlers import Handlers
-from constants import HEADER_LENGTH, ZERO_HASH, BLOCK_HEADER_LENGTH
-from deserializer import Deserializer
-from networks import NetworkConfig
-from peers import Peer
-from serializer import Serializer
-from utils import is_block_msg
+from .logs import logs
+from . import utils
+from .commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA
+from .handlers import Handlers
+from .constants import HEADER_LENGTH, ZERO_HASH, BLOCK_HEADER_LENGTH
+from .deserializer import Deserializer
+from .networks import NetworkConfig
+from .peers import Peer
+from .serializer import Serializer
+from .utils import is_block_msg
 
 Header = namedtuple("Header", "magic command payload_size checksum")
 
@@ -147,7 +147,7 @@ class BufferedSession(BitcoinFramer):
 
     def connection_lost(self, exc):
         self.con_lost_event.set()
-        self.logger.exception("The server closed the connection:", exc)
+        self.logger.warning("The server closed the connection")
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)

@@ -1,5 +1,4 @@
-from session_manager import SessionManager
-
+import conduit
 
 def test_init():
     assert True
