@@ -300,7 +300,7 @@ class BufferedSession(BitcoinFramer):
             self._all_blocks_synced_event.set()
             self.logger.debug(
                 "blocks synced. new local block height is: %s",
-                self.local_block_tip_height,
+                self.get_local_block_tip_height(),
             )
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception", e)
@@ -410,6 +410,7 @@ class BufferedSession(BitcoinFramer):
             if worker_id == 1:
                 tx_count, varint_size = utils.unpack_varint_from_mv(buffer_view[80:])
                 self.logger.debug("current_block_header = %s", current_block_header)
+                self.logger.info("block size=%s bytes", self._payload_size)
 
                 # updates local_block_tip
                 self.deserializer.connect_block_header(buffer_view[0:80].tobytes())

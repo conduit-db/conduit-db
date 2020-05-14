@@ -2,12 +2,15 @@ import asyncio
 from typing import Optional
 
 import bitcoinx
+from bitcoinx import Headers
 
 import database
+from constants import REGTEST
 from logs import logs
 from networks import (
     NetworkConfig,
     NETWORKS,
+    HeadersRegTestMod,
 )
 from peers import Peer
 from session import BufferedSession
@@ -37,7 +40,9 @@ class SessionManager:
     async def connect_session(self):
         loop = asyncio.get_event_loop()
         peer = self.get_peer()
-        logger.debug("[connect] connecting to (%s, %s)", peer.host, peer.port)
+        logger.debug(
+            "[connect] connecting to (%s, %s) [%s]", peer.host, peer.port, self.network
+        )
         protocol_factory = lambda: BufferedSession(
             self.config, peer, self.host, self.port, self.storage
         )
@@ -67,14 +72,20 @@ class SessionManager:
                 self.transport.close()
 
     def setup_storage(self) -> None:
-        # Headers
-        headers = bitcoinx.Headers.from_file(
-            self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
-        )
-        # Blocks
-        block_headers = bitcoinx.Headers.from_file(
-            self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
-        )
+        if self.network == REGTEST:
+            headers = HeadersRegTestMod.from_file(
+                self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
+            )
+            block_headers = HeadersRegTestMod.from_file(
+                self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
+            )
+        else:
+            headers = Headers.from_file(
+                self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
+            )
+            block_headers = Headers.from_file(
+                self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
+            )
         # Postgres db
         pg_db = database
         # Redis

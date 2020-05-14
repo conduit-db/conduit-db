@@ -1,5 +1,3 @@
-from typing import Optional
-
 from bitcoinx import (
     Coin,
     CheckPoint,
@@ -7,13 +5,39 @@ from bitcoinx import (
     BitcoinTestnet,
     BitcoinScalingTestnet,
     BitcoinRegtest,
+    Headers,
+    MissingHeader,
 )
+import json
+import logging
+import requests
+from typing import Optional
 
-from peers import Peer
+from constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
+from peers import Peer, get_seed_peers
+
+logger = logging.getLogger("networks")
+
+
+class HeadersRegTestMod(Headers):
+    def connect(self, raw_header):
+        """overwrite Headers method to skip checking of difficulty target"""
+        header = self.coin.deserialized_header(raw_header, -1)
+        prev_header, chain = self.lookup(header.prev_hash)
+        header.height = prev_header.height + 1
+        # If the chain tip is the prior header then this header is new.  Otherwise we must check.
+        if chain.tip.hash != prev_header.hash:
+            try:
+                return self.lookup(header.hash)
+            except MissingHeader:
+                pass
+        header_index = self._storage.append(raw_header)
+        chain = self._read_header(header_index)
+        return header, chain
 
 
 class AbstractNetwork:
-    PREFIX = ""
+    NET = ""
     PUBKEY_HASH = 0x00
     PRIVATEKEY = 0x00
     SCRIPTHASH = 0x00
@@ -27,7 +51,7 @@ class AbstractNetwork:
 
 
 class MainNet(AbstractNetwork):
-    PREFIX = "main"
+    NET = MAINNET
     PUBKEY_HASH = 0x00
     PRIVATEKEY = 0x80
     SCRIPTHASH = 0x05
@@ -51,7 +75,7 @@ class MainNet(AbstractNetwork):
 
 
 class TestNet(AbstractNetwork):
-    PREFIX = "test"
+    NET = TESTNET
     PUBKEY_HASH = 0x6F
     PRIVATEKEY = 0xEF
     SCRIPTHASH = 0xC4
@@ -61,18 +85,21 @@ class TestNet(AbstractNetwork):
     PORT = 18333
     DNS_SEEDS = ["testnet-seed.bitcoinsv.io"]
     BITCOINX_COIN = BitcoinTestnet
+
+    # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
-            "0000002029f1e3df7fda466242b9b56076792ffdb9e5d7ea51610307bc010000000000007ac1fa84"
-            "ef5f0998232fb01cd6fea2c0199e34218df2fb33e4e80e79d22b6a746994435d41c4021a208bae0a"
+            "010000000000000000000000000000000000000000000000000000000000000000000000"
+            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494"
+            "dffff001d1aa4ae18"
         ),
-        height=1314717,
-        prev_work=0x62BA4D708756160950,
+        height=0,
+        prev_work=0,
     )
 
 
 class ScalingTestNet(AbstractNetwork):
-    PREFIX = "stn"
+    NET = SCALINGTESTNET
     PUBKEY_HASH = 0x6F
     PRIVATEKEY = 0xEF
     SCRIPTHASH = 0xC4
@@ -83,11 +110,12 @@ class ScalingTestNet(AbstractNetwork):
     DNS_SEEDS = ["stn-seed.bitcoinsv.io"]
     BITCOINX_COIN = BitcoinScalingTestnet
 
-    # Todo - probably needs updating
+    # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
-            "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd"
-            "7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494dffff001d1aa4ae18"
+            "010000000000000000000000000000000000000000000000000000000000000000000000"
+            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494"
+            "dffff001d1aa4ae18"
         ),
         height=0,
         prev_work=0,
@@ -96,7 +124,7 @@ class ScalingTestNet(AbstractNetwork):
 
 
 class RegTestNet(AbstractNetwork):
-    PREFIX = "regtest"
+    NET = REGTEST
     PUBKEY_HASH = 0x6F
     PRIVATEKEY = 0xEF
     SCRIPTHASH = 0xC4
@@ -106,21 +134,21 @@ class RegTestNet(AbstractNetwork):
     PORT = 18444
     DNS_SEEDS = ["127.0.0.1"]
     BITCOINX_COIN = BitcoinRegtest
-
-    # NOTE: placeholder only - needs to be dynamically created for every RegTest reset
+    # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
-            "0000002029f1e3df7fda466242b9b56076792ffdb9e5d7ea51610307bc010000000000007ac1fa84"
-            "ef5f0998232fb01cd6fea2c0199e34218df2fb33e4e80e79d22b6a746994435d41c4021a208bae0a"
+            "010000000000000000000000000000000000000000000000000000000000000000000000"
+            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494"
+            "dffff7f2002000000"
         ),
-        height=123,
-        prev_work=123,
+        height=0,
+        prev_work=0,
     )
 
 
 class NetworkConfig:
     def __init__(self, network: AbstractNetwork):
-        self.PREFIX = network.PREFIX
+        self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
         self.SCRIPTHASH = network.SCRIPTHASH
@@ -134,7 +162,16 @@ class NetworkConfig:
 
         if isinstance(network, RegTestNet):
             self.peers = [Peer("127.0.0.1", 18444)]
-        else:
+        if isinstance(network, TestNet):
+            self.peers = [
+                # Peer("127.0.0.1", 18333),
+                # Peer("167.99.91.85", 18333),  # random node from WOC
+                Peer("178.128.60.17", 18333),  # bsvisbitcoin-austecon.dev
+                Peer("176.9.148.163", 18333),  # tsv.usebsv.com
+            ]
+        if isinstance(network, ScalingTestNet):
+            self.peers = [Peer("95.217.108.109", 9333)]  #  stn-server.electrumsv.io
+        elif isinstance(network, MainNet):
             self.peers = [Peer("127.0.0.1", 8333)]
             # self.peers = [
             #     Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
@@ -142,8 +179,8 @@ class NetworkConfig:
 
 
 NETWORKS = {
-    MainNet.PREFIX: MainNet,
-    TestNet.PREFIX: TestNet,
-    ScalingTestNet.PREFIX: ScalingTestNet,
-    RegTestNet.PREFIX: RegTestNet,
+    MAINNET: MainNet,
+    TESTNET: TestNet,
+    SCALINGTESTNET: ScalingTestNet,
+    REGTEST: RegTestNet,
 }

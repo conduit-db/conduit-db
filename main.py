@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import selectors
 import logging
@@ -17,6 +18,10 @@ from constants import (
     DATABASE_PORT_VARNAME,
     DATABASE_PASSWORD_VARNAME,
     LOGGING_LEVEL_VARNAME,
+    TESTNET,
+    SCALINGTESTNET,
+    REGTEST,
+    MAINNET,
 )
 
 # selector = selectors.SelectSelector()
@@ -27,9 +32,69 @@ asyncio.set_event_loop(loop)
 logger = logs.get_logger("main")
 
 
+def get_parser():
+    parser = argparse.ArgumentParser(description="run conduit chain-indexer")
+    parser.add_argument(
+        "--host",
+        dest="host",
+        nargs=argparse.OPTIONAL,
+        help="specify a host bitcoin node to connect to (to override default)",
+    )
+    parser.add_argument(
+        "--port",
+        dest="port",
+        action="store",
+        type=int,
+        help="port for remote daemon; defaults=[mainnet=8333, testnet=18333, "
+        "scaling-testnet=9333, regtest=18444]",
+    )
+
+    parser.add_argument(
+        "--mainnet", action="store_true", dest=MAINNET, help="use mainnet"
+    )
+    parser.add_argument(
+        "--testnet", action="store_true", dest=TESTNET, help="use testnet (default)"
+    )
+    parser.add_argument(
+        "--scaling-testnet",
+        action="store_true",
+        dest=SCALINGTESTNET,
+        help="Use scaling-testnet",
+    )
+    parser.add_argument(
+        "--regtest",
+        action="store_true",
+        dest=REGTEST,
+        help="Use regression testnet",
+    )
+
+    parser.add_argument(
+        "-v",
+        "--verbosity",
+        action="store",
+        dest="verbosity",
+        const="info",
+        nargs=argparse.OPTIONAL,
+        choices=("debug", "info", "warning", "error", "critical"),
+        help="Set logging verbosity",
+    )
+    parser.add_argument(
+        "--file-logging", action="store_true", dest="filelogging", help="log to file"
+    )
+    parser.add_argument(
+        "--client-mode",
+        action="store_true",
+        dest="client_mode",
+        help="will not sync any blocks and does not require a "
+        "database or redis - for use as a broadcasting "
+        "service only (Not implemented)",
+    )
+    return parser
+
+
 DEFAULT_ENV_VARS = [
     (DATABASE_NAME_VARNAME, "conduitdb", DATABASE_NAME_VARNAME),
-    (BITCOIN_NETWORK_VARNAME, "regtest", BITCOIN_NETWORK_VARNAME),
+    (BITCOIN_NETWORK_VARNAME, MAINNET, BITCOIN_NETWORK_VARNAME),
     (DATABASE_USER_VARNAME, "conduitadmin", DATABASE_USER_VARNAME),
     (DATABASE_HOST_VARNAME, "127.0.0.1", DATABASE_HOST_VARNAME),
     (DATABASE_PORT_VARNAME, 5432, DATABASE_PORT_VARNAME),
@@ -81,9 +146,31 @@ def get_env_vars() -> Dict:
     return env_vars
 
 
+def get_and_set_network_type(env_vars):
+    nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
+    for arg in env_vars.keys():
+        if (arg in nets and env_vars.get(arg) is True):
+            env_vars['network'] = arg
+    return env_vars.get('network')
+
+
+def parse_args() -> Dict:
+    parser = get_parser()
+    args = parser.parse_args()
+
+    # config is an object passed to various constructors
+    config_options = args.__dict__
+    config_options = {
+        key: value for key, value in config_options.items() if value is not None
+    }
+    return config_options
+
+
 def setup():
     env_vars = {}
     env_vars.update(get_env_vars())
+    env_vars.update(parse_args())  # overrides
+    get_and_set_network_type(env_vars)
     db = database.load(env_vars)
     return env_vars, db
 
@@ -98,8 +185,13 @@ async def main():
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(loop_exception_handler)
         env_vars, db = setup()
-        session_manager = SessionManager(network="main", host="127.0.0.1", port=8000,
-            env_vars=env_vars, db=db)
+        session_manager = SessionManager(
+            network=env_vars.get("network"),
+            host="127.0.0.1",
+            port=8000,
+            env_vars=env_vars,
+            db=db,
+        )
         await session_manager.run()
     except KeyboardInterrupt:
         pass
