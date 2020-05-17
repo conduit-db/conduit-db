@@ -126,6 +126,6 @@ class Handlers:
             with self.storage.pg_database.atomic():
                 self.storage.insert_many_txs(txs)
 
-            self.session._blocks_done_queue.put_nowait((header_hash, header_height))
+            self.session._blocks_done_queue.put((header_hash, header_height))
         except Exception as e:
             logger.exception(e)

@@ -1,6 +1,9 @@
 import asyncio
+import multiprocessing
 import threading
 from asyncio import BufferedProtocol
+from concurrent.futures.thread import ThreadPoolExecutor
+from queue import Queue
 
 import bitcoinx
 from bitcoinx import hex_str_to_hash, MissingHeader, Headers, Chain
@@ -147,7 +150,10 @@ class BufferedSession(BitcoinFramer):
 
         # Parallel block processing related
         self._blocks_batch_set = set()
-        self._blocks_done_queue = asyncio.Queue()
+        self._blocks_done_queue = multiprocessing.Queue()
+        self._join_batched_blocks_exec = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="join-batched-blocks"
+        )
 
         # Message queue
         self._incoming_msg_queue = asyncio.Queue()
@@ -179,7 +185,7 @@ class BufferedSession(BitcoinFramer):
         self.logger.warning("The server closed the connection")
 
     def message_received(self, command: bytes, message: memoryview):
-        self.logger.debug("received: %s message", command.rstrip(b"\0"))
+        # self.logger.debug("received: %s message", command.rstrip(b"\0"))
         self.incr_msg_received_count()
         self._incoming_msg_queue.put_nowait((command, message))
 
@@ -293,17 +299,16 @@ class BufferedSession(BitcoinFramer):
         header = headers.header_at_height(chain, height)
         return header
 
-    async def join_batched_blocks(self):
-        """This should run in a thread so that it can block on a multiprocessing queue
-        - i.e. the _blocks_done_queue.get() and calls the self.incr_msg_handled_count()
-        which has a threading.Lock around the count."""
+    def join_batched_blocks(self):
+        """Runs in a thread so that it can block on the multiprocessing queue
+        - calls the self.incr_msg_handled_count() for each block completed."""
 
         # join block parser workers
         self.logger.debug("waiting for block parsers to complete work...")
         done_block_heights = []
         while True:
             # This queue should transition to a multiprocessing queue
-            block_hash, block_height = await self._blocks_done_queue.get()
+            block_hash, block_height = self._blocks_done_queue.get()
             done_block_heights.append(block_height)
             self.incr_msg_handled_count()  # ensure merkle tree done too later..
             try:
@@ -347,11 +352,13 @@ class BufferedSession(BitcoinFramer):
                 GETDATA, self.serializer.getdata([inv]),
             )
             pending_blocks = self._pending_blocks_queue.qsize()
-            self.logger.debug(f"pending blocks=" f"{pending_blocks}")
+            # self.logger.debug(f"pending blocks=" f"{pending_blocks}")
 
             if pending_blocks == 0:
                 break
-        await self.join_batched_blocks()
+        await asyncio.get_running_loop().run_in_executor(
+            self._join_batched_blocks_exec, self.join_batched_blocks
+        )
 
     def reset_pending_blocks_batch_set(self, hash_stop):
         self._blocks_batch_set = set()
