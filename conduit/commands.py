@@ -31,6 +31,7 @@ SENDCMPCT = "sendcmpct"
 
 VERSION_BIN = struct.pack("12s", "version".encode("ASCII"))
 VERACK_BIN = struct.pack("12s", "verack".encode("ASCII"))
+PROTOCONF_BIN = struct.pack("12s", "protoconf".encode("ASCII"))
 INV_BIN = struct.pack("12s", "inv".encode("ASCII"))
 ADDR_BIN = struct.pack("12s", "addr".encode("ASCII"))
 GETDATA_BIN = struct.pack("12s", "getdata".encode("ASCII"))

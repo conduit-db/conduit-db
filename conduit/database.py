@@ -38,7 +38,7 @@ def load(env_vars) -> PostgresqlDatabase:
         password=password,
     )
     db.connect()
-    db.drop_tables([Transaction], safe=True)  # Todo - remove when finished testing
+    # db.drop_tables([Transaction], safe=True)  # Todo - remove when finished testing
     db.create_tables([Transaction], safe=True)
     db.close()
     return db
