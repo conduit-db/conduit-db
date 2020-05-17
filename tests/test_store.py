@@ -20,12 +20,12 @@ class TestStorage:
     }
     db = database.load(env_vars)
 
-    config = NetworkConfig(NETWORKS[env_vars.get("network")]())
+    net_config = NetworkConfig(NETWORKS[env_vars.get("network")]())
     headers = bitcoinx.Headers.from_file(
-        config.BITCOINX_COIN, "headers.mmap", config.CHECKPOINT
+        net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
     )
     block_headers = bitcoinx.Headers.from_file(
-        config.BITCOINX_COIN, "block_headers.mmap", config.CHECKPOINT
+        net_config.BITCOINX_COIN, "block_headers.mmap", net_config.CHECKPOINT
     )
     pg_db = database
     redis = None  # NotImplemented

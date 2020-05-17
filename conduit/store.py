@@ -2,6 +2,8 @@ import logging
 from typing import Sequence, Tuple, List
 from bitcoinx import Headers
 
+from .constants import REGTEST
+from .networks import HeadersRegTestMod
 from . import database
 from .logs import logs
 
@@ -57,3 +59,28 @@ class Storage:
                 (row.tx_hash.tobytes(), row.height, row.rawtx.tobytes())
             )
         return results_data
+
+
+def setup_storage(net_config) -> Storage:
+    Headers.max_cache_size = 2_000_000  # 2 million headers - only 160MB
+    HeadersRegTestMod.max_cache_size = 2_000_000
+    if net_config.NET == REGTEST:
+        headers = HeadersRegTestMod.from_file(
+            net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
+        )
+        block_headers = HeadersRegTestMod.from_file(
+            net_config.BITCOINX_COIN, "block_headers.mmap", net_config.CHECKPOINT
+        )
+    else:
+        headers = Headers.from_file(
+            net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
+        )
+        block_headers = Headers.from_file(
+            net_config.BITCOINX_COIN, "block_headers.mmap", net_config.CHECKPOINT
+        )
+    # Postgres db
+    pg_db = database
+    # Redis
+    # -- NotImplemented
+    storage = Storage(headers, block_headers, pg_db, None)
+    return storage

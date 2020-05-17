@@ -12,6 +12,7 @@ import logging
 import struct
 from typing import Optional, List, Dict, Callable
 
+from .block_parsing import BlockParser
 from .commands import (
     VERSION,
     GETHEADERS,
@@ -122,7 +123,7 @@ class BufferedSession(BitcoinFramer):
         self.storage = storage
 
         # Bitcoin network/peer config
-        self.config = config
+        self.net_config = config
         self.peer = peer
         self.host = host
         self.port = port
@@ -130,9 +131,9 @@ class BufferedSession(BitcoinFramer):
         self.protocol_factory = None
 
         # Serialization/Deserialization
-        self.handlers = Handlers(self, self.config, self.storage)
-        self.serializer = Serializer(self.config, self.storage)
-        self.deserializer = Deserializer(self.config, self.storage)
+        self.handlers = Handlers(self, self.net_config, self.storage)
+        self.serializer = Serializer(self.net_config, self.storage)
+        self.deserializer = Deserializer(self.net_config, self.storage)
 
         # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
@@ -149,11 +150,10 @@ class BufferedSession(BitcoinFramer):
         self._pending_blocks_queue = asyncio.Queue()
 
         # Parallel block processing related
+        self.proc_message_queue = multiprocessing.Queue()
+        self.proc_blocks_done_queue = multiprocessing.Queue()
         self._blocks_batch_set = set()
-        self._blocks_done_queue = multiprocessing.Queue()
-        self._join_batched_blocks_exec = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="join-batched-blocks"
-        )
+        self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
 
         # Message queue
         self._incoming_msg_queue = asyncio.Queue()
@@ -178,7 +178,7 @@ class BufferedSession(BitcoinFramer):
         self.logger.info("connection made")
 
         _fut = asyncio.create_task(self.handle())
-        _fut = asyncio.create_task(self.manage_jobs())
+        _fut = asyncio.create_task(self.start_jobs())
 
     def connection_lost(self, exc):
         self.con_lost_event.set()
@@ -217,7 +217,7 @@ class BufferedSession(BitcoinFramer):
         while True:
             command, message = await self._incoming_msg_queue.get()
             try:
-                print(f"command={command}")
+                # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
                 handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
                 handler_func = getattr(self.handlers, handler_func_name)
                 await handler_func(message)
@@ -250,18 +250,24 @@ class BufferedSession(BitcoinFramer):
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height
 
-    async def manage_jobs(self):
+    def start_block_parsers(self):
+        self.processes = []
+        for i in range(0, self.WORKER_COUNT):
+            p = BlockParser(self.proc_message_queue, self.proc_blocks_done_queue)
+            p.start()
+            self.processes.append(p)
+
+    async def start_jobs(self):
         try:
             await self.handshake_complete_event.wait()
-            _sync_headers_task = asyncio.create_task(self.sync_headers_job())
+            self.start_block_parsers()
 
+            _sync_headers_task = asyncio.create_task(self.sync_headers_job())
             if self.get_local_tip_height() != self.target_header_height:
-                self.logger.debug("pre-waiting for _all_headers_synced_event")
                 await self._all_headers_synced_event.wait()
 
             self.target_block_height = self.get_local_tip_height()  # blocks lag headers
-
-            if not self.get_local_block_tip_height() == self.target_block_height:
+            if self.get_local_block_tip_height() != self.target_block_height:
                 _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
                 await self._all_blocks_synced_event.wait()
         except Exception as e:
@@ -308,8 +314,16 @@ class BufferedSession(BitcoinFramer):
         done_block_heights = []
         while True:
             # This queue should transition to a multiprocessing queue
-            block_hash, block_height = self._blocks_done_queue.get()
-            done_block_heights.append(block_height)
+            block_hash, txs = self.proc_blocks_done_queue.get()
+
+            # When switching to LMDB for storing txs data will go here (single writer)
+            header = self.get_header_for_hash(block_hash)
+            self.logger.debug(f"block height={header.height} done!")
+            with self.storage.pg_database.atomic():
+                rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
+                self.storage.insert_many_txs(rows)
+
+            done_block_heights.append(header.height)
             self.incr_msg_handled_count()  # ensure merkle tree done too later..
             try:
                 self._blocks_batch_set.remove(block_hash)
@@ -357,7 +371,7 @@ class BufferedSession(BitcoinFramer):
             if pending_blocks == 0:
                 break
         await asyncio.get_running_loop().run_in_executor(
-            self._join_batched_blocks_exec, self.join_batched_blocks
+            self._batched_blocks_exec, self.join_batched_blocks
         )
 
     def reset_pending_blocks_batch_set(self, hash_stop):

@@ -14,7 +14,7 @@ from .networks import (
 )
 from .peers import Peer
 from .session import BufferedSession
-from .store import Storage
+from .store import Storage, setup_storage
 
 logger = logs.get_logger("session-manager")
 
@@ -53,7 +53,7 @@ class SessionManager:
 
     async def run(self):
         try:
-            self.setup_storage()
+            self.storage = setup_storage(self.config)
             await self.connect_session()
             init_handshake = asyncio.create_task(
                 self.session.send_version(
@@ -70,26 +70,3 @@ class SessionManager:
         finally:
             if self.transport:
                 self.transport.close()
-
-    def setup_storage(self) -> None:
-        Headers.max_cache_size = 2_000_000  # 2 million headers - only 160MB
-        HeadersRegTestMod.max_cache_size = 2_000_000
-        if self.network == REGTEST:
-            headers = HeadersRegTestMod.from_file(
-                self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
-            )
-            block_headers = HeadersRegTestMod.from_file(
-                self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
-            )
-        else:
-            headers = Headers.from_file(
-                self.config.BITCOINX_COIN, "headers.mmap", self.config.CHECKPOINT
-            )
-            block_headers = Headers.from_file(
-                self.config.BITCOINX_COIN, "block_headers.mmap", self.config.CHECKPOINT
-            )
-        # Postgres db
-        pg_db = database
-        # Redis
-        # -- NotImplemented
-        self.storage = Storage(headers, block_headers, pg_db, None)

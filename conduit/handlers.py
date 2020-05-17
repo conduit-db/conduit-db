@@ -1,4 +1,5 @@
 import io
+import multiprocessing
 
 import bitcoinx
 
@@ -103,29 +104,5 @@ class Handlers:
         """simplified right down to just parsing a whole block on single core so that
         we can redesign around the 'pre-processor' idea and then do the txs in
         parallel given the co-ordinates of each tx in the block"""
-        try:
-            raw_header = message[0:80].tobytes()
-            header_hash = bitcoinx.double_sha256(raw_header)
-            current_block_header, chain = self.storage.headers.lookup(header_hash)
-            header_height = current_block_header.height
-            logger.debug("current_block_header = %s", current_block_header)
-            logger.info("block size=%s bytes", len(message))
-
-            # updates local_block_tip - doing this sequentially is not ideal
-            # connecting headers should be done at the end of each batch of 500 blocks
-            block_subview = message[80:]
-            stream: io.BytesIO = io.BytesIO(block_subview)
-
-            txs = []
-            count = bitcoinx.read_varint(stream.read)
-            for i in range(count):
-                tx = bitcoinx.Tx.read(stream.read)
-                txn_tuple = (tx.hash(), current_block_header.height, tx.to_bytes())
-                txs.append(txn_tuple)
-
-            with self.storage.pg_database.atomic():
-                self.storage.insert_many_txs(txs)
-
-            self.session._blocks_done_queue.put((header_hash, header_height))
-        except Exception as e:
-            logger.exception(e)
+        message = message.tobytes()  # memoryviews not picklable
+        self.session.proc_message_queue.put(message)
