@@ -1,5 +1,5 @@
 from peewee import PostgresqlDatabase, Model, BlobField, IntegerField
-from peewee_async import PooledPostgresqlDatabase
+# from peewee_async import PooledPostgresqlDatabase
 
 from .constants import (
     DATABASE_NAME_VARNAME,
@@ -9,8 +9,7 @@ from .constants import (
     DATABASE_PASSWORD_VARNAME,
 )
 
-
-db = PooledPostgresqlDatabase(None)
+db = PostgresqlDatabase(None)
 
 
 class BaseModel(Model):
@@ -24,7 +23,7 @@ class Transaction(BaseModel):
     rawtx = BlobField()
 
 
-def load(env_vars) -> PooledPostgresqlDatabase:
+def load(env_vars) -> PostgresqlDatabase:
     database_name = env_vars[DATABASE_NAME_VARNAME]
     database_user = env_vars[DATABASE_USER_VARNAME]
     host = env_vars[DATABASE_HOST_VARNAME]
@@ -37,7 +36,6 @@ def load(env_vars) -> PooledPostgresqlDatabase:
         host=host,
         port=port,
         password=password,
-        max_connections=16
     )
     db.connect()
     # db.drop_tables([Transaction], safe=True)  # Todo - remove when finished testing

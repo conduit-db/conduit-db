@@ -1,30 +1,33 @@
 import asyncio
+import io
 import multiprocessing
 import threading
 from asyncio import BufferedProtocol
 from concurrent.futures.thread import ThreadPoolExecutor
-from queue import Queue
-
 import bitcoinx
-from bitcoinx import hex_str_to_hash, MissingHeader, Headers, Chain
+from bitcoinx import hex_str_to_hash, MissingHeader, Headers, read_varint
 from collections import namedtuple
+from multiprocessing import shared_memory
 import logging
 import struct
-from typing import Optional, List, Dict, Callable
+from typing import Optional, List, Dict
 
-from .block_parsing import BlockParser
+from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
 from .commands import (
     VERSION,
     GETHEADERS,
     GETBLOCKS,
     GETDATA,
     BLOCK_BIN,
-    TX_BIN,
 )
 from .handlers import Handlers
 from .constants import (
     HEADER_LENGTH,
     ZERO_HASH,
+    WORKER_COUNT_PREPROCESSORS,
+    WORKER_COUNT_TX_PARSERS,
+    WORKER_COUNT_MTREE_CALCULATORS,
+    WORKER_COUNT_BLK_WRITER,
 )
 from .deserializer import Deserializer
 from .networks import NetworkConfig
@@ -36,11 +39,11 @@ Header = namedtuple("Header", "magic command payload_size checksum")
 
 class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
-    _HWM = 1024 * 1024 * 1024  # 1GB - needs to accommodate largest conceivable block
-    BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 50  # 50MB
+    _HWM = 1024 * 1024 * 8
+    BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4  # 50MB
     BUFFER_SIZE = _HWM + BUFFER_OVERFLOW_SIZE  # high water mark level
-    _buffer = bytearray(BUFFER_SIZE)  # initial buffer
-    _buffer_view = memoryview(_buffer)
+    shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)
+    shm_buffer_view = shm_buffer.buf
     _pos = 0
     _last_msg_end_pos = 0
     _msg_received_count = 0
@@ -49,17 +52,22 @@ class BitcoinFramer(BufferedProtocol):
     def _new_buffer(self):
         assert self._pos >= self._HWM
         # take the remainder of buffer and place it at the start then extend to size
-        remainder = self._buffer[self._last_msg_end_pos :]
-        self._buffer = remainder + bytearray(self.BUFFER_SIZE - len(remainder))
-        self._buffer_view = memoryview(self._buffer)
-        self._pos = 0
+        remainder = self.shm_buffer_view[self._last_msg_end_pos :].tobytes()
+        self.shm_buffer_view[0 : len(remainder)] = remainder
+
+        # For debugging only in development
+        fresh_buf_len = self.BUFFER_SIZE - len(remainder)
+        self.shm_buffer_view[len(remainder) : self.BUFFER_SIZE] = b"x" * fresh_buf_len
+
+        # new offset for most recent, partially read msg
+        self._pos = self._pos - self._last_msg_end_pos
         self._last_msg_end_pos = 0
 
     def get_buffer(self, sizehint):
-        return self._buffer_view[self._pos :]
+        return self.shm_buffer_view[self._pos :]
 
     def _unpack_msg_header(self) -> Header:
-        cur_header_view = self._buffer_view[
+        cur_header_view = self.shm_buffer_view[
             self._last_msg_end_pos : self._last_msg_end_pos + HEADER_LENGTH
         ]
         return Header(*struct.unpack_from("<4s12sI4s", cur_header_view, offset=0))
@@ -70,29 +78,58 @@ class BitcoinFramer(BufferedProtocol):
     def is_next_payload_available(self) -> bool:
         return self._pos - self._last_msg_end_pos >= HEADER_LENGTH + self._payload_size
 
+    def get_block_tx_count(self, end_blk_header_pos):
+        # largest varint (tx_count) is 9 bytes
+        block_tx_count_view = self.shm_buffer_view[
+            end_blk_header_pos : end_blk_header_pos + 10
+        ]
+        return read_varint(io.BytesIO(block_tx_count_view).read)
+
+    def make_special_blk_msg(self, cur_msg_start_pos, cur_msg_end_pos):
+        end_blk_header_pos = cur_msg_start_pos + 80
+        raw_block_header = self.shm_buffer_view[
+            cur_msg_start_pos:end_blk_header_pos
+        ].tobytes()
+        block_tx_count = self.get_block_tx_count(end_blk_header_pos)
+        return (
+            cur_msg_start_pos,
+            cur_msg_end_pos,
+            raw_block_header,
+            block_tx_count,
+        )
+
     def buffer_updated(self, nbytes):
         self._pos += nbytes
 
         while self.is_next_header_available():
-            cur_header_bytes = self._unpack_msg_header()
-            self._payload_size = cur_header_bytes.payload_size
+            cur_header = self._unpack_msg_header()
+            self._payload_size = cur_header.payload_size
             if self.is_next_payload_available():
-
-                # we have the next full msg
                 cur_msg_end_pos = (
                     self._last_msg_end_pos + HEADER_LENGTH + self._payload_size
                 )
-                sub_view_payload = self._buffer_view[
-                    self._last_msg_end_pos + HEADER_LENGTH : cur_msg_end_pos
-                ]
-                self.message_received(cur_header_bytes.command, sub_view_payload)
+                cur_msg_start_pos = self._last_msg_end_pos + HEADER_LENGTH
+
+                # Block messages
+                if cur_header.command == BLOCK_BIN:
+                    self.message_received(
+                        cur_header.command,
+                        self.make_special_blk_msg(cur_msg_start_pos, cur_msg_end_pos),
+                    )
+
+                # Non-block messages
+                else:
+                    sub_view_payload = self.shm_buffer_view[
+                        cur_msg_start_pos:cur_msg_end_pos
+                    ]
+                    self.message_received(cur_header.command, sub_view_payload)
                 self._last_msg_end_pos = cur_msg_end_pos
             else:
-                break  # recv more data until full payload available
+                break  # recv more data until next full payload available
 
         if self._pos >= self._HWM:
             self.logger.debug("buffer reached high-water mark, pausing reading...")
-            self.transport.pause_reading()  # and wait for the 'go' signal
+            self.transport.pause_reading()
             loop = asyncio.get_running_loop()
             coro = self.wait_for_go_signal()
             asyncio.run_coroutine_threadsafe(coro, loop)
@@ -114,8 +151,6 @@ class BufferedSession(BitcoinFramer):
     single peer (bitcoind daemon).But also coordinates the outsourcing of the other work
     such as parsing and committing block data to the (postgres) database - processes
     that can run in parallel leveraging a shared, memory view of each block."""
-
-    WORKER_COUNT = 2
 
     def __init__(self, config: NetworkConfig, peer: Peer, host, port, storage):
         self.logger = logging.getLogger("session")
@@ -139,35 +174,38 @@ class BufferedSession(BitcoinFramer):
         self.handshake_complete_event = asyncio.Event()
         self.con_lost_event = asyncio.Event()
 
-        # Syncing of chain
+        # Syncing of chain - two bitcoinx.Headers stores (headers and block_headers)
         self._headers_msg_processed_event = asyncio.Event()
         self._all_headers_synced_event = asyncio.Event()
         self._all_blocks_synced_event = asyncio.Event()
-        self.target_header_height: Optional[int] = None
-        self.target_block_height: Optional[int] = None
-        self.local_tip_height: int = self.update_local_tip_height()
-        self.local_block_tip_height: int = self.get_local_block_tip_height()
-        self._pending_blocks_queue = asyncio.Queue()
+        self._target_header_height: Optional[int] = None
+        self._target_block_header_height: Optional[int] = None
+        self._local_tip_height: int = self.update_local_tip_height()
+        self._local_block_tip_height: int = self.get_local_block_tip_height()
 
-        # Parallel block processing related
-        self.proc_message_queue = multiprocessing.Queue()
-        self.proc_blocks_done_queue = multiprocessing.Queue()
-        self._blocks_batch_set = set()
-        self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
-
-        # Message queue
+        # Accounting and ack'ing for non-block msgs
         self._incoming_msg_queue = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
         self._msg_handled_count_lock = threading.Lock()
 
-        # self._block_parsed_event = asyncio.Event()
-        self._merkle_tree_done_event = asyncio.Event()
-        self._block_committed_event = asyncio.Event()
-        self._work_done_queue = asyncio.Queue()
-        self.block_partition_size: Optional[int] = None
-        self.workers_map: Dict[int:Callable] = {}
+        # Accounting and ack'ing for block msgs
+        self._pending_blocks_batch_size = 0
+        self._pending_blocks_received = {}  # blk_hash: total_tx_count
+        self._pending_blocks_inv_queue = asyncio.Queue()
+        self._pending_blocks_batch_set = set()  # usually a set of 500 hashes
+        self._pending_blocks_progress_counter = {}
+        self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
+
+        # Worker queues
+        self.worker_in_queue_preproc = multiprocessing.Queue()  # no ack needed
+        self.worker_in_queue_tx_parse = multiprocessing.Queue()
+        self.worker_in_queue_mtree = multiprocessing.Queue()
+        self.worker_in_queue_blk_writer = multiprocessing.Queue()
+        self.worker_ack_queue_tx_parse = multiprocessing.Queue()  # blk_hash:tx_count
+        self.worker_ack_queue_mtree = multiprocessing.Queue()
+        self.worker_ack_queue_blk_writer = multiprocessing.Queue()
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
@@ -186,15 +224,38 @@ class BufferedSession(BitcoinFramer):
 
     def message_received(self, command: bytes, message: memoryview):
         # self.logger.debug("received: %s message", command.rstrip(b"\0"))
-        self.incr_msg_received_count()
+        if command != BLOCK_BIN:
+            self.incr_msg_received_count()
         self._incoming_msg_queue.put_nowait((command, message))
 
-    async def wait_for_go_signal(self):
-        """spawned when buffer goes above HWM level. will then wait for count of
-        messages received to == count of messages done"""
-        while self._msg_received_count != self._msg_handled_count:
-            await asyncio.sleep(0)
+    def have_processed_received_blocks(self) -> bool:
+        # Todo - cover MTree and BlockWriter workers too
+        expected_blocks_processed_count = self._pending_blocks_batch_size - len(
+            self._pending_blocks_batch_set
+        )
+        for blk_hash, count in self._pending_blocks_progress_counter.items():
+            if not self._pending_blocks_received[blk_hash] == count:
+                return False  # not all txs in block ack'd
 
+        if expected_blocks_processed_count != len(self.done_block_heights):
+            return False
+
+        return True
+
+    def have_processed_received_non_block_msgs(self) -> bool:
+        return self._msg_received_count == self._msg_handled_count
+
+    async def wait_for_go_signal(self):
+        """spawned when buffer goes above HWM level. will then depend on the accounting
+        system to ensure all messages have been processed before resetting the buffer."""
+
+        while not (
+            self.have_processed_received_non_block_msgs()
+            and self.have_processed_received_blocks()
+        ):
+            await asyncio.sleep(0.05)
+
+        self.logger.debug("resuming reading...")
         self.reset_msg_counts()
         self._new_buffer()
         self.transport.resume_reading()
@@ -213,6 +274,14 @@ class BufferedSession(BitcoinFramer):
         with self._msg_handled_count_lock:
             self._msg_handled_count += 1
 
+    def add_pending_block(self, blk_hash, total_tx_count):
+        self._pending_blocks_received[blk_hash] = total_tx_count
+        self._pending_blocks_progress_counter[blk_hash] = 0
+
+    def reset_pending_blocks(self):
+        self._pending_blocks_received = {}
+        self._pending_blocks_progress_counter = {}
+
     async def handle(self):
         while True:
             command, message = await self._incoming_msg_queue.get()
@@ -221,14 +290,14 @@ class BufferedSession(BitcoinFramer):
                 handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
                 handler_func = getattr(self.handlers, handler_func_name)
                 await handler_func(message)
-                if command not in [TX_BIN, BLOCK_BIN]:
+                if command != BLOCK_BIN:
                     self.incr_msg_handled_count()
             except Exception as e:
                 self.logger.exception("handle: ", e)
                 raise
 
     def is_synchronized(self):
-        return self.get_local_block_tip_height() == self.target_block_height
+        return self.get_local_block_tip_height() == self._target_block_header_height
 
     def send_message(self, message):
         self.transport.write(message)
@@ -238,36 +307,67 @@ class BufferedSession(BitcoinFramer):
         self.send_message(message)
 
     def get_local_tip_height(self):
-        return self.local_tip_height
+        return self._local_tip_height
 
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
 
     def update_local_tip_height(self) -> int:
-        self.local_tip_height = self.storage.headers.longest_chain().tip.height
-        return self.local_tip_height
+        self._local_tip_height = self.storage.headers.longest_chain().tip.height
+        return self._local_tip_height
 
     def set_target_header_height(self, height) -> None:
-        self.target_header_height = height
+        self._target_header_height = height
 
-    def start_block_parsers(self):
+    def start_workers(self):
         self.processes = []
-        for i in range(0, self.WORKER_COUNT):
-            p = BlockParser(self.proc_message_queue, self.proc_blocks_done_queue)
+        for i in range(WORKER_COUNT_PREPROCESSORS):
+            p = BlockPreProcessor(
+                self.shm_buffer.name,
+                self.worker_in_queue_preproc,
+                self.worker_in_queue_tx_parse,
+                self.worker_in_queue_mtree,
+            )
+            p.start()
+            self.processes.append(p)
+        for i in range(WORKER_COUNT_TX_PARSERS):
+            p = TxParser(
+                self.shm_buffer.name,
+                self.worker_in_queue_tx_parse,
+                self.worker_ack_queue_tx_parse,
+            )
+            p.start()
+            self.processes.append(p)
+        for i in range(WORKER_COUNT_MTREE_CALCULATORS):
+            p = MTreeCalculator(
+                self.shm_buffer.name,
+                self.worker_in_queue_mtree,
+                self.worker_ack_queue_mtree,
+            )
+            p.start()
+            self.processes.append(p)
+        for i in range(WORKER_COUNT_BLK_WRITER):
+            p = BlockWriter(
+                self.shm_buffer.name,
+                self.worker_in_queue_blk_writer,
+                self.worker_ack_queue_blk_writer,
+            )
             p.start()
             self.processes.append(p)
 
     async def start_jobs(self):
         try:
             await self.handshake_complete_event.wait()
-            self.start_block_parsers()
+            self.start_workers()
 
             _sync_headers_task = asyncio.create_task(self.sync_headers_job())
-            if self.get_local_tip_height() != self.target_header_height:
+            if self.get_local_tip_height() != self._target_header_height:
                 await self._all_headers_synced_event.wait()
 
-            self.target_block_height = self.get_local_tip_height()  # blocks lag headers
-            if self.get_local_block_tip_height() != self.target_block_height:
+            self._target_block_header_height = (
+                self.get_local_tip_height()
+            )  # blocks lag headers
+            if self.get_local_block_tip_height() != self._target_block_header_height:
                 _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
                 await self._all_blocks_synced_event.wait()
         except Exception as e:
@@ -277,7 +377,7 @@ class BufferedSession(BitcoinFramer):
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
         self.logger.debug("starting sync_headers_job...")
-        while self.local_tip_height < self.target_header_height:
+        while self._local_tip_height < self._target_header_height:
             block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
             hash_count = len(block_locator_hashes)
             await self.send_request(
@@ -285,15 +385,15 @@ class BufferedSession(BitcoinFramer):
                 self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
             )
             await self._headers_msg_processed_event.wait()
-            self.local_tip_height = self.update_local_tip_height()
+            self._local_tip_height = self.update_local_tip_height()
             self.logger.debug(
                 "headers message processed - new chain tip height: %s",
-                self.local_tip_height,
+                self._local_tip_height,
             )
             self._headers_msg_processed_event.clear()
 
         self._all_headers_synced_event.set()
-        self.logger.debug("headers synced. chain tip height=%s", self.local_tip_height)
+        self.logger.debug("headers synced. chain tip height=%s", self._local_tip_height)
 
     def get_header_for_hash(self, block_hash: bytes):
         header, chain = self.storage.headers.lookup(block_hash)
@@ -306,83 +406,88 @@ class BufferedSession(BitcoinFramer):
         return header
 
     def join_batched_blocks(self):
-        """Runs in a thread so that it can block on the multiprocessing queue
-        - calls the self.incr_msg_handled_count() for each block completed."""
+        """Runs in a thread so it can block on the multiprocessing queue"""
         # join block parser workers
         self.logger.debug("waiting for block parsers to complete work...")
-        done_block_heights = []
+        self.done_block_heights = []
 
         while True:
             try:
                 # This queue should transition to a multiprocessing queue
-                block_hash, txs = self.proc_blocks_done_queue.get()
+                block_hash, txs_done_count = self.worker_ack_queue_tx_parse.get()
+                self._pending_blocks_progress_counter[block_hash] += txs_done_count
 
-                # When switching to LMDB for storing txs data will go here (single writer)
                 header = self.get_header_for_hash(block_hash)
                 self.logger.debug(f"block height={header.height} done!")
 
-                rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
-                self.storage.insert_many_txs(rows)
+                self.done_block_heights.append(header.height)
 
-                done_block_heights.append(header.height)
-                self.incr_msg_handled_count()  # ensure merkle tree done too later..
                 try:
-                    self._blocks_batch_set.remove(block_hash)
+                    self._pending_blocks_batch_set.remove(block_hash)
                 except KeyError:
                     header = self.get_header_for_hash(block_hash)
                     self.logger.debug(f"also parsed block: {header.height}")
 
                 # all blocks in batch parsed
-                if len(self._blocks_batch_set) == 0:
+                if len(self._pending_blocks_batch_set) == 0:
                     # in a crash prior to this point, the last 500 blocks will just get
-                    # re-done on start-up because the block_headers.mmap file
-                    # has not been updated with any headers. It's resistant to killing :)
+                    # re-done on start-up because the block_headers.mmap file has not
+                    # been updated with any headers.
 
-                    for height in sorted(done_block_heights):
+                    for height in sorted(self.done_block_heights):
+                        self.logger.debug(f"connecting height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
+                    self.reset_pending_blocks()
                     return
             except Exception as e:
                 self.logger.exception(e)
 
     async def sync_batched_blocks(self) -> None:
         # one block per loop
+        pending_getdata_requests = list(self._pending_blocks_batch_set)
         while True:
-            inv = await self._pending_blocks_queue.get()
+            inv = await self._pending_blocks_inv_queue.get()
+            # self.logger.debug(f"got inv: {inv}")
             try:
                 header = self.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
                 self.logger.warning(
                     "header with hash=%s not found", inv.get("inv_hash")
                 )
-                if self._pending_blocks_queue.empty():
+                if self._pending_blocks_inv_queue.empty():
                     break
                 else:
                     continue
 
             if not header.height <= self.stop_header_height:
                 self.logger.debug(f"ignoring block height={header.height} until sync'd")
-                if self._pending_blocks_queue.empty():
+                self.logger.debug(
+                    f"len(pending_getdata_requests)={len(pending_getdata_requests)}"
+                )
+                if len(pending_getdata_requests) == 0:
                     break
                 else:
+                    # careful to not block on the queue.get() if there's nothing left..
+                    # had a bug with annoying new block invs throwing it off...
                     continue
 
             await self.send_request(
                 GETDATA, self.serializer.getdata([inv]),
             )
-            pending_blocks = self._pending_blocks_queue.qsize()
+            pending_getdata_requests.pop()
             # self.logger.debug(f"pending blocks=" f"{pending_blocks}")
 
-            if pending_blocks == 0:
+            if len(pending_getdata_requests) == 0:
                 break
-        if self.proc_blocks_done_queue.qsize() != 0:
-            await asyncio.get_running_loop().run_in_executor(
-                self._batched_blocks_exec, self.join_batched_blocks
-            )
+
+        await asyncio.get_running_loop().run_in_executor(
+            self._batched_blocks_exec, self.join_batched_blocks
+        )
 
     def reset_pending_blocks_batch_set(self, hash_stop):
-        self._blocks_batch_set = set()
+        self._pending_blocks_batch_set = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
 
@@ -392,16 +497,16 @@ class BufferedSession(BitcoinFramer):
         else:
             self.stop_header_height = headers.lookup(hash_stop).height
 
-        expected_batch_size = self.stop_header_height - local_tip_height
-        for i in range(1, expected_batch_size + 1):
+        self._pending_blocks_batch_size = self.stop_header_height - local_tip_height
+        for i in range(1, self._pending_blocks_batch_size + 1):
             block_header = headers.header_at_height(chain, local_tip_height + i)
-            self._blocks_batch_set.add(block_header.hash)
+            self._pending_blocks_batch_set.add(block_header.hash)
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
         try:
             # up to 500 blocks per loop
-            while self.get_local_block_tip_height() < self.target_block_height:
+            while self.get_local_block_tip_height() < self._target_block_header_height:
                 chain = self.storage.block_headers.longest_chain()
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)
