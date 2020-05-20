@@ -115,7 +115,7 @@ class BufferedSession(BitcoinFramer):
     such as parsing and committing block data to the (postgres) database - processes
     that can run in parallel leveraging a shared, memory view of each block."""
 
-    WORKER_COUNT = 1
+    WORKER_COUNT = 2
 
     def __init__(self, config: NetworkConfig, peer: Peer, host, port, storage):
         self.logger = logging.getLogger("session")
@@ -319,9 +319,9 @@ class BufferedSession(BitcoinFramer):
             # When switching to LMDB for storing txs data will go here (single writer)
             header = self.get_header_for_hash(block_hash)
             self.logger.debug(f"block height={header.height} done!")
-            with self.storage.pg_database.atomic():
-                rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
-                self.storage.insert_many_txs(rows)
+
+            rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
+            self.storage.insert_many_txs(rows)
 
             done_block_heights.append(header.height)
             self.incr_msg_handled_count()  # ensure merkle tree done too later..
@@ -337,7 +337,7 @@ class BufferedSession(BitcoinFramer):
                 # re-done on start-up because the block_headers.mmap file
                 # has not been updated with any headers. It's resistant to killing :)
 
-                for height in done_block_heights:
+                for height in sorted(done_block_heights):
                     header = self.get_header_for_height(height)
                     block_headers: bitcoinx.Headers = self.storage.block_headers
                     block_headers.connect(header.raw)
