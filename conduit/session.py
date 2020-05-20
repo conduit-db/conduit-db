@@ -308,40 +308,43 @@ class BufferedSession(BitcoinFramer):
     def join_batched_blocks(self):
         """Runs in a thread so that it can block on the multiprocessing queue
         - calls the self.incr_msg_handled_count() for each block completed."""
-
         # join block parser workers
         self.logger.debug("waiting for block parsers to complete work...")
         done_block_heights = []
+
         while True:
-            # This queue should transition to a multiprocessing queue
-            block_hash, txs = self.proc_blocks_done_queue.get()
-
-            # When switching to LMDB for storing txs data will go here (single writer)
-            header = self.get_header_for_hash(block_hash)
-            self.logger.debug(f"block height={header.height} done!")
-
-            rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
-            self.storage.insert_many_txs(rows)
-
-            done_block_heights.append(header.height)
-            self.incr_msg_handled_count()  # ensure merkle tree done too later..
             try:
-                self._blocks_batch_set.remove(block_hash)
-            except KeyError:
+                # This queue should transition to a multiprocessing queue
+                block_hash, txs = self.proc_blocks_done_queue.get()
+
+                # When switching to LMDB for storing txs data will go here (single writer)
                 header = self.get_header_for_hash(block_hash)
-                self.logger.debug(f"also parsed block: {header.height}")
+                self.logger.debug(f"block height={header.height} done!")
 
-            # all blocks in batch parsed
-            if len(self._blocks_batch_set) == 0:
-                # in a crash prior to this point, the last 500 blocks will just get
-                # re-done on start-up because the block_headers.mmap file
-                # has not been updated with any headers. It's resistant to killing :)
+                rows = ((tx.hash(), header.height, tx.to_bytes()) for tx in txs)
+                self.storage.insert_many_txs(rows)
 
-                for height in sorted(done_block_heights):
-                    header = self.get_header_for_height(height)
-                    block_headers: bitcoinx.Headers = self.storage.block_headers
-                    block_headers.connect(header.raw)
-                return
+                done_block_heights.append(header.height)
+                self.incr_msg_handled_count()  # ensure merkle tree done too later..
+                try:
+                    self._blocks_batch_set.remove(block_hash)
+                except KeyError:
+                    header = self.get_header_for_hash(block_hash)
+                    self.logger.debug(f"also parsed block: {header.height}")
+
+                # all blocks in batch parsed
+                if len(self._blocks_batch_set) == 0:
+                    # in a crash prior to this point, the last 500 blocks will just get
+                    # re-done on start-up because the block_headers.mmap file
+                    # has not been updated with any headers. It's resistant to killing :)
+
+                    for height in sorted(done_block_heights):
+                        header = self.get_header_for_height(height)
+                        block_headers: bitcoinx.Headers = self.storage.block_headers
+                        block_headers.connect(header.raw)
+                    return
+            except Exception as e:
+                self.logger.exception(e)
 
     async def sync_batched_blocks(self) -> None:
         # one block per loop
@@ -360,7 +363,10 @@ class BufferedSession(BitcoinFramer):
 
             if not header.height <= self.stop_header_height:
                 self.logger.debug(f"ignoring block height={header.height} until sync'd")
-                continue
+                if self._pending_blocks_queue.empty():
+                    break
+                else:
+                    continue
 
             await self.send_request(
                 GETDATA, self.serializer.getdata([inv]),
@@ -370,9 +376,10 @@ class BufferedSession(BitcoinFramer):
 
             if pending_blocks == 0:
                 break
-        await asyncio.get_running_loop().run_in_executor(
-            self._batched_blocks_exec, self.join_batched_blocks
-        )
+        if self.proc_blocks_done_queue.qsize() != 0:
+            await asyncio.get_running_loop().run_in_executor(
+                self._batched_blocks_exec, self.join_batched_blocks
+            )
 
     def reset_pending_blocks_batch_set(self, hash_stop):
         self._blocks_batch_set = set()
