@@ -75,10 +75,3 @@ if __name__ == "__main__":
     t1 = time.time() - t0
     print(t1)
     assert len(txs) == len(tx_positions)
-
-
-"""
-block parsing took 0.00896 seconds for 1558 txs and 999887 bytes - 
-therefore 173939 txs per second for an average tx size of 642 bytes - 
-therefore 106 MB/sec
-"""
