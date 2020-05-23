@@ -1,7 +1,9 @@
 import io
 import multiprocessing
+from typing import Tuple
 
 import bitcoinx
+from bitcoinx import double_sha256
 
 from .commands import VERACK, GETDATA, PING, SENDCMPCT, PONG
 from .deserializer import Deserializer
@@ -76,7 +78,7 @@ class Handlers:
         for inv in inv_vects:
             if inv["inv_type"] == 2:  # BLOCK
                 # logger.info(f"received a block inv: {inv}")
-                self.session._pending_blocks_queue.put_nowait(inv)
+                self.session._pending_blocks_inv_queue.put_nowait(inv)
             else:
                 if self.session.is_synchronized():
                     # temporary for testing - request all relayed txs without checking db
@@ -94,15 +96,21 @@ class Handlers:
 
     # ----- Special case messages ----- #
 
-    async def on_tx(self, message):
+    async def on_tx(self, message: memoryview):
         # logger.debug("handling tx...")
         tx = self.session.deserializer.tx(io.BytesIO(message))
         # logger.debug(f"tx: {tx}")
         self.session._msg_handled_count += 1
 
-    async def on_block(self, message: memoryview):
-        """simplified right down to just parsing a whole block on single core so that
-        we can redesign around the 'pre-processor' idea and then do the txs in
-        parallel given the co-ordinates of each tx in the block"""
-        message = message.tobytes()  # memoryviews not picklable
-        self.session.proc_message_queue.put(message)
+    async def on_block(self, special_message: Tuple[int, int, bytes, int]):
+        blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message
+        blk_hash = double_sha256(raw_block_header)
+        blk_height = self.storage.headers.lookup(blk_hash)[0].height
+        self.session.add_pending_block(blk_hash, tx_count)
+
+        self.session.worker_in_queue_preproc.put(
+            (blk_hash, blk_height, blk_start_pos, blk_end_pos)
+        )
+        self.session.worker_in_queue_blk_writer.put(
+            (blk_hash, blk_start_pos, blk_end_pos)
+        )

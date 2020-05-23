@@ -60,24 +60,24 @@ class Storage:
             )
         return results_data
 
-
-def setup_storage(net_config) -> Storage:
-    Headers.max_cache_size = 2_000_000  # 2 million headers - only 160MB
+def setup_headers_store(net_config, mmap_filename):
+    Headers.max_cache_size = 2_000_000
     HeadersRegTestMod.max_cache_size = 2_000_000
     if net_config.NET == REGTEST:
         headers = HeadersRegTestMod.from_file(
-            net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
-        )
-        block_headers = HeadersRegTestMod.from_file(
-            net_config.BITCOINX_COIN, "block_headers.mmap", net_config.CHECKPOINT
+            net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT
         )
     else:
         headers = Headers.from_file(
-            net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
+            net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT
         )
-        block_headers = Headers.from_file(
-            net_config.BITCOINX_COIN, "block_headers.mmap", net_config.CHECKPOINT
-        )
+    return headers
+
+
+def setup_storage(net_config) -> Storage:
+    headers = setup_headers_store(net_config, "headers.mmap")
+    block_headers = setup_headers_store(net_config, "block_headers.mmap")
+
     # Postgres db
     pg_db = database
     # Redis
