@@ -4,9 +4,10 @@
 from libcpp.vector cimport vector
 from struct import Struct
 
-cdef int HEADER_OFFSET = 80
+cdef unsigned int HEADER_OFFSET = 80
 
-cdef (int, int) unpack_varint(bytes buf, int offset) except *:
+cdef (unsigned long long, unsigned long long) unpack_varint(bytes buf, int offset) \
+        except *:
     cdef int n
     n = buf[offset]
     if n < 253:
@@ -18,13 +19,13 @@ cdef (int, int) unpack_varint(bytes buf, int offset) except *:
     return Struct('<Q').unpack_from(buf, offset + 1)[0], offset + 9
 
 
-cpdef pre_processor(bytes block_view, int offset=0):
-    cdef int count, i, script_sig_len, script_pubkey_len
+cpdef cy_preprocessor(bytes block_view, unsigned long long offset=0):
+    cdef unsigned long long count, i, script_sig_len, script_pubkey_len
 
     offset += HEADER_OFFSET
     count, offset = unpack_varint(block_view, offset)
 
-    cdef vector[int] tx_positions  # start byte pos of each tx in the block
+    cdef vector[unsigned long long] tx_positions  # start byte pos of each tx in the block
     tx_positions.push_back(offset)
     for i in range(count - 1):
         # version
@@ -51,7 +52,6 @@ cpdef pre_processor(bytes block_view, int offset=0):
     return tx_positions
 
 def print_results(tx_positions, t1, block_view):
-    print(tx_positions)
     count = len(tx_positions)
     rate = (count/t1)
     av_tx_size = round(len(block_view) / count)

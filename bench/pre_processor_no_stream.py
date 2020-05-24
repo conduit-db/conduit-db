@@ -1,10 +1,10 @@
+import bitcoinx
 import io
 import time
 from struct import Struct
 from typing import Tuple
 
-import bitcoinx
-from bitcoinx import read_varint, read_le_uint32, read_le_uint64
+from bench.utils import print_results
 
 HEADER_OFFSET = 80
 
@@ -46,22 +46,6 @@ def pre_processor(block_view, offset=0):
         offset += 4
         tx_positions.append(offset)
     return tx_positions
-
-def print_results(tx_positions, t1, block_view):
-    print(tx_positions)
-    count = len(tx_positions)
-    rate = round(count/t1)
-    av_tx_size = round(len(block_view) / count)
-    bytes_per_sec = rate * av_tx_size
-    MB_per_sec = round(bytes_per_sec/(1024*1024))
-
-    print(
-        f"block parsing took {round(t1, 5)} seconds for {count} txs and"
-        f" {len(block_view)} "
-        f"bytes - therefore {rate} txs per second for an average tx size "
-        f"of {av_tx_size} bytes - therefore {MB_per_sec} MB/sec"
-    )
-
 
 if __name__ == "__main__":
     with open("data/block413567.raw", "rb") as f:

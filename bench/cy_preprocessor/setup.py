@@ -8,6 +8,6 @@ Options.fast_fail = True
 
 setup(
     name='preprocessor bench',
-    ext_modules=cythonize("preprocessor.pyx"),
+    ext_modules=cythonize("cy_preprocessor.pyx"),
     zip_safe=False,
 )

@@ -6,3 +6,8 @@
 *.mmap
 *logs/*
 tests/logs/*
+bench/cy_preprocessor/cy_preprocessor.cpp
+*.cpp*
+*.c*
+*.obj*
+*.html*
