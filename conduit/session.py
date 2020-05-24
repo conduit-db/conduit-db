@@ -39,7 +39,7 @@ Header = namedtuple("Header", "magic command payload_size checksum")
 
 class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
-    _HWM = 1024 * 1024 * 8
+    _HWM = 1024 * 1024 * 128
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4  # 50MB
     BUFFER_SIZE = _HWM + BUFFER_OVERFLOW_SIZE  # high water mark level
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)

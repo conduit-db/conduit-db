@@ -7,9 +7,7 @@ import bitcoinx
 from bitcoinx import read_varint
 
 from .logs import logs
-from .constants import (
-    WORKER_COUNT_TX_PARSERS,
-)
+from .constants import WORKER_COUNT_TX_PARSERS
 
 logger = logs.get_logger("handlers")
 
@@ -68,13 +66,15 @@ class BlockPreProcessor(multiprocessing.Process):
         return tx_positions
 
     def distribute_load_parsing(
-        self, blk_hash, blk_height, blk_start_pos, tx_positions
+        self, blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
     ) -> List[Tuple[bytes, int, int, List[int]]]:
         divided_tx_positions = []
         count_per_div_parsing = round(len(tx_positions) / WORKER_COUNT_TX_PARSERS)
         # Todo - divide up the block into x number of worker segments for parallel
         #  processing.
-        divided_tx_positions = [(blk_hash, blk_height, blk_start_pos, tx_positions)]
+        divided_tx_positions = [
+            (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions)
+        ]
         return divided_tx_positions
 
     def run(self):
@@ -89,13 +89,15 @@ class BlockPreProcessor(multiprocessing.Process):
                 tx_positions = self.pre_process(self.shm.buf[blk_start_pos:blk_end_pos])
 
                 divided_parsing_work = self.distribute_load_parsing(
-                    blk_hash, blk_height, blk_start_pos, tx_positions
+                    blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
                 )
 
                 for item in divided_parsing_work:
                     self.worker_in_queue_tx_parse.put(item)
 
-                self.worker_in_queue_mtree.put((blk_hash, blk_start_pos, tx_positions))
+                self.worker_in_queue_mtree.put(
+                    (blk_hash, blk_start_pos, blk_end_pos, tx_positions)
+                )
         except Exception as e:
             logger.exception(e)
             raise
@@ -103,7 +105,7 @@ class BlockPreProcessor(multiprocessing.Process):
 
 class TxParser(multiprocessing.Process):
     """
-    in: blk_hash, blk_height, blk_start_pos, tx_positions
+    in: blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div
     out: N/A - directly updates posgres database
     ack: blk_hash, count_txs_done
 
@@ -122,16 +124,16 @@ class TxParser(multiprocessing.Process):
                 if not item:
                     return  # poison pill stop command
 
-                blk_hash, blk_height, blk_start_pos, tx_positions_div = item
+                blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div = item
                 # logger.debug(f"TxParser got blk_start_pos={blk_start_pos}; tx_positions_div="
                 #              f"{tx_positions_div}; len(tx_positions_div)={len(tx_positions_div)}; "
                 #              f"blk_height={blk_height}")
 
                 results = []
                 # maybe could renew this buffer in-sync with buffer reset if faster
-                stream = io.BytesIO(self.shm.buf)
+                stream = io.BytesIO(self.shm.buf[blk_start_pos:blk_end_pos])
                 for pos in tx_positions_div:
-                    stream.seek(blk_start_pos + pos)
+                    stream.seek(pos)
                     tx = bitcoinx.Tx.read(stream.read)
 
                     tx_hash: bytes = tx.hash()
@@ -164,7 +166,7 @@ class MTreeCalculator(multiprocessing.Process):
     Single writer to mtree LMDB database (although LMDB handles concurrent writes internally so
     we could spin up more than one of these)
 
-    in: a list of tx start positions for *all the txs in the block* and the block_hash
+    in: blk_hash, blk_start_pos, blk_end_pos, tx_positions
     out: N/A - directly dumps to LMDB
     ack: block_hash done
 
@@ -186,7 +188,7 @@ class MTreeCalculator(multiprocessing.Process):
                 if not item:
                     return
 
-                blk_hash, blk_start_pos, tx_positions = item
+                blk_hash, blk_start_pos, blk_end_pos, tx_positions = item
                 results = []
 
                 # hash every tx and calculate merkle tree one layer at a time...
