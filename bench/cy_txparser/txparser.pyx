@@ -1,8 +1,20 @@
 # distutils: language = c++
 # cython: language_level=3
-
 from struct import Struct
 from hashlib import sha256
+from libcpp.set cimport set
+
+struct_le_H = Struct('<H')
+struct_le_I = Struct('<I')
+struct_le_Q = Struct('<Q')
+struct_OP_20 = Struct('<20s')
+struct_OP_33 = Struct('<33s')
+cdef unsigned char OP_PUSH_20 = 20
+cdef unsigned char OP_PUSH_33 = 33
+cdef set[int] SET_OTHER_PUSH_OPS
+cdef unsigned char i
+for i in range(1,75):
+    SET_OTHER_PUSH_OPS.insert(i)
 
 cpdef unpack_varint(buf, unsigned long long offset):
     cdef int n
@@ -12,10 +24,31 @@ cpdef unpack_varint(buf, unsigned long long offset):
     if n < 253:
         return n, offset + 1
     if n == 253:
-        return Struct('<H').unpack_from(buf, offset + 1)[0], offset + 3
+        return struct_le_H.unpack_from(buf, offset + 1)[0], offset + 3
     if n == 254:
-        return Struct('<I').unpack_from(buf, offset + 1)[0], offset + 5
-    return Struct('<Q').unpack_from(buf, offset + 1)[0], offset + 9
+        return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
+    return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
+
+
+cpdef get_pk_and_pkh_from_script(script: bytearray):
+    cdef int i, len_script
+    cdef list pks = []
+    cdef list pkhs = []
+    i = 0
+    len_script = len(script)
+    while i < len_script:
+        if script[i] == 20:
+            pkhs.append(struct_OP_20.unpack_from(script, i))
+            i += 20 + 1
+        elif script[i] == 33:
+            pks.append(struct_OP_33.unpack_from(script, i))
+            i += 33 + 1
+        elif SET_OTHER_PUSH_OPS.find(script[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
+            i += script[i] + 1
+        # elif ... OP_PUSHDATA1,2,4... # Todo - this is broken otherwise...
+        else:  # slow search byte by byte...
+            i += 1
+    return pks, pkhs
 
 
 cpdef list cy_parse_block(raw_block, tx_offsets, int height):
@@ -43,6 +76,7 @@ cpdef list cy_parse_block(raw_block, tx_offsets, int height):
             offset += 36  # skip (prev_out, idx)
             script_sig_len, offset = unpack_varint(raw_block, offset)
             script_sig = raw_block[offset: offset + script_sig_len]
+            pks, pkhs = get_pk_and_pkh_from_script(script_sig)
             offset += script_sig_len
             offset += 4  # skip sequence
 
@@ -56,7 +90,7 @@ cpdef list cy_parse_block(raw_block, tx_offsets, int height):
         # nlocktime
         offset += 4
 
-        tx_row = (tx_hash, script_sig, scriptpubkey, height, offset)
+        tx_row = (tx_hash, pks, pkhs, scriptpubkey, height, offset)
         tx_rows.append(tx_row)
     assert len(tx_rows) == count_txs
     return tx_rows

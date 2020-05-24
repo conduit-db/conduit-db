@@ -1,24 +1,9 @@
 import time
 
-import bitcoinx
 from bench.cy_txparser.txparser import cy_parse_block
 from bench.cy_txparser.offsets import TX_OFFSETS
 from bench.cy_txparser.py_txparse import parse_block
 from bench.utils import print_results
-import array
-from hashlib import sha256
-
-# def get_tx_hashes(raw_block, tx_offsets):
-#     tx_hashes = []
-#     count_txs = len(tx_offsets)
-#     for index in range(count_txs):
-#         offset = tx_offsets[index]
-#         if index < count_txs - 1:
-#             print(index, count_txs)
-#             next_tx_offset = tx_offsets[index + 1]
-#             tx_hash = sha256(sha256(raw_block[offset: next_tx_offset]).digest()).digest()
-#             tx_hashes.append(tx_hash)
-#     return tx_hashes
 
 
 if __name__ == "__main__":
