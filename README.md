@@ -10,42 +10,41 @@ unreasonable times for mempool events and confirmations.
 Conduit can parallelize the chain indexing process across multiple cores
 (16, 32, 64 etc.) so wallets/applications can get timely notifications.
 
-There are two approaches one can take:
-1. 1 core -> 1 block and do many blocks in parallel (geared like a formula1 race car)
-2. many cores -> 1 block and chug through 1 (partitioned) block at a time (geared like
-a diesel truck)
-
-Approach 1 is great for whipping through thousands of tiny <1MB blocks but it has
-**no impact on responsiveness to indexing the most recent big block!** The other cores
-cannot help and so it will take a very long time (maybe several minutes) before the
-pub-sub notifications go out. So you get nice looking IBD stats to tell your friends about
-but **zero impact where it actually matters**!
-
-So in my view, approach #1 offers little value.
-
-Option 2 on the other hand will be ideal for handling very large blocks where it can
-partition the block and deploy all available resources to deal with it as quickly as
-possible. This is the approach that conduit takes.
-
 ## Project Status
 
 Conduit is still in early development. So far it can:
 
-    1. Do an initial sync of all headers and can stop/start and saves progress
-    2. Do an initial sync of all blocks and can stop/start and saves progress
-    3. Insert the transactions into a basic postgres "Transaction" table
+    1. Use the new python3.8 BufferedProtocol to connect to a localhost node with 
+    transfer speeds of 500-600MB/sec.
+    2. Do an initial sync of all headers and can stop/start and saves progress
+    3. Do an initial sync of all blocks and can stop/start and saves progress
     4. Connect to mainnet, testnet, regtest, scalingtestnet nodes for the above purposes.
-    5. Currently does this on a single core but does so via a pure function that can
-    be outsourced to any number of worker processes (not implemented yet).
-    The parsing algorithm is also not optimized at all as it converts to and from
-    python objects rather than staying in binary (and in theory could also be
-    'cythonized'). In saying that it does about 50,000tx/sec for blocks > 1MB.
+    5. Skeleton for 4 dedicated worker processes is in place to make use of python3.8's
+    multiprocessing.shared_memory + BufferedProtocol such that it can read multiple p2p protocol
+    messages into one contiguous, large buffer (e.g. >2GB) of shared_memory. 
+    - The synchronizing of buffer resets with worker processes was the hardest part but that's
+    completed now.
+    6. Cythonized pre-processor prototype is complete - see 'bench' folder which finds all of the
+    start byte positions of txs in a block at around 3200 MB/sec on a single core.
+    7. Cythonized tx parser prototype mostly complete - see 'bench' folder which parses txs at these
+    byte positions in shared memory to pull out the tx_hash and pk/pkh associated with the input or
+    output script at around 80-90MB/sec per core.
+    8. Merkle Tree calculation not implemented yet but tx offsets are being fed to this worker via a
+    queue. Just needs an algorithm for hashing out the tx_hashes and storing it in LMDB.
+    9. Design decision made on LMDB for synchronous writes of raw blocks (in append-only mode) which should
+    in theory match the write speed of the underlying storage media. Read performance is better than any other
+    key-value store that I've seen by quite a margin. Currently the worker gets the block start/stop 
+    byte position offsets for the raw blocks in shared_memory - just a matter of performing the write 
+    operation.
+    10. Design decision made on postgres for storing stripped tx metadata (such as tx_hash, height, 
+    pk and pkhs, byte offset in the raw block) but *not* the full rawtx (which will be retrieved 
+    from LMDB raw blocks via the byte offset for the tx).
+    11. Some kind of external api (in this repo or a different repo)
 
-Currently it will not continue syncing to the latest new blocks that come in - only does
-the initial sync and then stops. Also does not calculate the merkle tree or have a database
-table for it (yet). And it goes without saying that a redis instance (for an LRU cache of
-the merkle tree and other things) is not in the picture yet nor is some kind of external API
-that might wrap all of this (perhaps best left for a separate repo?).
+So mostly just need to connect it all up to LMDB and postgres to actually persist the data but 
+should not be much work left. 
+I think it can probably stay under 4000 lines of code (excluding an external API for it and unittesting) 
+- currently only at around 2000 LOC
 
 See `BLUEPRINT.md` for the overall design plans.
 
