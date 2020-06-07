@@ -8,6 +8,7 @@ from bitcoinx import read_varint
 
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
+from ._algorithms import cy_preprocessor
 
 logger = logs.get_logger("handlers")
 
@@ -56,15 +57,6 @@ class BlockPreProcessor(multiprocessing.Process):
         stream.seek(4, io.SEEK_CUR)
         return stream.tell()
 
-    def pre_process(self, block_view) -> List[int]:
-        stream: io.BytesIO = io.BytesIO(block_view)
-        stream.seek(80)  # header
-        count = bitcoinx.read_varint(stream.read)
-        tx_positions = [stream.tell()]  # start byte pos of each tx in the block
-        for i in range(count - 1):
-            tx_positions.append(self.seek_to_next_tx(stream))
-        return tx_positions
-
     def distribute_load_parsing(
         self, blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
     ) -> List[Tuple[bytes, int, int, List[int]]]:
@@ -86,7 +78,7 @@ class BlockPreProcessor(multiprocessing.Process):
 
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
-                tx_positions = self.pre_process(self.shm.buf[blk_start_pos:blk_end_pos])
+                tx_positions = cy_preprocessor(self.shm.buf[blk_start_pos:blk_end_pos].tobytes())
 
                 divided_parsing_work = self.distribute_load_parsing(
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions

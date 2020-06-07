@@ -1,7 +1,18 @@
 from setuptools import find_packages, setup
+from Cython.Build import cythonize
+from Cython.Compiler import Options
 import pathlib
 
-path = pathlib.Path('__init__.py')
+"""
+To compile cython module:
+> py -3.8-64 setup.py build_ext --inplace
+"""
+
+Options.annotate = True
+Options.docstrings = True
+Options.fast_fail = True
+
+path = pathlib.Path('conduit/__init__.py')
 
 with path.open() as f:
     for line in f.readlines():
@@ -13,7 +24,7 @@ setup(
     name='conduit',
     version=version,
     description='zero-copy, multi-core bitcoin chain indexer',
-    long_description=open('README.rst', 'r').read(),
+    long_description=open('README.md', 'r').read(),
     long_description_content_type='text/markdown',
     author='AustEcon',
     author_email='AustEcon0922@gmail.com',
@@ -50,6 +61,7 @@ setup(
     install_requires=[],
     extras_require={},
     tests_require=['pytest'],
-
+    ext_modules=cythonize("conduit/_algorithms.pyx"),
+    zip_safe=False,
     packages=find_packages(),
 )
