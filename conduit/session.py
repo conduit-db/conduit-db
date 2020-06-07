@@ -39,9 +39,9 @@ Header = namedtuple("Header", "magic command payload_size checksum")
 
 class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
-    _HWM = 1024 * 1024 * 128
-    BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4  # 50MB
-    BUFFER_SIZE = _HWM + BUFFER_OVERFLOW_SIZE  # high water mark level
+    HIGH_WATER = 1024 * 1024 * 128
+    BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
+    BUFFER_SIZE = HIGH_WATER + BUFFER_OVERFLOW_SIZE
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)
     shm_buffer_view = shm_buffer.buf
     _pos = 0
@@ -50,7 +50,7 @@ class BitcoinFramer(BufferedProtocol):
     _msg_handled_count = 0
 
     def _new_buffer(self):
-        assert self._pos >= self._HWM
+        assert self._pos >= self.HIGH_WATER
         # take the remainder of buffer and place it at the start then extend to size
         remainder = self.shm_buffer_view[self._last_msg_end_pos :].tobytes()
         self.shm_buffer_view[0 : len(remainder)] = remainder
@@ -127,7 +127,7 @@ class BitcoinFramer(BufferedProtocol):
             else:
                 break  # recv more data until next full payload available
 
-        if self._pos >= self._HWM:
+        if self._pos >= self.HIGH_WATER:
             self.logger.debug("buffer reached high-water mark, pausing reading...")
             self.transport.pause_reading()
             loop = asyncio.get_running_loop()
@@ -303,7 +303,6 @@ class BufferedSession(BitcoinFramer):
         self.transport.write(message)
 
     async def send_request(self, command_name: str, message: bytes):
-        # self.logger.debug(f"sending to {self.peer}, msg type: {command_name}")
         self.send_message(message)
 
     def get_local_tip_height(self):

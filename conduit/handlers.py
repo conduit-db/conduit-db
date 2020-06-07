@@ -56,7 +56,7 @@ class Handlers:
 
     async def on_ping(self, message):
         logger.debug("handling ping...")
-        pong_message = self.session.serializer.pong()
+        pong_message = self.serializer.pong(message)
         await self.session.send_request(PONG, pong_message)
 
     async def on_addr(self, message):

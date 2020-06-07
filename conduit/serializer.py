@@ -27,6 +27,10 @@ from .commands import (
     TX_BIN,
     GETDATA_BIN,
     GETBLOCKS_BIN,
+    PING_BIN,
+    MEMPOOL_BIN,
+    PONG_BIN,
+    SENDCMPCT_BIN,
 )
 from .logs import logs
 from .networks import NetworkConfig
@@ -145,15 +149,14 @@ class Serializer:
         return self.payload_to_message(GETADDR_BIN, b"")
 
     def mempool(self):
-        return self.payload_to_message(GETADDR_BIN, b"")
+        return self.payload_to_message(MEMPOOL_BIN, b"")
 
     def ping(self):
         nonce = random.randint(0, 2 ** 64 - 1)
-        return self.payload_to_message(GETADDR_BIN, pack_le_uint64(nonce))
+        return self.payload_to_message(PING_BIN, pack_le_uint64(nonce))
 
-    def pong(self):
-        nonce = random.randint(0, 2 ** 64 - 1)
-        return self.payload_to_message(GETADDR_BIN, pack_le_uint64(nonce))
+    def pong(self, nonce):
+        return self.payload_to_message(PONG_BIN, nonce)
 
     def filterclear(self):
         return self.payload_to_message(FILTERCLEAR_BIN, b"")
@@ -178,4 +181,4 @@ class Serializer:
 
     def sendcmpct(self):
         payload = pack_byte(0) + pack_le_uint64(1)
-        return self.payload_to_message(GETADDR_BIN, payload)
+        return self.payload_to_message(SENDCMPCT_BIN, payload)

@@ -7,6 +7,7 @@ of the merkle tree for all txids in a block. This could be parallelised if need-
 
     primary_key:        txid
     other columns:      height
+                        position
                         tx_offset (LMDB)
 
 ## History table
