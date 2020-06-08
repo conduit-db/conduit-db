@@ -9,7 +9,7 @@
 
 ## Inputs table
 
-    clustered idx:   out_tx_num
+    clustered idx:   prevout_hash
                      out_idx
                      pushdata_id
     other columns    in_tx_num
@@ -27,13 +27,45 @@
     primary_key:     pushdata_id
                      pushdata (pk or pkh for example)
 
-Query for key history becomes:
+## Query plan
+Tx parser should extract these rows directly from a block without any need to query the database:
+- tx_row:       (tx_num, tx_hash, height, pos, offset)
+- in_row:       (prevout_hash, out_idx, pushdata_id, in_tx_num, in_idx)
+- out_row:      (out_tx_num, out_idx, pushdata_id, value)
 
-    SELECT in_tx_num, in_idx, out_tx_num, out_idx, pushdata_id, value
-    FROM outputs
-    LEFT OUTER JOIN inputs
-    ON inputs.out_tx_num = outputs.out_tx_num AND inputs.out_idx = outputs.out_idx
-    WHERE outputs.pushdata_id = 12345 OR inputs.pushdata_id = <pkh of 12345>
+notice that the in_row uses `prevout_hash` and not `out_tx_num` - this is because it would require a db query at tx parsing
+time to fetch it which is unacceptable for performance reasons. Therefore we directly store what is readily
+available during the tx parsing process. There is no disadvantage when it comes to table joins for querying key history
+because a table join with the transaction table is needed anyway.
+
+Query for key history becomes (maybe something like this - but better optimized):
+    
+    Then query becomes:
+    
+    WITH filtered_ins AS (
+        SELECT * 
+        FROM inputs 
+        WHERE pushdata_id in {12345}
+    )
+    WITH filtered_outs AS (
+        SELECT * 
+        FROM outputs 
+        WHERE pushdata_id in {12345}
+    )
+    WITH outs_with_tx_hash AS (
+        SELECT *
+        FROM outputs
+        JOIN transactions 
+        ON transactions.tx_num = outputs.tx_num
+    )
+    SELECT *
+    FROM outs_with_tx_hash
+    -- should get rows where pk or pkh is in input scriptsig but not in corresponding output 
+    --     which is basically unheard of but theoretically possible I guess...)
+    -- should get rows where pk or pkh is in output scriptpubkey but not in corresponding input (common)
+    FULL OUTER JOIN filtered_ins
+    ON outs_with_tx_hash.tx_hash = filtered_ins.tx_hash AND outs_with_tx_hash.out_idx = 
+        filtered_ins.in_idx
 
 
 Also need to then join with Transaction table to convert `in_tx_num` and `out_tx_num`
