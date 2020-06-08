@@ -1,4 +1,5 @@
 from peewee import PostgresqlDatabase, Model, BlobField, IntegerField
+
 # from peewee_async import PooledPostgresqlDatabase
 
 from .constants import (

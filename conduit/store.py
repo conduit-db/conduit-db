@@ -60,6 +60,7 @@ class Storage:
             )
         return results_data
 
+
 def setup_headers_store(net_config, mmap_filename):
     Headers.max_cache_size = 2_000_000
     HeadersRegTestMod.max_cache_size = 2_000_000

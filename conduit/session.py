@@ -446,6 +446,7 @@ class BufferedSession(BitcoinFramer):
     async def sync_batched_blocks(self) -> None:
         # one block per loop
         pending_getdata_requests = list(self._pending_blocks_batch_set)
+        count_requested = 0
         while True:
             inv = await self._pending_blocks_inv_queue.get()
             # self.logger.debug(f"got inv: {inv}")
@@ -468,22 +469,25 @@ class BufferedSession(BitcoinFramer):
                 if len(pending_getdata_requests) == 0:
                     break
                 else:
-                    # careful to not block on the queue.get() if there's nothing left..
-                    # had a bug with annoying new block invs throwing it off...
                     continue
 
             await self.send_request(
                 GETDATA, self.serializer.getdata([inv]),
             )
+            count_requested += 1
             pending_getdata_requests.pop()
-            # self.logger.debug(f"pending blocks=" f"{pending_blocks}")
-
             if len(pending_getdata_requests) == 0:
                 break
 
-        await asyncio.get_running_loop().run_in_executor(
-            self._batched_blocks_exec, self.join_batched_blocks
-        )
+        # detect when an unsolicited new block has thrown a spanner in the works
+        if not count_requested == 0:
+            await asyncio.get_running_loop().run_in_executor(
+                self._batched_blocks_exec, self.join_batched_blocks
+            )
+        else:
+            # it was just a 'rogue' unsolicited block so still need to wait for
+            # the 500 odd requested blocks...
+            await self.sync_batched_blocks()
 
     def reset_pending_blocks_batch_set(self, hash_stop):
         self._pending_blocks_batch_set = set()

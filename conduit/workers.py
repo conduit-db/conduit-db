@@ -8,7 +8,7 @@ from bitcoinx import read_varint
 
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
-from ._algorithms import cy_preprocessor
+from ._algorithms import cy_preprocessor, cy_parse_block
 
 logger = logs.get_logger("handlers")
 
@@ -78,7 +78,9 @@ class BlockPreProcessor(multiprocessing.Process):
 
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
-                tx_positions = cy_preprocessor(self.shm.buf[blk_start_pos:blk_end_pos].tobytes())
+                tx_positions = cy_preprocessor(
+                    self.shm.buf[blk_start_pos:blk_end_pos].tobytes()
+                )
 
                 divided_parsing_work = self.distribute_load_parsing(
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
@@ -116,31 +118,22 @@ class TxParser(multiprocessing.Process):
                 if not item:
                     return  # poison pill stop command
 
-                blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div = item
+                (
+                    blk_hash,
+                    blk_height,
+                    blk_start_pos,
+                    blk_end_pos,
+                    tx_positions_div,
+                ) = item
                 # logger.debug(f"TxParser got blk_start_pos={blk_start_pos}; tx_positions_div="
                 #              f"{tx_positions_div}; len(tx_positions_div)={len(tx_positions_div)}; "
                 #              f"blk_height={blk_height}")
 
-                results = []
-                # maybe could renew this buffer in-sync with buffer reset if faster
-                stream = io.BytesIO(self.shm.buf[blk_start_pos:blk_end_pos])
-                for pos in tx_positions_div:
-                    stream.seek(pos)
-                    tx = bitcoinx.Tx.read(stream.read)
-
-                    tx_hash: bytes = tx.hash()
-                    tx_offset = pos - blk_start_pos  # from beginning of block
-                    results.append(
-                        (
-                            tx.hash(),
-                            [
-                                f"<pubkey1 for {tx_hash.hex()}>",
-                                f"<pubkey2 for" f" {tx_hash.hex()}>",
-                            ],
-                            blk_height,
-                            tx_offset,
-                        )
-                    )
+                tx_rows = cy_parse_block(
+                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
+                    tx_positions_div,
+                    blk_height,
+                )
 
                 # Todo - directly update postgres with metadata via asyncpg connection
                 # logger.debug(

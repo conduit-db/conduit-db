@@ -1,33 +1,22 @@
-# distutils: language = c++
-# cython: language_level=3
 import logging
-import bitcoinx
-
-from libcpp.vector cimport vector
+import struct
 from struct import Struct
 from hashlib import sha256
-from libcpp.set cimport set as cppset
-
-cdef unsigned int HEADER_OFFSET = 80
-cdef unsigned char OP_PUSH_20 = 20
-cdef unsigned char OP_PUSH_33 = 33
-cdef cppset[int] SET_OTHER_PUSH_OPS
-cdef unsigned char i
-for i in range(1,76):
-    SET_OTHER_PUSH_OPS.insert(i)
 
 struct_le_H = Struct('<H')
 struct_le_I = Struct('<I')
 struct_le_Q = Struct('<Q')
 struct_OP_20 = Struct('<20s')
 struct_OP_33 = Struct('<33s')
-
+OP_PUSH_20 = struct.pack('B', 20)
+OP_PUSH_33 = struct.pack('B', 33)
+SET_OTHER_PUSH_OPS = set(range(1, 76))
 
 OP_PUSHDATA1 = 0x4c
 OP_PUSHDATA2 = 0x4d
 OP_PUSHDATA4 = 0x4e
 
-logger = logging.getLogger("algorithms")
+logger = logging.getLogger("py_parse_block")
 
 
 def unpack_varint(buf, offset):
@@ -41,56 +30,7 @@ def unpack_varint(buf, offset):
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
 
-cdef (unsigned long long, unsigned long long) unpack_varint_preprocessor(bytes buf, int offset) \
-        except *:
-    # more heavily cythonized version
-    cdef int n
-    n = buf[offset]
-    if n < 253:
-        return n, offset + 1
-    if n == 253:
-        return Struct('<H').unpack_from(buf, offset + 1)[0], offset + 3
-    if n == 254:
-        return Struct('<I').unpack_from(buf, offset + 1)[0], offset + 5
-    return Struct('<Q').unpack_from(buf, offset + 1)[0], offset + 9
-
-
-
-cpdef cy_preprocessor(bytes block_view, unsigned long long offset=0):
-    cdef unsigned long long count, i, script_sig_len, script_pubkey_len
-
-    offset += HEADER_OFFSET
-    count, offset = unpack_varint_preprocessor(block_view, offset)
-
-    cdef vector[unsigned long long] tx_positions  # start byte pos of each tx in the block
-    tx_positions.push_back(offset)
-    for i in range(count - 1):
-        # version
-        offset += 4
-
-        # tx_in block
-        count_tx_in, offset = unpack_varint(block_view, offset)
-        for i in range(count_tx_in):
-            offset += 36  # prev_hash + prev_idx
-            script_sig_len, offset = unpack_varint(block_view, offset)
-            offset += script_sig_len
-            offset += 4 # sequence
-
-        # tx_out block
-        count_tx_out, offset = unpack_varint(block_view, offset)
-        for i in range(count_tx_out):
-            offset += 8  # value
-            script_pubkey_len, offset = unpack_varint(block_view, offset)  # script_pubkey
-            offset += script_pubkey_len  # script_sig
-
-        # lock_time
-        offset += 4
-        tx_positions.push_back(offset)
-    return tx_positions
-
-
-cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
-    cdef unsigned long long i, len_script
+def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
     i = 0
     len_script = len(script)
     try:
@@ -103,7 +43,7 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
                 i += 1
                 pks.add(struct_OP_33.unpack_from(script, i)[0])
                 i += 33
-            elif SET_OTHER_PUSH_OPS.find(script[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
+            elif script[i] in SET_OTHER_PUSH_OPS:  # signature -> skip
                 i += script[i] + 1
             elif script[i] == 0x4C:
                 i += 1
@@ -126,15 +66,9 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
     return pks, pkhs
 
 
-cpdef cy_parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
-    cdef unsigned int index
-    cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
-        count_tx_out, script_sig_len, scriptpubkey_len
-    cdef set pubkeys, pubkeyhashes
-    cdef list tx_rows
-    cdef tuple tx_row
-
+def py_parse_block(raw_block, tx_offsets, height):
     tx_rows = []
+
     count_txs = len(tx_offsets)
     try:
         for index in range(count_txs):
@@ -154,7 +88,7 @@ cpdef cy_parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
 
             # inputs
             count_tx_in, offset = unpack_varint(raw_block, offset)
-            for input in range(count_tx_in):
+            for i in range(count_tx_in):
 
                 offset += 36  # skip (prev_out, idx)
                 script_sig_len, offset = unpack_varint(raw_block, offset)
@@ -172,7 +106,7 @@ cpdef cy_parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
 
             # outputs
             count_tx_out, offset = unpack_varint(raw_block, offset)
-            for output in range(count_tx_out):
+            for i in range(count_tx_out):
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(raw_block, offset)
                 scriptpubkey = raw_block[offset : offset + scriptpubkey_len]
@@ -193,7 +127,6 @@ cpdef cy_parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
         assert len(tx_rows) == count_txs
         return tx_rows
     except Exception as e:
-        logger.debug(f"count_txs={count_txs}, index={index}, input={input}, output={output}, "
-                     f"txid={bitcoinx.hash_to_hex_str(tx_hash)}")
+        logger.debug(f"count_txs={count_txs}")
         logger.exception(e)
         raise
