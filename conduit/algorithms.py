@@ -1,22 +1,28 @@
-import logging
-import struct
+"""slower pure python alternative"""
+
+import bitcoinx
 from struct import Struct
 from hashlib import sha256
+
+from .logs import logs
+
+HEADER_OFFSET = 80
+OP_PUSH_20 = 20
+OP_PUSH_33 = 33
+SET_OTHER_PUSH_OPS = set(range(1,76))
 
 struct_le_H = Struct('<H')
 struct_le_I = Struct('<I')
 struct_le_Q = Struct('<Q')
 struct_OP_20 = Struct('<20s')
 struct_OP_33 = Struct('<33s')
-OP_PUSH_20 = struct.pack('B', 20)
-OP_PUSH_33 = struct.pack('B', 33)
-SET_OTHER_PUSH_OPS = set(range(1, 76))
+
 
 OP_PUSHDATA1 = 0x4c
 OP_PUSHDATA2 = 0x4d
 OP_PUSHDATA4 = 0x4e
 
-logger = logging.getLogger("py_parse_block")
+logger = logs.get_logger("algorithms")
 
 
 def unpack_varint(buf, offset):
@@ -28,6 +34,37 @@ def unpack_varint(buf, offset):
     if n == 254:
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
+
+
+def preprocessor(block_view, offset=0):
+    offset += HEADER_OFFSET
+    count, offset = unpack_varint(block_view, offset)
+
+    tx_positions = []  # start byte pos of each tx in the block
+    tx_positions.append(offset)
+    for i in range(count - 1):
+        # version
+        offset += 4
+
+        # tx_in block
+        count_tx_in, offset = unpack_varint(block_view, offset)
+        for i in range(count_tx_in):
+            offset += 36  # prev_hash + prev_idx
+            script_sig_len, offset = unpack_varint(block_view, offset)
+            offset += script_sig_len
+            offset += 4 # sequence
+
+        # tx_out block
+        count_tx_out, offset = unpack_varint(block_view, offset)
+        for i in range(count_tx_out):
+            offset += 8  # value
+            script_pubkey_len, offset = unpack_varint(block_view, offset)  # script_pubkey
+            offset += script_pubkey_len  # script_sig
+
+        # lock_time
+        offset += 4
+        tx_positions.append(offset)
+    return tx_positions
 
 
 def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
@@ -66,7 +103,7 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
     return pks, pkhs
 
 
-def py_parse_block(raw_block, tx_offsets, height):
+def parse_block(raw_block, tx_offsets, height):
     tx_rows = []
 
     count_txs = len(tx_offsets)

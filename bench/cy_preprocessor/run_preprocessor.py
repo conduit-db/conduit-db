@@ -1,18 +1,23 @@
 import io
 import time
 import bitcoinx
-
-from cy_preprocessor import print_results, cy_preprocessor
+try:
+    from conduit._algorithms import preprocessor  # cython
+except ModuleNotFoundError:
+    from conduit.algorithms import preprocessor  # pure python
+from bench.utils import print_results
 
 if __name__ == "__main__":
+
     with open("../data/block413567.raw", "rb") as f:
         raw_block = f.read()
 
     t0 = time.time()
     for i in range(100):
-        tx_positions = cy_preprocessor(raw_block)
+        tx_positions = preprocessor(raw_block)
+        # tx_positions = preprocessor(raw_block)
     t1 = time.time() - t0
-    print_results(tx_positions, t1/100, raw_block)
+    print_results(len(tx_positions), t1/100, raw_block)
 
     # check validity
     t0 = time.time()

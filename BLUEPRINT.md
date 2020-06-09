@@ -11,7 +11,7 @@
 
     clustered idx:   prevout_hash
                      out_idx
-                     pushdata_id
+                     pushdata_hash
     other columns    in_tx_num
                      in_idx
 
@@ -19,20 +19,55 @@
 
     clustered idx:   out_tx_num
                      out_idx
-                     pushdata_id
+                     pushdata_hash
     other columns    value
-
-## Pubkeys table
-
-    primary_key:     pushdata_id
-                     pushdata (pk or pkh for example)
 
 ## Query plan
 Tx parser should extract these rows directly from a block without any need to query the database:
-- tx_row:       (tx_num, tx_hash, height, pos, offset)
-- in_row:       (prevout_hash, out_idx, pushdata_id, in_tx_num, in_idx)
-- out_row:      (out_tx_num, out_idx, pushdata_id, value)
+- tx_row:       (tx_hash, height, pos, offset)  # tx_num is generated
+- in_rows:      [(prevout_hash, out_idx, pushdata_id, in_idx)...]  # in_tx_num is == 'tx_num' that gets generated
+- out_rows:     [(out_idx, pushdata_hash, value)...]  # out_tx_num is == 'tx_num' that gets generated
 
+Prepared statement for insertions (stmt = await conn.prepare('''INSERT INTO... $1, $2...''')):
+    
+    INSERT INTO transactions VALUES (tx_hash, height, pos, offset)
+    ON CONFLICT (tx_hash)
+    DO UPDATE
+        SET tx_hash=tx_hash, height=height, pos=pos, offset=offset
+        
+Then use asyncpg's executemany to perform this for all tx_rows
+    
+And then use prepared statement in one atomic sql query for each transaction that is parsed 
+(updates all 3 tables at once):
+
+    -- main f-string query:
+    
+    -- transaction row
+    SELECT insert_tx_row_return_tx_num($1, $2, $3, $4) AS tx_num
+    SELECT insert_tx_row_return_tx_num(tx_hash, height, pos, offset) AS tx_num
+
+    -- input rows
+    INSERT INTO inputs VALUES
+        -- '?' parameter I guess in an f-string and 'tx_num' would be a string to match the varname ^^
+        ($5, $6, $7, $8, $9),
+        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
+        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
+        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
+        ...
+        ...
+    ON CONFLICT DO NOTHING
+
+    -- output rows
+        INSERT INTO inputs VALUES 
+        ($10, $11, $12, $13),
+        (tx_num, out_idx, pushdata_hash, value),
+        (tx_num, out_idx, pushdata_hash, value),
+        (tx_num, out_idx, pushdata_hash, value),
+        ...
+        ...
+
+    ON CONFLICT DO NOTHING
+    
 notice that the in_row uses `prevout_hash` and not `out_tx_num` - this is because it would require a db query at tx parsing
 time to fetch it which is unacceptable for performance reasons. Therefore we directly store what is readily
 available during the tx parsing process. There is no disadvantage when it comes to table joins for querying key history
@@ -45,12 +80,12 @@ Query for key history becomes (maybe something like this - but better optimized)
     WITH filtered_ins AS (
         SELECT * 
         FROM inputs 
-        WHERE pushdata_id in {12345}
+        WHERE pushdata_hash in {12345}
     )
     WITH filtered_outs AS (
         SELECT * 
         FROM outputs 
-        WHERE pushdata_id in {12345}
+        WHERE pushdata_hash in {12345}
     )
     WITH outs_with_tx_hash AS (
         SELECT *
@@ -71,10 +106,10 @@ Query for key history becomes (maybe something like this - but better optimized)
 Also need to then join with Transaction table to convert `in_tx_num` and `out_tx_num`
 to `in_tx_hash` and `out_tx_hash` respectively + `height` column. Client receives an array of:
 
-    [(in_tx_hash, in_indx, out_tx_hash, out_idx, pushdata_id, value, height),
-     (in_tx_hash, in_indx, out_tx_hash, out_idx, pushdata_id, value, height),
-     (in_tx_hash, in_indx, out_tx_hash, out_idx, pushdata_id, value, height),
-     ...                                                                     ]
+    [(in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
+     (in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
+     (in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
+     ...                                                        ]
 
 If `in_tx_hash` is null then it is a utxo (not yet spent).
 

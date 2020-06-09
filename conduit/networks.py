@@ -8,15 +8,13 @@ from bitcoinx import (
     Headers,
     MissingHeader,
 )
-import json
-import logging
-import requests
 from typing import Optional
 
+from .logs import logs
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
-from .peers import Peer, get_seed_peers
+from .peers import Peer
 
-logger = logging.getLogger("networks")
+logger = logs.get_logger("networks")
 
 
 class HeadersRegTestMod(Headers):

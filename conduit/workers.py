@@ -8,7 +8,10 @@ from bitcoinx import read_varint
 
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
-from ._algorithms import cy_preprocessor, cy_parse_block
+try:
+    from ._algorithms import preprocessor, parse_block  # cython
+except ModuleNotFoundError:
+    from .algorithms import preprocessor, parse_block  # pure python
 
 logger = logs.get_logger("handlers")
 
@@ -78,7 +81,7 @@ class BlockPreProcessor(multiprocessing.Process):
 
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
-                tx_positions = cy_preprocessor(
+                tx_positions = preprocessor(
                     self.shm.buf[blk_start_pos:blk_end_pos].tobytes()
                 )
 
@@ -129,7 +132,7 @@ class TxParser(multiprocessing.Process):
                 #              f"{tx_positions_div}; len(tx_positions_div)={len(tx_positions_div)}; "
                 #              f"blk_height={blk_height}")
 
-                tx_rows = cy_parse_block(
+                tx_rows = parse_block(
                     bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
                     tx_positions_div,
                     blk_height,

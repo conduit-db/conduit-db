@@ -1,8 +1,10 @@
 import time
 
-from bench.cy_txparser.py_parse_block import py_parse_block
+try:
+    from conduit._algorithms import parse_block  # cython
+except ModuleNotFoundError:
+    from conduit.algorithms import parse_block  # pure python
 from bench.cy_txparser.offsets import TX_OFFSETS
-from bench.cy_txparser.cy_parse_block import cy_parse_block
 from bench.utils import print_results
 
 
@@ -12,8 +14,7 @@ if __name__ == "__main__":
 
     t0 = time.time()
     for i in range(10):
-        tx_rows = cy_parse_block(raw_block, TX_OFFSETS, 413567)
-        # tx_rows = py_parse_block(raw_block, TX_OFFSETS, 413567)
+        tx_rows = parse_block(raw_block, TX_OFFSETS, 413567)
+        # tx_rows = parse_block(raw_block, TX_OFFSETS, 413567)
     t1 = time.time() - t0
-    print(len(tx_rows))
     print_results(len(tx_rows), t1/10, raw_block)

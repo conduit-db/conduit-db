@@ -1,12 +1,14 @@
 # distutils: language = c++
 # cython: language_level=3
-import logging
+"""cythonized version of algorithms.py"""
 import bitcoinx
 
 from libcpp.vector cimport vector
 from struct import Struct
 from hashlib import sha256
 from libcpp.set cimport set as cppset
+
+from .logs import logs
 
 cdef unsigned int HEADER_OFFSET = 80
 cdef unsigned char OP_PUSH_20 = 20
@@ -27,7 +29,7 @@ OP_PUSHDATA1 = 0x4c
 OP_PUSHDATA2 = 0x4d
 OP_PUSHDATA4 = 0x4e
 
-logger = logging.getLogger("algorithms")
+logger = logs.get_logger("_algorithms")
 
 
 def unpack_varint(buf, offset):
@@ -56,7 +58,7 @@ cdef (unsigned long long, unsigned long long) unpack_varint_preprocessor(bytes b
 
 
 
-cpdef cy_preprocessor(bytes block_view, unsigned long long offset=0):
+cpdef preprocessor(bytes block_view, unsigned long long offset=0):
     cdef unsigned long long count, i, script_sig_len, script_pubkey_len
 
     offset += HEADER_OFFSET
@@ -69,18 +71,18 @@ cpdef cy_preprocessor(bytes block_view, unsigned long long offset=0):
         offset += 4
 
         # tx_in block
-        count_tx_in, offset = unpack_varint(block_view, offset)
+        count_tx_in, offset = unpack_varint_preprocessor(block_view, offset)
         for i in range(count_tx_in):
             offset += 36  # prev_hash + prev_idx
-            script_sig_len, offset = unpack_varint(block_view, offset)
+            script_sig_len, offset = unpack_varint_preprocessor(block_view, offset)
             offset += script_sig_len
             offset += 4 # sequence
 
         # tx_out block
-        count_tx_out, offset = unpack_varint(block_view, offset)
+        count_tx_out, offset = unpack_varint_preprocessor(block_view, offset)
         for i in range(count_tx_out):
             offset += 8  # value
-            script_pubkey_len, offset = unpack_varint(block_view, offset)  # script_pubkey
+            script_pubkey_len, offset = unpack_varint_preprocessor(block_view, offset)  # script_pubkey
             offset += script_pubkey_len  # script_sig
 
         # lock_time
@@ -126,7 +128,7 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
     return pks, pkhs
 
 
-cpdef cy_parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
+cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
     cdef unsigned int index
     cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
         count_tx_out, script_sig_len, scriptpubkey_len
