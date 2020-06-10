@@ -63,31 +63,68 @@ port=5432,
 password="conduitpass",
 database="conduittestdb",
 
+returned rows from block parsing:
+- tx_rows:      [(tx_hash, height, position, offset)]
+- in_rows:      [(tx_hash, prevout_hash, out_idx, pushdata_hash, in_idx)...]
+- out_rows:     [(tx_hash, out_idx, pushdata_hash, value)...]
+
+# tx_num is generated for all 3 tables
+
 """
+
 
 import asyncio
 import asyncpg
 
 
-async def tx_insert_naive(conn, tx_rows):
-    for tx_row in tx_rows:
-        await conn.execute(
-            """INSERT INTO transactions VALUES($1, $2, $3, $4)""", *tx_row
-        )
-
-
-async def tx_insert_copy_method(conn: asyncpg.Connection, tx_rows):
+async def insert_tx_copy_method(conn: asyncpg.Connection, tx_rows):
     await conn.copy_records_to_table(
         "temp_txs",
-        columns=("tx_hash", "height", "tx_position", "tx_offset"),
+        columns=["tx_hash", "height", "tx_position", "tx_offset"],
         records=tx_rows,
     )
     # await conn.execute("""CREATE UNIQUE INDEX tx_num_idx ON temp_txs (tx_num);""")
 
 
-async def tx_upsert_from_temp_tx(stmt: PreparedStatement):
-    await stmt.fetchval()
+async def insert_input_copy_method(conn: asyncpg.Connection, in_rows):
+    await conn.copy_records_to_table(
+        "temp_inputs",
+        columns=["tx_hash", "in_idx", "prevout_hash", "out_idx", "pushdata_hash"],
+        records=in_rows,
+    )
+    # await conn.execute("""CREATE UNIQUE INDEX tx_num_idx ON temp_txs (tx_num);""")
 
+
+# async def tx_upsert_from_temp_tx(stmt: PreparedStatement):
+#     await stmt.fetchval()
+async def upsert_from_temp_txs(conn: asyncpg.Connection):
+     await conn.execute("""
+        INSERT INTO transactions
+        SELECT tx_hash, height, tx_position, tx_offset
+        FROM temp_txs
+        ON CONFLICT (tx_hash)
+        DO UPDATE SET tx_hash=excluded.tx_hash, height=excluded.height, 
+            tx_position=excluded.tx_position, tx_offset=excluded.tx_offset;
+        
+        UPDATE temp_txs
+        SET tx_num = transactions.tx_num
+        FROM transactions
+        WHERE temp_txs.tx_hash = transactions.tx_hash;""")
+
+async def upsert_from_temp_inputs(conn: asyncpg.Connection):
+    await conn.execute("""
+        WITH temp_inputs AS (
+            SELECT temp_inputs.tx_hash, temp_inputs.in_idx, temp_inputs.prevout_hash, 
+                temp_inputs.out_idx, temp_inputs.pushdata_hash, tx_num
+            FROM temp_inputs 
+            JOIN temp_txs 
+            ON temp_inputs.tx_hash = temp_txs.tx_hash
+        )
+        
+        -- conflicts should never happen
+        INSERT INTO inputs 
+        SELECT *
+        FROM temp_inputs;""")
 
 if __name__ == "__main__":
 
@@ -108,7 +145,9 @@ if __name__ == "__main__":
             password="conduitpass",
             database="conduittestdb",
         )
-        await conn.execute("""DROP TABLE transactions;""")
+        await conn.execute("""
+            DROP TABLE transactions;
+            DROP TABLE inputs;""")
 
         await conn.execute(
             """
@@ -128,8 +167,20 @@ if __name__ == "__main__":
                 height integer,
                 tx_position integer,
                 tx_offset bigint,
-                tx_num bigint generated always as identity
+                tx_num integer generated always as identity
             );
+            CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
+            
+            CREATE UNLOGGED TABLE inputs(
+                tx_hash bytea,
+                in_idx bigint,
+                prevout_hash bytea,
+                out_idx integer,
+                pushdata_hash bytea,
+                in_tx_num bigint
+            );
+            CREATE INDEX in_point_idx ON inputs (tx_hash, in_idx);
+
             CREATE TEMPORARY TABLE temp_txs(
                 tx_hash bytea PRIMARY KEY,
                 height integer,
@@ -137,29 +188,28 @@ if __name__ == "__main__":
                 tx_offset bigint,
                 tx_num bigint
             );
-            CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
+            
+            CREATE TEMPORARY TABLE temp_inputs(
+                tx_hash bytea,
+                in_idx bigint,
+                prevout_hash bytea,
+                out_idx integer,
+                pushdata_hash bytea,
+                in_tx_num bigint
+            );
+            CREATE INDEX in_point_idx ON temp_inputs (tx_hash, in_idx);
             """
-        )
-
-        tx_upsert_stmt = await conn.prepare(
-            """
-            INSERT INTO transactions
-            SELECT tx_hash, height, tx_position, tx_offset
-            FROM temp_txs
-            ON CONFLICT (tx_hash)
-            DO UPDATE SET tx_hash=excluded.tx_hash, height=excluded.height, tx_position=excluded.tx_position, tx_offset=excluded.tx_offset;
-        """
         )
 
         t0 = time.time()
-        # await tx_insert_naive(conn, tx_rows)
-        await tx_insert_copy_method(conn, tx_rows)
-        await tx_upsert_from_temp_tx(tx_upsert_stmt)
+        await insert_tx_copy_method(conn, tx_rows)
+        await insert_input_copy_method(conn, in_rows)
+        await upsert_from_temp_txs(conn)
+        await upsert_from_temp_inputs(conn)
         t1 = time.time() - t0
         print_results_asyncpg(len(tx_offsets), t1)
 
-        # Select a row from the table.
-        # rows = await conn.fetch("SELECT * FROM transactions")
+        # rows = await conn.fetch("SELECT * FROM inputs;")
         # for row in rows:
         #     print(row)
 

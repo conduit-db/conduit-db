@@ -191,7 +191,9 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                     )
                     if len(pushdata_hashes):
                         for pd_hash in pushdata_hashes:
-                            in_rows.append((prevout_hash, prev_out_idx, pd_hash, in_idx))
+                            in_rows.append(
+                                (tx_hash, in_idx, prevout_hash, prev_out_idx, pd_hash)
+                            )
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
@@ -207,7 +209,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                 )
                 if len(pushdata_hashes):
                     for pd_hash in pushdata_hashes:
-                        out_rows.append((out_idx, pd_hash, value))
+                        out_rows.append((tx_hash, out_idx, pd_hash, value))
                 offset += scriptpubkey_len
 
             # nlocktime

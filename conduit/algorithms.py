@@ -125,9 +125,11 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 def parse_block(raw_block, tx_offsets, height):
     """
     returns:
-    - tx_rows:      [(tx_hash, height, pos, offset)]  # tx_num is generated
-    - in_rows:      [(prevout_hash, out_idx, pushdata_hash, in_idx)...]  # in_tx_num is generated
-    - out_rows:     [(out_idx, pushdata_hash, value)...]  # out_tx_num is generated
+    - tx_rows:      [(tx_hash, height, position, offset)]
+    - in_rows:      [(tx_hash, prevout_hash, out_idx, pushdata_hash, in_idx)...]
+    - out_rows:     [(tx_hash, out_idx, pushdata_hash, value)...]
+
+    # tx_num is generated for all 3 tables
     """
     tx_rows = []
     in_rows = []
@@ -168,7 +170,7 @@ def parse_block(raw_block, tx_offsets, height):
                     if len(pushdata_hashes):
                         for pd_hash in pushdata_hashes:
                             in_rows.append(
-                                (prevout_hash, prev_out_idx, pd_hash, in_idx)
+                                (tx_hash, in_idx, prevout_hash, prev_out_idx, pd_hash)
                             )
                 offset += script_sig_len
                 offset += 4  # skip sequence
@@ -183,7 +185,7 @@ def parse_block(raw_block, tx_offsets, height):
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
                     for pd_hash in pushdata_hashes:
-                        out_rows.append((out_idx, pd_hash, value))
+                        out_rows.append((tx_hash, out_idx, pd_hash, value))
                 offset += scriptpubkey_len
 
             # nlocktime
