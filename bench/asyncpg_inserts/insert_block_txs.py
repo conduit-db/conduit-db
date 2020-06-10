@@ -7,7 +7,7 @@ try:
     from conduit._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
     from conduit.algorithms import preprocessor, parse_block  # pure python
-from bench.utils import print_results
+from bench.utils import print_results, print_results_asyncpg
 
 from conduit.store import setup_storage
 
@@ -65,7 +65,17 @@ database="conduittestdb",
 
 import asyncio
 import asyncpg
-import datetime
+
+async def naive_tx_insert(conn, tx_rows):
+    """0.16057 seconds for 1557 txs therefore 9696.639159950348 txs per second"""
+    for tx_row in tx_rows:
+        await conn.execute(
+            """
+            INSERT INTO transactions VALUES($1, $2, $3, $4)
+            """,
+            *tx_row
+        )
+
 
 if __name__ == "__main__":
 
@@ -75,7 +85,7 @@ if __name__ == "__main__":
 
         t0 = time.time()
         tx_offsets = preprocessor(raw_block)
-        tx_rows = parse_block(raw_block, tx_offsets, 413567)
+        tx_rows, in_rows, out_rows = parse_block(raw_block, tx_offsets, 413567)
 
         t1 = time.time() - t0
         print_results(len(tx_offsets), t1 / 1, raw_block)
@@ -94,24 +104,34 @@ if __name__ == "__main__":
         # Execute a statement to create a new table.
         await conn.execute(
             """
-            CREATE TABLE transactions(
-                tx_hash bytea PRIMARY KEY,
-                tx_num integer generated always as identity
-            );
-            CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
+        UPDATE pg_settings
+            SET setting = 'off'
+            WHERE name='synchronous_commit'
         """
         )
 
         await conn.execute(
             """
-            INSERT INTO transactions(tx_hash) VALUES($1)
-        """,
-            b'1234',
+            CREATE TABLE transactions(
+                tx_hash bytea PRIMARY KEY,
+                height integer,
+                position integer,
+                tx_offset bigint,
+                tx_num bigint generated always as identity
+            );
+            CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
+            """
         )
 
-        # Select a row from the table.
-        row = await conn.fetchrow("SELECT * FROM transactions WHERE tx_hash = $1", b'1234')
-        print(row)
+        t0 = time.time()
+        await naive_tx_insert(conn, tx_rows)
+        t1 = time.time() - t0
+        print_results_asyncpg(len(tx_offsets), t1)
+
+        # # Select a row from the table.
+        # rows = await conn.fetch("SELECT * FROM transactions")
+        # for row in rows:
+        #     print(row)
 
         # Close the connection.
         await conn.close()
