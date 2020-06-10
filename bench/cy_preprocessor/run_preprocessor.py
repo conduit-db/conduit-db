@@ -10,7 +10,7 @@ from bench.utils import print_results
 if __name__ == "__main__":
 
     with open("../data/block413567.raw", "rb") as f:
-        raw_block = f.read()
+        raw_block = bytearray(f.read())
 
     t0 = time.time()
     for i in range(100):

@@ -95,6 +95,7 @@ cpdef preprocessor(bytearray block_view, unsigned long long offset=0):
 cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
     cdef unsigned long long i, len_script
     i = 0
+    pd_hashes = []
     len_script = len(script)
     try:
         while i < len_script:
@@ -122,32 +123,52 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
                 i += 4 + length
             else:  # slow search byte by byte...
                 i += 1
+        # hash pushdata
+        if len(pks) == 1:
+            pd_hashes.append(sha256(pks.pop()).digest())  # skip for loop if possible
+        else:
+            for pk in pks:
+                pd_hashes.append(sha256(pk).digest())
+
+        if len(pkhs) == 1:
+            pd_hashes.append(sha256(pkhs.pop()).digest())  # skip for loop if possible
+        else:
+            for pkh in pkhs:
+                pd_hashes.append(sha256(pkh).digest())
+        return pd_hashes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
         logger.exception(e)
         raise
-    return pks, pkhs
 
 
 cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
-    cdef unsigned int index
+    """
+    returns:
+    - tx_rows:      [(tx_hash, height, pos, offset)]  # tx_num is generated
+    - in_rows:      [(prevout_hash, out_idx, pushdata_hash, in_idx)...]  # in_tx_num is generated
+    - out_rows:     [(out_idx, pushdata_hash, value)...]  # out_tx_num is generated
+    """
+    cdef unsigned int position
     cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
         count_tx_out, script_sig_len, scriptpubkey_len
     cdef set pubkeys, pubkeyhashes
-    cdef list tx_rows
+    cdef list tx_rows, in_rows, out_rows
     cdef tuple tx_row
 
     tx_rows = []
+    in_rows = []
+    out_rows = []
     count_txs = len(tx_offsets)
     try:
-        for index in range(count_txs):
+        for position in range(count_txs):
             pks = set()
             pkhs = set()
 
             # tx_hash
-            offset = tx_offsets[index]
-            if index < count_txs - 1:
-                next_tx_offset = tx_offsets[index + 1]
+            offset = tx_offsets[position]
+            if position < count_txs - 1:
+                next_tx_offset = tx_offsets[position + 1]
             else:
                 next_tx_offset = len(raw_block)
             tx_hash = sha256(sha256(raw_block[offset:next_tx_offset]).digest()).digest()
@@ -157,35 +178,36 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
 
             # inputs
             count_tx_in, offset = unpack_varint(raw_block, offset)
-            for input in range(count_tx_in):
-
-                offset += 36  # skip (prev_out, idx)
+            for in_idx in range(count_tx_in):
+                prevout_hash = raw_block[offset: offset + 32]
+                offset += 32
+                prev_out_idx = struct_le_I.unpack_from(raw_block[offset: offset + 4])[0]
+                offset += 4
                 script_sig_len, offset = unpack_varint(raw_block, offset)
                 script_sig = raw_block[offset : offset + script_sig_len]
-                if not index == 0:  # some coinbase tx scriptsigs don't obey any rules.
-                    pubkeys, pubkey_hashes = get_pk_and_pkh_from_script(
+                if not position == 0:  # some coinbase tx scriptsigs don't obey any rules.
+                    pushdata_hashes = get_pk_and_pkh_from_script(
                         script_sig, pks, pkhs
                     )
-                    if len(pubkeys):
-                        pks.update(pubkeys)
-                    if len(pubkey_hashes):
-                        pkhs.update(pubkey_hashes)
+                    if len(pushdata_hashes):
+                        for pd_hash in pushdata_hashes:
+                            in_rows.append((prevout_hash, prev_out_idx, pd_hash, in_idx))
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
             # outputs
             count_tx_out, offset = unpack_varint(raw_block, offset)
-            for output in range(count_tx_out):
+            for out_idx in range(count_tx_out):
+                value = struct_le_Q.unpack_from(raw_block[offset: offset+8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(raw_block, offset)
                 scriptpubkey = raw_block[offset : offset + scriptpubkey_len]
-                pubkeys, pubkey_hashes = get_pk_and_pkh_from_script(
+                pushdata_hashes = get_pk_and_pkh_from_script(
                     scriptpubkey, pks, pkhs
                 )
-                if len(pubkeys):
-                    pks.update(pubkeys)
-                if len(pubkey_hashes):
-                    pkhs.update(pubkey_hashes)
+                if len(pushdata_hashes):
+                    for pd_hash in pushdata_hashes:
+                        out_rows.append((out_idx, pd_hash, value))
                 offset += scriptpubkey_len
 
             # nlocktime
@@ -194,9 +216,9 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
             tx_row = (tx_hash, pks, pkhs, height, offset)
             tx_rows.append(tx_row)
         assert len(tx_rows) == count_txs
-        return tx_rows
+        return tx_rows, in_rows, out_rows
     except Exception as e:
-        logger.debug(f"count_txs={count_txs}, index={index}, input={input}, output={output}, "
+        logger.debug(f"count_txs={count_txs}, position={position}, input={input}, output={output}, "
                      f"txid={bitcoinx.hash_to_hex_str(tx_hash)}")
         logger.exception(e)
         raise

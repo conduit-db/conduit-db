@@ -132,7 +132,7 @@ class TxParser(multiprocessing.Process):
                 #              f"{tx_positions_div}; len(tx_positions_div)={len(tx_positions_div)}; "
                 #              f"blk_height={blk_height}")
 
-                tx_rows = parse_block(
+                tx_rows, in_rows, out_rows = parse_block(
                     bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
                     tx_positions_div,
                     blk_height,
