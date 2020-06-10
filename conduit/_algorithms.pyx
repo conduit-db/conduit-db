@@ -43,7 +43,8 @@ def unpack_varint(buf, offset):
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
 
-cdef (unsigned long long, unsigned long long) unpack_varint_preprocessor(bytes buf, int offset) \
+cdef (unsigned long long, unsigned long long) unpack_varint_preprocessor(bytearray buf,
+        int offset) \
         except *:
     # more heavily cythonized version
     cdef int n
@@ -58,7 +59,7 @@ cdef (unsigned long long, unsigned long long) unpack_varint_preprocessor(bytes b
 
 
 
-cpdef preprocessor(bytes block_view, unsigned long long offset=0):
+cpdef preprocessor(bytearray block_view, unsigned long long offset=0):
     cdef unsigned long long count, i, script_sig_len, script_pubkey_len
 
     offset += HEADER_OFFSET

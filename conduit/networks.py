@@ -145,7 +145,8 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network: AbstractNetwork):
+    def __init__(self, network_type: str):
+        network: AbstractNetwork = NETWORKS[network_type]
         self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
@@ -177,8 +178,8 @@ class NetworkConfig:
 
 
 NETWORKS = {
-    MAINNET: MainNet,
-    TESTNET: TestNet,
-    SCALINGTESTNET: ScalingTestNet,
-    REGTEST: RegTestNet,
+    MAINNET: MainNet(),
+    TESTNET: TestNet(),
+    SCALINGTESTNET: ScalingTestNet(),
+    REGTEST: RegTestNet(),
 }

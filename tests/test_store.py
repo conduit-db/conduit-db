@@ -20,7 +20,7 @@ class TestStorage:
     }
     db = database.load(env_vars)
 
-    net_config = NetworkConfig(NETWORKS[env_vars.get("network")]())
+    net_config = NetworkConfig(env_vars.get("network"))
     headers = bitcoinx.Headers.from_file(
         net_config.BITCOINX_COIN, "headers.mmap", net_config.CHECKPOINT
     )

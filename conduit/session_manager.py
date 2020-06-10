@@ -26,7 +26,7 @@ class SessionManager:
         self.network: str = network
         self.session: Optional[BufferedSession] = None
         self.transport = None
-        self.config = NetworkConfig(NETWORKS[network]())
+        self.config = NetworkConfig(network)
         self.peers = self.config.peers
         self.host = host
         self.port = port

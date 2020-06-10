@@ -1,3 +1,16 @@
+import time
+
+from conduit.constants import REGTEST
+from conduit.networks import NetworkConfig
+
+try:
+    from conduit._algorithms import preprocessor, parse_block  # cython
+except ModuleNotFoundError:
+    from conduit.algorithms import preprocessor, parse_block  # pure python
+from bench.utils import print_results
+
+from conduit.store import setup_storage
+
 """
 - parse raw block
 - establish asyncpg connection with asynchronous_commit and temp_buffer size increased
@@ -39,3 +52,15 @@ upsert outputs table
 drop all 4 temp tables
 """
 
+
+if __name__ == "__main__":
+    store = setup_storage(NetworkConfig(REGTEST))
+
+    with open("../data/block413567.raw", "rb") as f:
+        raw_block = bytearray(f.read())
+
+    t0 = time.time()
+    tx_offsets = preprocessor(raw_block)
+    tx_rows = parse_block(raw_block, tx_offsets, 413567)
+    t1 = time.time() - t0
+    print_results(len(tx_offsets), t1/1, raw_block)

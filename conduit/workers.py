@@ -82,7 +82,7 @@ class BlockPreProcessor(multiprocessing.Process):
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
                 tx_positions = preprocessor(
-                    self.shm.buf[blk_start_pos:blk_end_pos].tobytes()
+                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos])
                 )
 
                 divided_parsing_work = self.distribute_load_parsing(
