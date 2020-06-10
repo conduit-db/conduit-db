@@ -7,7 +7,7 @@ def print_results(count_txs, t1, block_view):
     print(
         f"block parsing took {round(t1, 5)} seconds for {count_txs} txs and"
         f" {len(block_view)} "
-        f"bytes - therefore {rate} txs per second for an average tx size "
+        f"bytes - therefore {round(rate)} txs per second for an average tx size "
         f"of {av_tx_size} bytes - therefore {MB_per_sec} MB/sec"
     )
 
@@ -16,6 +16,6 @@ def print_results_asyncpg(count_txs, t1):
     rate = count_txs / t1
 
     print(
-        f"block parsing took {round(t1, 5)} seconds for {count_txs} txs"
-        f"therefore {rate} txs per second"
+        f"asynpg took {round(t1, 5)} seconds for {count_txs} rows "
+        f"therefore {round(rate)} rows per second"
     )

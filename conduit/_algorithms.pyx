@@ -152,7 +152,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
     cdef unsigned int position
     cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
         count_tx_out, script_sig_len, scriptpubkey_len
-    cdef set pubkeys, pubkeyhashes
+    cdef set pks, pkhs
     cdef list tx_rows, in_rows, out_rows
     cdef tuple tx_row
 
@@ -213,7 +213,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
             # nlocktime
             offset += 4
 
-            tx_row = (tx_hash, pks, pkhs, height, offset)
+            tx_row = (tx_hash, height, position, offset)
             tx_rows.append(tx_row)
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows

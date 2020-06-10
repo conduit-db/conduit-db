@@ -1,5 +1,7 @@
 import time
 
+from asyncpg.prepared_stmt import PreparedStatement
+
 from conduit.constants import REGTEST
 from conduit.networks import NetworkConfig
 
@@ -66,15 +68,25 @@ database="conduittestdb",
 import asyncio
 import asyncpg
 
-async def naive_tx_insert(conn, tx_rows):
-    """0.16057 seconds for 1557 txs therefore 9696.639159950348 txs per second"""
+
+async def tx_insert_naive(conn, tx_rows):
     for tx_row in tx_rows:
         await conn.execute(
-            """
-            INSERT INTO transactions VALUES($1, $2, $3, $4)
-            """,
-            *tx_row
+            """INSERT INTO transactions VALUES($1, $2, $3, $4)""", *tx_row
         )
+
+
+async def tx_insert_copy_method(conn: asyncpg.Connection, tx_rows):
+    await conn.copy_records_to_table(
+        "temp_txs",
+        columns=("tx_hash", "height", "tx_position", "tx_offset"),
+        records=tx_rows,
+    )
+    # await conn.execute("""CREATE UNIQUE INDEX tx_num_idx ON temp_txs (tx_num);""")
+
+
+async def tx_upsert_from_temp_tx(stmt: PreparedStatement):
+    await stmt.fetchval()
 
 
 if __name__ == "__main__":
@@ -86,12 +98,9 @@ if __name__ == "__main__":
         t0 = time.time()
         tx_offsets = preprocessor(raw_block)
         tx_rows, in_rows, out_rows = parse_block(raw_block, tx_offsets, 413567)
-
         t1 = time.time() - t0
         print_results(len(tx_offsets), t1 / 1, raw_block)
 
-        # Establish a connection to an existing database named "test"
-        # as a "postgres" user.
         conn = await asyncpg.connect(
             user="conduitadmin",
             host="127.0.0.1",
@@ -99,36 +108,57 @@ if __name__ == "__main__":
             password="conduitpass",
             database="conduittestdb",
         )
-        await conn.execute("""DROP TABLE transactions""")
+        await conn.execute("""DROP TABLE transactions;""")
 
-        # Execute a statement to create a new table.
         await conn.execute(
             """
-        UPDATE pg_settings
-            SET setting = 'off'
-            WHERE name='synchronous_commit'
-        """
+            UPDATE pg_settings
+                SET setting = 'off'
+                WHERE name='synchronous_commit';
+            UPDATE pg_settings
+                SET setting = 200
+                WHERE name='temp_buffers'
+            """
         )
 
         await conn.execute(
             """
-            CREATE TABLE transactions(
+            CREATE UNLOGGED TABLE transactions(
                 tx_hash bytea PRIMARY KEY,
                 height integer,
-                position integer,
+                tx_position integer,
                 tx_offset bigint,
                 tx_num bigint generated always as identity
+            );
+            CREATE TEMPORARY TABLE temp_txs(
+                tx_hash bytea PRIMARY KEY,
+                height integer,
+                tx_position integer,
+                tx_offset bigint,
+                tx_num bigint
             );
             CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
             """
         )
 
+        tx_upsert_stmt = await conn.prepare(
+            """
+            INSERT INTO transactions
+            SELECT tx_hash, height, tx_position, tx_offset
+            FROM temp_txs
+            ON CONFLICT (tx_hash)
+            DO UPDATE SET tx_hash=excluded.tx_hash, height=excluded.height, tx_position=excluded.tx_position, tx_offset=excluded.tx_offset;
+        """
+        )
+
         t0 = time.time()
-        await naive_tx_insert(conn, tx_rows)
+        # await tx_insert_naive(conn, tx_rows)
+        await tx_insert_copy_method(conn, tx_rows)
+        await tx_upsert_from_temp_tx(tx_upsert_stmt)
         t1 = time.time() - t0
         print_results_asyncpg(len(tx_offsets), t1)
 
-        # # Select a row from the table.
+        # Select a row from the table.
         # rows = await conn.fetch("SELECT * FROM transactions")
         # for row in rows:
         #     print(row)
