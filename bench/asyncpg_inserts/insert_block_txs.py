@@ -52,15 +52,69 @@ upsert outputs table
 drop all 4 temp tables
 """
 
+"""
+test db:
+
+user="conduitadmin",
+host="127.0.0.1",
+port=5432,
+password="conduitpass",
+database="conduittestdb",
+
+"""
+
+import asyncio
+import asyncpg
+import datetime
 
 if __name__ == "__main__":
+
+    async def main():
+        with open("../data/block413567.raw", "rb") as f:
+            raw_block = bytearray(f.read())
+
+        t0 = time.time()
+        tx_offsets = preprocessor(raw_block)
+        tx_rows = parse_block(raw_block, tx_offsets, 413567)
+
+        t1 = time.time() - t0
+        print_results(len(tx_offsets), t1 / 1, raw_block)
+
+        # Establish a connection to an existing database named "test"
+        # as a "postgres" user.
+        conn = await asyncpg.connect(
+            user="conduitadmin",
+            host="127.0.0.1",
+            port=5432,
+            password="conduitpass",
+            database="conduittestdb",
+        )
+        await conn.execute("""DROP TABLE transactions""")
+
+        # Execute a statement to create a new table.
+        await conn.execute(
+            """
+            CREATE TABLE transactions(
+                tx_hash bytea PRIMARY KEY,
+                tx_num integer generated always as identity
+            );
+            CREATE UNIQUE INDEX tx_num_idx ON transactions (tx_num);
+        """
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO transactions(tx_hash) VALUES($1)
+        """,
+            b'1234',
+        )
+
+        # Select a row from the table.
+        row = await conn.fetchrow("SELECT * FROM transactions WHERE tx_hash = $1", b'1234')
+        print(row)
+
+        # Close the connection.
+        await conn.close()
+
+    asyncio.get_event_loop().run_until_complete(main())
     store = setup_storage(NetworkConfig(REGTEST))
-
-    with open("../data/block413567.raw", "rb") as f:
-        raw_block = bytearray(f.read())
-
-    t0 = time.time()
-    tx_offsets = preprocessor(raw_block)
-    tx_rows = parse_block(raw_block, tx_offsets, 413567)
-    t1 = time.time() - t0
-    print_results(len(tx_offsets), t1/1, raw_block)
