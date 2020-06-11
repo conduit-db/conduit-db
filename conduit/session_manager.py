@@ -53,7 +53,7 @@ class SessionManager:
 
     async def run(self):
         try:
-            self.storage = setup_storage(self.config)
+            self.storage = await setup_storage(self.config)
             await self.connect_session()
             init_handshake = asyncio.create_task(
                 self.session.send_version(
