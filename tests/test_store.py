@@ -37,7 +37,7 @@ class TestStorage:
         klass.storage = Storage(
             klass.headers, klass.block_headers, klass.pg_db, klass.redis
         )
-        klass.storage.pg_database.drop_tables([database.Transaction])
+        klass.storage.pg_database.pg_drop_tables([database.Transaction])
         klass.storage.pg_database.create_tables([database.Transaction])
 
     def setup_method(self) -> None:
@@ -47,7 +47,7 @@ class TestStorage:
     def teardown_method(self) -> None:
         # pylint: disable=no-value-for-parameter
         with self.storage.pg_database.atomic():
-            self.storage.pg_database.drop_tables([database.Transaction])
+            self.storage.pg_database.pg_drop_tables([database.Transaction])
 
     @classmethod
     def teardown_class(klass) -> None:
