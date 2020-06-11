@@ -124,10 +124,10 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 def parse_block(raw_block, tx_offsets, height):
     """
-    returns:
-    - tx_rows:      [(tx_hash, height, position, offset)]
-    - in_rows:      [(tx_hash, prevout_hash, out_idx, pushdata_hash, in_idx)...]
-    - out_rows:     [(tx_hash, out_idx, pushdata_hash, value)...]
+    returned rows:
+    - tx_rows:      [("tx_hash", "height", "tx_position", "tx_offset")]
+    - in_rows:      [("in_prevout_hash", "in_prevout_idx", "in_pushdata_hash", "in_idx", "in_tx_hash")...]
+    - out_rows:     [("out_tx_hash", "out_idx", "out_pushdata_hash", "out_value")...]
 
     # tx_num is generated for all 3 tables
     """
@@ -155,22 +155,27 @@ def parse_block(raw_block, tx_offsets, height):
             # inputs
             count_tx_in, offset = unpack_varint(raw_block, offset)
             for in_idx in range(count_tx_in):
-                prevout_hash = raw_block[offset : offset + 32]
+                in_prevout_hash = raw_block[offset : offset + 32]
                 offset += 32
-                prev_out_idx = struct_le_I.unpack_from(raw_block[offset : offset + 4])[
-                    0
-                ]
+                in_prevout_idx = struct_le_I.unpack_from(
+                    raw_block[offset : offset + 4]
+                )[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint(raw_block, offset)
                 script_sig = raw_block[offset : offset + script_sig_len]
-                if (
-                    not position == 0
-                ):  # some coinbase tx scriptsigs don't obey any rules.
+                # some coinbase tx scriptsigs don't obey any rules.
+                if not position == 0:
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
                     if len(pushdata_hashes):
-                        for pd_hash in pushdata_hashes:
+                        for in_pushdata_hash in pushdata_hashes:
                             in_rows.append(
-                                (tx_hash, in_idx, prevout_hash, prev_out_idx, pd_hash)
+                                (
+                                    in_prevout_hash,
+                                    in_prevout_idx,
+                                    in_pushdata_hash,
+                                    in_idx,
+                                    tx_hash,
+                                )
                             )
                 offset += script_sig_len
                 offset += 4  # skip sequence
@@ -178,14 +183,16 @@ def parse_block(raw_block, tx_offsets, height):
             # outputs
             count_tx_out, offset = unpack_varint(raw_block, offset)
             for out_idx in range(count_tx_out):
-                value = struct_le_Q.unpack_from(raw_block[offset : offset + 8])[0]
+                out_value = struct_le_Q.unpack_from(raw_block[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(raw_block, offset)
                 scriptpubkey = raw_block[offset : offset + scriptpubkey_len]
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
-                    for pd_hash in pushdata_hashes:
-                        out_rows.append((tx_hash, out_idx, pd_hash, value))
+                    for out_pushdata_hash in pushdata_hashes:
+                        out_rows.append(
+                            (tx_hash, out_idx, out_pushdata_hash, out_value)
+                        )
                 offset += scriptpubkey_len
 
             # nlocktime
