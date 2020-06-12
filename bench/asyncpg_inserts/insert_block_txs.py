@@ -1,11 +1,8 @@
 import asyncio
-import asyncpg
 import logging
 import time
 
-from conduit.constants import REGTEST
-from conduit.networks import NetworkConfig
-from conduit.database import PG_Database, load_pg_database
+from conduit.database import load_test_pg_database
 
 try:
     from conduit._algorithms import preprocessor, parse_block  # cython
@@ -29,7 +26,7 @@ if __name__ == "__main__":
         t1 = time.time() - t0
         print_results(len(tx_offsets), t1 / 1, raw_block)
 
-        pg_db = await load_pg_database()
+        pg_db = await load_test_pg_database()
 
         await pg_db.pg_update_settings()
         await pg_db.pg_drop_tables()

@@ -12,6 +12,16 @@ async def pg_connect() -> asyncpg.Connection:
     )
     return conn
 
+async def pg_test_connect() -> asyncpg.Connection:
+    conn = await asyncpg.connect(
+        user="conduitadmin",
+        host="127.0.0.1",
+        port=5432,
+        password="conduitpass",
+        database="conduittestdb",
+    )
+    return conn
+
 class PG_Database:
     """simple container for common postgres queries"""
 
@@ -243,6 +253,14 @@ class PG_Database:
 
 async def load_pg_database() -> PG_Database:
     pg_conn = await pg_connect()
+    pg_database = PG_Database(pg_conn)
+    await pg_database.pg_update_settings()
+    # await pg_database.pg_drop_tables()
+    await pg_database.pg_create_permanent_tables()
+    return PG_Database(pg_conn)
+
+async def load_test_pg_database() -> PG_Database:
+    pg_conn = await pg_test_connect()
     pg_database = PG_Database(pg_conn)
     await pg_database.pg_update_settings()
     # await pg_database.pg_drop_tables()
