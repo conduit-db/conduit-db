@@ -9,6 +9,7 @@ from .logs import logs
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_33 = 33
+OP_PUSH_65 = 65
 SET_OTHER_PUSH_OPS = set(range(1, 76))
 
 struct_le_H = Struct("<H")
@@ -16,6 +17,7 @@ struct_le_I = Struct("<I")
 struct_le_Q = Struct("<Q")
 struct_OP_20 = Struct("<20s")
 struct_OP_33 = Struct("<33s")
+struct_OP_65 = Struct("<65s")
 
 
 OP_PUSHDATA1 = 0x4C
@@ -83,6 +85,10 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
                 i += 1
                 pks.add(struct_OP_33.unpack_from(script, i)[0])
                 i += 33
+            elif script[i] == 65:
+                i += 1
+                pks.add(struct_OP_65.unpack_from(script, i)[0])
+                i += 65
             elif script[i] in SET_OTHER_PUSH_OPS:  # signature -> skip
                 i += script[i] + 1
             elif script[i] == 0x4C:

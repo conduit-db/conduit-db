@@ -13,6 +13,7 @@ from .logs import logs
 cdef unsigned int HEADER_OFFSET = 80
 cdef unsigned char OP_PUSH_20 = 20
 cdef unsigned char OP_PUSH_33 = 33
+cdef unsigned char OP_PUSH_65 = 65
 cdef cppset[int] SET_OTHER_PUSH_OPS
 cdef unsigned char i
 for i in range(1,76):
@@ -23,6 +24,7 @@ struct_le_I = Struct('<I')
 struct_le_Q = Struct('<Q')
 struct_OP_20 = Struct('<20s')
 struct_OP_33 = Struct('<33s')
+struct_OP_65 = Struct("<65s")
 
 
 OP_PUSHDATA1 = 0x4c
@@ -107,6 +109,10 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
                 i += 1
                 pks.add(struct_OP_33.unpack_from(script, i)[0])
                 i += 33
+            elif script[i] == 65:
+                i += 1
+                pks.add(struct_OP_65.unpack_from(script, i)[0])
+                i += 65
             elif SET_OTHER_PUSH_OPS.find(script[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
                 i += script[i] + 1
             elif script[i] == 0x4C:
