@@ -198,8 +198,8 @@ class TxParser(multiprocessing.Process):
                     blk_height,
                 )
 
-                print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
-                      f"len(out_rows)={len(out_rows)}")
+                # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
+                #       f"len(out_rows)={len(out_rows)}")
                 coro = partial(self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows))
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
 

@@ -125,16 +125,16 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
                 i += 1
         # hash pushdata
         if len(pks) == 1:
-            pd_hashes.append(sha256(pks.pop()).digest())  # skip for loop if possible
+            pd_hashes.append(sha256(pks.pop()).digest()[0:20])  # skip for loop if possible
         else:
             for pk in pks:
-                pd_hashes.append(sha256(pk).digest())
+                pd_hashes.append(sha256(pk).digest()[0:20])
 
         if len(pkhs) == 1:
-            pd_hashes.append(sha256(pkhs.pop()).digest())  # skip for loop if possible
+            pd_hashes.append(sha256(pkhs.pop()).digest()[0:20])  # skip for loop if possible
         else:
             for pkh in pkhs:
-                pd_hashes.append(sha256(pkh).digest())
+                pd_hashes.append(sha256(pkh).digest()[0:20])
         return pd_hashes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
@@ -171,7 +171,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                 next_tx_offset = tx_offsets[position + 1]
             else:
                 next_tx_offset = len(raw_block)
-            tx_hash = sha256(sha256(raw_block[offset:next_tx_offset]).digest()).digest()
+            tx_hash = sha256(sha256(raw_block[offset:next_tx_offset]).digest()).digest()[0:20]
 
             # version
             offset += 4
@@ -179,7 +179,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
             # inputs
             count_tx_in, offset = unpack_varint(raw_block, offset)
             for in_idx in range(count_tx_in):
-                in_prevout_hash = raw_block[offset : offset + 32]
+                in_prevout_hash = raw_block[offset : offset + 20]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(
                     raw_block[offset : offset + 4]
