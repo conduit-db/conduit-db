@@ -11,7 +11,7 @@ import asyncpg
 import bitcoinx
 from bitcoinx import read_varint
 
-from .database import pg_connect, load_pg_database
+from .database import pg_connect, load_pg_database, PG_Database
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
 
@@ -122,12 +122,13 @@ class TxParser(multiprocessing.Process):
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
         self.pg_db = None
         self.pg_parsed_rows_queue = None
+        self.worker_ack_queue_asyncio = None
         self.loop = None
-        # self.worker_ack_queue_asyncio = asyncio.Queue()
 
     def run(self):
         self.loop = asyncio.get_event_loop()
         self.pg_parsed_rows_queue = asyncio.Queue()
+        self.worker_ack_queue_asyncio = asyncio.Queue()
         try:
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
@@ -139,50 +140,36 @@ class TxParser(multiprocessing.Process):
             logger.exception(e)
             raise
 
-    async def create_temp_tables(self, conn):
-        await conn.execute("""
-            -- TEMP TABLES
-            CREATE TEMPORARY TABLE temp_txs(
-                tx_hash bytea PRIMARY KEY,
-                height integer,
-                tx_position integer,
-                tx_offset bigint,
-                tx_num bigint
-            );
-
-            CREATE TEMPORARY TABLE temp_inputs(
-                in_prevout_hash bytea,
-                in_prevout_idx integer,
-                in_pushdata_hash bytea,
-                in_idx bigint,
-                in_tx_hash bytea,
-                in_tx_num bigint  -- last because left blank initially
-            );
-
-            CREATE TEMPORARY TABLE temp_outputs(
-                out_tx_hash bytea,
-                out_idx integer,
-                out_pushdata_hash bytea,
-                out_value bigint
-            );"""
-        )
-
-    async def pg_insert_tx_copy_method(self, pg_conn, tx_rows):
-        await pg_conn.copy_records_to_table("temp_txs",
-            columns=["tx_hash", "height", "tx_position", "tx_offset"],
-            records=tx_rows, )  # await conn.execute("""CREATE UNIQUE INDEX tx_num_idx ON temp_txs (tx_num);""")
-    
     async def pg_inserts_task(self):
-        pg_conn = await pg_connect()
-        await self.create_temp_tables(pg_conn)
-
+        pg_db: PG_Database
+        pg_db = await load_pg_database()
         try:
             while True:
-                result = await pg_conn.fetch("""select * from temp_txs""")
-                print(f"len temp_txs table rows={len(result)}")
-                rows = await self.pg_parsed_rows_queue.get()
-                print(len(rows[0]), len(rows[1]), len(rows[2]))
-                await self.pg_insert_tx_copy_method(pg_conn, rows[0])
+                tx_rows, in_rows, out_rows = await self.pg_parsed_rows_queue.get()
+                # print(tx_rows)
+                # print(in_rows)
+                # print(out_rows)
+                # print(f"got: {len(tx_rows)} tx_rows; {len(in_rows)} in_rows; "
+                #     f"{len(out_rows)} out_rows")
+                await pg_db.pg_create_temp_tables()
+                await pg_db.pg_insert_tx_copy_method(tx_rows)
+                await pg_db.pg_insert_output_copy_method(out_rows)
+                await pg_db.pg_insert_input_copy_method(in_rows)
+                await pg_db.pg_upsert_from_temp_txs()
+                await pg_db.pg_upsert_from_temp_outputs()
+                await pg_db.pg_upsert_from_temp_inputs()
+                await pg_db.pg_drop_temp_tables()
+
+                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from transactions""")
+                # print(f"count transactions table rows={result}")
+                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from inputs""")
+                # print(f"count inputs table rows={result}")
+                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from outputs""")
+                # print(f"count outputs table rows={result}")
+                blk_hash, tx_count = await self.worker_ack_queue_asyncio.get()
+                # print(f"item={(blk_hash, tx_count)}")
+                self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
+                # ack is only sent when db is updated
         except Exception as e:
             logger.exception(e)
             raise e
@@ -215,11 +202,10 @@ class TxParser(multiprocessing.Process):
                       f"len(out_rows)={len(out_rows)}")
                 coro = partial(self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows))
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
-                self.worker_ack_queue_tx_parse.put((blk_hash, len(tx_positions_div)))
-                # # ack is only sent when db is updated
-                # self.worker_ack_queue_asyncio.put_nowait(
-                #     (blk_hash, len(tx_positions_div))
-                # )
+
+                item = (blk_hash, len(tx_positions_div))
+                coro2 = partial(self.worker_ack_queue_asyncio.put, item)
+                asyncio.run_coroutine_threadsafe(coro2(), self.loop)
             except Exception as e:
                 logger.exception(e)
                 raise

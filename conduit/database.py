@@ -8,7 +8,7 @@ async def pg_connect() -> asyncpg.Connection:
         host="127.0.0.1",
         port=5432,
         password="conduitpass",
-        database="conduittestdb",
+        database="conduitdb",
     )
     return conn
 
@@ -30,7 +30,7 @@ class PG_Database:
                 WHERE name='synchronous_commit';
             UPDATE pg_settings
                 SET setting = 200
-                WHERE name='temp_buffers'
+                WHERE name='temp_buffers';
             """
         )
 
@@ -202,7 +202,9 @@ class PG_Database:
             )
             INSERT INTO inputs
             SELECT full_inputs.in_prevout_tx_num, full_inputs.in_prevout_idx, full_inputs.in_pushdata_hash, full_inputs.in_idx, full_inputs.in_tx_num
-            FROM add_in_tx_num AS full_inputs;"""
+            FROM add_in_tx_num AS full_inputs
+            ON CONFLICT (in_prevout_tx_num, in_prevout_idx, in_pushdata_hash)
+            DO NOTHING;"""
         )
 
     async def pg_upsert_from_temp_outputs(self):
@@ -218,11 +220,13 @@ class PG_Database:
             -- select * from tmp_outs_w_num
             INSERT INTO outputs
             SELECT full_outputs.out_tx_num, full_outputs.out_idx, full_outputs.out_pushdata_hash, full_outputs.out_value
-            FROM tmp_outs_w_num AS full_outputs;
+            FROM tmp_outs_w_num AS full_outputs
+            ON CONFLICT (out_tx_num, out_idx, out_pushdata_hash)
+            DO NOTHING;
         """
         )
 
-    async def pg_process_parsed_block_metadata(self, tx_rows, out_rows, in_rows):
+    async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows):
         await self.pg_create_temp_tables()
 
         await self.pg_insert_tx_copy_method(tx_rows)
