@@ -22,6 +22,8 @@ class Storage:
         self.block_headers: Headers = block_headers
         self.redis = redis  # NotImplemented
 
+    async def close(self):
+        await self.pg_database.close()
     # External API
 
 

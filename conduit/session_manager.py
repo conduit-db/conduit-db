@@ -22,7 +22,7 @@ logger = logs.get_logger("session-manager")
 class SessionManager:
     """Coordinates startup and shutdown of all components"""
 
-    def __init__(self, network, host, port, env_vars, db):
+    def __init__(self, network, host, port, env_vars):
         self.network: str = network
         self.session: Optional[BufferedSession] = None
         self.transport = None
@@ -32,7 +32,6 @@ class SessionManager:
         self.port = port
         self.storage: Optional[Storage] = None
         self.env_vars = env_vars
-        self.db = db
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -70,3 +69,4 @@ class SessionManager:
         finally:
             if self.transport:
                 self.transport.close()
+            await self.storage.close()

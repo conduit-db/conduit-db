@@ -7,7 +7,7 @@ import sys
 import time
 from typing import Dict
 
-from conduit import database
+from conduit.database import load_pg_database
 from conduit.logs import logs
 from conduit.session_manager import SessionManager
 from conduit.constants import (
@@ -26,6 +26,8 @@ from conduit.constants import (
 
 # selector = selectors.SelectSelector()
 # loop = asyncio.SelectorEventLoop(selector)
+
+
 loop = asyncio.ProactorEventLoop()
 asyncio.set_event_loop(loop)
 
@@ -171,8 +173,7 @@ def setup():
     env_vars.update(get_env_vars())
     env_vars.update(parse_args())  # overrides
     get_and_set_network_type(env_vars)
-    db = database.load(env_vars)
-    return env_vars, db
+    return env_vars
 
 
 def loop_exception_handler(loop, context) -> None:
@@ -184,19 +185,16 @@ async def main():
     try:
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(loop_exception_handler)
-        env_vars, db = setup()
+        env_vars = setup()
         session_manager = SessionManager(
             network=env_vars.get("network"),
             host="127.0.0.1",
             port=8000,
-            env_vars=env_vars,
-            db=db,
+            env_vars=env_vars
         )
         await session_manager.run()
     except KeyboardInterrupt:
         pass
-    finally:
-        database.db.close()
 
 
 if __name__ == "__main__":

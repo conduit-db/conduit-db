@@ -1,5 +1,3 @@
-import asyncio
-
 import asyncpg
 
 from .logs import logs
@@ -69,7 +67,7 @@ class PG_Database:
                     tx_offset bigint,
                     tx_num integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY
                 );
-                CREATE UNIQUE INDEX tx_hash_idx ON transactions (tx_hash);
+                CREATE UNIQUE INDEX IF NOT EXISTS tx_hash_idx ON transactions (tx_hash);
 
                 CREATE UNLOGGED TABLE IF NOT EXISTS inputs(
                     in_prevout_tx_num bigint,
@@ -78,7 +76,8 @@ class PG_Database:
                     in_idx integer,
                     in_tx_num bigint
                 );
-                CREATE UNIQUE INDEX in_point_idx ON inputs (in_prevout_tx_num, in_prevout_idx, in_pushdata_hash);
+                CREATE UNIQUE INDEX IF NOT EXISTS in_point_idx ON inputs (in_prevout_tx_num, 
+                in_prevout_idx, in_pushdata_hash);
 
                 CREATE UNLOGGED TABLE IF NOT EXISTS outputs(
                     out_tx_num bigint,
@@ -86,7 +85,8 @@ class PG_Database:
                     out_pushdata_hash bytea,
                     out_value bigint
                 );
-                CREATE UNIQUE INDEX out_point_idx ON outputs (out_tx_num, out_idx, out_pushdata_hash);
+                CREATE UNIQUE INDEX IF NOT EXISTS out_point_idx ON outputs (out_tx_num, out_idx, 
+                out_pushdata_hash);
                 """
         )
 
@@ -222,6 +222,25 @@ class PG_Database:
         """
         )
 
+    async def pg_process_parsed_block_metadata(self, tx_rows, out_rows, in_rows):
+        await self.pg_create_temp_tables()
+
+        await self.pg_insert_tx_copy_method(tx_rows)
+        await self.pg_insert_output_copy_method(out_rows)
+        await self.pg_insert_input_copy_method(in_rows)
+
+        await self.pg_upsert_from_temp_txs()
+        await self.pg_upsert_from_temp_outputs()
+        await self.pg_upsert_from_temp_inputs()
+        # rows = await pg_db.pg_conn.fetch("SELECT * FROM outputs;")
+        # for row in rows:
+        #     print(row)
+        await self.pg_drop_temp_tables()
+
 async def load_pg_database() -> PG_Database:
     pg_conn = await pg_connect()
+    pg_database = PG_Database(pg_conn)
+    await pg_database.pg_update_settings()
+    # await pg_database.pg_drop_tables()
+    await pg_database.pg_create_permanent_tables()
     return PG_Database(pg_conn)

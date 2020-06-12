@@ -1,13 +1,20 @@
+import asyncio
 import io
 import multiprocessing
+import threading
+import time
+from functools import partial
 from multiprocessing import shared_memory
 from typing import List, Tuple
 
+import asyncpg
 import bitcoinx
 from bitcoinx import read_varint
 
+from .database import pg_connect, load_pg_database
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
+
 try:
     from ._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
@@ -113,8 +120,74 @@ class TxParser(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
+        self.pg_db = None
+        self.pg_parsed_rows_queue = None
+        self.loop = None
+        # self.worker_ack_queue_asyncio = asyncio.Queue()
 
     def run(self):
+        self.loop = asyncio.get_event_loop()
+        self.pg_parsed_rows_queue = asyncio.Queue()
+        try:
+            main_thread = threading.Thread(target=self.main_thread)
+            main_thread.start()
+            asyncio.get_event_loop().run_until_complete(self.pg_inserts_task())
+            print("Coro done...")
+            while True:
+                time.sleep(0.05)
+        except Exception as e:
+            logger.exception(e)
+            raise
+
+    async def create_temp_tables(self, conn):
+        await conn.execute("""
+            -- TEMP TABLES
+            CREATE TEMPORARY TABLE temp_txs(
+                tx_hash bytea PRIMARY KEY,
+                height integer,
+                tx_position integer,
+                tx_offset bigint,
+                tx_num bigint
+            );
+
+            CREATE TEMPORARY TABLE temp_inputs(
+                in_prevout_hash bytea,
+                in_prevout_idx integer,
+                in_pushdata_hash bytea,
+                in_idx bigint,
+                in_tx_hash bytea,
+                in_tx_num bigint  -- last because left blank initially
+            );
+
+            CREATE TEMPORARY TABLE temp_outputs(
+                out_tx_hash bytea,
+                out_idx integer,
+                out_pushdata_hash bytea,
+                out_value bigint
+            );"""
+        )
+
+    async def pg_insert_tx_copy_method(self, pg_conn, tx_rows):
+        await pg_conn.copy_records_to_table("temp_txs",
+            columns=["tx_hash", "height", "tx_position", "tx_offset"],
+            records=tx_rows, )  # await conn.execute("""CREATE UNIQUE INDEX tx_num_idx ON temp_txs (tx_num);""")
+    
+    async def pg_inserts_task(self):
+        pg_conn = await pg_connect()
+        await self.create_temp_tables(pg_conn)
+
+        try:
+            while True:
+                result = await pg_conn.fetch("""select * from temp_txs""")
+                print(f"len temp_txs table rows={len(result)}")
+                rows = await self.pg_parsed_rows_queue.get()
+                print(len(rows[0]), len(rows[1]), len(rows[2]))
+                await self.pg_insert_tx_copy_method(pg_conn, rows[0])
+        except Exception as e:
+            logger.exception(e)
+            raise e
+
+    def main_thread(self):
         while True:
             try:
                 item = self.worker_in_queue_tx_parse.get()
@@ -138,15 +211,18 @@ class TxParser(multiprocessing.Process):
                     blk_height,
                 )
 
-                # Todo - directly update postgres with metadata via asyncpg connection
-                # logger.debug(
-                #     f"TxParser: completed {len(results)} txs for block hash: "
-                #     f"{blk_hash.hex()}, block height: {blk_height}."
-                # )
-
+                print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
+                      f"len(out_rows)={len(out_rows)}")
+                coro = partial(self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows))
+                asyncio.run_coroutine_threadsafe(coro(), self.loop)
                 self.worker_ack_queue_tx_parse.put((blk_hash, len(tx_positions_div)))
+                # # ack is only sent when db is updated
+                # self.worker_ack_queue_asyncio.put_nowait(
+                #     (blk_hash, len(tx_positions_div))
+                # )
             except Exception as e:
                 logger.exception(e)
+                raise
 
 
 class MTreeCalculator(multiprocessing.Process):
