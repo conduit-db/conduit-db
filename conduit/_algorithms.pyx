@@ -227,12 +227,10 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height, uns
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
                         set_pd_rows.add((tx_num, out_idx, out_pushdata_hash, 0))
-                        out_rows.append(
-                            (tx_num, out_idx, out_value)
-                        )
+                        out_rows.append((tx_num, out_idx, out_value, None, None))
                 else:
                     set_pd_rows.add((tx_num, out_idx, b"", 0))
-                    out_rows.append((tx_hash, out_idx, b"", out_value))
+                    out_rows.append((tx_num, out_idx, out_value, None, None))
                 offset += scriptpubkey_len
 
             # nlocktime

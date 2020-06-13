@@ -151,6 +151,7 @@ class TxParser(multiprocessing.Process):
     async def pg_inserts_task(self):
         pg_db: PG_Database
         pg_db = await load_pg_database()
+        await pg_db.pg_update_settings()
         try:
             while True:
                 tx_rows, in_rows, out_rows, set_pd_rows = await self.pg_parsed_rows_queue.get()
@@ -159,14 +160,12 @@ class TxParser(multiprocessing.Process):
                 # print(out_rows)
                 # print(f"got: {len(tx_rows)} tx_rows; {len(in_rows)} in_rows; "
                 #     f"{len(out_rows)} out_rows")
-                # await pg_db.pg_create_temp_tables()
-                # await pg_db.pg_insert_tx_copy_method(tx_rows)
-                # await pg_db.pg_insert_output_copy_method(out_rows)
-                # await pg_db.pg_insert_input_copy_method(in_rows)
-                # await pg_db.pg_upsert_from_temp_txs()
-                # await pg_db.pg_upsert_from_temp_outputs()
-                # await pg_db.pg_upsert_from_temp_inputs()
-                # await pg_db.pg_drop_temp_tables()
+                await pg_db.pg_create_temp_tables()
+                await pg_db.pg_bulk_load_tx_rows(tx_rows)
+                await pg_db.pg_bulk_load_output_rows(out_rows)
+                await pg_db.pg_bulk_load_input_rows(in_rows)
+                await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+                await pg_db.pg_drop_temp_tables()
 
                 # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from transactions""")
                 # print(f"count transactions table rows={result}")

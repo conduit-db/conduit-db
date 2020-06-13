@@ -37,12 +37,10 @@ if __name__ == "__main__":
         await pg_db.pg_create_temp_tables()
 
         t0 = time.time()
-        await pg_db.pg_insert_tx_copy_method(tx_rows)
-        await pg_db.pg_insert_output_copy_method(out_rows)
-        await pg_db.pg_insert_input_copy_method(in_rows)
-        await pg_db.pg_upsert_from_temp_txs()
-        await pg_db.pg_upsert_from_temp_outputs()
-        await pg_db.pg_upsert_from_temp_inputs()
+        await pg_db.pg_bulk_load_tx_rows(tx_rows)
+        await pg_db.pg_bulk_load_output_rows(out_rows)
+        await pg_db.pg_bulk_load_input_rows(in_rows)
+        await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
         t1 = time.time() - t0
         print_results_asyncpg(len(tx_offsets), t1)
 
