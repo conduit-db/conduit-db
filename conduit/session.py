@@ -207,6 +207,8 @@ class BufferedSession(BitcoinFramer):
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
 
+        self.tx_num_value = multiprocessing.Value('Q', lock=True)
+
     def run_coro_threadsafe(self, coro, *args, **kwargs):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
@@ -334,6 +336,7 @@ class BufferedSession(BitcoinFramer):
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse,
+                self.tx_num_value
             )
             p.start()
             self.processes.append(p)

@@ -149,26 +149,30 @@ cpdef get_pk_and_pkh_from_script(bytearray script, set pks, set pkhs):
         raise
 
 
-cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
+cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height, unsigned
+    long long first_tx_num, unsigned long long last_tx_num):
     """
-    returned rows:
-    - tx_rows:      [("tx_hash", "height", "tx_position", "tx_offset")]
-    - in_rows:      [("in_prevout_hash", "in_prevout_idx", "in_pushdata_hash", "in_idx", "in_tx_hash")...]
-    - out_rows:     [("out_tx_hash", "out_idx", "out_pushdata_hash", "out_value")...]
+    returns
+        tx_rows =       [(tx_num, tx_hash, height, position, offset)...]
+        in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
+        out_rows =      [(tx_num, idx, value)...)]
+        pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
     """
     cdef unsigned int position
     cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
         count_tx_out, script_sig_len, scriptpubkey_len
-    cdef set pks, pkhs
+    cdef set pks, pkhs, set_pd_rows
     cdef list tx_rows, in_rows, out_rows
     cdef tuple tx_row
 
+    tx_nums_range = range(first_tx_num, last_tx_num + 1)
     tx_rows = []
     in_rows = []
     out_rows = []
+    set_pd_rows = set()  # rule out possibility of duplicate pushdata in same input
     count_txs = len(tx_offsets)
     try:
-        for position in range(count_txs):
+        for position, tx_num in zip(range(count_txs), tx_nums_range):
             pks = set()
             pkhs = set()
 
@@ -200,19 +204,14 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
                     if len(pushdata_hashes):
                         for in_pushdata_hash in pushdata_hashes:
+                            set_pd_rows.add((tx_num, in_idx, in_pushdata_hash, 1))
                             in_rows.append(
-                                (
-                                    in_prevout_hash,
-                                    in_prevout_idx,
-                                    in_pushdata_hash,
-                                    in_idx,
-                                    tx_hash,
-                                )
+                                (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
                             )
                     else:
-                        # print("no pushdata inputs...")
+                        set_pd_rows.add((tx_num, in_idx, b"", 1))
                         in_rows.append(
-                            (in_prevout_hash, in_prevout_idx, b'', in_idx, tx_hash,)
+                            (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
                         )
                 offset += script_sig_len
                 offset += 4  # skip sequence
@@ -227,21 +226,23 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
+                        set_pd_rows.add((tx_num, out_idx, out_pushdata_hash, 0))
                         out_rows.append(
-                            (tx_hash, out_idx, out_pushdata_hash, out_value)
+                            (tx_num, out_idx, out_value)
                         )
                 else:
-                    # print("no pushdata outputs...")
-                    out_rows.append((tx_hash, out_idx, b'', out_value))
+                    set_pd_rows.add((tx_num, out_idx, b"", 0))
+                    out_rows.append((tx_hash, out_idx, b"", out_value))
                 offset += scriptpubkey_len
 
             # nlocktime
             offset += 4
 
-            tx_row = (tx_hash, height, position, offset)
+            # NOTE: when partitioning blocks ensure position is correct!
+            tx_row = (tx_num, tx_hash, height, position, offset)
             tx_rows.append(tx_row)
         assert len(tx_rows) == count_txs
-        return tx_rows, in_rows, out_rows
+        return tx_rows, in_rows, out_rows, set_pd_rows
     except Exception as e:
         logger.debug(f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
                      f"txid={bitcoinx.hash_to_hex_str(full_tx_hash)}")

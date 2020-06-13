@@ -48,9 +48,9 @@ class PG_Database:
         try:
             await self.pg_conn.execute(
                 """
-                DROP TABLE transactions;
-                DROP TABLE inputs;
-                DROP TABLE outputs;"""
+                DROP TABLE IF EXISTS transactions;
+                DROP TABLE IF EXISTS inputs;
+                DROP TABLE IF EXISTS outputs;"""
             )
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)

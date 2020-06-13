@@ -115,11 +115,19 @@ class TxParser(multiprocessing.Process):
 
     """
 
-    def __init__(self, shm_name, worker_in_queue_tx_parse, worker_ack_queue_tx_parse):
+    def __init__(
+        self,
+        shm_name,
+        worker_in_queue_tx_parse,
+        worker_ack_queue_tx_parse,
+        tx_num_value,
+    ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
+        self.tx_num_value: multiprocessing.Value = tx_num_value
+
         self.pg_db = None
         self.pg_parsed_rows_queue = None
         self.worker_ack_queue_asyncio = None
@@ -145,20 +153,20 @@ class TxParser(multiprocessing.Process):
         pg_db = await load_pg_database()
         try:
             while True:
-                tx_rows, in_rows, out_rows = await self.pg_parsed_rows_queue.get()
+                tx_rows, in_rows, out_rows, set_pd_rows = await self.pg_parsed_rows_queue.get()
                 # print(tx_rows)
                 # print(in_rows)
                 # print(out_rows)
                 # print(f"got: {len(tx_rows)} tx_rows; {len(in_rows)} in_rows; "
                 #     f"{len(out_rows)} out_rows")
-                await pg_db.pg_create_temp_tables()
-                await pg_db.pg_insert_tx_copy_method(tx_rows)
-                await pg_db.pg_insert_output_copy_method(out_rows)
-                await pg_db.pg_insert_input_copy_method(in_rows)
-                await pg_db.pg_upsert_from_temp_txs()
-                await pg_db.pg_upsert_from_temp_outputs()
-                await pg_db.pg_upsert_from_temp_inputs()
-                await pg_db.pg_drop_temp_tables()
+                # await pg_db.pg_create_temp_tables()
+                # await pg_db.pg_insert_tx_copy_method(tx_rows)
+                # await pg_db.pg_insert_output_copy_method(out_rows)
+                # await pg_db.pg_insert_input_copy_method(in_rows)
+                # await pg_db.pg_upsert_from_temp_txs()
+                # await pg_db.pg_upsert_from_temp_outputs()
+                # await pg_db.pg_upsert_from_temp_inputs()
+                # await pg_db.pg_drop_temp_tables()
 
                 # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from transactions""")
                 # print(f"count transactions table rows={result}")
@@ -188,19 +196,30 @@ class TxParser(multiprocessing.Process):
                     blk_end_pos,
                     tx_positions_div,
                 ) = item
-                # logger.debug(f"TxParser got blk_start_pos={blk_start_pos}; tx_positions_div="
-                #              f"{tx_positions_div}; len(tx_positions_div)={len(tx_positions_div)}; "
-                #              f"blk_height={blk_height}")
 
-                tx_rows, in_rows, out_rows = parse_block(
+                txs_count = len(tx_positions_div)
+
+                # increment global tx_num (for use in postgres db tables)
+                # if something goes wrong it leaves a gap in the tx_num index (it's ok)
+
+                with self.tx_num_value.get_lock():
+                    first_tx_num = self.tx_num_value.value
+                    self.tx_num_value.value += txs_count
+                    last_tx_num = self.tx_num_value.value - 1  # 0-based index
+
+                tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
                     bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
                     tx_positions_div,
                     blk_height,
+                    first_tx_num,
+                    last_tx_num,
                 )
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")
-                coro = partial(self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows))
+                coro = partial(
+                    self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows, set_pd_rows)
+                )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
                 item = (blk_hash, len(tx_positions_div))
