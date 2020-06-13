@@ -2,6 +2,7 @@
 # cython: language_level=3
 """cythonized version of algorithms.py"""
 import bitcoinx
+from bitcoinx import double_sha256
 
 from libcpp.vector cimport vector
 from struct import Struct
@@ -177,7 +178,8 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                 next_tx_offset = tx_offsets[position + 1]
             else:
                 next_tx_offset = len(raw_block)
-            tx_hash = sha256(sha256(raw_block[offset:next_tx_offset]).digest()).digest()[0:20]
+            full_tx_hash = double_sha256(raw_block[offset:next_tx_offset])
+            tx_hash = full_tx_hash[0:20]
 
             # version
             offset += 4
@@ -207,6 +209,11 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                                     tx_hash,
                                 )
                             )
+                    else:
+                        # print("no pushdata inputs...")
+                        in_rows.append(
+                            (in_prevout_hash, in_prevout_idx, b'', in_idx, tx_hash,)
+                        )
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
@@ -220,7 +227,12 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
-                        out_rows.append((tx_hash, out_idx, out_pushdata_hash, out_value))
+                        out_rows.append(
+                            (tx_hash, out_idx, out_pushdata_hash, out_value)
+                        )
+                else:
+                    # print("no pushdata outputs...")
+                    out_rows.append((tx_hash, out_idx, b'', out_value))
                 offset += scriptpubkey_len
 
             # nlocktime
@@ -231,7 +243,7 @@ cpdef parse_block(bytearray raw_block, list tx_offsets, unsigned int height):
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows
     except Exception as e:
-        logger.debug(f"count_txs={count_txs}, position={position}, input={input}, output={output}, "
-                     f"txid={bitcoinx.hash_to_hex_str(tx_hash)}")
+        logger.debug(f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
+                     f"txid={bitcoinx.hash_to_hex_str(full_tx_hash)}")
         logger.exception(e)
         raise

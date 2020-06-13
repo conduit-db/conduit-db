@@ -4,6 +4,8 @@ import bitcoinx
 from struct import Struct
 from hashlib import sha256
 
+from bitcoinx import double_sha256
+
 from .logs import logs
 
 HEADER_OFFSET = 80
@@ -111,13 +113,17 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
                 i += 1
         # hash pushdata
         if len(pks) == 1:
-            pd_hashes.append(sha256(pks.pop()).digest()[0:20])  # skip for loop if possible
+            pd_hashes.append(
+                sha256(pks.pop()).digest()[0:20]
+            )  # skip for loop if possible
         else:
             for pk in pks:
                 pd_hashes.append(sha256(pk).digest()[0:20])
 
         if len(pkhs) == 1:
-            pd_hashes.append(sha256(pkhs.pop()).digest()[0:20])  # skip for loop if possible
+            pd_hashes.append(
+                sha256(pkhs.pop()).digest()[0:20]
+            )  # skip for loop if possible
         else:
             for pkh in pkhs:
                 pd_hashes.append(sha256(pkh).digest()[0:20])
@@ -153,7 +159,8 @@ def parse_block(raw_block, tx_offsets, height):
                 next_tx_offset = tx_offsets[position + 1]
             else:
                 next_tx_offset = len(raw_block)
-            tx_hash = sha256(sha256(raw_block[offset:next_tx_offset]).digest()).digest()[0:20]
+            full_tx_hash = double_sha256(raw_block[offset:next_tx_offset])
+            tx_hash = full_tx_hash[0:20]
 
             # version
             offset += 4
@@ -183,6 +190,11 @@ def parse_block(raw_block, tx_offsets, height):
                                     tx_hash,
                                 )
                             )
+                    else:
+                        # print("no pushdata inputs...")
+                        in_rows.append(
+                            (in_prevout_hash, in_prevout_idx, b"", in_idx, tx_hash,)
+                        )
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
@@ -199,6 +211,9 @@ def parse_block(raw_block, tx_offsets, height):
                         out_rows.append(
                             (tx_hash, out_idx, out_pushdata_hash, out_value)
                         )
+                else:
+                    # print("no pushdata outputs...")
+                    out_rows.append((tx_hash, out_idx, b"", out_value))
                 offset += scriptpubkey_len
 
             # nlocktime
@@ -210,6 +225,9 @@ def parse_block(raw_block, tx_offsets, height):
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows
     except Exception as e:
-        logger.debug(f"count_txs={count_txs}")
+        logger.debug(
+            f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
+            f"txid={bitcoinx.hash_to_hex_str(full_tx_hash)}"
+        )
         logger.exception(e)
         raise
