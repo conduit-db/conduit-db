@@ -1,120 +1,107 @@
 # Chain indexer
 
+# Confirmed Block Data
+
 ## Transactions table
-    primary_key:     tx_num (autoincrementing int) - used for table joins
+    primary_key:     tx_num (NOT autoincrementing - calculated in py/cython algo)
     other columns:   tx_hash (indexed separately)
                      height
                      position
                      tx_offset (LMDB)
 
-## Inputs table
+## IO table (inputs and outputs)
 
-    clustered idx:   prevout_hash
-                     out_idx
-                     pushdata_hash
-    other columns    in_tx_num
-                     in_idx
-
-## Outputs table
-
-    clustered idx:   out_tx_num
-                     out_idx
-                     pushdata_hash
-    other columns    value
-
-## Query plan
-Tx parser should extract these rows directly from a block without any need to query the database:
-- tx_row:       (tx_hash, height, pos, offset)  # tx_num is generated
-- in_rows:      [(prevout_hash, out_idx, pushdata_id, in_idx)...]  # in_tx_num is == 'tx_num' that gets generated
-- out_rows:     [(out_idx, pushdata_hash, value)...]  # out_tx_num is == 'tx_num' that gets generated
-
-Prepared statement for insertions (stmt = await conn.prepare('''INSERT INTO... $1, $2...''')):
+    tx_num (aka out_tx_hash + in_prevout_hash joined)
+    out_idx
+    out_value
+    in_tx_num
+    in_idx
     
-    INSERT INTO transactions VALUES (tx_hash, height, pos, offset)
-    ON CONFLICT (tx_hash)
-    DO UPDATE
-        SET tx_hash=tx_hash, height=height, pos=pos, offset=offset
-        
-Then use asyncpg's executemany to perform this for all tx_rows
+## Pushdata_hashes
     
-And then use prepared statement in one atomic sql query for each transaction that is parsed 
-(updates all 3 tables at once):
-
-    -- main f-string query:
+    pd_id (generated for uniqueness constraint) as PK
+    tx_num  (indexed)
+    idx (out_idx or in_idx)
+    pushdata_hash  (indexed)
+    ref_type (bit = 0 for output, bit = 1 for input)
     
-    -- transaction row
-    SELECT insert_tx_row_return_tx_num($1, $2, $3, $4) AS tx_num
-    SELECT insert_tx_row_return_tx_num(tx_hash, height, pos, offset) AS tx_num
-
-    -- input rows
-    INSERT INTO inputs VALUES
-        -- '?' parameter I guess in an f-string and 'tx_num' would be a string to match the varname ^^
-        ($5, $6, $7, $8, $9),
-        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
-        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
-        (prevout_hash, out_idx, pushdata_hash, tx_num, in_idx),
-        ...
-        ...
-    ON CONFLICT DO NOTHING
-
-    -- output rows
-        INSERT INTO inputs VALUES 
-        ($10, $11, $12, $13),
-        (tx_num, out_idx, pushdata_hash, value),
-        (tx_num, out_idx, pushdata_hash, value),
-        (tx_num, out_idx, pushdata_hash, value),
-        ...
-        ...
-
-    ON CONFLICT DO NOTHING
+- multi-idx on tx_num, idx, pushdata_hash - which also allows for situations where there is
+no pushdata indexed (20, 33, 65 bytes length) from either the input or the output 
+(if we have decided to not index it).
+- normalizing out the pushdata_hashes is also essential for the many-to-many relationship of
+pushdatas to inputs or outputs. To denormalize this would cause insane disc usage by duplicating
+all of the input and output rows! 
+- retrieving the relationship of pushdata <-> io is only 1 table join away and 
+- utxos could be cached later if we wanted to without much trouble (to provide that as 
+a frequently desired service)
     
-notice that the in_row uses `prevout_hash` and not `out_tx_num` - this is because it would require a db query at tx parsing
-time to fetch it which is unacceptable for performance reasons. Therefore we directly store what is readily
-available during the tx parsing process. There is no disadvantage when it comes to table joins for querying key history
-because a table join with the transaction table is needed anyway.
+# Mempool data
+In short - use redis to store the same information as the above permanent postgres tables: 
 
-Query for key history becomes (maybe something like this - but better optimized):
+    transactions, inputs, outputs and pushdata rows in whatever way is most useful.
+
+# Pipeline
+## TxParser requirement (will be heavily cythonised)
+
+This design is entirely centered around how to most efficiently
+store this into postgres in bulk with minimal table joins 
+(whilst minimizing db bloat and denormalization in the process). This design is also very friendly
+to the concept of postgres-XL with sharding on tx_hash for (approximately) linearly scaling
+**write** throughput.
+
+####Steps:
+Track a global tx_num and increment it with the tx_count of the block (or block_partition) inside of
+a multiprocessing.Lock'd code segment. 
+
+Then allocate this sequence of tx_nums to 'tx_rows'
+
+    (tx_num, tx_hash, height, position, offset)
     
-    Then query becomes:
+Calculate 'input_rows' (that will -> a SQL UPDATE of the IO table)
+
+    (prevout_hash, out_idx, tx_num, in_idx)
+
+Append input to 'in_pushdata_rows'
+
+    (tx_num, idx, pushdata_hash, ref_type=1)  # NOTE pushdata_hash may be null
     
-    WITH filtered_ins AS (
-        SELECT * 
-        FROM inputs 
-        WHERE pushdata_hash in {12345}
-    )
-    WITH filtered_outs AS (
-        SELECT * 
-        FROM outputs 
-        WHERE pushdata_hash in {12345}
-    )
-    WITH outs_with_tx_hash AS (
-        SELECT *
-        FROM outputs
-        JOIN transactions 
-        ON transactions.tx_num = outputs.tx_num
-    )
-    SELECT *
-    FROM outs_with_tx_hash
-    -- should get rows where pk or pkh is in input scriptsig but not in corresponding output 
-    --     which is basically unheard of but theoretically possible I guess...)
-    -- should get rows where pk or pkh is in output scriptpubkey but not in corresponding input (common)
-    FULL OUTER JOIN filtered_ins
-    ON outs_with_tx_hash.tx_hash = filtered_ins.tx_hash AND outs_with_tx_hash.out_idx = 
-        filtered_ins.in_idx
+Calculate 'output_rows' (that will be bulk copied directly to IO table)
 
+    (tx_num, idx, value)
+    
+Append output to 'out_pushdata_rows'
 
-Also need to then join with Transaction table to convert `in_tx_num` and `out_tx_num`
-to `in_tx_hash` and `out_tx_hash` respectively + `height` column. Client receives an array of:
+    (tx_num, idx, pushdata_hash, ref_type=0)
 
-    [(in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
-     (in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
-     (in_tx_hash, in_indx, out_tx_hash, out_idx, value, height),
-     ...                                                        ]
+so in the end there are:
 
-If `in_tx_hash` is null then it is a utxo (not yet spent).
+    tx_rows =       [(tx_num, tx_hash, height, position, offset)...]
+    in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
+    out_rows =      [(tx_num, idx, value)...)]
+    pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
+
+## Bulk postgres insert algorithm
+
+1) Bulk copy directly to the transaction table
+2) Bulk copy directly to the io table (for the **outputs** - i.e. input columns blank)
+    - sidenote: if we wanted utxos cached now would be the time to update redis too...
+3) Inputs are trickier
+    - Bulk copy to temporary table
+    - INNER JOIN on transaction table to convert prevout_hash to out_tx_num
+    - Bulk UPDATE of input columns based on the tx_num + idx matching
+4) Bulk copy directly to the pushdata table (**outputs and inputs together**)
+
+NOTE: step 4 is only made possible if an edge case is ruled out!:
+- there's an edge case where the input/output could have the same (tx_num AND idx
+AND pushdata_hash AND same ref_type) --- but it's probably very rare... 
+so options are to either rule out input or output row duplicates in the cython parser (**much preferred 
+and much faster**) or avoid bulk copy and instead do bulk upsert with an ON CONFLICT DO NOTHING; 
+to account for this possibility)
+
 
 ## MerkleTree table (LMDB vs postgres)
-Merkle Tree key-value store and db structure:
+Merkle Tree key-value store and db structure stored only to mid-level only to avoid 
+excessive disc usage.:
 
     {header_id + depth + position: binary hashes}
     
@@ -125,7 +112,6 @@ Merkle Tree key-value store and db structure:
     at depth = 1 have 2^1 32-byte hashes etc. - so keys are (0,0) and (0,1)
     at depth = 2 have 2^2 32-byte hashes concatenated side by side...
 
-Store only to mid-level only to avoid excessive disc usage.
 
 ## Headers
 Use bitcoinx Headers object for tracking chain forks and the current chain tip etc.
@@ -157,7 +143,7 @@ Clients should be using a 30 second timeout so might be okay to just have a dela
 fully dealt with. I am not 100% sure what's best at this stage.
 
 
-# Architecture
+## Tech Stack
 
 Dream stack for performance of a python chain indexer would be:
 
@@ -169,4 +155,3 @@ Dream stack for performance of a python chain indexer would be:
     6. new python3.8 shared memory feature for multicore workers to parse blocks with zero-cpy
     
     Overall "dumber indexer" design (only pulling out what is needed - no utxo tracking).
-
