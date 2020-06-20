@@ -140,8 +140,8 @@ class TxParser(multiprocessing.Process):
         self.batched_prev_flush_time = time.time()
 
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
-        self.MAX_TX_BATCH_SIZE = 2000
-        self.BATCHED_MAX_WAIT_TIME = 0.2
+        self.MAX_TX_BATCH_SIZE = 50000
+        self.BATCHED_MAX_WAIT_TIME = 0.3
 
     def run(self):
         self.loop = asyncio.get_event_loop()
@@ -175,15 +175,40 @@ class TxParser(multiprocessing.Process):
     async def append_block_acks(self, blk_acks):
         self.batched_block_acks.append(blk_acks)
 
+    # async def flush_to_postgres(self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks) -> None:
+    #     import cProfile, pstats, io
+    #     from pstats import SortKey
+    #     pr = cProfile.Profile()
+    #     pr.enable()
+    #     await self.flush_to_postgres2(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks)
+    #     pr.disable()
+    #     s = io.StringIO()
+    #     sortby = SortKey.CUMULATIVE
+    #     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    #     ps.print_stats()
+    #     print(s.getvalue())
+
     async def flush_to_postgres(
         self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
     ):
-        await self.pg_db.pg_create_temp_tables()
+        t0 = time.time()
+        # await self.pg_db.pg_create_temp_tables()
         await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_tx_rows = {t1} seconds for {len(tx_rows)}")
+
+        t0 = time.time()
         await self.pg_db.pg_bulk_load_output_rows(out_rows)
-        await self.pg_db.pg_bulk_load_input_rows(in_rows)
-        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-        await self.pg_db.pg_drop_temp_tables()
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(tx_rows)}")
+
+        # await self.pg_db.pg_bulk_load_input_rows(in_rows)
+
+        # t0 = time.time()
+        # await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+        # t1 = time.time() - t0
+        # logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds")
+        # await self.pg_db.pg_drop_temp_tables()
 
         # Ack for all flushed blocks
         for blk_hash, tx_count in blk_acks:

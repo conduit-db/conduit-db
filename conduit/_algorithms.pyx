@@ -117,9 +117,15 @@ cpdef get_pk_and_pkh_from_script(bytes script, set pks, set pkhs):
             elif SET_OTHER_PUSH_OPS.find(script[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
                 i += script[i] + 1
             elif script[i] == 0x4C:
-                i += 1
-                length = script[i]
-                i += 1 + length
+                try:
+                    i += 1
+                    length = script[i]
+                    i += 1 + length
+                except IndexError as e:
+                    # This can legitimately happen (bad output scripts...) e.g. see:
+                    # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
+                    logger.error(f"script={script}, len(script)={len(script)}, i={i}")
+                    logger.exception(e)
             elif script[i] == OP_PUSHDATA2:
                 i += 1
                 length = int.from_bytes(script[i:i+2], byteorder='little', signed=False)
@@ -153,7 +159,7 @@ cpdef parse_block(bytes raw_block, list tx_offsets, unsigned int height, unsigne
     long long first_tx_num, unsigned long long last_tx_num):
     """
     returns
-        tx_rows =       [(tx_num, tx_hash, height, position, offset)...]
+        tx_rows =       [(tx_num, height, position, offset)...]
         in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
         out_rows =      [(tx_num, idx, value)...)]
         pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
@@ -238,7 +244,7 @@ cpdef parse_block(bytes raw_block, list tx_offsets, unsigned int height, unsigne
             offset += 4
 
             # NOTE: when partitioning blocks ensure position is correct!
-            tx_row = (tx_num, tx_hash, height, position, offset)
+            tx_row = (tx_num, height, position, offset)
             tx_rows.append(tx_row)
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows, set_pd_rows

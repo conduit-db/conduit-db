@@ -76,7 +76,7 @@ class PG_Database:
                     tx_position bigint,
                     tx_offset bigint
                 );
-                CREATE INDEX IF NOT EXISTS tx_hash_idx ON transactions (tx_hash);
+                CREATE INDEX IF NOT EXISTS tx_hash_idx ON transactions USING HASH (tx_hash);
 
                 CREATE UNLOGGED TABLE IF NOT EXISTS io_table (
                     out_tx_num bigint,
@@ -85,7 +85,7 @@ class PG_Database:
                     in_tx_num integer,
                     in_idx integer
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_num, out_idx);
+                CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_num);
 
                 CREATE UNLOGGED TABLE IF NOT EXISTS pushdata (
                     tx_num bigint,
@@ -188,7 +188,7 @@ async def load_pg_database() -> PG_Database:
     pg_conn = await pg_connect()
     pg_database = PG_Database(pg_conn)
     await pg_database.pg_update_settings()
-    await pg_database.pg_drop_tables()
+    # await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
     return PG_Database(pg_conn)
 
@@ -197,6 +197,6 @@ async def load_test_pg_database() -> PG_Database:
     pg_conn = await pg_test_connect()
     pg_database = PG_Database(pg_conn)
     await pg_database.pg_update_settings()
-    # await pg_database.pg_drop_tables()
+    await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
     return PG_Database(pg_conn)

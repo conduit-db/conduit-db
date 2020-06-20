@@ -94,9 +94,15 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
             elif script[i] in SET_OTHER_PUSH_OPS:  # signature -> skip
                 i += script[i] + 1
             elif script[i] == 0x4C:
-                i += 1
-                length = script[i]
-                i += 1 + length
+                try:
+                    i += 1
+                    length = script[i]
+                    i += 1 + length
+                except IndexError as e:
+                    # This can legitimately happen (bad output scripts...) e.g. see:
+                    # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
+                    logger.error(f"script={script}, len(script)={len(script)}, i={i}")
+                    logger.exception(e)
             elif script[i] == OP_PUSHDATA2:
                 i += 1
                 length = int.from_bytes(
@@ -137,13 +143,21 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 def parse_block(raw_block, tx_offsets, height, first_tx_num, last_tx_num):
     """
     returns
-        tx_rows =       [(tx_num, tx_hash, height, position, offset)...]
+        tx_rows =       [(tx_num, height, position, offset)...]
         in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
         out_rows =      [(tx_num, idx, value)...)]
         pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
 
     # tx_num is calculated here to avoid table joins
     """
+    # Todo
+    #  generate rows for LMDB too like:
+    #  1) tx_hash -> tx_num
+    #  2) pushdata_hash -> [(tx_num, idx)..] then extend the array in LMDB to record history
+    #   to maximise raw write throughput, **duplicates may be allowed** (and delegated to
+    #   post-processing at the time of a client query... only pay the cost of removing duplicates
+    #   then. Then use this array to lookup all outputs and inputs which will have an index on the
+    #   tx_num to make this fast (table join should be quite fast after filtering for tx_nums).
     tx_nums_range = range(first_tx_num, last_tx_num + 1)
     tx_rows = []
     # sets rule out possibility of duplicate pushdata in same input / output

@@ -39,8 +39,8 @@ if __name__ == "__main__":
         t0 = time.time()
         await pg_db.pg_bulk_load_tx_rows(tx_rows)
         await pg_db.pg_bulk_load_output_rows(out_rows)
-        await pg_db.pg_bulk_load_input_rows(in_rows)
-        await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+        # await pg_db.pg_bulk_load_input_rows(in_rows)
+        # await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
         t1 = time.time() - t0
         print_results_asyncpg(len(tx_offsets), t1)
 
