@@ -75,7 +75,7 @@ class PG_Database:
                     tx_position bigint,
                     tx_offset bigint
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS tx_hash_idx ON transactions (tx_hash);
+                CREATE INDEX IF NOT EXISTS tx_hash_idx ON transactions (tx_hash);
 
                 CREATE UNLOGGED TABLE IF NOT EXISTS io_table (
                     out_tx_num bigint,
