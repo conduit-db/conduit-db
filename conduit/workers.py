@@ -1,4 +1,5 @@
 import asyncio
+import async_timeout
 import io
 import multiprocessing
 import threading
@@ -6,12 +7,9 @@ import time
 from functools import partial
 from multiprocessing import shared_memory
 from typing import List, Tuple
-
-import asyncpg
-import bitcoinx
 from bitcoinx import read_varint
 
-from .database import pg_connect, load_pg_database, PG_Database
+from .database import load_pg_database, PG_Database
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
 
@@ -133,6 +131,18 @@ class TxParser(multiprocessing.Process):
         self.worker_ack_queue_asyncio = None
         self.loop = None
 
+        # batched rows
+        self.batched_tx_rows = []
+        self.batched_in_rows = []
+        self.batched_out_rows = []
+        self.batched_set_pd_rows = []
+        self.batched_block_acks = []
+        self.batched_prev_flush_time = time.time()
+
+        # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
+        self.MAX_TX_BATCH_SIZE = 2000
+        self.BATCHED_MAX_WAIT_TIME = 0.2
+
     def run(self):
         self.loop = asyncio.get_event_loop()
         self.pg_parsed_rows_queue = asyncio.Queue()
@@ -148,35 +158,80 @@ class TxParser(multiprocessing.Process):
             logger.exception(e)
             raise
 
+    def reset_batched_rows(self):
+        self.batched_tx_rows = []
+        self.batched_in_rows = []
+        self.batched_out_rows = []
+        self.batched_set_pd_rows = []
+        self.batched_block_acks = []
+
+    async def extend_batched_rows(self, blk_rows):
+        tx_rows, in_rows, out_rows, set_pd_rows = blk_rows
+        self.batched_tx_rows.extend(tx_rows)
+        self.batched_in_rows.extend(in_rows)
+        self.batched_out_rows.extend(out_rows)
+        self.batched_set_pd_rows.extend(set_pd_rows)
+
+    async def append_block_acks(self, blk_acks):
+        self.batched_block_acks.append(blk_acks)
+
+    async def flush_to_postgres(
+        self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
+    ):
+        await self.pg_db.pg_create_temp_tables()
+        await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
+        await self.pg_db.pg_bulk_load_output_rows(out_rows)
+        await self.pg_db.pg_bulk_load_input_rows(in_rows)
+        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+        await self.pg_db.pg_drop_temp_tables()
+
+        # Ack for all flushed blocks
+        for blk_hash, tx_count in blk_acks:
+            # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
+            self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
+
+        self.reset_batched_rows()
+
     async def pg_inserts_task(self):
-        pg_db: PG_Database
-        pg_db = await load_pg_database()
-        await pg_db.pg_update_settings()
+        """bulk inserts to postgres.
+
+        NOTE: this cannot be done via multiple coroutines per worker process. Varying
+        times for the insert to complete, would cause each worker coroutine to pull from
+        worker_ack_queue_asyncio out of sequence. This is not a bottleneck anyway
+        - especially with larger blocks."""
+        self.pg_db: PG_Database = await load_pg_database()
+        await self.pg_db.pg_update_settings()
         try:
             while True:
-                tx_rows, in_rows, out_rows, set_pd_rows = await self.pg_parsed_rows_queue.get()
-                # print(tx_rows)
-                # print(in_rows)
-                # print(out_rows)
-                # print(f"got: {len(tx_rows)} tx_rows; {len(in_rows)} in_rows; "
-                #     f"{len(out_rows)} out_rows")
-                await pg_db.pg_create_temp_tables()
-                await pg_db.pg_bulk_load_tx_rows(tx_rows)
-                await pg_db.pg_bulk_load_output_rows(out_rows)
-                await pg_db.pg_bulk_load_input_rows(in_rows)
-                await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-                await pg_db.pg_drop_temp_tables()
+                try:
+                    async with async_timeout.timeout(self.BATCHED_MAX_WAIT_TIME):
+                        # see 'footnote_1'
+                        blk_rows = await self.pg_parsed_rows_queue.get()
+                        blk_acks = await self.worker_ack_queue_asyncio.get()
+                        await self.extend_batched_rows(blk_rows)
+                        await self.append_block_acks(blk_acks)
 
-                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from transactions""")
-                # print(f"count transactions table rows={result}")
-                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from inputs""")
-                # print(f"count inputs table rows={result}")
-                # result = await pg_db.pg_conn.fetchval("""select COUNT(*) from outputs""")
-                # print(f"count outputs table rows={result}")
-                blk_hash, tx_count = await self.worker_ack_queue_asyncio.get()
-                # print(f"item={(blk_hash, tx_count)}")
-                self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
-                # ack is only sent when db is updated
+                except asyncio.TimeoutError:
+                    # print("timed out...")
+                    if len(self.batched_tx_rows) != 0:
+                        await self.flush_to_postgres(
+                            self.batched_tx_rows,
+                            self.batched_in_rows,
+                            self.batched_out_rows,
+                            self.batched_set_pd_rows,
+                            self.batched_block_acks,
+                        )
+                    continue
+
+                if len(self.batched_tx_rows) > self.MAX_TX_BATCH_SIZE:
+                    # print("hit max tx batch size...")
+                    await self.flush_to_postgres(
+                        self.batched_tx_rows,
+                        self.batched_in_rows,
+                        self.batched_out_rows,
+                        self.batched_set_pd_rows,
+                        self.batched_block_acks,
+                    )
         except Exception as e:
             logger.exception(e)
             raise e
@@ -207,7 +262,7 @@ class TxParser(multiprocessing.Process):
                     last_tx_num = self.tx_num_value.value - 1  # 0-based index
 
                 tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
-                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
+                    bytes(self.shm.buf[blk_start_pos:blk_end_pos]),
                     tx_positions_div,
                     blk_height,
                     first_tx_num,
@@ -217,7 +272,8 @@ class TxParser(multiprocessing.Process):
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")
                 coro = partial(
-                    self.pg_parsed_rows_queue.put, (tx_rows, in_rows, out_rows, set_pd_rows)
+                    self.pg_parsed_rows_queue.put,
+                    (tx_rows, in_rows, out_rows, set_pd_rows),
                 )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
@@ -302,3 +358,13 @@ class BlockWriter(multiprocessing.Process):
 
             except Exception as e:
                 logger.exception(e)
+
+
+"""
+Footnotes:
+----------
+footnote_1: this relies on the fact that if pg_parsed_rows_queue is blocked then 
+worker_ack_queue_asyncio queue should also be blocked and so there should never be a 
+situation where the async_timeout -> timeout after getting from one queue 
+*but not the other*.
+"""

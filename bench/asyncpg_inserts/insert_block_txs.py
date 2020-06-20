@@ -23,7 +23,7 @@ if __name__ == "__main__":
         t0 = time.time()
         tx_offsets = preprocessor(raw_block)
         tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
-            raw_block, tx_offsets, 413567, 0, 1556
+            bytes(raw_block), tx_offsets, 413567, 0, 1556
         )
 
         t1 = time.time() - t0

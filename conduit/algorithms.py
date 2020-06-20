@@ -146,9 +146,10 @@ def parse_block(raw_block, tx_offsets, height, first_tx_num, last_tx_num):
     """
     tx_nums_range = range(first_tx_num, last_tx_num + 1)
     tx_rows = []
-    in_rows = []
-    out_rows = []
-    set_pd_rows = set()  # rule out possibility of duplicate pushdata in same input
+    # sets rule out possibility of duplicate pushdata in same input / output
+    in_rows = set()
+    out_rows = set()
+    set_pd_rows = set()
     count_txs = len(tx_offsets)
     try:
         for position, tx_num in zip(range(count_txs), tx_nums_range):
@@ -184,12 +185,12 @@ def parse_block(raw_block, tx_offsets, height, first_tx_num, last_tx_num):
                     if len(pushdata_hashes):
                         for in_pushdata_hash in pushdata_hashes:
                             set_pd_rows.add((tx_num, in_idx, in_pushdata_hash, 1))
-                            in_rows.append(
+                            in_rows.add(
                                 (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
                             )
                     else:
                         set_pd_rows.add((tx_num, in_idx, b"", 1))
-                        in_rows.append(
+                        in_rows.add(
                             (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
                         )
                 offset += script_sig_len
@@ -206,10 +207,10 @@ def parse_block(raw_block, tx_offsets, height, first_tx_num, last_tx_num):
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
                         set_pd_rows.add((tx_num, out_idx, out_pushdata_hash, 0))
-                        out_rows.append((tx_num, out_idx, out_value, None, None))
+                        out_rows.add((tx_num, out_idx, out_value, None, None))
                 else:
                     set_pd_rows.add((tx_num, out_idx, b"", 0))
-                    out_rows.append((tx_num, out_idx, out_value, None, None))
+                    out_rows.add((tx_num, out_idx, out_value, None, None))
                 offset += scriptpubkey_len
 
             # nlocktime

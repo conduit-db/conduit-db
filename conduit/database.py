@@ -1,4 +1,5 @@
 import asyncpg
+from bitcoinx import hash_to_hex_str
 
 from .logs import logs
 
@@ -68,7 +69,7 @@ class PG_Database:
         await self.pg_conn.execute(
             """
                 -- PERMANENT TABLES
-                CREATE TABLE IF NOT EXISTS transactions(
+                CREATE UNLOGGED TABLE IF NOT EXISTS transactions(
                     tx_num bigint PRIMARY KEY,
                     tx_hash bytea,
                     height integer,
@@ -172,6 +173,15 @@ class PG_Database:
         # for row in rows:
         #     print(row)
         await self.pg_drop_temp_tables()
+
+    async def get_last_tx_num(self):
+        max_tx_num = await self.pg_conn.fetchval("""
+            SELECT tx_num 
+            FROM transactions 
+            ORDER BY tx_num DESC 
+            LIMIT 1
+        """)
+        return max_tx_num
 
 
 async def load_pg_database() -> PG_Database:
