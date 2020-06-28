@@ -118,13 +118,11 @@ class TxParser(multiprocessing.Process):
         shm_name,
         worker_in_queue_tx_parse,
         worker_ack_queue_tx_parse,
-        tx_num_value,
     ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
-        self.tx_num_value: multiprocessing.Value = tx_num_value
 
         self.pg_db = None
         self.pg_parsed_rows_queue = None
@@ -279,22 +277,10 @@ class TxParser(multiprocessing.Process):
                     tx_positions_div,
                 ) = item
 
-                txs_count = len(tx_positions_div)
-
-                # increment global tx_num (for use in postgres db tables)
-                # if something goes wrong it leaves a gap in the tx_num index (it's ok)
-
-                with self.tx_num_value.get_lock():
-                    first_tx_num = self.tx_num_value.value
-                    self.tx_num_value.value += txs_count
-                    last_tx_num = self.tx_num_value.value - 1  # 0-based index
-
                 tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
                     bytes(self.shm.buf[blk_start_pos:blk_end_pos]),
                     tx_positions_div,
                     blk_height,
-                    first_tx_num,
-                    last_tx_num,
                 )
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "

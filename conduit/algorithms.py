@@ -17,6 +17,7 @@ SET_OTHER_PUSH_OPS = set(range(1, 76))
 struct_le_H = Struct("<H")
 struct_le_I = Struct("<I")
 struct_le_Q = Struct("<Q")
+struct_le_q = Struct("<q")  # for short_hashes
 struct_OP_20 = Struct("<20s")
 struct_OP_33 = Struct("<33s")
 struct_OP_65 = Struct("<65s")
@@ -62,9 +63,7 @@ def preprocessor(block_view, offset=0):
         count_tx_out, offset = unpack_varint(block_view, offset)
         for i in range(count_tx_out):
             offset += 8  # value
-            script_pubkey_len, offset = unpack_varint(
-                block_view, offset
-            )  # script_pubkey
+            script_pubkey_len, offset = unpack_varint(block_view, offset)  # script_pubkey
             offset += script_pubkey_len  # script_sig
 
         # lock_time
@@ -105,34 +104,26 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
                     logger.exception(e)
             elif script[i] == OP_PUSHDATA2:
                 i += 1
-                length = int.from_bytes(
-                    script[i : i + 2], byteorder="little", signed=False
-                )
+                length = int.from_bytes(script[i : i + 2], byteorder="little", signed=False)
                 i += 2 + length
             elif script[i] == OP_PUSHDATA4:
                 i += 1
-                length = int.from_bytes(
-                    script[i : i + 4], byteorder="little", signed=False
-                )
+                length = int.from_bytes(script[i : i + 4], byteorder="little", signed=False)
                 i += 4 + length
             else:  # slow search byte by byte...
                 i += 1
         # hash pushdata
         if len(pks) == 1:
-            pd_hashes.append(
-                sha256(pks.pop()).digest()[0:20]
-            )  # skip for loop if possible
+            pd_hashes.append(sha256(pks.pop()).digest()[0:32])  # skip for loop if possible
         else:
             for pk in pks:
-                pd_hashes.append(sha256(pk).digest()[0:20])
+                pd_hashes.append(sha256(pk).digest()[0:32])
 
         if len(pkhs) == 1:
-            pd_hashes.append(
-                sha256(pkhs.pop()).digest()[0:20]
-            )  # skip for loop if possible
+            pd_hashes.append(sha256(pkhs.pop()).digest()[0:32])  # skip for loop if possible
         else:
             for pkh in pkhs:
-                pd_hashes.append(sha256(pkh).digest()[0:20])
+                pd_hashes.append(sha256(pkh).digest()[0:32])
         return pd_hashes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
@@ -140,105 +131,125 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
         raise
 
 
-def parse_block(raw_block, tx_offsets, height, first_tx_num, last_tx_num):
+def parse_block(raw_block, tx_offsets, height):
     """
     returns
-        tx_rows =       [(tx_num, height, position, offset)...]
-        in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
-        out_rows =      [(tx_num, idx, value)...)]
-        pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
+        tx_rows =       [(tx_shash, tx_hash, height, position, offset_start, offset_end, tx_has_collided)...]
+        in_rows =       [(prevout_shash, out_idx, tx_shash, in_idx, out_has_collided)...)...]
+        out_rows =      [(out_tx_shash, idx, value, in_has_collided)...)]
+        pd_rows =       [(pushdata_hash, pushdata_shash, tx_shash, idx, ref_type=0 or 1,
+            pd_has_collided)...]
 
-    # tx_num is calculated here to avoid table joins
+        NOTE: full pushdata_hash is not committed to the database but is temporarily included in
+        these rows in case of a collision -> committed to collision table.
     """
-    # Todo
-    #  generate rows for LMDB too like:
-    #  1) tx_hash -> tx_num
-    #  2) pushdata_hash -> [(tx_num, idx)..] then extend the array in LMDB to record history
-    #   to maximise raw write throughput, **duplicates may be allowed** (and delegated to
-    #   post-processing at the time of a client query... only pay the cost of removing duplicates
-    #   then. Then use this array to lookup all outputs and inputs which will have an index on the
-    #   tx_num to make this fast (table join should be quite fast after filtering for tx_nums).
-    tx_nums_range = range(first_tx_num, last_tx_num + 1)
     tx_rows = []
     # sets rule out possibility of duplicate pushdata in same input / output
     in_rows = set()
     out_rows = set()
     set_pd_rows = set()
     count_txs = len(tx_offsets)
+
+    tx_has_collided = False
+    out_has_collided = False
+    in_has_collided = False
+    pd_has_collided = False
     try:
-        for position, tx_num in zip(range(count_txs), tx_nums_range):
+        for position in range(count_txs):
             pks = set()
             pkhs = set()
 
             # tx_hash
             offset = tx_offsets[position]
+            tx_offset_start = offset
             if position < count_txs - 1:
                 next_tx_offset = tx_offsets[position + 1]
             else:
                 next_tx_offset = len(raw_block)
-            full_tx_hash = double_sha256(raw_block[offset:next_tx_offset])
-            tx_hash = full_tx_hash[0:20]
+            tx_hash = double_sha256(raw_block[tx_offset_start:next_tx_offset])
+            tx_shash = struct_le_q.unpack(tx_hash[0:8])[0]
 
             # version
             offset += 4
 
             # inputs
             count_tx_in, offset = unpack_varint(raw_block, offset)
+            ref_type = 1
             for in_idx in range(count_tx_in):
-                in_prevout_hash = raw_block[offset : offset + 20]
+                in_prevout_hash = raw_block[offset : offset + 32]
+                in_prevout_shash = struct_le_q.unpack(in_prevout_hash[0:8])[0]
                 offset += 32
-                in_prevout_idx = struct_le_I.unpack_from(
-                    raw_block[offset : offset + 4]
-                )[0]
+                in_prevout_idx = struct_le_I.unpack_from(raw_block[offset : offset + 4])[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint(raw_block, offset)
                 script_sig = raw_block[offset : offset + script_sig_len]
                 # some coinbase tx scriptsigs don't obey any rules.
                 if not position == 0:
+
+                    in_rows.add(
+                        (in_prevout_shash, in_prevout_idx, tx_shash, in_idx, in_has_collided,),
+                    )
+
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
                     if len(pushdata_hashes):
                         for in_pushdata_hash in pushdata_hashes:
-                            set_pd_rows.add((tx_num, in_idx, in_pushdata_hash, 1))
-                            in_rows.add(
-                                (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
+                            # Todo - in_pushdata_hash needs to be kept in memory for collisions
+                            in_pushdata_shash = struct_le_q.unpack(in_pushdata_hash[0:8])[0]
+                            set_pd_rows.add(
+                                (
+                                    in_pushdata_shash,
+                                    tx_shash,
+                                    in_idx,
+                                    ref_type,
+                                    pd_has_collided,
+                                )
                             )
-                    else:
-                        set_pd_rows.add((tx_num, in_idx, b"", 1))
-                        in_rows.add(
-                            (in_prevout_hash, in_prevout_idx, tx_num, in_idx,)
-                        )
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
             # outputs
             count_tx_out, offset = unpack_varint(raw_block, offset)
+            ref_type = 0
             for out_idx in range(count_tx_out):
                 out_value = struct_le_Q.unpack_from(raw_block[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(raw_block, offset)
                 scriptpubkey = raw_block[offset : offset + scriptpubkey_len]
+
+                out_rows.add((tx_shash, out_idx, out_value, out_has_collided, None, None, None,))
+
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
-                        set_pd_rows.add((tx_num, out_idx, out_pushdata_hash, 0))
-                        out_rows.add((tx_num, out_idx, out_value, None, None))
-                else:
-                    set_pd_rows.add((tx_num, out_idx, b"", 0))
-                    out_rows.add((tx_num, out_idx, out_value, None, None))
+                        # Todo - out_pushdata_hash needs to be kept in memory for collisions...
+                        out_pushdata_shash = struct_le_q.unpack(out_pushdata_hash[0:8])[0]
+                        set_pd_rows.add(
+                            (out_pushdata_shash, tx_shash, out_idx, ref_type,
+                            pd_has_collided,)
+                        )
                 offset += scriptpubkey_len
 
             # nlocktime
             offset += 4
 
             # NOTE: when partitioning blocks ensure position is correct!
-            tx_row = (tx_num, tx_hash, height, position, offset)
-            tx_rows.append(tx_row)
+            tx_rows.append(
+                (
+                    tx_shash,
+                    tx_hash,
+                    height,
+                    position,
+                    tx_offset_start,
+                    next_tx_offset,
+                    tx_has_collided,
+                )
+            )
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows, set_pd_rows
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
-            f"txid={bitcoinx.hash_to_hex_str(full_tx_hash)}"
+            f"txid={bitcoinx.hash_to_hex_str(tx_hash)}"
         )
         logger.exception(e)
         raise

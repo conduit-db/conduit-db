@@ -208,7 +208,6 @@ class BufferedSession(BitcoinFramer):
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
 
-        self.tx_num_value = multiprocessing.Value('Q', lock=True)
         self.pg_db: Optional[PG_Database] = None
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
@@ -338,7 +337,6 @@ class BufferedSession(BitcoinFramer):
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse,
-                self.tx_num_value
             )
             p.start()
             self.processes.append(p)
@@ -362,13 +360,6 @@ class BufferedSession(BitcoinFramer):
     async def start_jobs(self):
         try:
             self.pg_db: PG_Database = await load_pg_database()
-
-            # Initialize highest tx_num from transaction table (to recover app state)
-            with self.tx_num_value.get_lock():
-                try:
-                    self.tx_num_value.value = await self.pg_db.get_last_tx_num() + 1
-                except TypeError:  # None on first ever run
-                    self.tx_num_value.value = 0
 
             await self.handshake_complete_event.wait()
             self.start_workers()

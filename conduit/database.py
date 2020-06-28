@@ -69,34 +69,41 @@ class PG_Database:
         await self.pg_conn.execute(
             """
                 -- PERMANENT TABLES
-                CREATE UNLOGGED TABLE IF NOT EXISTS transactions(
-                    tx_num bigint PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS transactions(
+                    tx_shash bigint PRIMARY KEY,
                     tx_hash bytea,
-                    height integer,
+                    tx_height integer,
                     tx_position bigint,
-                    tx_offset bigint
+                    tx_offset_start bigint,
+                    tx_offset_end bigint,
+                    tx_has_collided boolean
                 );
-                CREATE INDEX IF NOT EXISTS tx_hash_idx ON transactions USING HASH (tx_hash);
+                -- need to store the full tx_hash (albeit non-indexed) because the client
+                -- may not be providing the tx_hash in their query (e.g. for key history).
 
-                CREATE UNLOGGED TABLE IF NOT EXISTS io_table (
-                    out_tx_num bigint,
+                CREATE TABLE IF NOT EXISTS io_table (
+                    out_tx_shash bigint,
                     out_idx integer,
                     out_value bigint,
-                    in_tx_num integer,
-                    in_idx integer
+                    out_has_collided boolean,
+                    in_tx_shash bigint,
+                    in_idx integer,
+                    in_has_collided boolean
                 );
-                CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_num);
+                CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_shash);
 
-                CREATE UNLOGGED TABLE IF NOT EXISTS pushdata (
-                    tx_num bigint,
+                -- I think I can get away with not storing full pushdata hashes
+                -- unless they collide... because the client provides the full pushdata_hash
+                CREATE TABLE IF NOT EXISTS pushdata (
+                    pushdata_shash bigint,
+                    tx_shash bigint,
                     idx integer,
-                    pushdata_hash bytea,
-                    reftype smallint
-                    -- pd_id bigint GENERATED ALWAYS AS IDENTITY
+                    ref_type smallint,
+                    pd_has_collided boolean
                 );
                 -- NOTE - parsing stage ensures there are no duplicates otherwise would need
                 -- to do UPSERT which is slow...
-                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_hash);
+                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_shash, tx_shash);
                 """
         )
 
@@ -104,85 +111,74 @@ class PG_Database:
         await self.pg_conn.execute(
             """
             CREATE TEMPORARY TABLE temp_inputs (
-                prevout_hash bytea,
+                in_prevout_shash bigint,
                 out_idx integer,
-                in_tx_num bigint,
-                in_idx integer
+                in_tx_shash bigint,
+                in_idx integer,
+                in_has_collided boolean
             );"""
         )
 
     async def pg_bulk_load_tx_rows(self, tx_rows):
         await self.pg_conn.copy_records_to_table(
             "transactions",
-            columns=["tx_num", "tx_hash", "height", "tx_position", "tx_offset"],
+            columns=["tx_shash", "tx_hash", "tx_height", "tx_position", "tx_offset_start",
+                "tx_offset_end", "tx_has_collided"],
             records=tx_rows,
         )
 
     async def pg_bulk_load_output_rows(self, out_rows):
         await self.pg_conn.copy_records_to_table(
             "io_table",
-            columns=["out_tx_num", "out_idx", "out_value", "in_tx_num", "in_idx"],
+            columns=["out_tx_shash", "out_idx", "out_value", "out_has_collided", "in_tx_shash",
+                "in_idx", "in_has_collided"],
             records=out_rows,
         )
 
     async def pg_bulk_load_input_rows(self, in_rows):
+        # Todo - check for collisions in TxParser then:
+        #  1) bulk copy to temp table
+        #  2) update io table from temp table (no table joins needed)
         await self.pg_conn.copy_records_to_table(
             "temp_inputs",
-            columns=["prevout_hash", "out_idx", "in_tx_num", "in_idx"],
+            columns=["in_prevout_shash", "out_idx", "in_tx_shash", "in_idx",
+                "in_has_collided"],
             records=in_rows,
         )
         await self.pg_conn.execute(
             """
-            -- get the tx_num for prevout_hash
-            WITH full_io_rows AS (
-                SELECT transactions.tx_num as out_tx_num, 
-                       temp_inputs.out_idx, 
-                       temp_inputs.in_tx_num, 
-                       temp_inputs.in_idx
-                FROM temp_inputs
-                JOIN transactions 
-                ON temp_inputs.prevout_hash = transactions.tx_hash
-            )
-            
             UPDATE io_table 
-            SET in_tx_num = full_io_rows.in_tx_num, 
-                in_idx = full_io_rows.in_idx
-            FROM full_io_rows
-            WHERE full_io_rows.out_tx_num = io_table.out_tx_num AND full_io_rows.out_idx = io_table.out_idx
+            SET in_tx_shash = temp_inputs.in_tx_shash, 
+                in_idx = temp_inputs.in_idx,
+                in_has_collided = temp_inputs.in_has_collided
+            FROM temp_inputs
+            WHERE temp_inputs.in_prevout_shash = io_table.out_tx_shash 
+            AND temp_inputs.out_idx = io_table.out_idx
             ;"""
         )
 
     async def pg_bulk_load_pushdata_rows(self, pd_rows):
         await self.pg_conn.copy_records_to_table(
             "pushdata",
-            columns=["tx_num", "idx", "pushdata_hash", "reftype"],
-            records=pd_rows,
+            columns=["pushdata_shash", "tx_shash", "idx", "ref_type", "pd_has_collided"],
+            records=pd_rows,  # exclude pushdata_hash there is no such column in the table
         )
 
-    async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows):
+    async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows, pd_rows):
         await self.pg_create_temp_tables()
 
-        await self.pg_bulk_load_tx_rows(tx_rows)
+        await self.pg_bulk_load_tx_rows(tx_rows)  # todo - collision checks...
         await self.pg_bulk_load_output_rows(out_rows)
-        await self.pg_insert_input_copy_method(in_rows)
+        await self.pg_bulk_load_input_rows(in_rows)
+        await self.pg_bulk_load_pushdata_rows(pd_rows)
 
-        await self.pg_upsert_from_temp_txs()
-        await self.pg_upsert_from_temp_outputs()
-        await self.pg_upsert_from_temp_inputs()
+        # await self.pg_upsert_from_temp_txs()
+        # await self.pg_upsert_from_temp_outputs()
+        # await self.pg_upsert_from_temp_inputs()
         # rows = await pg_db.pg_conn.fetch("SELECT * FROM outputs;")
         # for row in rows:
         #     print(row)
         await self.pg_drop_temp_tables()
-
-    async def get_last_tx_num(self):
-        max_tx_num = await self.pg_conn.fetchval("""
-            SELECT tx_num 
-            FROM transactions 
-            ORDER BY tx_num DESC 
-            LIMIT 1
-        """)
-        return max_tx_num
-
 
 async def load_pg_database() -> PG_Database:
     pg_conn = await pg_connect()

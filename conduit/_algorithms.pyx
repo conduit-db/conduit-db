@@ -159,10 +159,10 @@ cpdef parse_block(bytes raw_block, list tx_offsets, unsigned int height, unsigne
     long long first_tx_num, unsigned long long last_tx_num):
     """
     returns
-        tx_rows =       [(tx_num, height, position, offset)...]
-        in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
-        out_rows =      [(tx_num, idx, value)...)]
-        pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
+        tx_rows =       [(tx_shash, tx_hash, height, position, offset_start, offset_end, has_collided_flags)...]
+        in_rows =       [(prevout_hash, out_idx, tx_num, in_idx, has_collided_flags)...)...]
+        out_rows =      [(out_tx_shash, idx, value, has_collided_flags)...)]
+        pd_rows =       [(pushdata_shash, tx_shash, idx, ref_type=0 or 1, has_collided_flags)...]
     """
     cdef unsigned int position
     cdef unsigned long long offset, next_tx_offset, count_txs, count_tx_in, input, output, \
