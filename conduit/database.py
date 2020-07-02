@@ -69,7 +69,7 @@ class PG_Database:
         await self.pg_conn.execute(
             """
                 -- PERMANENT TABLES
-                CREATE TABLE IF NOT EXISTS transactions(
+                CREATE UNLOGGED TABLE IF NOT EXISTS transactions(
                     tx_shash bigint PRIMARY KEY,
                     tx_hash bytea,
                     tx_height integer,
@@ -81,7 +81,7 @@ class PG_Database:
                 -- need to store the full tx_hash (albeit non-indexed) because the client
                 -- may not be providing the tx_hash in their query (e.g. for key history).
 
-                CREATE TABLE IF NOT EXISTS io_table (
+                CREATE UNLOGGED TABLE IF NOT EXISTS io_table (
                     out_tx_shash bigint,
                     out_idx integer,
                     out_value bigint,
@@ -94,7 +94,7 @@ class PG_Database:
 
                 -- I think I can get away with not storing full pushdata hashes
                 -- unless they collide... because the client provides the full pushdata_hash
-                CREATE TABLE IF NOT EXISTS pushdata (
+                CREATE UNLOGGED TABLE IF NOT EXISTS pushdata (
                     pushdata_shash bigint,
                     tx_shash bigint,
                     idx integer,
@@ -103,7 +103,10 @@ class PG_Database:
                 );
                 -- NOTE - parsing stage ensures there are no duplicates otherwise would need
                 -- to do UPSERT which is slow...
-                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_shash, tx_shash);
+                -- dropped the tx_shash index and can instead do range scans (for a given
+                -- pushdata_hash / key history) at lookup time...
+                -- Things like B:// maybe could be dealt with as special cases perhaps?
+                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_shash);
                 """
         )
 

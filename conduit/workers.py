@@ -7,6 +7,8 @@ import time
 from functools import partial
 from multiprocessing import shared_memory
 from typing import List, Tuple
+
+import asyncpg
 from bitcoinx import read_varint
 
 from .database import load_pg_database, PG_Database
@@ -105,6 +107,34 @@ class BlockPreProcessor(multiprocessing.Process):
             raise
 
 
+def handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
+                colliding_tx_shash):
+    """only expect to find 1 collision and then reattempt the batch
+    (based on probabilities)"""
+    try:
+        colliding_index = None
+        for index, tx_row in enumerate(tx_rows):
+            if tx_row[0] == int(colliding_tx_shash):
+                print(f"detected colliding tx_row: {tx_row}")
+                colliding_index = index
+                break
+            else:
+                continue
+
+        if colliding_index is not None and tx_row[3] == 0:  # position == 0 (i.e. coinbase)
+            logger.error("coinbase colliding tx - ignore")
+            _colliding_tx_row = tx_rows.pop(colliding_index)  # do nothing
+            # todo... need to chase after the in_rows, out_rows and pd_rows
+            return tx_rows
+        elif colliding_index is not None and tx_row[3] != 0:  # this is a 'real' collision
+            _colliding_tx_row = tx_rows.pop(colliding_index)
+            logger.error("non-coinbase colliding tx - this needs to be handled...")
+            return tx_rows
+    except Exception as e:
+        logger.exception(e)
+        raise
+
+
 class TxParser(multiprocessing.Process):
     """
     in: blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div
@@ -189,34 +219,48 @@ class TxParser(multiprocessing.Process):
     async def flush_to_postgres(
         self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
     ):
-        t0 = time.time()
-        await self.pg_db.pg_create_temp_tables()
-        await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
-        t1 = time.time() - t0
-        logger.info(f"elapsed time for pg_bulk_load_tx_rows = {t1} seconds for {len(tx_rows)}")
+        # Todo - ideally wrap these all in a single transaction for consistency
+        try:
+            t0 = time.time()
+            await self.pg_db.pg_create_temp_tables()
+            await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
+            t1 = time.time() - t0
+            logger.info(f"elapsed time for pg_bulk_load_tx_rows = {t1} seconds for {len(tx_rows)}")
 
-        t0 = time.time()
-        await self.pg_db.pg_bulk_load_output_rows(out_rows)
-        t1 = time.time() - t0
-        logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
+            t0 = time.time()
+            await self.pg_db.pg_bulk_load_output_rows(out_rows)
+            t1 = time.time() - t0
+            logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
 
-        t0 = time.time()
-        await self.pg_db.pg_bulk_load_input_rows(in_rows)
-        t1 = time.time() - t0
-        logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
+            t0 = time.time()
+            await self.pg_db.pg_bulk_load_input_rows(in_rows)
+            t1 = time.time() - t0
+            logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
 
-        t0 = time.time()
-        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-        t1 = time.time() - t0
-        logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}")
-        await self.pg_db.pg_drop_temp_tables()
+            t0 = time.time()
+            await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+            t1 = time.time() - t0
+            logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}")
+            await self.pg_db.pg_drop_temp_tables()
 
-        # Ack for all flushed blocks
-        for blk_hash, tx_count in blk_acks:
-            # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
-            self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
+            # Ack for all flushed blocks
+            for blk_hash, tx_count in blk_acks:
+                # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
+                self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
 
-        self.reset_batched_rows()
+            self.reset_batched_rows()
+        except asyncpg.exceptions.UniqueViolationError as e:
+            error_text = e.as_dict()['detail']
+            # extract tx_shash from brackets - not best practice.. but most efficient
+            colliding_tx_shash = error_text.split('(')[2].split(')')[0]
+            logger.error(f"colliding tx_shash = {colliding_tx_shash}")
+            tx_rows = handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
+                colliding_tx_shash)
+            await self.pg_db.pg_drop_temp_tables()
+
+            # retry without the colliding tx
+            await self.flush_to_postgres(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks)
+            logger.error(e)
 
     async def pg_inserts_task(self):
         """bulk inserts to postgres.
