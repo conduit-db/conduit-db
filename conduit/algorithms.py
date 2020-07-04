@@ -198,6 +198,7 @@ def parse_block(raw_block, tx_offsets, height):
                             set_pd_rows.add(
                                 (
                                     in_pushdata_shash,
+                                    in_pushdata_hash,
                                     tx_shash,
                                     in_idx,
                                     ref_type,
@@ -224,7 +225,7 @@ def parse_block(raw_block, tx_offsets, height):
                         # Todo - out_pushdata_hash needs to be kept in memory for collisions...
                         out_pushdata_shash = struct_le_q.unpack(out_pushdata_hash[0:8])[0]
                         set_pd_rows.add(
-                            (out_pushdata_shash, tx_shash, out_idx, ref_type,
+                            (out_pushdata_shash, out_pushdata_hash, tx_shash, out_idx, ref_type,
                             pd_has_collided,)
                         )
                 offset += scriptpubkey_len

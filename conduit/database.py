@@ -96,6 +96,7 @@ class PG_Database:
                 -- unless they collide... because the client provides the full pushdata_hash
                 CREATE UNLOGGED TABLE IF NOT EXISTS pushdata (
                     pushdata_shash bigint,
+                    pushdata_hash bytea,
                     tx_shash bigint,
                     idx integer,
                     ref_type smallint,
@@ -106,7 +107,8 @@ class PG_Database:
                 -- dropped the tx_shash index and can instead do range scans (for a given
                 -- pushdata_hash / key history) at lookup time...
                 -- Things like B:// maybe could be dealt with as special cases perhaps?
-                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_shash);
+                CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (
+                pushdata_shash);
                 """
         )
 
@@ -163,7 +165,7 @@ class PG_Database:
     async def pg_bulk_load_pushdata_rows(self, pd_rows):
         await self.pg_conn.copy_records_to_table(
             "pushdata",
-            columns=["pushdata_shash", "tx_shash", "idx", "ref_type", "pd_has_collided"],
+            columns=["pushdata_shash", "pushdata_hash", "tx_shash", "idx", "ref_type", "pd_has_collided"],
             records=pd_rows,  # exclude pushdata_hash there is no such column in the table
         )
 
