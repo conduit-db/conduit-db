@@ -12,7 +12,7 @@ from typing import Optional
 
 from .logs import logs
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
-from .peers import Peer
+from .peers import Peer, get_seed_peers
 
 logger = logs.get_logger("networks")
 
@@ -163,18 +163,18 @@ class NetworkConfig:
             self.peers = [Peer("127.0.0.1", 18444)]
         if isinstance(network, TestNet):
             self.peers = [
-                # Peer("127.0.0.1", 18333),
+                Peer("127.0.0.1", 18333),
                 # Peer("167.99.91.85", 18333),  # random node from WOC
-                Peer("178.128.60.17", 18333),  # bsvisbitcoin-austecon.dev
-                Peer("176.9.148.163", 18333),  # tsv.usebsv.com
+                # Peer("178.128.60.17", 18333),  # bsvisbitcoin-austecon.dev
+                # Peer("176.9.148.163", 18333),  # tsv.usebsv.com
             ]
         if isinstance(network, ScalingTestNet):
             self.peers = [Peer("95.217.108.109", 9333)]  #  stn-server.electrumsv.io
         elif isinstance(network, MainNet):
-            self.peers = [Peer("127.0.0.1", 8333)]
-            # self.peers = [
-            #     Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
-            # ]
+            # self.peers = [Peer("127.0.0.1", 8333)]
+            self.peers = [
+                Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
+            ]
 
 
 NETWORKS = {

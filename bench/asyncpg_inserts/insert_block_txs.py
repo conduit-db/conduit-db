@@ -2,16 +2,13 @@ import asyncio
 import logging
 import time
 
-from conduit.database import load_test_pg_database
+from database.postgres_database import load_test_pg_database
 
 try:
     from conduit._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
     from conduit.algorithms import preprocessor, parse_block  # pure python
 from bench.utils import print_results, print_results_asyncpg
-
-from conduit.store import setup_storage
-
 
 if __name__ == "__main__":
     logger = logging.getLogger("insert_block_txs")

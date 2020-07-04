@@ -1,7 +1,6 @@
-import asyncpg
 from bitcoinx import Headers
 
-from .database import load_pg_database, PG_Database
+from .database.postgres_database import load_pg_database, PG_Database
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
 from .logs import logs

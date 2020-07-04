@@ -1,13 +1,11 @@
 import argparse
 import asyncio
-import selectors
 import logging
 import os
 import sys
 import time
 from typing import Dict
 
-from conduit.database import load_pg_database
 from conduit.logs import logs
 from conduit.session_manager import SessionManager
 from conduit.constants import (

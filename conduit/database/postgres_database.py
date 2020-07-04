@@ -1,8 +1,7 @@
+import logging
+
 import asyncpg
 from bitcoinx import hash_to_hex_str
-
-from .logs import logs
-
 
 async def pg_connect() -> asyncpg.Connection:
     conn = await asyncpg.connect(
@@ -31,7 +30,7 @@ class PG_Database:
 
     def __init__(self, pg_conn: asyncpg.Connection):
         self.pg_conn = pg_conn
-        self.logger = logs.get_logger("pg_database")
+        self.logger = logging.getLogger("pg_database")
 
     async def close(self):
         await self.pg_conn.close()

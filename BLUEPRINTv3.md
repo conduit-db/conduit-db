@@ -218,6 +218,21 @@ that the first, complete set of headers acts as 'training wheels' for the IBD pr
 The raw blocks and rawtx data will be dumped into an LMDB database using append only mode which is very performant 
 for bulk writes. Txs can the be retrieved with the offset (stored via the Transaction table)
 
+There will be two main LMDB tables for blocks:
+
+#### Blocks table
+
+    block_num (key) - STRICTLY sequential
+    raw_block (val)
+
+#### Block numbers table
+The sole reason for this table to exist is so that the Blocks table has sequential keys 
+and can turn on append-only mode - which is the only reason that using LMDB is in any way acceptable for
+heavy write throughput.
+
+    block_hash (key) - 32 byte block hash
+    block_num (val) - uint32_t
+
 ## Reorg handling...
 
 When there is a reorg... the affected raw block(s) would be fetched and a list of all tx_hashes

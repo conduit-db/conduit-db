@@ -11,3 +11,4 @@ tests/logs/*
 *.obj*
 *.html*
 *.log
+*.mdb

@@ -12,7 +12,7 @@ import logging
 import struct
 from typing import Optional, List, Dict
 
-from .database import PG_Database, load_pg_database
+from .database.postgres_database import PG_Database, load_pg_database
 from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
 from .commands import (
     VERSION,
@@ -439,7 +439,7 @@ class BufferedSession(BitcoinFramer):
                     # been updated with any headers.
 
                     for height in sorted(self.done_block_heights):
-                        self.logger.debug(f"connecting height: {height}")
+                        # self.logger.debug(f"connecting height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)

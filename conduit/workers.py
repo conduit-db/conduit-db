@@ -9,9 +9,10 @@ from multiprocessing import shared_memory
 from typing import List, Tuple
 
 import asyncpg
-from bitcoinx import read_varint
+from bitcoinx import read_varint, hash_to_hex_str
 
-from .database import load_pg_database, PG_Database
+from .database.postgres_database import load_pg_database, PG_Database
+from .database.lmdb_database import LMDB_Database
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
 
@@ -153,10 +154,10 @@ class TxParser(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
+        self.worker_asyncio_tx_parser_in_queue = None
+        self.worker_asyncio_tx_parser_ack_queue = None
 
         self.pg_db = None
-        self.pg_parsed_rows_queue = None
-        self.worker_ack_queue_asyncio = None
         self.loop = None
 
         # batched rows
@@ -173,8 +174,8 @@ class TxParser(multiprocessing.Process):
 
     def run(self):
         self.loop = asyncio.get_event_loop()
-        self.pg_parsed_rows_queue = asyncio.Queue()
-        self.worker_ack_queue_asyncio = asyncio.Queue()
+        self.worker_asyncio_tx_parser_in_queue = asyncio.Queue()
+        self.worker_asyncio_tx_parser_ack_queue = asyncio.Queue()
         try:
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
@@ -202,19 +203,6 @@ class TxParser(multiprocessing.Process):
 
     async def append_block_acks(self, blk_acks):
         self.batched_block_acks.append(blk_acks)
-
-    # async def flush_to_postgres(self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks) -> None:
-    #     import cProfile, pstats, io
-    #     from pstats import SortKey
-    #     pr = cProfile.Profile()
-    #     pr.enable()
-    #     await self.flush_to_postgres2(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks)
-    #     pr.disable()
-    #     s = io.StringIO()
-    #     sortby = SortKey.CUMULATIVE
-    #     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-    #     ps.print_stats()
-    #     print(s.getvalue())
 
     async def flush_to_postgres(
         self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
@@ -274,12 +262,12 @@ class TxParser(multiprocessing.Process):
         try:
             while True:
                 try:
-                    async with async_timeout.timeout(self.BATCHED_MAX_WAIT_TIME):
-                        # see 'footnote_1'
-                        blk_rows = await self.pg_parsed_rows_queue.get()
-                        blk_acks = await self.worker_ack_queue_asyncio.get()
-                        await self.extend_batched_rows(blk_rows)
-                        await self.append_block_acks(blk_acks)
+                    # see 'footnote_1'
+                    blk_rows = await asyncio.wait_for(
+                        self.worker_asyncio_tx_parser_in_queue.get(), timeout=self.BATCHED_MAX_WAIT_TIME)
+                    blk_acks = await self.worker_asyncio_tx_parser_ack_queue.get()
+                    await self.extend_batched_rows(blk_rows)
+                    await self.append_block_acks(blk_acks)
 
                 except asyncio.TimeoutError:
                     # print("timed out...")
@@ -293,6 +281,8 @@ class TxParser(multiprocessing.Process):
                         )
                     continue
 
+                # This is not in the "try block" because I wasn't sure if it would be atomic
+                # i.e. what if it times out half-way through committing rows to the db?
                 if len(self.batched_tx_rows) > self.MAX_TX_BATCH_SIZE:
                     # print("hit max tx batch size...")
                     await self.flush_to_postgres(
@@ -330,13 +320,15 @@ class TxParser(multiprocessing.Process):
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")
                 coro = partial(
-                    self.pg_parsed_rows_queue.put,
+                    self.worker_asyncio_tx_parser_in_queue.put,
                     (tx_rows, in_rows, out_rows, set_pd_rows),
                 )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
+                # need to ack from asyncio event loop because that's where the context
+                # is for when the data has indeed been flushed to db
                 item = (blk_hash, len(tx_positions_div))
-                coro2 = partial(self.worker_ack_queue_asyncio.put, item)
+                coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
                 asyncio.run_coroutine_threadsafe(coro2(), self.loop)
             except Exception as e:
                 logger.exception(e)
@@ -403,21 +395,94 @@ class BlockWriter(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_blk_writer = worker_in_queue_blk_writer
         self.worker_ack_queue_blk_writer = worker_ack_queue_blk_writer
+        self.worker_asyncio_block_writer_in_queue = None
+
+        self.batched_blocks = None
+        self.lmdb = None
+
+        # accumulate x seconds worth of blocks or MAX_BLOCK_BATCH_SIZE (whichever comes first)
+        self.MIN_BLOCK_BATCH_SIZE = 500
+        self.MAX_QUEUE_WAIT_TIME = 0.3
+        self.time_prev = time.time()
 
     def run(self):
-        stream = io.BytesIO(self.shm.buf)
+        self.loop = asyncio.get_event_loop()
+        self.worker_asyncio_block_writer_in_queue = asyncio.Queue()
+
+        try:
+            main_thread = threading.Thread(target=self.main_thread)
+            main_thread.start()
+            asyncio.get_event_loop().run_until_complete(self.lmdb_inserts_task())
+            print("Coro done...")
+            while True:
+                time.sleep(0.05)
+        except Exception as e:
+            logger.exception(e)
+            raise
+
+    async def lmdb_inserts_task(self):
+        self.lmdb = LMDB_Database()
+        self.batched_blocks = []
+        while True:
+            try:
+                # no timeout functionality on asyncio queues...
+                # todo - perhaps a special message from session.py is better to signal
+                #  a full buffer and just flush a full buffer each time. Would stop the
+                #  wasteful polling.
+                item = await asyncio.wait_for(self.worker_asyncio_block_writer_in_queue.get(),
+                    timeout=self.MAX_QUEUE_WAIT_TIME)
+                blk_hash, blk_start_pos, blk_end_pos = item
+                self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
+
+                # print(f"got block from queue unpacked: {blk_hash} {blk_start_pos} {blk_end_pos}")
+
+                if len(self.batched_blocks) >= self.MIN_BLOCK_BATCH_SIZE:
+                    # logger.debug("block batching hit max batch size - loading batched blocks...")
+                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
+                    self.ack_for_loaded_blocks(self.batched_blocks)
+                    self.batched_blocks = []
+
+            except asyncio.TimeoutError:
+                # logger.debug("block batching timed out - loading batched blocks...")
+                self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
+                self.ack_for_loaded_blocks(self.batched_blocks)
+                self.batched_blocks = []
+                continue
+
+            except Exception as e:
+                logger.exception(e)
+                raise
+
+    def main_thread(self):
         while True:
             try:
                 item = self.worker_in_queue_blk_writer.get()
                 if not item:
                     return  # poison pill stop command
+                assert isinstance(item, tuple)
 
                 blk_hash, blk_start_pos, blk_end_pos = item
+                coro = partial(self.worker_asyncio_block_writer_in_queue.put, (blk_hash,
+                    blk_start_pos, blk_end_pos))
+                asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
             except Exception as e:
                 logger.exception(e)
 
-
+    def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]):
+        if len(batched_blocks) == 0:
+            return
+        # Ack for all flushed blocks
+        total_batch_size = 0
+        for blk_hash, start_position, stop_position in self.batched_blocks:
+            total_batch_size += stop_position-start_position
+            # logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
+            #       f"size={stop_position-start_position} bytes")
+            self.worker_ack_queue_blk_writer.put(blk_hash)
+            # Fixme - need to get from this queue in the session manager side
+            _discard_result = self.worker_ack_queue_blk_writer.get()
+        if total_batch_size > 0:
+            logger.debug(f"total batch size for raw blocks={round(total_batch_size/1024/1024, 3)} MB")
 """
 Footnotes:
 ----------
