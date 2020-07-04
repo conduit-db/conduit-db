@@ -137,8 +137,8 @@ def parse_block(raw_block, tx_offsets, height):
         tx_rows =       [(tx_shash, tx_hash, height, position, offset_start, offset_end, tx_has_collided)...]
         in_rows =       [(prevout_shash, out_idx, tx_shash, in_idx, out_has_collided)...)...]
         out_rows =      [(out_tx_shash, idx, value, in_has_collided)...)]
-        pd_rows =       [(pushdata_hash, pushdata_shash, tx_shash, idx, ref_type=0 or 1,
-            pd_has_collided)...]
+        pd_rows =       [(pushdata_shash, pushdata_hash, tx_shash, idx, ref_type=0 or 1,
+            pd_tx_has_collided)...]
 
         NOTE: full pushdata_hash is not committed to the database but is temporarily included in
         these rows in case of a collision -> committed to collision table.
@@ -153,7 +153,7 @@ def parse_block(raw_block, tx_offsets, height):
     tx_has_collided = False
     out_has_collided = False
     in_has_collided = False
-    pd_has_collided = False
+    pd_tx_has_collided = False
     try:
         for position in range(count_txs):
             pks = set()
@@ -202,7 +202,7 @@ def parse_block(raw_block, tx_offsets, height):
                                     tx_shash,
                                     in_idx,
                                     ref_type,
-                                    pd_has_collided,
+                                    pd_tx_has_collided,
                                 )
                             )
                 offset += script_sig_len
@@ -226,7 +226,7 @@ def parse_block(raw_block, tx_offsets, height):
                         out_pushdata_shash = struct_le_q.unpack(out_pushdata_hash[0:8])[0]
                         set_pd_rows.add(
                             (out_pushdata_shash, out_pushdata_hash, tx_shash, out_idx, ref_type,
-                            pd_has_collided,)
+                            pd_tx_has_collided,)
                         )
                 offset += scriptpubkey_len
 

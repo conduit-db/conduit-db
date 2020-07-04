@@ -100,7 +100,7 @@ class PG_Database:
                     tx_shash bigint,
                     idx integer,
                     ref_type smallint,
-                    pd_has_collided boolean
+                    pd_tx_has_collided boolean
                 );
                 -- NOTE - parsing stage ensures there are no duplicates otherwise would need
                 -- to do UPSERT which is slow...
@@ -165,7 +165,7 @@ class PG_Database:
     async def pg_bulk_load_pushdata_rows(self, pd_rows):
         await self.pg_conn.copy_records_to_table(
             "pushdata",
-            columns=["pushdata_shash", "pushdata_hash", "tx_shash", "idx", "ref_type", "pd_has_collided"],
+            columns=["pushdata_shash", "pushdata_hash", "tx_shash", "idx", "ref_type", "pd_tx_has_collided"],
             records=pd_rows,  # exclude pushdata_hash there is no such column in the table
         )
 
