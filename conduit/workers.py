@@ -192,7 +192,7 @@ class TxParser(multiprocessing.Process):
         self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
     ):
         t0 = time.time()
-        # await self.pg_db.pg_create_temp_tables()
+        await self.pg_db.pg_create_temp_tables()
         await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
         t1 = time.time() - t0
         logger.info(f"elapsed time for pg_bulk_load_tx_rows = {t1} seconds for {len(tx_rows)}")
@@ -200,15 +200,18 @@ class TxParser(multiprocessing.Process):
         t0 = time.time()
         await self.pg_db.pg_bulk_load_output_rows(out_rows)
         t1 = time.time() - t0
-        logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(tx_rows)}")
+        logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
 
-        # await self.pg_db.pg_bulk_load_input_rows(in_rows)
+        t0 = time.time()
+        await self.pg_db.pg_bulk_load_input_rows(in_rows)
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
 
-        # t0 = time.time()
-        # await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-        # t1 = time.time() - t0
-        # logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds")
-        # await self.pg_db.pg_drop_temp_tables()
+        t0 = time.time()
+        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}")
+        await self.pg_db.pg_drop_temp_tables()
 
         # Ack for all flushed blocks
         for blk_hash, tx_count in blk_acks:

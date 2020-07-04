@@ -188,7 +188,7 @@ async def load_pg_database() -> PG_Database:
     pg_conn = await pg_connect()
     pg_database = PG_Database(pg_conn)
     await pg_database.pg_update_settings()
-    # await pg_database.pg_drop_tables()
+    await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
     return PG_Database(pg_conn)
 
