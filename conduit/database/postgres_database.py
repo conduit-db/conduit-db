@@ -89,7 +89,7 @@ class PG_Database:
                     in_idx integer,
                     in_has_collided boolean
                 );
-                CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_shash);
+                CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_shash, out_idx);
 
                 -- I think I can get away with not storing full pushdata hashes
                 -- unless they collide... because the client provides the full pushdata_hash

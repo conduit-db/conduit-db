@@ -80,7 +80,7 @@ class LMDB_Database:
                 # print(f"block_nums={block_nums}")
                 for block_num, block_row in zip(block_nums, batched_blocks):
                     blk_hash, blk_start_pos, blk_end_pos = block_row
-                    print(f"put: ({block_num}, {shared_mem_buffer[blk_start_pos: blk_end_pos]})")
+                    # print(f"put: ({block_num}, {shared_mem_buffer[blk_start_pos: blk_end_pos]})")
                     txn.put(struct_be_I.pack(block_num), shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes(),
                         append=True, overwrite=False)
                     block_nums_map[blk_hash] = block_num
