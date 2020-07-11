@@ -40,7 +40,7 @@ Header = namedtuple("Header", "magic command payload_size checksum")
 
 class BitcoinFramer(BufferedProtocol):
     logger = logging.getLogger("bitcoin-framer")
-    HIGH_WATER = 1024 * 1024 * 128
+    HIGH_WATER = 1024 * 1024 * 256
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
     BUFFER_SIZE = HIGH_WATER + BUFFER_OVERFLOW_SIZE
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)
@@ -367,6 +367,7 @@ class BufferedSession(BitcoinFramer):
             _sync_headers_task = asyncio.create_task(self.sync_headers_job())
             if self.get_local_tip_height() != self._target_header_height:
                 await self._all_headers_synced_event.wait()
+                self._all_headers_synced_event.clear()
 
             self._target_block_header_height = (
                 self.get_local_tip_height()
@@ -503,7 +504,8 @@ class BufferedSession(BitcoinFramer):
         if hash_stop == ZERO_HASH:
             self.stop_header_height = local_tip_height + 500
         else:
-            self.stop_header_height = headers.lookup(hash_stop).height
+            header, chain = headers.lookup(hash_stop)
+            self.stop_header_height = header.height
 
         self._pending_blocks_batch_size = self.stop_header_height - local_tip_height
         for i in range(1, self._pending_blocks_batch_size + 1):

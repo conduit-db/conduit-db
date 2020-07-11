@@ -1,3 +1,4 @@
+import asyncio
 import io
 import multiprocessing
 from typing import Tuple
@@ -71,13 +72,22 @@ class Handlers:
         to int to categorise it - rather just match to corresponding byte string.
         payload_len/36 == count and the index in bytearray of each hash is just every 36th byte
         with an offset of 4."""
-        # logger.debug("handling inv...")
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
-        # logger.debug(f"inv: {inv_vects}")
+
+        def have_header(inv_vect) -> bool:
+            try:
+                self.storage.headers.lookup(inv_vect['inv_hash'])
+                return True
+            except bitcoinx.MissingHeader:
+                return False
 
         for inv in inv_vects:
             if inv["inv_type"] == 2:  # BLOCK
-                # logger.info(f"received a block inv: {inv}")
+                if not have_header(inv):
+                    # safest - ensures blocks always lag headers
+                    _sync_headers_task = asyncio.create_task(self.session.sync_headers_job())
+                    await self.session._all_headers_synced_event.wait()
+                    self.session._all_headers_synced_event.clear()
                 self.session._pending_blocks_inv_queue.put_nowait(inv)
             else:
                 if self.session.is_synchronized():

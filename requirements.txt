@@ -1,3 +1,4 @@
+asyncpg
 lmdb
 bitcoinx>=0.2.4
 requests>=2.21.0
