@@ -218,7 +218,6 @@ class BufferedSession(BitcoinFramer):
         self._payload_size = None
         self.logger.info("connection made")
 
-        _fut = asyncio.create_task(self.handle())
         _fut = asyncio.create_task(self.start_jobs())
 
     def connection_lost(self, exc):
@@ -357,24 +356,33 @@ class BufferedSession(BitcoinFramer):
             p.start()
             self.processes.append(p)
 
+    async def spawn_handler_tasks(self):
+        """spawn 4 tasks so that if one handler is waiting on an event that depends on
+        another handler, progress will continue to be made."""
+        for i in range(4):
+            _task = asyncio.create_task(self.handle())
+
+    async def spawn_sync_headers_task(self):
+        """runs once at startup and is re-spawned for new unsolicited block tips"""
+        _sync_headers_task = asyncio.create_task(self.sync_headers_job())
+        await self._all_headers_synced_event.wait()
+        self._all_headers_synced_event.clear()
+
+    async def spawn_sync_blocks_task(self):
+        """runs once at startup and is re-spawned for new unsolicited block tips"""
+        self._target_block_header_height = self.get_local_tip_height()  # blocks lag headers
+        if self.get_local_block_tip_height() != self._target_block_header_height:
+            _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
+            await self._all_blocks_synced_event.wait()
+
     async def start_jobs(self):
         try:
             self.pg_db: PG_Database = await load_pg_database()
-
+            await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
             self.start_workers()
-
-            _sync_headers_task = asyncio.create_task(self.sync_headers_job())
-            if self.get_local_tip_height() != self._target_header_height:
-                await self._all_headers_synced_event.wait()
-                self._all_headers_synced_event.clear()
-
-            self._target_block_header_height = (
-                self.get_local_tip_height()
-            )  # blocks lag headers
-            if self.get_local_block_tip_height() != self._target_block_header_height:
-                _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
-                await self._all_blocks_synced_event.wait()
+            await self.spawn_sync_headers_task()
+            await self.spawn_sync_blocks_task()
         except Exception as e:
             self.logger.exception(e)
             raise
@@ -440,7 +448,7 @@ class BufferedSession(BitcoinFramer):
                     # been updated with any headers.
 
                     for height in sorted(self.done_block_heights):
-                        # self.logger.debug(f"connecting height: {height}")
+                        self.logger.debug(f"connecting height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
@@ -491,25 +499,20 @@ class BufferedSession(BitcoinFramer):
                 self._batched_blocks_exec, self.join_batched_blocks
             )
         else:
-            # it was just a 'rogue' unsolicited block so still need to wait for
-            # the 500 odd requested blocks...
+            # it was an unsolicited block therefore -> recurse (to continue with batch)
             await self.sync_batched_blocks()
 
-    def reset_pending_blocks_batch_set(self, hash_stop):
+    def reset_pending_blocks_batch_set(self):
         self._pending_blocks_batch_set = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
 
-        local_tip_height = self.get_local_block_tip_height()
-        if hash_stop == ZERO_HASH:
-            self.stop_header_height = local_tip_height + 500
-        else:
-            header, chain = headers.lookup(hash_stop)
-            self.stop_header_height = header.height
+        local_block_tip_height = self.get_local_block_tip_height()
+        block_height_deficit = min(self.get_local_tip_height() - local_block_tip_height, 500)
+        self.stop_header_height = local_block_tip_height + block_height_deficit
 
-        self._pending_blocks_batch_size = self.stop_header_height - local_tip_height
-        for i in range(1, self._pending_blocks_batch_size + 1):
-            block_header = headers.header_at_height(chain, local_tip_height + i)
+        for i in range(1, block_height_deficit + 1):
+            block_header = headers.header_at_height(chain, local_block_tip_height + i)
             self._pending_blocks_batch_set.add(block_header.hash)
 
     async def sync_all_blocks_job(self):
@@ -526,7 +529,9 @@ class BufferedSession(BitcoinFramer):
                     self.get_local_block_tip_height(),
                 )
                 hash_stop = ZERO_HASH  # get max
-                self.reset_pending_blocks_batch_set(hash_stop)
+
+                self.reset_pending_blocks_batch_set()
+
                 await self.send_request(
                     GETBLOCKS,
                     self.serializer.getblocks(
