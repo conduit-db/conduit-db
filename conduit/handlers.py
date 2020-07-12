@@ -66,18 +66,6 @@ class Handlers:
     async def on_feefilter(self, message):
         logger.debug("handling feefilter...")
 
-    async def handle_new_block_tip(self):
-        """ensures that blocks always lag headers for simplicity"""
-        # todo - this is probably not reorg safe - maybe can send a getheaders message
-        #  directly for this one (not-seen-before) header and defer this 'handle_new_block_tip'
-        #  call to the 'on_headers' handling of the response.
-        #  That way can first connect the header and handle any reorgs at that point.
-        #  If it's just business as usual (the tip height increased by 1) then maybe this
-        #  works okay.
-        self.session._target_header_height += 1
-        await self.session.spawn_sync_headers_task()
-        await self.session.spawn_sync_blocks_task()
-
     async def on_inv(self, message):
         """Todo: Optimization
         This could be optimized by staying in bytes. No need to convert the inv_type
@@ -96,12 +84,12 @@ class Handlers:
         for inv in inv_vects:
             if inv["inv_type"] == 2:  # BLOCK
                 if not have_header(inv):
-                    await self.handle_new_block_tip()
+                    self.session._headers_event_new_tip.set()
 
                 if hex_str_to_hash(inv["inv_hash"]) in self.session._pending_blocks_batch_set:
                     self.session._pending_blocks_inv_queue.put_nowait(inv)
                 else:
-                    logger.debug(f"ignored unsolicited block {inv['inv_hash']}")
+                    logger.debug(f"got an unsolicited block {inv['inv_hash']}")
             else:
                 if self.session.is_synchronized():
                     # temporary for testing - request all relayed txs without checking db

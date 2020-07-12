@@ -177,8 +177,9 @@ class BufferedSession(BitcoinFramer):
 
         # Syncing of chain - two bitcoinx.Headers stores (headers and block_headers)
         self._headers_msg_processed_event = asyncio.Event()
-        self._all_headers_synced_event = asyncio.Event()
-        self._all_blocks_synced_event = asyncio.Event()
+        self._headers_event_new_tip = asyncio.Event()
+        self._headers_event_initial_sync = asyncio.Event()
+        self._blocks_event_new_tip = asyncio.Event()
         self._target_header_height: Optional[int] = None
         self._target_block_header_height: Optional[int] = None
         self._local_tip_height: int = self.update_local_tip_height()
@@ -384,15 +385,10 @@ class BufferedSession(BitcoinFramer):
     async def spawn_sync_headers_task(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         _sync_headers_task = asyncio.create_task(self.sync_headers_job())
-        await self._all_headers_synced_event.wait()
-        self._all_headers_synced_event.clear()
 
     async def spawn_sync_blocks_task(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self._target_block_header_height = self.get_local_tip_height()  # blocks lag headers
-        if self.get_local_block_tip_height() != self._target_block_header_height:
-            _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
-            await self._all_blocks_synced_event.wait()
+        _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
 
     async def start_jobs(self):
         try:
@@ -401,31 +397,37 @@ class BufferedSession(BitcoinFramer):
             await self.handshake_complete_event.wait()
             self.start_workers()
             await self.spawn_sync_headers_task()
+            await self._headers_event_initial_sync.wait()  # one-off
             await self.spawn_sync_blocks_task()
         except Exception as e:
             self.logger.exception(e)
             raise
 
+    async def _get_max_headers(self):
+        block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
+        hash_count = len(block_locator_hashes)
+        await self.send_request(GETHEADERS,
+            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
+
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
         self.logger.debug("starting sync_headers_job...")
-        while self._local_tip_height < self._target_header_height:
-            block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
-            hash_count = len(block_locator_hashes)
-            await self.send_request(
-                GETHEADERS,
-                self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH),
-            )
+
+        self._target_block_header_height = self.get_local_tip_height()
+        while True:
+            if not self._local_tip_height < self._target_header_height:
+                self._headers_event_initial_sync.set()
+                await self._headers_event_new_tip.wait()
+                self._headers_event_new_tip.clear()
+            await self._get_max_headers()
             await self._headers_msg_processed_event.wait()
+            self._headers_msg_processed_event.clear()
             self._local_tip_height = self.update_local_tip_height()
             self.logger.debug(
-                "headers message processed - new chain tip height: %s",
+                "new headers tip height: %s",
                 self._local_tip_height,
             )
-            self._headers_msg_processed_event.clear()
-
-        self._all_headers_synced_event.set()
-        self.logger.debug("headers synced. chain tip height=%s", self._local_tip_height)
+            self._blocks_event_new_tip.set()
 
     def get_header_for_hash(self, block_hash: bytes):
         header, chain = self.storage.headers.lookup(block_hash)
@@ -467,7 +469,7 @@ class BufferedSession(BitcoinFramer):
                     # been updated with any headers.
 
                     for height in sorted(self.done_block_heights):
-                        self.logger.debug(f"connecting height: {height}")
+                        self.logger.debug(f"new block tip height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
@@ -518,7 +520,9 @@ class BufferedSession(BitcoinFramer):
                 self._batched_blocks_exec, self.join_batched_blocks
             )
             try:
-                await asyncio.wait_for(coro, timeout=60.0)
+                # if a batch of blocks takes more than 5 minutes - it will print out a
+                # diagnostic overview to assist with troubleshooting the blockage
+                await asyncio.wait_for(coro, timeout=300.0)
             except asyncio.TimeoutError:
                 self.readout_controller_state()
         else:
@@ -544,7 +548,11 @@ class BufferedSession(BitcoinFramer):
         """supervises completion of syncing all blocks to target height"""
         try:
             # up to 500 blocks per loop
-            while self.get_local_block_tip_height() < self._target_block_header_height:
+            while True:
+                if not self.get_local_block_tip_height() < self.get_local_tip_height():
+                    self.logger.debug("block tip synced to match headers tip")
+                    await self._blocks_event_new_tip.wait()
+                    self._blocks_event_new_tip.clear()
                 chain = self.storage.block_headers.longest_chain()
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)
@@ -565,11 +573,6 @@ class BufferedSession(BitcoinFramer):
                 )
                 await self.sync_batched_blocks()
 
-            self._all_blocks_synced_event.set()
-            self.logger.debug(
-                "blocks synced. new local block height is: %s",
-                self.get_local_block_tip_height(),
-            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
