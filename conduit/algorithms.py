@@ -1,11 +1,12 @@
 """slower pure python alternative"""
 import struct
+from typing import Dict
 
 import bitcoinx
 from struct import Struct
 from hashlib import sha256
 
-from bitcoinx import double_sha256
+from bitcoinx import double_sha256, hash_to_hex_str
 
 from .logs import logs
 
@@ -41,6 +42,7 @@ def unpack_varint(buf, offset):
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
+# -------------------- PREPROCESSOR -------------------- #
 
 def preprocessor(block_view, offset=0):
     offset += HEADER_OFFSET
@@ -72,6 +74,7 @@ def preprocessor(block_view, offset=0):
         tx_positions.append(offset)
     return tx_positions
 
+# -------------------- PARSE BLOCK TXS -------------------- #
 
 def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
     i = 0
@@ -255,3 +258,62 @@ def parse_block(raw_block, tx_offsets, height):
         )
         logger.exception(e)
         raise
+
+# -------------------- MERKLE TREE -------------------- #
+
+def calc_depth(leaves_count):
+    result = leaves_count
+    mtree_depth = 0
+    while result >= 1:  # 1 represents merkle root
+        result = result / 2
+        mtree_depth += 1
+    return mtree_depth
+
+def calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets):
+    mtree[base_level] = []
+    for i in range(leaves_count):
+        if i < (leaves_count - 1):
+            rawtx = raw_block[tx_offsets[i]:tx_offsets[i + 1]]
+        else:
+            rawtx = raw_block[tx_offsets[i]:]
+        tx_hash = double_sha256(rawtx)
+        mtree[base_level].append(tx_hash)
+    return mtree
+
+
+def build_mtree_from_base(base_level, mtree):
+    """if there is an odd number of hashes at a given level -> raise IndexError
+    then duplicate the last hash, concatenate and double_sha256 to continue."""
+
+    for current_level in reversed(range(1, base_level+1)):
+        next_level_up = []
+        hashes = mtree[current_level]
+        for i in range(0, len(hashes), 2):
+            try:
+                _hash = double_sha256(hashes[i] + hashes[i+1])
+            except IndexError:
+                # print(f"index error at level={current_level}. i={i+1} index doesn't exist - there are {i+1} "
+                #       f"hashes at this level")
+                _hash = double_sha256(hashes[i] + hashes[i])
+            finally:
+                next_level_up.append(_hash)
+        hashes = next_level_up
+        mtree[current_level-1] = hashes
+
+
+def calc_mtree(raw_block, tx_offsets) -> Dict:
+    """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
+    # Todo - optimizations:
+    #  1) operate on raw binary instead of python lists which would remove the need to then
+    #  convert all of the python lists to binary in LMDB
+    #  2) only store to mid-level (would save around 40% time on insertion) and around 12% on total
+    #  disc space of storing full blockchain.
+    #  3) parallelise the calculation across more than 1 process
+
+    mtree = {}
+    leaves_count = len(tx_offsets)
+    base_level = calc_depth(leaves_count)
+    mtree = calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets)
+    build_mtree_from_base(base_level, mtree)
+    # logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")
+    return mtree

@@ -9,12 +9,14 @@ import lmdb
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
+struct_le_I = Struct("<I")
 
 class LMDB_Database:
     """simple interface to LMDB"""
 
     BLOCKS_DB = b"blocks_db"
     BLOCK_NUMS_DB = b"block_nums_db"
+    MTREE_DB = b"mtree_db"
     DEFAULT_DIR = Path(MODULE_DIR).joinpath("lmdb_data").__str__()
 
     def __init__(self, storage_path: str=DEFAULT_DIR):
@@ -32,11 +34,12 @@ class LMDB_Database:
         self.logger = logging.getLogger("lmdb_database")
 
     def open(self):
-        self.env = lmdb.open(self._storage_path, max_dbs=2, map_size=self._map_size,
+        self.env = lmdb.open(self._storage_path, max_dbs=3, map_size=self._map_size,
             metasync=True, readahead=False)
 
         self.blocks_db = self.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)
+        self.mtree_db = self.env.open_db(self.MTREE_DB)
         self._opened = True
         return True
 
@@ -50,9 +53,13 @@ class LMDB_Database:
         self._db2 = None
         self._opened = False
 
-    def get(self, key: int):
+    def get_block(self, key: int):
         with self.env.begin(db=self.blocks_db) as txn:
             return txn.get(struct_be_I.pack(key))
+
+    def get_mtree_row(self, key: bytes):
+        with self.env.begin(db=self.mtree_db) as txn:
+            return txn.get(key)
 
     def get_last_block_num(self) -> int:
         with self.env.begin(db=self.blocks_db, write=False) as txn:
@@ -95,6 +102,23 @@ class LMDB_Database:
                 self.logger.debug(f"elapsed time for {len(batched_blocks)} raw_blocks took {t1} seconds")
         except Exception as e:
             self.logger.exception(e)
+
+    def put_merkle_tree(self, mtree: Dict, block_hash: bytes):
+        """stores an array of key: values where key is a concatenation of the block_hash + level
+        of the mtree. Value is an array of 32 byte hashes."""
+        def pack_list_to_concatenated_bytes(hashes):
+            # Todo - see algorithms.py for future optimization plans
+            byte_array = bytearray()
+            for _hash in hashes:
+                byte_array += _hash
+            return byte_array
+
+        with self.env.begin(db=self.mtree_db, write=True, buffers=True) as txn:
+            for level, hashes in mtree.items():
+                key = block_hash + struct_le_I.pack(level)
+                value = pack_list_to_concatenated_bytes(hashes)
+                txn.put(key, value)
+
 if __name__ == "__main__":
     lmdb_db = LMDB_Database()
 
@@ -106,6 +130,6 @@ if __name__ == "__main__":
         # val = lmdb_db.get(key)
         # print(val)
         txn = lmdb_db.env.begin(buffers=True)
-        buf = txn.get(struct_be_I.pack(key), db=lmdb_db.blocks_db)
+        buf = txn.get_block(struct_be_I.pack(key), db=lmdb_db.blocks_db)
         print(bytes(buf[50:100]))
     lmdb_db.close()

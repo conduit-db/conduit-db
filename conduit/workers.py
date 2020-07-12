@@ -6,7 +6,7 @@ import threading
 import time
 from functools import partial
 from multiprocessing import shared_memory
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import asyncpg
 from bitcoinx import read_varint, hash_to_hex_str
@@ -19,7 +19,7 @@ from .constants import WORKER_COUNT_TX_PARSERS
 try:
     from ._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from .algorithms import preprocessor, parse_block  # pure python
+    from .algorithms import preprocessor, parse_block, calc_mtree  # pure python
 
 logger = logs.get_logger("handlers")
 
@@ -116,7 +116,7 @@ def handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
         colliding_index = None
         for index, tx_row in enumerate(tx_rows):
             if tx_row[0] == int(colliding_tx_shash):
-                print(f"detected colliding tx_row: {tx_row}")
+                logger.error(f"detected colliding tx_row: {tx_row}")
                 colliding_index = index
                 break
             else:
@@ -180,7 +180,7 @@ class TxParser(multiprocessing.Process):
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
             asyncio.get_event_loop().run_until_complete(self.pg_inserts_task())
-            print("Coro done...")
+            logger.debug("TxParser event loop completed...")
             while True:
                 time.sleep(0.05)
         except Exception as e:
@@ -355,23 +355,22 @@ class MTreeCalculator(multiprocessing.Process):
         self.worker_ack_queue_mtree = worker_ack_queue_mtree
 
     def run(self):
-        stream = io.BytesIO(self.shm.buf)
+        lmdb_db = LMDB_Database()
         while True:
             try:
                 item = self.worker_in_queue_mtree.get()
                 if not item:
                     return
 
-                blk_hash, blk_start_pos, blk_end_pos, tx_positions = item
-                results = []
+                blk_hash, blk_start_pos, blk_end_pos, tx_offsets = item
 
-                # hash every tx and calculate merkle tree one layer at a time...
-                # if divided into sub-divisions of full tree... will require a
-                # coordinating higher level of abstraction
+                t0 = time.time()
+                mtree = calc_mtree(self.shm.buf[blk_start_pos: blk_end_pos], tx_offsets)
+                lmdb_db.put_merkle_tree(mtree, blk_hash)
+                t1 = time.time() - t0
+                # logger.debug(f"full mtree calculation took {t1} seconds")
+                # Todo - add batching to this like the other workers.
 
-                # push result straight to LMDB (ideally in append only mode)
-                # will require a block_id number for each row which will match the block_id for
-                # raw_blocks in a different LMDB database.
                 self.worker_ack_queue_mtree.put(blk_hash)
             except Exception as e:
                 logger.exception(e)

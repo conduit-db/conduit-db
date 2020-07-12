@@ -1,66 +1,35 @@
 import time
+import os
+from pathlib import Path
+from struct import Struct
 
 from bitcoinx import double_sha256, hash_to_hex_str
+
+from conduit.database.lmdb_database import LMDB_Database
 from offsets import TX_OFFSETS
+try:
+    from conduit._algorithms import calc_mtree  # cython
+except ModuleNotFoundError:
+    from conduit.algorithms import calc_mtree  # pure python
 
-
-def calc_depth(leaves_count):
-    result = leaves_count
-    mtree_depth = 0
-    while result >= 1:  # 1 represents merkle root
-        result = result / 2
-        mtree_depth += 1
-    return mtree_depth
-
-
-def calc_mtree_base_level(base_level, leaves_count, mtree):
-    mtree[base_level] = []
-    for i in range(leaves_count):
-        if i < (leaves_count - 1):
-            rawtx = raw_block[TX_OFFSETS[i]:TX_OFFSETS[i + 1]]
-        else:
-            rawtx = raw_block[TX_OFFSETS[i]:]
-        tx_hash = double_sha256(rawtx)
-        mtree[base_level].append(tx_hash)
-    return mtree
-
-
-def build_mtree_from_base(base_level, mtree):
-    """if there is an odd number of hashes at a given level -> raise IndexError
-    then duplicate the last hash, concatenate and double_sha256 to continue."""
-
-    for current_level in reversed(range(1, base_level+1)):
-        next_level_up = []
-        hashes = mtree[current_level]
-        for i in range(0, len(hashes), 2):
-            try:
-                _hash = double_sha256(hashes[i] + hashes[i+1])
-            except IndexError:
-                # print(f"index error at level={current_level}. i={i+1} index doesn't exist - there are {i+1} "
-                #       f"hashes at this level")
-                _hash = double_sha256(hashes[i] + hashes[i])
-            finally:
-                next_level_up.append(_hash)
-        hashes = next_level_up
-        mtree[current_level-1] = hashes
-
-
-def calc_mtree(raw_block):
-    """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
-    mtree = {}
-    leaves_count = len(TX_OFFSETS)
-    base_level = calc_depth(leaves_count)
-    mtree = calc_mtree_base_level(base_level, leaves_count, mtree)
-    build_mtree_from_base(base_level, mtree)
-    # for row in mtree.values():
-    #     print(len(row))
-    print(hash_to_hex_str(mtree[0][0]))
-
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+struct_le_I = Struct("<I")
 
 if __name__ == "__main__":
     with open("../data/block413567.raw", "rb") as f:
         raw_block = bytearray(f.read())
+    blk_hash = double_sha256(raw_block[0:80])
     t0 = time.time()
-    calc_mtree(raw_block)
+    mtree = calc_mtree(raw_block, TX_OFFSETS)
+
+    lmdb_db = LMDB_Database(storage_path=Path(MODULE_DIR).joinpath("lmdb_test_data").__str__())
+    lmdb_db.put_merkle_tree(mtree, blk_hash)
     t1 = time.time() - t0
     print(f"time taken={t1} seconds")
+
+    for level in mtree.keys():
+        key = blk_hash + struct_le_I.pack(level)
+        result = lmdb_db.get_mtree_row(key)
+        print(len(result))
+
+    # roughly 77mbps for naive, full merkle tree (single core) approach - good enough for a start!
