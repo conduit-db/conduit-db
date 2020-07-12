@@ -195,7 +195,7 @@ with an ON CONFLICT DO NOTHING; to account for this possibility)
 Merkle Tree key-value store and db structure stored only to mid-level only to avoid 
 excessive disc usage.:
 
-    {header_id + depth + position: binary hashes}
+    {header_id + depth: hash array}
     
     where header_id + depth + position is a concatenation of uint_32 integers
     to form the key
