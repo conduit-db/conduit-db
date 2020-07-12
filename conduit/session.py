@@ -230,7 +230,7 @@ class BufferedSession(BitcoinFramer):
             self.incr_msg_received_count()
         self._incoming_msg_queue.put_nowait((command, message))
 
-    def have_processed_received_blocks(self) -> bool:
+    def have_processed_block_msgs(self) -> bool:
         # Todo - cover MTree and BlockWriter workers too
         expected_blocks_processed_count = self._pending_blocks_batch_size - len(
             self._pending_blocks_batch_set
@@ -244,17 +244,36 @@ class BufferedSession(BitcoinFramer):
 
         return True
 
-    def have_processed_received_non_block_msgs(self) -> bool:
+    def have_processed_non_block_msgs(self) -> bool:
         return self._msg_received_count == self._msg_handled_count
+
+    def readout_controller_state(self):
+        self.logger.error(f"A blockage in the pipeline is suspected and needs diagnosing.")
+        self.logger.error(f"Controller State:")
+        self.logger.error(f"-----------------")
+        self.logger.error(f"self._msg_received_count={self._msg_received_count}")
+        self.logger.error(f"self._msg_handled_count={self._msg_handled_count}")
+
+        self.logger.error(f"self._pending_blocks_batch_size={self._pending_blocks_batch_size}")
+        self.logger.error(f"self._pending_blocks_batch_set={self._pending_blocks_batch_set}")
+        self.logger.error(f"self._pending_blocks_received={self._pending_blocks_received}")
+
+        self.logger.error(f"self._pending_blocks_progress_counter.items():")
+        for blk_hash, count in self._pending_blocks_progress_counter.items():
+            self.logger.error(f"blk_hash={bitcoinx.hash_to_hex_str(blk_hash)}, count={count}, "
+                              f"self._pending_blocks_received[blk_hash]={self._pending_blocks_received[blk_hash]}")
+        expected_blocks_processed_count = self._pending_blocks_batch_size - len(
+            self._pending_blocks_batch_set
+        )
+        self.logger.error(f"expected_blocks_processed_count={expected_blocks_processed_count},"
+                          f"len(self.done_block_heights)={len(self.done_block_heights)}")
 
     async def wait_for_go_signal(self):
         """spawned when buffer goes above HWM level. will then depend on the accounting
         system to ensure all messages have been processed before resetting the buffer."""
-
         while not (
-            self.have_processed_received_non_block_msgs()
-            and self.have_processed_received_blocks()
-        ):
+            self.have_processed_non_block_msgs() and
+            self.have_processed_block_msgs()):
             await asyncio.sleep(0.05)
 
         self.logger.debug("resuming reading...")
@@ -495,9 +514,13 @@ class BufferedSession(BitcoinFramer):
 
         # detect when an unsolicited new block has thrown a spanner in the works
         if not count_requested == 0:
-            await asyncio.get_running_loop().run_in_executor(
+            coro = asyncio.get_running_loop().run_in_executor(
                 self._batched_blocks_exec, self.join_batched_blocks
             )
+            try:
+                await asyncio.wait_for(coro, timeout=60.0)
+            except asyncio.TimeoutError:
+                self.readout_controller_state()
         else:
             # it was an unsolicited block therefore -> recurse (to continue with batch)
             await self.sync_batched_blocks()
@@ -507,9 +530,11 @@ class BufferedSession(BitcoinFramer):
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
 
+        local_headers_tip_height = self.get_local_tip_height()
         local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = min(self.get_local_tip_height() - local_block_tip_height, 500)
+        block_height_deficit = min((local_headers_tip_height - local_block_tip_height), 500)
         self.stop_header_height = local_block_tip_height + block_height_deficit
+        self._pending_blocks_batch_size = self.stop_header_height - local_block_tip_height
 
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
