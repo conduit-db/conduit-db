@@ -7,7 +7,7 @@ from database.postgres_database import load_test_pg_database
 try:
     from conduit._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from conduit.algorithms import preprocessor, parse_block  # pure python
+    from conduit.algorithms import preprocessor, parse_txs  # pure python
 from bench.utils import print_results, print_results_asyncpg
 
 if __name__ == "__main__":
@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
         t0 = time.time()
         tx_offsets = preprocessor(raw_block)
-        tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
+        tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(
             bytes(raw_block), tx_offsets, 413567, 0, 1556
         )
 
@@ -34,7 +34,7 @@ if __name__ == "__main__":
         await pg_db.pg_create_temp_tables()
 
         t0 = time.time()
-        await pg_db.pg_bulk_load_tx_rows(tx_rows)
+        await pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
         await pg_db.pg_bulk_load_output_rows(out_rows)
         # await pg_db.pg_bulk_load_input_rows(in_rows)
         # await pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)

@@ -1,7 +1,7 @@
 """slower pure python alternative"""
 import struct
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Union, List
 
 import bitcoinx
 from struct import Struct
@@ -43,7 +43,9 @@ def unpack_varint(buf, offset):
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
+
 # -------------------- PREPROCESSOR -------------------- #
+
 
 def preprocessor(block_view, offset=0):
     offset += HEADER_OFFSET
@@ -75,7 +77,9 @@ def preprocessor(block_view, offset=0):
         tx_positions.append(offset)
     return tx_positions
 
+
 # -------------------- PARSE BLOCK TXS -------------------- #
+
 
 def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
     i = 0
@@ -135,17 +139,24 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
         logger.exception(e)
         raise
 
+
 def parse_tx(rawtx):
     tx_hash = double_sha256(rawtx)
-    tx_shash = struct_le_q.unpack(tx_hash[0:8])[0]
     logger.debug(f"got tx: {hash_to_hex_str(tx_hash)}")
-
-    # This is a hack so that code duplication is not required
-    parse_block(raw_block=rawtx, tx_offsets=[0], height=datetime.now())
+    return parse_txs(buffer=rawtx, tx_offsets=[0], height_or_timestamp=datetime.now())
 
 
-def parse_block(raw_block, tx_offsets, height):
+def parse_txs(
+    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, datetime], confirmed: bool
+):
     """
+    This function is dual-purpose - it can:
+    1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
+    2) ingest mempool rawtxs (buffer=rawtx) and the height_or_timestamp=datetime.now()
+
+    This obviates the need for duplicated code and makes it possible to do batch processing of
+    mempool transactions at a later date (where buffer=contiguous array of rawtxs)
+
     returns
         tx_rows =       [(tx_shash, tx_hash, height, position, offset_start, offset_end, tx_has_collided)...]
         in_rows =       [(prevout_shash, out_idx, tx_shash, in_idx, out_has_collided)...)...]
@@ -178,24 +189,26 @@ def parse_block(raw_block, tx_offsets, height):
             if position < count_txs - 1:
                 next_tx_offset = tx_offsets[position + 1]
             else:
-                next_tx_offset = len(raw_block)
-            tx_hash = double_sha256(raw_block[tx_offset_start:next_tx_offset])
+                next_tx_offset = len(buffer)
+
+            rawtx = buffer[tx_offset_start:next_tx_offset]
+            tx_hash = double_sha256(rawtx)
             tx_shash = struct_le_q.unpack(tx_hash[0:8])[0]
 
             # version
             offset += 4
 
             # inputs
-            count_tx_in, offset = unpack_varint(raw_block, offset)
+            count_tx_in, offset = unpack_varint(buffer, offset)
             ref_type = 1
             for in_idx in range(count_tx_in):
-                in_prevout_hash = raw_block[offset : offset + 32]
+                in_prevout_hash = buffer[offset : offset + 32]
                 in_prevout_shash = struct_le_q.unpack(in_prevout_hash[0:8])[0]
                 offset += 32
-                in_prevout_idx = struct_le_I.unpack_from(raw_block[offset : offset + 4])[0]
+                in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
-                script_sig_len, offset = unpack_varint(raw_block, offset)
-                script_sig = raw_block[offset : offset + script_sig_len]
+                script_sig_len, offset = unpack_varint(buffer, offset)
+                script_sig = buffer[offset : offset + script_sig_len]
                 # some coinbase tx scriptsigs don't obey any rules.
                 if not position == 0:
 
@@ -222,13 +235,13 @@ def parse_block(raw_block, tx_offsets, height):
                 offset += 4  # skip sequence
 
             # outputs
-            count_tx_out, offset = unpack_varint(raw_block, offset)
+            count_tx_out, offset = unpack_varint(buffer, offset)
             ref_type = 0
             for out_idx in range(count_tx_out):
-                out_value = struct_le_Q.unpack_from(raw_block[offset : offset + 8])[0]
+                out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
-                scriptpubkey_len, offset = unpack_varint(raw_block, offset)
-                scriptpubkey = raw_block[offset : offset + scriptpubkey_len]
+                scriptpubkey_len, offset = unpack_varint(buffer, offset)
+                scriptpubkey = buffer[offset : offset + scriptpubkey_len]
 
                 out_rows.add((tx_shash, out_idx, out_value, out_has_collided, None, None, None,))
 
@@ -238,8 +251,14 @@ def parse_block(raw_block, tx_offsets, height):
                         # Todo - out_pushdata_hash needs to be kept in memory for collisions...
                         out_pushdata_shash = struct_le_q.unpack(out_pushdata_hash[0:8])[0]
                         set_pd_rows.add(
-                            (out_pushdata_shash, out_pushdata_hash, tx_shash, out_idx, ref_type,
-                            pd_tx_has_collided,)
+                            (
+                                out_pushdata_shash,
+                                out_pushdata_hash,
+                                tx_shash,
+                                out_idx,
+                                ref_type,
+                                pd_tx_has_collided,
+                            )
                         )
                 offset += scriptpubkey_len
 
@@ -247,17 +266,20 @@ def parse_block(raw_block, tx_offsets, height):
             offset += 4
 
             # NOTE: when partitioning blocks ensure position is correct!
-            tx_rows.append(
-                (
-                    tx_shash,
-                    tx_hash,
-                    height,
-                    position,
-                    tx_offset_start,
-                    next_tx_offset,
-                    tx_has_collided,
+            if confirmed:
+                tx_rows.append(
+                    (
+                        tx_shash,
+                        tx_hash,
+                        height_or_timestamp,
+                        position,
+                        tx_offset_start,
+                        next_tx_offset,
+                        tx_has_collided,
+                    )
                 )
-            )
+            else:
+                tx_rows.append((tx_shash, tx_hash, height_or_timestamp, tx_has_collided, rawtx))
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows, set_pd_rows
     except Exception as e:
@@ -268,7 +290,9 @@ def parse_block(raw_block, tx_offsets, height):
         logger.exception(e)
         raise
 
+
 # -------------------- MERKLE TREE -------------------- #
+
 
 def calc_depth(leaves_count):
     result = leaves_count
@@ -278,13 +302,14 @@ def calc_depth(leaves_count):
         mtree_depth += 1
     return mtree_depth
 
+
 def calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets):
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
-            rawtx = raw_block[tx_offsets[i]:tx_offsets[i + 1]]
+            rawtx = raw_block[tx_offsets[i] : tx_offsets[i + 1]]
         else:
-            rawtx = raw_block[tx_offsets[i]:]
+            rawtx = raw_block[tx_offsets[i] :]
         tx_hash = double_sha256(rawtx)
         mtree[base_level].append(tx_hash)
     return mtree
@@ -294,12 +319,12 @@ def build_mtree_from_base(base_level, mtree):
     """if there is an odd number of hashes at a given level -> raise IndexError
     then duplicate the last hash, concatenate and double_sha256 to continue."""
 
-    for current_level in reversed(range(1, base_level+1)):
+    for current_level in reversed(range(1, base_level + 1)):
         next_level_up = []
         hashes = mtree[current_level]
         for i in range(0, len(hashes), 2):
             try:
-                _hash = double_sha256(hashes[i] + hashes[i+1])
+                _hash = double_sha256(hashes[i] + hashes[i + 1])
             except IndexError:
                 # print(f"index error at level={current_level}. i={i+1} index doesn't exist - there are {i+1} "
                 #       f"hashes at this level")
@@ -307,7 +332,7 @@ def build_mtree_from_base(base_level, mtree):
             finally:
                 next_level_up.append(_hash)
         hashes = next_level_up
-        mtree[current_level-1] = hashes
+        mtree[current_level - 1] = hashes
 
 
 def calc_mtree(raw_block, tx_offsets) -> Dict:

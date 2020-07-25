@@ -77,14 +77,11 @@ a frequently desired service)
 
 ## Mempool Transactions table
 
-    primary_key:     tx_shash (primary key with unique constraint)
-                     tx_hash (NOT INDEXED)
-                     timestamp (INSTEAD OF HEIGHT IN CONFIRMED TX TABLE)
-                     position
-                     tx_offset_start
-                     tx_offset_end
-                     has_collided  (boolean 0 or 1) - referring to 'short hash' (WITHIN MEMPOOL TX TABLE ONLY)
-    
+    primary_key:    mp_tx_shash bigint PRIMARY KEY, (with unique constraint)
+                    mp_tx_hash bytea, (NOT INDEXED)
+                    mp_tx_timestamp timestamptz, (INSTEAD OF HEIGHT IN CONFIRMED TX TABLE)
+                    mp_tx_has_collided boolean,  (boolean 0 or 1) - referring to 'short hash' (WITHIN MEMPOOL TX TABLE ONLY)
+                    mp_rawtx bytea
     
 When IBD is complete, need to request the full mempool and begin accepting relayed mempool txs.
 These 'tx' messages can be fed to the TxParser and the pushdata_rows, input_rows, output_rows

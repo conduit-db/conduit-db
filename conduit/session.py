@@ -12,7 +12,7 @@ import logging
 import struct
 from typing import Optional, List, Dict
 
-from .database.postgres_database import PG_Database, load_pg_database
+from .database.postgres_database import PG_Database
 from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
 from .commands import (VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL, TX_BIN)
 from .handlers import Handlers
@@ -404,7 +404,7 @@ class BufferedSession(BitcoinFramer):
 
     async def start_jobs(self):
         try:
-            self.pg_db: PG_Database = await load_pg_database()
+            self.pg_db: PG_Database = self.storage.pg_database
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
             self.start_workers()

@@ -1,29 +1,8 @@
 import logging
+import time
 
 import asyncpg
 from bitcoinx import hash_to_hex_str
-
-async def pg_connect() -> asyncpg.Connection:
-    conn = await asyncpg.connect(
-        user="conduitadmin",
-        host="127.0.0.1",
-        port=5432,
-        password="conduitpass",
-        database="conduitdb",
-    )
-    return conn
-
-
-async def pg_test_connect() -> asyncpg.Connection:
-    conn = await asyncpg.connect(
-        user="conduitadmin",
-        host="127.0.0.1",
-        port=5432,
-        password="conduitpass",
-        database="conduittestdb",
-    )
-    return conn
-
 
 class PG_Database:
     """simple container for common postgres queries"""
@@ -52,8 +31,10 @@ class PG_Database:
             await self.pg_conn.execute(
                 """
                 DROP TABLE IF EXISTS confirmed_transactions;
+                DROP TABLE IF EXISTS mempool_transactions;
                 DROP TABLE IF EXISTS io_table;
-                DROP TABLE IF EXISTS pushdata;"""
+                DROP TABLE IF EXISTS pushdata;
+                DROP TABLE IF EXISTS api_state"""
             )
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
@@ -110,13 +91,11 @@ class PG_Database:
                 pushdata_shash);
                 
                 CREATE UNLOGGED TABLE IF NOT EXISTS mempool_transactions (
-                    tx_shash bigint PRIMARY KEY,
-                    tx_hash bytea,
-                    timestamp integer,
-                    tx_position bigint,
-                    tx_offset_start bigint,
-                    tx_offset_end bigint,
-                    tx_has_collided boolean
+                    mp_tx_shash bigint PRIMARY KEY,
+                    mp_tx_hash bytea,
+                    mp_tx_timestamp timestamptz,
+                    mp_tx_has_collided boolean,
+                    mp_rawtx bytea
                 );
                 -- need to store the full tx_hash (albeit non-indexed) because the client
                 -- may not be providing the tx_hash in their query (e.g. for key history).
@@ -140,13 +119,26 @@ class PG_Database:
             );"""
         )
 
-    async def pg_bulk_load_tx_rows(self, tx_rows):
+    async def pg_bulk_load_confirmed_tx_rows(self, tx_rows):
+        t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "confirmed_transactions",
             columns=["tx_shash", "tx_hash", "tx_height", "tx_position", "tx_offset_start",
                 "tx_offset_end", "tx_has_collided"],
             records=tx_rows,
         )
+        t1 = time.time() - t0
+        self.logger.info(f"elapsed time for pg_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}")
+
+    async def pg_bulk_load_mempool_tx_rows(self, tx_rows):
+        t0 = time.time()
+        await self.pg_conn.copy_records_to_table(
+            "mempool_transactions",
+            columns=["mp_tx_shash", "mp_tx_hash", "mp_tx_timestamp", "mp_tx_has_collided", "mp_rawtx"],
+            records=tx_rows,
+        )
+        t1 = time.time() - t0
+        self.logger.info(f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}")
 
     async def pg_bulk_load_output_rows(self, out_rows):
         await self.pg_conn.copy_records_to_table(
@@ -187,26 +179,45 @@ class PG_Database:
 
     async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows, pd_rows):
         await self.pg_create_temp_tables()
-
-        await self.pg_bulk_load_tx_rows(tx_rows)  # todo - collision checks...
+        await self.pg_bulk_load_confirmed_tx_rows(tx_rows)
         await self.pg_bulk_load_output_rows(out_rows)
         await self.pg_bulk_load_input_rows(in_rows)
         await self.pg_bulk_load_pushdata_rows(pd_rows)
         await self.pg_drop_temp_tables()
 
+async def pg_connect() -> PG_Database:
+    conn = await asyncpg.connect(
+        user="conduitadmin",
+        host="127.0.0.1",
+        port=5432,
+        password="conduitpass",
+        database="conduitdb",
+    )
+    return PG_Database(conn)
+
+
+async def pg_test_connect() -> PG_Database:
+    conn = await asyncpg.connect(
+        user="conduitadmin",
+        host="127.0.0.1",
+        port=5432,
+        password="conduitpass",
+        database="conduittestdb",
+    )
+    return PG_Database(conn)
+
+
 async def load_pg_database() -> PG_Database:
-    pg_conn = await pg_connect()
-    pg_database = PG_Database(pg_conn)
+    pg_database = await pg_connect()
     await pg_database.pg_update_settings()
     await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
-    return PG_Database(pg_conn)
+    return pg_database
 
 
 async def load_test_pg_database() -> PG_Database:
-    pg_conn = await pg_test_connect()
-    pg_database = PG_Database(pg_conn)
+    pg_database = await pg_test_connect()
     await pg_database.pg_update_settings()
     await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
-    return PG_Database(pg_conn)
+    return pg_database

@@ -3,14 +3,15 @@ import io
 import multiprocessing
 import threading
 import time
+from datetime import datetime
 from functools import partial
 from multiprocessing import shared_memory
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Sequence, Optional
 
 import asyncpg
 from bitcoinx import read_varint
 
-from .database.postgres_database import load_pg_database, PG_Database
+from .database.postgres_database import load_pg_database, PG_Database, pg_connect
 from .database.lmdb_database import LMDB_Database
 from .logs import logs
 from .constants import WORKER_COUNT_TX_PARSERS
@@ -18,7 +19,7 @@ from .constants import WORKER_COUNT_TX_PARSERS
 try:
     from ._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from .algorithms import preprocessor, parse_block, calc_mtree, parse_tx  # pure python
+    from .algorithms import preprocessor, parse_txs, calc_mtree, parse_tx  # pure python
 
 logger = logs.get_logger("handlers")
 
@@ -140,7 +141,8 @@ class TxParser(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
-        self.worker_asyncio_tx_parser_in_queue = None
+        self.worker_asyncio_tx_parser_confirmed_tx_queue = None
+        self.worker_asyncio_tx_parser_mempool_tx_queue = None
         self.worker_asyncio_tx_parser_ack_queue = None
 
         self.pg_db = None
@@ -160,18 +162,27 @@ class TxParser(multiprocessing.Process):
 
     def run(self):
         self.loop = asyncio.get_event_loop()
-        self.worker_asyncio_tx_parser_in_queue = asyncio.Queue()
+        self.worker_asyncio_tx_parser_confirmed_tx_queue = asyncio.Queue()
+        self.worker_asyncio_tx_parser_mempool_tx_queue = asyncio.Queue()
         self.worker_asyncio_tx_parser_ack_queue = asyncio.Queue()
         try:
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
-            asyncio.get_event_loop().run_until_complete(self.pg_inserts_task())
+
+            asyncio.get_event_loop().run_until_complete(self.start_asyncio_jobs())
             logger.debug("TxParser event loop completed...")
             while True:
                 time.sleep(0.05)
         except Exception as e:
             logger.exception(e)
             raise
+
+    async def start_asyncio_jobs(self):
+        tasks = [
+            asyncio.create_task(self.pg_insert_confirmed_tx_rows_task()),
+            asyncio.create_task(self.pg_insert_mempool_tx_rows_task()),
+        ]
+        await asyncio.gather(*tasks)
 
     def reset_batched_rows(self):
         self.batched_tx_rows = []
@@ -190,43 +201,52 @@ class TxParser(multiprocessing.Process):
     async def append_block_acks(self, blk_acks):
         self.batched_block_acks.append(blk_acks)
 
-    async def flush_to_postgres(self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks):
-        # Todo - ideally wrap these all in a single transaction for consistency
+    async def pg_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
+        await self.pg_db.pg_create_temp_tables()
+        t0 = time.time()
+        await self.pg_db.pg_bulk_load_output_rows(out_rows)
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
+
+        t0 = time.time()
+        await self.pg_db.pg_bulk_load_input_rows(in_rows)
+        t1 = time.time() - t0
+        logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
+
+        t0 = time.time()
+        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+        t1 = time.time() - t0
+        logger.info(
+            f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}"
+        )
+        await self.pg_db.pg_drop_temp_tables()
+
+    async def pg_flush_rows(
+        self,
+        tx_rows: Sequence,
+        in_rows: Sequence,
+        out_rows: Sequence,
+        set_pd_rows: Sequence,
+        blk_acks: Optional[Sequence],
+        confirmed: bool,
+    ):
         try:
-            t0 = time.time()
-            await self.pg_db.pg_create_temp_tables()
-            await self.pg_db.pg_bulk_load_tx_rows(tx_rows)
-            t1 = time.time() - t0
-            logger.info(f"elapsed time for pg_bulk_load_tx_rows = {t1} seconds for {len(tx_rows)}")
+            if confirmed:
+                await self.pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
+                await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                # Ack for all flushed blocks
+                for blk_hash, tx_count in blk_acks:
+                    # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
+                    self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
 
-            t0 = time.time()
-            await self.pg_db.pg_bulk_load_output_rows(out_rows)
-            t1 = time.time() - t0
-            logger.info(
-                f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
-            )
+                self.reset_batched_rows()
+            else:
+                logger.debug(f"confirmed = {confirmed}")
+                await self.pg_db.pg_bulk_load_mempool_tx_rows(tx_rows)
+                await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
 
-            t0 = time.time()
-            await self.pg_db.pg_bulk_load_input_rows(in_rows)
-            t1 = time.time() - t0
-            logger.info(
-                f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
-            )
+            await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
 
-            t0 = time.time()
-            await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-            t1 = time.time() - t0
-            logger.info(
-                f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}"
-            )
-            await self.pg_db.pg_drop_temp_tables()
-
-            # Ack for all flushed blocks
-            for blk_hash, tx_count in blk_acks:
-                # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
-                self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
-
-            self.reset_batched_rows()
         except asyncpg.exceptions.UniqueViolationError as e:
             error_text = e.as_dict()["detail"]
             # extract tx_shash from brackets - not best practice.. but most efficient
@@ -235,27 +255,26 @@ class TxParser(multiprocessing.Process):
             tx_rows = handle_collision(
                 tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, colliding_tx_shash
             )
-            await self.pg_db.pg_drop_temp_tables()
-
             # retry without the colliding tx
-            await self.flush_to_postgres(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks)
+            await self.pg_flush_rows(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, confirmed)
             logger.error(e)
 
-    async def pg_inserts_task(self):
+    async def pg_insert_confirmed_tx_rows_task(self):
         """bulk inserts to postgres.
 
-        NOTE: this cannot be done via multiple coroutines per worker process. Varying
-        times for the insert to complete, would cause each worker coroutine to pull from
-        worker_ack_queue_asyncio out of sequence. This is not a bottleneck anyway
-        - especially with larger blocks."""
-        self.pg_db: PG_Database = await load_pg_database()
+        NOTE: Can only have ONE asyncio task per worker process. Varying
+        times for the insert to complete would cause each worker coroutine to pull from
+        worker_ack_queue_asyncio out of sequence.
+
+        This is not a bottleneck anyway - especially with larger blocks."""
+        self.pg_db: PG_Database = await pg_connect()
         await self.pg_db.pg_update_settings()
         try:
             while True:
                 try:
                     # see 'footnote_1'
                     blk_rows = await asyncio.wait_for(
-                        self.worker_asyncio_tx_parser_in_queue.get(),
+                        self.worker_asyncio_tx_parser_confirmed_tx_queue.get(),
                         timeout=self.BATCHED_MAX_WAIT_TIME,
                     )
                     blk_acks = await self.worker_asyncio_tx_parser_ack_queue.get()
@@ -265,12 +284,13 @@ class TxParser(multiprocessing.Process):
                 except asyncio.TimeoutError:
                     # print("timed out...")
                     if len(self.batched_tx_rows) != 0:
-                        await self.flush_to_postgres(
+                        await self.pg_flush_rows(
                             self.batched_tx_rows,
                             self.batched_in_rows,
                             self.batched_out_rows,
                             self.batched_set_pd_rows,
                             self.batched_block_acks,
+                            confirmed=True,
                         )
                     continue
 
@@ -278,37 +298,39 @@ class TxParser(multiprocessing.Process):
                 # i.e. what if it times out half-way through committing rows to the db?
                 if len(self.batched_tx_rows) > self.MAX_TX_BATCH_SIZE:
                     # print("hit max tx batch size...")
-                    await self.flush_to_postgres(
+                    await self.pg_flush_rows(
                         self.batched_tx_rows,
                         self.batched_in_rows,
                         self.batched_out_rows,
                         self.batched_set_pd_rows,
                         self.batched_block_acks,
+                        confirmed=True,
                     )
         except Exception as e:
             logger.exception(e)
             raise e
 
-    def handle_tx_msg(self, item):
-        (tx_start_pos, tx_end_pos,) = item
-        rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
-        parse_tx(rawtx)
-        # todo - feed to db
+    async def pg_insert_mempool_tx_rows_task(self):
+        """bulk inserts to postgres.
 
-    def handle_block_msg(self, item):
-        (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div,) = item
-        tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
-            bytes(self.shm.buf[blk_start_pos:blk_end_pos]), tx_positions_div, blk_height,
-        )
-        coro = partial(self.worker_asyncio_tx_parser_in_queue.put,
-            (tx_rows, in_rows, out_rows, set_pd_rows), )
-        asyncio.run_coroutine_threadsafe(coro(), self.loop)
+        NOTE: Can only have ONE asyncio task per worker process. Varying
+        times for the insert to complete would cause each worker coroutine to pull from
+        worker_ack_queue_asyncio out of sequence.
 
-        # need to ack from asyncio event loop because that's where the context
-        # is for when the data has indeed been flushed to db
-        item = (blk_hash, len(tx_positions_div))
-        coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
-        asyncio.run_coroutine_threadsafe(coro2(), self.loop)
+        This is not a bottleneck anyway - especially with larger blocks."""
+        self.pg_db: PG_Database = await pg_connect()
+        await self.pg_db.pg_update_settings()
+        try:
+            while True:
+                mempool_rows = await self.worker_asyncio_tx_parser_mempool_tx_queue.get()
+                logger.debug(mempool_rows)
+
+                await self.pg_flush_rows(
+                    *mempool_rows, blk_acks=None, confirmed=False,
+                )
+        except Exception as e:
+            logger.exception(e)
+            raise e
 
     def main_thread(self):
         while True:
@@ -318,11 +340,42 @@ class TxParser(multiprocessing.Process):
                     return  # poison pill stop command
 
                 if msg_type == 1:
-                    # tx_rows, in_rows, out_rows, set_pd_rows = self.handle_tx_msg(item)
-                    self.handle_tx_msg(item)
+                    (tx_start_pos, tx_end_pos) = item
+                    rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
+
+                    tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(
+                        buffer=rawtx,
+                        tx_offsets=[0],
+                        height_or_timestamp=datetime.now(),
+                        confirmed=False,
+                    )
+                    coro = partial(
+                        self.worker_asyncio_tx_parser_mempool_tx_queue.put,
+                        (tx_rows, in_rows, out_rows, set_pd_rows),
+                    )
+                    asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
                 if msg_type == 2:
-                    self.handle_block_msg(item)
+                    (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div,) = item
+                    raw_block = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
+
+                    tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(
+                        buffer=raw_block,
+                        tx_offsets=tx_positions_div,
+                        height_or_timestamp=blk_height,
+                        confirmed=True,
+                    )
+                    coro = partial(
+                        self.worker_asyncio_tx_parser_confirmed_tx_queue.put,
+                        (tx_rows, in_rows, out_rows, set_pd_rows),
+                    )
+                    asyncio.run_coroutine_threadsafe(coro(), self.loop)
+
+                    # need to ack from asyncio event loop because that's where the context
+                    # is for when the data has indeed been flushed to db
+                    item = (blk_hash, len(tx_positions_div))
+                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
+                    asyncio.run_coroutine_threadsafe(coro2(), self.loop)
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")
