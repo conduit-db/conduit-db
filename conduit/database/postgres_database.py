@@ -1,8 +1,11 @@
 import logging
 import time
+from typing import List
 
 import asyncpg
+from asyncpg import Record
 from bitcoinx import hash_to_hex_str
+
 
 class PG_Database:
     """simple container for common postgres queries"""
@@ -41,7 +44,10 @@ class PG_Database:
 
     async def pg_drop_temp_tables(self):
         try:
-            await self.pg_conn.execute("""DROP TABLE temp_inputs;""")
+            await self.pg_conn.execute("""
+            DROP TABLE temp_inputs;
+            DROP TABLE temp_mined_tx_shashes;
+            """)
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
 
@@ -108,6 +114,8 @@ class PG_Database:
         )
 
     async def pg_create_temp_tables(self):
+        # Todo - prefix the table name with the worker_id to avoid clashes
+        #  currently there is only a single worker
         await self.pg_conn.execute(
             """
             CREATE TEMPORARY TABLE temp_inputs (
@@ -116,35 +124,91 @@ class PG_Database:
                 in_tx_shash bigint,
                 in_idx integer,
                 in_has_collided boolean
-            );"""
+            );
+            
+            CREATE TEMPORARY TABLE temp_mined_tx_shashes (
+                mined_tx_shash bigint
+            );
+            """
         )
+
+    async def pg_get_unprocessed_txs(self, mined_tx_shashes: List[int]):
+        """checking for colliding short hashes is not required -
+        - see blueprint section: very fine print"""
+        t0 = time.time()
+        await self.pg_conn.copy_records_to_table(
+            "temp_mined_tx_shashes", columns=["mined_tx_shash"], records=mined_tx_shashes,
+        )
+        t1 = time.time() - t0
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(mined_tx_shashes)}"
+        )
+        result: List[Record] = await self.pg_conn.fetch(
+            """
+            -- tx_hash ISNULL implies no match therefore not previously processed yet
+            SELECT *
+            FROM temp_mined_tx_shashes
+            LEFT OUTER JOIN mempool_transactions
+            ON (mempool_transactions.tx_shash = temp_mined_tx_shashes.mined_tx_shash)
+            WHERE mempool_transactions.tx_hash ISNULL
+            ;"""
+        )
+        return result
+
+    async def pg_invalidate_mempool_rows(self, mined_tx_shashes):
+        """Need to deal with collisions here"""
+        raise NotImplementedError
 
     async def pg_bulk_load_confirmed_tx_rows(self, tx_rows):
         t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "confirmed_transactions",
-            columns=["tx_shash", "tx_hash", "tx_height", "tx_position", "tx_offset_start",
-                "tx_offset_end", "tx_has_collided"],
+            columns=[
+                "tx_shash",
+                "tx_hash",
+                "tx_height",
+                "tx_position",
+                "tx_offset_start",
+                "tx_offset_end",
+                "tx_has_collided",
+            ],
             records=tx_rows,
         )
         t1 = time.time() - t0
-        self.logger.info(f"elapsed time for pg_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}")
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
+        )
 
     async def pg_bulk_load_mempool_tx_rows(self, tx_rows):
         t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "mempool_transactions",
-            columns=["mp_tx_shash", "mp_tx_hash", "mp_tx_timestamp", "mp_tx_has_collided", "mp_rawtx"],
+            columns=[
+                "mp_tx_shash",
+                "mp_tx_hash",
+                "mp_tx_timestamp",
+                "mp_tx_has_collided",
+                "mp_rawtx",
+            ],
             records=tx_rows,
         )
         t1 = time.time() - t0
-        self.logger.info(f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}")
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
+        )
 
     async def pg_bulk_load_output_rows(self, out_rows):
         await self.pg_conn.copy_records_to_table(
             "io_table",
-            columns=["out_tx_shash", "out_idx", "out_value", "out_has_collided", "in_tx_shash",
-                "in_idx", "in_has_collided"],
+            columns=[
+                "out_tx_shash",
+                "out_idx",
+                "out_value",
+                "out_has_collided",
+                "in_tx_shash",
+                "in_idx",
+                "in_has_collided",
+            ],
             records=out_rows,
         )
 
@@ -154,8 +218,7 @@ class PG_Database:
         #  2) update io table from temp table (no table joins needed)
         await self.pg_conn.copy_records_to_table(
             "temp_inputs",
-            columns=["in_prevout_shash", "out_idx", "in_tx_shash", "in_idx",
-                "in_has_collided"],
+            columns=["in_prevout_shash", "out_idx", "in_tx_shash", "in_idx", "in_has_collided"],
             records=in_rows,
         )
         await self.pg_conn.execute(
@@ -173,7 +236,14 @@ class PG_Database:
     async def pg_bulk_load_pushdata_rows(self, pd_rows):
         await self.pg_conn.copy_records_to_table(
             "pushdata",
-            columns=["pushdata_shash", "pushdata_hash", "tx_shash", "idx", "ref_type", "pd_tx_has_collided"],
+            columns=[
+                "pushdata_shash",
+                "pushdata_hash",
+                "tx_shash",
+                "idx",
+                "ref_type",
+                "pd_tx_has_collided",
+            ],
             records=pd_rows,  # exclude pushdata_hash there is no such column in the table
         )
 
@@ -184,6 +254,7 @@ class PG_Database:
         await self.pg_bulk_load_input_rows(in_rows)
         await self.pg_bulk_load_pushdata_rows(pd_rows)
         await self.pg_drop_temp_tables()
+
 
 async def pg_connect() -> PG_Database:
     conn = await asyncpg.connect(

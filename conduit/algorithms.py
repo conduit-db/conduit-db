@@ -140,12 +140,6 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
         raise
 
 
-def parse_tx(rawtx):
-    tx_hash = double_sha256(rawtx)
-    logger.debug(f"got tx: {hash_to_hex_str(tx_hash)}")
-    return parse_txs(buffer=rawtx, tx_offsets=[0], height_or_timestamp=datetime.now())
-
-
 def parse_txs(
     buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, datetime], confirmed: bool
 ):
@@ -168,6 +162,8 @@ def parse_txs(
         these rows in case of a collision -> committed to collision table.
     """
     tx_rows = []
+    tx_shashes = []
+
     # sets rule out possibility of duplicate pushdata in same input / output
     in_rows = set()
     out_rows = set()
@@ -278,10 +274,11 @@ def parse_txs(
                         tx_has_collided,
                     )
                 )
+                tx_shashes.append(tx_shash)
             else:
                 tx_rows.append((tx_shash, tx_hash, height_or_timestamp, tx_has_collided, rawtx))
         assert len(tx_rows) == count_txs
-        return tx_rows, in_rows, out_rows, set_pd_rows
+        return tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "

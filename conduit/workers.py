@@ -1,6 +1,7 @@
 import asyncio
 import io
 import multiprocessing
+import queue
 import threading
 import time
 from datetime import datetime
@@ -19,7 +20,13 @@ from .constants import WORKER_COUNT_TX_PARSERS
 try:
     from ._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from .algorithms import preprocessor, parse_txs, calc_mtree, parse_tx  # pure python
+    from .algorithms import (
+        preprocessor,
+        parse_txs,
+        calc_mtree,
+        calc_mtree_base_level,
+        struct_le_q,
+    )
 
 logger = logs.get_logger("handlers")
 
@@ -135,15 +142,22 @@ class TxParser(multiprocessing.Process):
     """
 
     def __init__(
-        self, shm_name, worker_in_queue_tx_parse, worker_ack_queue_tx_parse,
+        self,
+        shm_name,
+        worker_in_queue_tx_parse,
+        worker_ack_queue_tx_parse,
+        initial_block_download_event_mp,
     ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
+        self.initial_block_download_event_mp = initial_block_download_event_mp
+
         self.worker_asyncio_tx_parser_confirmed_tx_queue = None
         self.worker_asyncio_tx_parser_mempool_tx_queue = None
         self.worker_asyncio_tx_parser_ack_queue = None
+        self.processed_vs_unprocessed_queue = None
 
         self.pg_db = None
         self.loop = None
@@ -165,11 +179,12 @@ class TxParser(multiprocessing.Process):
         self.worker_asyncio_tx_parser_confirmed_tx_queue = asyncio.Queue()
         self.worker_asyncio_tx_parser_mempool_tx_queue = asyncio.Queue()
         self.worker_asyncio_tx_parser_ack_queue = asyncio.Queue()
+        self.processed_vs_unprocessed_queue = queue.Queue()
         try:
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
 
-            asyncio.get_event_loop().run_until_complete(self.start_asyncio_jobs())
+            self.loop.run_until_complete(self.start_asyncio_jobs())
             logger.debug("TxParser event loop completed...")
             while True:
                 time.sleep(0.05)
@@ -332,6 +347,28 @@ class TxParser(multiprocessing.Process):
             logger.exception(e)
             raise e
 
+    async def get_processed_vs_unprocessed_tx_offsets(self, raw_block, tx_offsets):
+        """input rows, output rows and pushdata rows must not be inserted again if this has
+        already occurred for the mempool transaction"""
+        all_block_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
+            0
+        ]
+
+        shashes = []
+        for full_tx_hash in all_block_tx_hashes:
+            shashes.append(struct_le_q.unpack(full_tx_hash[0:8])[0])
+
+        offsets_map = dict(zip(shashes, tx_offsets))
+        unprocessed_tx_shashes = await self.pg_db.pg_get_unprocessed_txs(shashes)
+
+        relevant_offsets = []
+        for tx_shash in unprocessed_tx_shashes:
+            relevant_offsets.append(offsets_map.pop(tx_shash))
+        self.processed_vs_unprocessed_queue.put_nowait((relevant_offsets, offsets_map))
+
+    def run_coroutine_threadsafe(self, coro) -> asyncio.Future:
+        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
     def main_thread(self):
         while True:
             try:
@@ -343,7 +380,7 @@ class TxParser(multiprocessing.Process):
                     (tx_start_pos, tx_end_pos) = item
                     rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
 
-                    tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(
+                    tx_rows, in_rows, out_rows, set_pd_rows, _tx_shashes = parse_txs(
                         buffer=rawtx,
                         tx_offsets=[0],
                         height_or_timestamp=datetime.now(),
@@ -353,15 +390,24 @@ class TxParser(multiprocessing.Process):
                         self.worker_asyncio_tx_parser_mempool_tx_queue.put,
                         (tx_rows, in_rows, out_rows, set_pd_rows),
                     )
-                    asyncio.run_coroutine_threadsafe(coro(), self.loop)
+                    self.run_coroutine_threadsafe(coro())
 
                 if msg_type == 2:
-                    (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div,) = item
+                    (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div,) = item
                     raw_block = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
-                    tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(
+                    if not self.initial_block_download_event_mp.is_set:
+                        self.run_coroutine_threadsafe(
+                            self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_div)
+                        )
+                        unprocessed_tx_offsets, processed_tx_offsets = \
+                            self.processed_vs_unprocessed_queue.get()
+                    else:
+                        unprocessed_tx_offsets = tx_offsets_div
+
+                    tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes = parse_txs(
                         buffer=raw_block,
-                        tx_offsets=tx_positions_div,
+                        tx_offsets=unprocessed_tx_offsets,
                         height_or_timestamp=blk_height,
                         confirmed=True,
                     )
@@ -369,13 +415,13 @@ class TxParser(multiprocessing.Process):
                         self.worker_asyncio_tx_parser_confirmed_tx_queue.put,
                         (tx_rows, in_rows, out_rows, set_pd_rows),
                     )
-                    asyncio.run_coroutine_threadsafe(coro(), self.loop)
+                    self.run_coroutine_threadsafe(coro())
 
                     # need to ack from asyncio event loop because that's where the context
                     # is for when the data has indeed been flushed to db
-                    item = (blk_hash, len(tx_positions_div))
+                    item = (blk_hash, len(tx_offsets_div))
                     coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
-                    asyncio.run_coroutine_threadsafe(coro2(), self.loop)
+                    self.run_coroutine_threadsafe(coro2())
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")

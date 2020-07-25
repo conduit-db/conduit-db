@@ -208,7 +208,7 @@ class BufferedSession(BitcoinFramer):
         self._pending_blocks_progress_counter = {}
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
 
-        # Worker queues
+        # Worker queues & events
         self.worker_in_queue_preproc = multiprocessing.Queue()  # no ack needed
         self.worker_in_queue_tx_parse = multiprocessing.Queue()
         self.worker_in_queue_mtree = multiprocessing.Queue()
@@ -216,6 +216,7 @@ class BufferedSession(BitcoinFramer):
         self.worker_ack_queue_tx_parse = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
+        self.initial_block_download_event_mp = multiprocessing.Event()
 
         # Mempool and API state
         self.mempool_tx_hash_set = set()
@@ -365,6 +366,7 @@ class BufferedSession(BitcoinFramer):
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse,
+                self.initial_block_download_event_mp
             )
             p.start()
             self.processes.append(p)

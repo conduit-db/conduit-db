@@ -105,6 +105,35 @@ Insertions for tx_rows will go in this order for new blocks:
 
 and an inner join with the mempool transactions table for unconfirmed history.
 
+#### Further considerations:
+When a new block is mined, a check needs to be done to see which transactions have already
+been processed. This can be done via:
+- bulk loading the tx short hashes to a temp table
+- doing a left outer join with this temp table and the mempool transactions table
+- the rows that did not 'find a match' are the ones that have not yet been processed
+(in other words there are no entries yet for the pushdata and io tables)
+so these txs should be processed as usual whereas the matching txs should go through
+a fast-track 
+
+##### Very fine print
+If there is a collision **in the mempool transaction table** then this would be tracked 
+in the corresponding collision table for the mempool transaction table.
+
+For 'pg_get_unprocessed_txs' method, checking for colliding short hashes is not required.
+There would have to be a freak scenario where there is already 2 previous collisions 
+(in the mempool) and yours is the 3rd (which has **not been processed / relayed**... but to 
+handle this crazy edge case would need to: 
+1) check all returned rows for a collision
+2) lookup tx_hash in collision table to get final verdict Yes or No (have we processed 
+this one?) 
+
+Instead I will assume that if there's a shash match then it *was* relayed and *has* been 
+processed already.
+
+This can still be added later for 'correctness' though and will likely not have much overhead
+because I expect most transactions to fall into the "already processed" category and so doing a 
+quick scan for any collisions may be acceptable.
+
 
 ## API State
 
