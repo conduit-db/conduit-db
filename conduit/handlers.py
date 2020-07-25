@@ -108,11 +108,9 @@ class Handlers:
 
     # ----- Special case messages ----- #
 
-    async def on_tx(self, message: memoryview):
-        # DEBUGGING ONLY
-        tx = self.session.deserializer.tx(io.BytesIO(message))
-        logger.debug(f"tx: {bitcoinx.hash_to_hex_str(tx.hash())}")
-
+    async def on_tx(self, special_message: Tuple[int, int]):
+        msg_type = 1  # TX
+        self.session.worker_in_queue_tx_parse.put((msg_type, special_message))
         self.session._msg_handled_count += 1
 
 

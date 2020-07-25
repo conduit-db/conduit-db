@@ -1,5 +1,4 @@
 import asyncio
-import async_timeout
 import io
 import multiprocessing
 import threading
@@ -9,7 +8,7 @@ from multiprocessing import shared_memory
 from typing import List, Tuple, Dict
 
 import asyncpg
-from bitcoinx import read_varint, hash_to_hex_str
+from bitcoinx import read_varint
 
 from .database.postgres_database import load_pg_database, PG_Database
 from .database.lmdb_database import LMDB_Database
@@ -19,7 +18,7 @@ from .constants import WORKER_COUNT_TX_PARSERS
 try:
     from ._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from .algorithms import preprocessor, parse_block, calc_mtree  # pure python
+    from .algorithms import preprocessor, parse_block, calc_mtree, parse_tx  # pure python
 
 logger = logs.get_logger("handlers")
 
@@ -33,11 +32,7 @@ class BlockPreProcessor(multiprocessing.Process):
     """
 
     def __init__(
-        self,
-        shm_name,
-        worker_in_queue_preproc,
-        worker_in_queue_tx_parse,
-        worker_in_queue_mtree,
+        self, shm_name, worker_in_queue_preproc, worker_in_queue_tx_parse, worker_in_queue_mtree,
     ):
         super(BlockPreProcessor, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
@@ -75,9 +70,7 @@ class BlockPreProcessor(multiprocessing.Process):
         count_per_div_parsing = round(len(tx_positions) / WORKER_COUNT_TX_PARSERS)
         # Todo - divide up the block into x number of worker segments for parallel
         #  processing.
-        divided_tx_positions = [
-            (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions)
-        ]
+        divided_tx_positions = [(blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions)]
         return divided_tx_positions
 
     def run(self):
@@ -89,27 +82,23 @@ class BlockPreProcessor(multiprocessing.Process):
 
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
-                tx_positions = preprocessor(
-                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos])
-                )
+                tx_positions = preprocessor(bytearray(self.shm.buf[blk_start_pos:blk_end_pos]))
 
                 divided_parsing_work = self.distribute_load_parsing(
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
                 )
 
+                msg_type = 2  # BLOCK
                 for item in divided_parsing_work:
-                    self.worker_in_queue_tx_parse.put(item)
+                    self.worker_in_queue_tx_parse.put((msg_type, item))
 
-                self.worker_in_queue_mtree.put(
-                    (blk_hash, blk_start_pos, blk_end_pos, tx_positions)
-                )
+                self.worker_in_queue_mtree.put((blk_hash, blk_start_pos, blk_end_pos, tx_positions))
         except Exception as e:
             logger.exception(e)
             raise
 
 
-def handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
-                colliding_tx_shash):
+def handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, colliding_tx_shash):
     """only expect to find 1 collision and then reattempt the batch
     (based on probabilities)"""
     try:
@@ -145,10 +134,7 @@ class TxParser(multiprocessing.Process):
     """
 
     def __init__(
-        self,
-        shm_name,
-        worker_in_queue_tx_parse,
-        worker_ack_queue_tx_parse,
+        self, shm_name, worker_in_queue_tx_parse, worker_ack_queue_tx_parse,
     ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
@@ -204,9 +190,7 @@ class TxParser(multiprocessing.Process):
     async def append_block_acks(self, blk_acks):
         self.batched_block_acks.append(blk_acks)
 
-    async def flush_to_postgres(
-        self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks
-    ):
+    async def flush_to_postgres(self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks):
         # Todo - ideally wrap these all in a single transaction for consistency
         try:
             t0 = time.time()
@@ -218,17 +202,23 @@ class TxParser(multiprocessing.Process):
             t0 = time.time()
             await self.pg_db.pg_bulk_load_output_rows(out_rows)
             t1 = time.time() - t0
-            logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
+            logger.info(
+                f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
+            )
 
             t0 = time.time()
             await self.pg_db.pg_bulk_load_input_rows(in_rows)
             t1 = time.time() - t0
-            logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
+            logger.info(
+                f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
+            )
 
             t0 = time.time()
             await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
             t1 = time.time() - t0
-            logger.info(f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}")
+            logger.info(
+                f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}"
+            )
             await self.pg_db.pg_drop_temp_tables()
 
             # Ack for all flushed blocks
@@ -238,12 +228,13 @@ class TxParser(multiprocessing.Process):
 
             self.reset_batched_rows()
         except asyncpg.exceptions.UniqueViolationError as e:
-            error_text = e.as_dict()['detail']
+            error_text = e.as_dict()["detail"]
             # extract tx_shash from brackets - not best practice.. but most efficient
-            colliding_tx_shash = error_text.split('(')[2].split(')')[0]
+            colliding_tx_shash = error_text.split("(")[2].split(")")[0]
             logger.error(f"colliding tx_shash = {colliding_tx_shash}")
-            tx_rows = handle_collision(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
-                colliding_tx_shash)
+            tx_rows = handle_collision(
+                tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, colliding_tx_shash
+            )
             await self.pg_db.pg_drop_temp_tables()
 
             # retry without the colliding tx
@@ -264,7 +255,9 @@ class TxParser(multiprocessing.Process):
                 try:
                     # see 'footnote_1'
                     blk_rows = await asyncio.wait_for(
-                        self.worker_asyncio_tx_parser_in_queue.get(), timeout=self.BATCHED_MAX_WAIT_TIME)
+                        self.worker_asyncio_tx_parser_in_queue.get(),
+                        timeout=self.BATCHED_MAX_WAIT_TIME,
+                    )
                     blk_acks = await self.worker_asyncio_tx_parser_ack_queue.get()
                     await self.extend_batched_rows(blk_rows)
                     await self.append_block_acks(blk_acks)
@@ -296,40 +289,43 @@ class TxParser(multiprocessing.Process):
             logger.exception(e)
             raise e
 
+    def handle_tx_msg(self, item):
+        (tx_start_pos, tx_end_pos,) = item
+        rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
+        parse_tx(rawtx)
+        # todo - feed to db
+
+    def handle_block_msg(self, item):
+        (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div,) = item
+        tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
+            bytes(self.shm.buf[blk_start_pos:blk_end_pos]), tx_positions_div, blk_height,
+        )
+        coro = partial(self.worker_asyncio_tx_parser_in_queue.put,
+            (tx_rows, in_rows, out_rows, set_pd_rows), )
+        asyncio.run_coroutine_threadsafe(coro(), self.loop)
+
+        # need to ack from asyncio event loop because that's where the context
+        # is for when the data has indeed been flushed to db
+        item = (blk_hash, len(tx_positions_div))
+        coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
+        asyncio.run_coroutine_threadsafe(coro2(), self.loop)
+
     def main_thread(self):
         while True:
             try:
-                item = self.worker_in_queue_tx_parse.get()
+                msg_type, item = self.worker_in_queue_tx_parse.get()
                 if not item:
                     return  # poison pill stop command
 
-                (
-                    blk_hash,
-                    blk_height,
-                    blk_start_pos,
-                    blk_end_pos,
-                    tx_positions_div,
-                ) = item
+                if msg_type == 1:
+                    # tx_rows, in_rows, out_rows, set_pd_rows = self.handle_tx_msg(item)
+                    self.handle_tx_msg(item)
 
-                tx_rows, in_rows, out_rows, set_pd_rows = parse_block(
-                    bytes(self.shm.buf[blk_start_pos:blk_end_pos]),
-                    tx_positions_div,
-                    blk_height,
-                )
+                if msg_type == 2:
+                    self.handle_block_msg(item)
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
                 #       f"len(out_rows)={len(out_rows)}")
-                coro = partial(
-                    self.worker_asyncio_tx_parser_in_queue.put,
-                    (tx_rows, in_rows, out_rows, set_pd_rows),
-                )
-                asyncio.run_coroutine_threadsafe(coro(), self.loop)
-
-                # need to ack from asyncio event loop because that's where the context
-                # is for when the data has indeed been flushed to db
-                item = (blk_hash, len(tx_positions_div))
-                coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
-                asyncio.run_coroutine_threadsafe(coro2(), self.loop)
             except Exception as e:
                 logger.exception(e)
                 raise
@@ -365,7 +361,7 @@ class MTreeCalculator(multiprocessing.Process):
                 blk_hash, blk_start_pos, blk_end_pos, tx_offsets = item
 
                 t0 = time.time()
-                mtree = calc_mtree(self.shm.buf[blk_start_pos: blk_end_pos], tx_offsets)
+                mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
                 lmdb_db.put_merkle_tree(mtree, blk_hash)
                 t1 = time.time() - t0
                 # logger.debug(f"full mtree calculation took {t1} seconds")
@@ -428,8 +424,10 @@ class BlockWriter(multiprocessing.Process):
                 # todo - perhaps a special message from session.py is better to signal
                 #  a full buffer and just flush a full buffer each time. Would stop the
                 #  wasteful polling.
-                item = await asyncio.wait_for(self.worker_asyncio_block_writer_in_queue.get(),
-                    timeout=self.MAX_QUEUE_WAIT_TIME)
+                item = await asyncio.wait_for(
+                    self.worker_asyncio_block_writer_in_queue.get(),
+                    timeout=self.MAX_QUEUE_WAIT_TIME,
+                )
                 blk_hash, blk_start_pos, blk_end_pos = item
                 self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
 
@@ -461,8 +459,10 @@ class BlockWriter(multiprocessing.Process):
                 assert isinstance(item, tuple)
 
                 blk_hash, blk_start_pos, blk_end_pos = item
-                coro = partial(self.worker_asyncio_block_writer_in_queue.put, (blk_hash,
-                    blk_start_pos, blk_end_pos))
+                coro = partial(
+                    self.worker_asyncio_block_writer_in_queue.put,
+                    (blk_hash, blk_start_pos, blk_end_pos),
+                )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
 
             except Exception as e:
@@ -474,14 +474,18 @@ class BlockWriter(multiprocessing.Process):
         # Ack for all flushed blocks
         total_batch_size = 0
         for blk_hash, start_position, stop_position in self.batched_blocks:
-            total_batch_size += stop_position-start_position
+            total_batch_size += stop_position - start_position
             # logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
             #       f"size={stop_position-start_position} bytes")
             self.worker_ack_queue_blk_writer.put(blk_hash)
             # Fixme - need to get from this queue in the session manager side
             _discard_result = self.worker_ack_queue_blk_writer.get()
         if total_batch_size > 0:
-            logger.debug(f"total batch size for raw blocks={round(total_batch_size/1024/1024, 3)} MB")
+            logger.debug(
+                f"total batch size for raw blocks={round(total_batch_size/1024/1024, 3)} MB"
+            )
+
+
 """
 Footnotes:
 ----------

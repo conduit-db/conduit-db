@@ -1,5 +1,6 @@
 """slower pure python alternative"""
 import struct
+from datetime import datetime
 from typing import Dict
 
 import bitcoinx
@@ -133,6 +134,14 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
         logger.exception(e)
         raise
+
+def parse_tx(rawtx):
+    tx_hash = double_sha256(rawtx)
+    tx_shash = struct_le_q.unpack(tx_hash[0:8])[0]
+    logger.debug(f"got tx: {hash_to_hex_str(tx_hash)}")
+
+    # This is a hack so that code duplication is not required
+    parse_block(raw_block=rawtx, tx_offsets=[0], height=datetime.now())
 
 
 def parse_block(raw_block, tx_offsets, height):

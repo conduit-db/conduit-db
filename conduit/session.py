@@ -14,7 +14,7 @@ from typing import Optional, List, Dict
 
 from .database.postgres_database import PG_Database, load_pg_database
 from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
-from .commands import (VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL)
+from .commands import (VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL, TX_BIN)
 from .handlers import Handlers
 from .constants import (
     HEADER_LENGTH,
@@ -93,6 +93,12 @@ class BitcoinFramer(BufferedProtocol):
             block_tx_count,
         )
 
+    def make_special_tx_msg(self, cur_msg_start_pos, cur_msg_end_pos):
+        return (
+            cur_msg_start_pos,
+            cur_msg_end_pos
+        )
+
     def buffer_updated(self, nbytes):
         self._pos += nbytes
 
@@ -110,6 +116,13 @@ class BitcoinFramer(BufferedProtocol):
                     self.message_received(
                         cur_header.command,
                         self.make_special_blk_msg(cur_msg_start_pos, cur_msg_end_pos),
+                    )
+
+                # Tx messages (via mempool relay)
+                elif cur_header.command == TX_BIN:
+                    self.message_received(
+                        cur_header.command,
+                        self.make_special_tx_msg(cur_msg_start_pos, cur_msg_end_pos),
                     )
 
                 # Non-block messages
