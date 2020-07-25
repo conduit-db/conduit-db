@@ -14,13 +14,7 @@ from typing import Optional, List, Dict
 
 from .database.postgres_database import PG_Database, load_pg_database
 from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
-from .commands import (
-    VERSION,
-    GETHEADERS,
-    GETBLOCKS,
-    GETDATA,
-    BLOCK_BIN,
-)
+from .commands import (VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL)
 from .handlers import Handlers
 from .constants import (
     HEADER_LENGTH,
@@ -184,6 +178,7 @@ class BufferedSession(BitcoinFramer):
         self._target_block_header_height: Optional[int] = None
         self._local_tip_height: int = self.update_local_tip_height()
         self._local_block_tip_height: int = self.get_local_block_tip_height()
+        self._initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
         self._incoming_msg_queue = asyncio.Queue()
@@ -209,6 +204,10 @@ class BufferedSession(BitcoinFramer):
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
 
+        # Mempool and API state
+        self.mempool_tx_hash_set = set()
+
+        # Database Interfaces
         self.pg_db: Optional[PG_Database] = None
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
@@ -318,9 +317,6 @@ class BufferedSession(BitcoinFramer):
                 self.logger.exception("handle: ", e)
                 raise
 
-    def is_synchronized(self):
-        return self.get_local_block_tip_height() == self._target_block_header_height
-
     def send_message(self, message):
         self.transport.write(message)
 
@@ -390,6 +386,9 @@ class BufferedSession(BitcoinFramer):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
 
+    async def spawn_request_mempool_after_IBD(self):
+        _request_mempool_task = asyncio.create_task(self.request_mempool_after_IBD_job())
+
     async def start_jobs(self):
         try:
             self.pg_db: PG_Database = await load_pg_database()
@@ -399,9 +398,17 @@ class BufferedSession(BitcoinFramer):
             await self.spawn_sync_headers_task()
             await self._headers_event_initial_sync.wait()  # one-off
             await self.spawn_sync_blocks_task()
+            await self.spawn_request_mempool_after_IBD()
         except Exception as e:
             self.logger.exception(e)
             raise
+
+    async def request_mempool_after_IBD_job(self):
+        """waits for initial block download to complete before requesting the full mempool.
+        NOTE: once the _initial_block_download_event is set, relayed mempool txs will also
+        begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
+        await self._initial_block_download_event.wait()
+        await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
         block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
@@ -551,6 +558,7 @@ class BufferedSession(BitcoinFramer):
             while True:
                 if not self.get_local_block_tip_height() < self.get_local_tip_height():
                     self.logger.debug("block tip synced to match headers tip")
+                    self._initial_block_download_event.set()
                     await self._blocks_event_new_tip.wait()
                     self._blocks_event_new_tip.clear()
                 chain = self.storage.block_headers.longest_chain()

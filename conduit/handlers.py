@@ -81,8 +81,11 @@ class Handlers:
             except bitcoinx.MissingHeader:
                 return False
 
+        tx_inv_vect = []
         for inv in inv_vects:
-            if inv["inv_type"] == 2:  # BLOCK
+            if inv["inv_type"] == 1:  # TX
+                tx_inv_vect.append(inv)
+            elif inv["inv_type"] == 2:  # BLOCK
                 if not have_header(inv):
                     self.session._headers_event_new_tip.set()
 
@@ -90,12 +93,10 @@ class Handlers:
                     self.session._pending_blocks_inv_queue.put_nowait(inv)
                 else:
                     logger.debug(f"got an unsolicited block {inv['inv_hash']}")
-            else:
-                if self.session.is_synchronized():
-                    # temporary for testing - request all relayed txs without checking db
-                    getdata_msg = self.serializer.getdata(inv_vects)
-                    await self.session.send_request(GETDATA, getdata_msg)
-                # else ignore mempool activity
+
+        if self.session._initial_block_download_event.is_set():
+            getdata_msg = self.serializer.getdata(tx_inv_vect)
+            await self.session.send_request(GETDATA, getdata_msg)
 
     async def on_getdata(self, message):
         logger.debug("handling getdata...")
@@ -108,10 +109,12 @@ class Handlers:
     # ----- Special case messages ----- #
 
     async def on_tx(self, message: memoryview):
-        # logger.debug("handling tx...")
+        # DEBUGGING ONLY
         tx = self.session.deserializer.tx(io.BytesIO(message))
-        # logger.debug(f"tx: {tx}")
+        logger.debug(f"tx: {bitcoinx.hash_to_hex_str(tx.hash())}")
+
         self.session._msg_handled_count += 1
+
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):
         blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message

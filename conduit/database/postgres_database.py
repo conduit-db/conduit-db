@@ -51,7 +51,7 @@ class PG_Database:
         try:
             await self.pg_conn.execute(
                 """
-                DROP TABLE IF EXISTS transactions;
+                DROP TABLE IF EXISTS confirmed_transactions;
                 DROP TABLE IF EXISTS io_table;
                 DROP TABLE IF EXISTS pushdata;"""
             )
@@ -68,7 +68,7 @@ class PG_Database:
         await self.pg_conn.execute(
             """
                 -- PERMANENT TABLES
-                CREATE UNLOGGED TABLE IF NOT EXISTS transactions(
+                CREATE UNLOGGED TABLE IF NOT EXISTS confirmed_transactions (
                     tx_shash bigint PRIMARY KEY,
                     tx_hash bytea,
                     tx_height integer,
@@ -108,6 +108,23 @@ class PG_Database:
                 -- Things like B:// maybe could be dealt with as special cases perhaps?
                 CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (
                 pushdata_shash);
+                
+                CREATE UNLOGGED TABLE IF NOT EXISTS mempool_transactions (
+                    tx_shash bigint PRIMARY KEY,
+                    tx_hash bytea,
+                    timestamp integer,
+                    tx_position bigint,
+                    tx_offset_start bigint,
+                    tx_offset_end bigint,
+                    tx_has_collided boolean
+                );
+                -- need to store the full tx_hash (albeit non-indexed) because the client
+                -- may not be providing the tx_hash in their query (e.g. for key history).
+                
+                CREATE UNLOGGED TABLE IF NOT EXISTS api_state (
+                    api_tip_height integer,
+                    api_tip_hash bytea
+                );
                 """
         )
 
@@ -125,7 +142,7 @@ class PG_Database:
 
     async def pg_bulk_load_tx_rows(self, tx_rows):
         await self.pg_conn.copy_records_to_table(
-            "transactions",
+            "confirmed_transactions",
             columns=["tx_shash", "tx_hash", "tx_height", "tx_position", "tx_offset_start",
                 "tx_offset_end", "tx_has_collided"],
             records=tx_rows,
@@ -175,13 +192,6 @@ class PG_Database:
         await self.pg_bulk_load_output_rows(out_rows)
         await self.pg_bulk_load_input_rows(in_rows)
         await self.pg_bulk_load_pushdata_rows(pd_rows)
-
-        # await self.pg_upsert_from_temp_txs()
-        # await self.pg_upsert_from_temp_outputs()
-        # await self.pg_upsert_from_temp_inputs()
-        # rows = await pg_db.pg_conn.fetch("SELECT * FROM outputs;")
-        # for row in rows:
-        #     print(row)
         await self.pg_drop_temp_tables()
 
 async def load_pg_database() -> PG_Database:

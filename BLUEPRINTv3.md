@@ -31,14 +31,14 @@ significantly > RAM. It also has the needed tools for future horizontal scaling 
 
     NOTE: shash = "short hash"
 
-## Transactions table
+## Confirmed Transactions table
     primary_key:     tx_shash (primary key with unique constraint)
                      tx_hash (NOT INDEXED)
                      height
                      position
                      tx_offset_start
                      tx_offset_end
-                     has_collided  (boolean 0 or 1) - referring to 'short hash'
+                     has_collided  (boolean 0 or 1) - referring to 'short hash' (WITHIN CONFIRMED TX TABLE ONLY)
                      
     (65 bytes per row)
 
@@ -75,7 +75,51 @@ chance but will definitely shine with MyRocks.
 - utxos could be cached later if we wanted to without much trouble (to provide that as 
 a frequently desired service)
 
-# Collision tables (tx, input, output, pushdata)
+## Mempool Transactions table
+
+    primary_key:     tx_shash (primary key with unique constraint)
+                     tx_hash (NOT INDEXED)
+                     timestamp (INSTEAD OF HEIGHT IN CONFIRMED TX TABLE)
+                     position
+                     tx_offset_start
+                     tx_offset_end
+                     has_collided  (boolean 0 or 1) - referring to 'short hash' (WITHIN MEMPOOL TX TABLE ONLY)
+    
+    
+When IBD is complete, need to request the full mempool and begin accepting relayed mempool txs.
+These 'tx' messages can be fed to the TxParser and the pushdata_rows, input_rows, output_rows
+**can be treated exactly the same as for confirmed transactions (these records are immutable!)**
+BUT the **tx_rows** need to go to a **Mempool transaction table** rather than the confirmed transaction table. 
+
+The mempool transaction table has timestamps in lieu of block heights.
+
+Queries for e.g. pushdata will do an inner join with the confirmed transaction table for confirmed history
+and should exclude height > api_chain_tip (see: api state table below).
+
+Insertions for tx_rows will go in this order for new blocks:
+    
+    1) insert pushdata, inputs, output rows THAT ARE MISSING (i.e. compatible with compact block paradigm)
+    2) insert ALL tx_rows in raw block to the confirmed table (but do not invalidate mempool txs yet!)
+    3) ATOMICALLY 
+        a) invalidate all confirmed tx_hashes from the mempool tx table + 
+        b) update the api_chain_tip
+        - this has the effect of atomically causing the API to stop returning the unconfirmed txs
+        whilst adding these txs to the return value for *confirmed* history.
+
+and an inner join with the mempool transactions table for unconfirmed history.
+
+
+## API State
+
+    api_chain_tip_height    (only incremented when the postgres tables are fully ready to accept queries for this height)
+    api_chain_tip_hash
+
+The api_chain_tip_height modifies the queries for pushdata_hash history in that the inner join for confirmed history
+with the confirmed transactions table will exclude txs above the api_chain_tip_height because the presence of these
+txs indicates that the block is not fully committed to the database yet (+ mempool txs invalidated) - if the block
+WAS fully committed then the api_chain_tip_height would be +=1.
+
+# Collision tables (tx, input, output)
 
 Need to track all colliding tx_hashes.
 Basically the procedure is:
@@ -93,22 +137,16 @@ and request the transaction row by its full 32 byte tx_hash instead of the short
 - to get full tx_hash can avoid wasted RAM consumption for such a rare event and just lookup the rawtx
 in LMDB raw block and re-hash it.
 - Finally, this collision event needs to be propagated to every SQL table for ****all affected
-input and output rows**** BUT WAIT... THIS MEANS THAT THE TX_SHASH FOR INPUTS WILL NEED AN INDEX!
-WAIT..... ACTUALLY... MAYBE IT IS NOT NEEDED BECAUSE INPUTS BY DEFINITION HAVE THE OUT_TX_SHASH RIGHT
-THERE... SO CAN LOOKUP BASED ON THAT! PHEW!! LUCKY...
-so that it is clearly marked for any access patterns that may arise for clients
-in the future.
+input and output rows**** BUT WAIT... This means that the tx_shash for inputs will need an index!
+But maybe its not needed because inputs by definition have the out_tx_shash right so can lookup 
+based on that...
 - The handling of colliding hashes should not be exposed in the external API - it should be
 entirely handled internally such that the client always receives the correct metadata for the correct
 transaction without necessarily appreciating how it happened under the hood.
 
-Pushdata collisions follow basically the same principle as the tx_hash_collisions table except much simpler (no need to update
-all inputs and outputs...)
+Pushdata short hashes are 16 bytes so the chances of collisions are negligible. 
+No such collision table will exist for these.
 
-# Mempool data
-In short - use LMDB to store the same information as the above permanent postgres tables: 
-
-    transactions, inputs, outputs and pushdata rows in whatever way is most useful.
 
 # Pipeline
 ## TxParser requirement (will be heavily cythonised)
