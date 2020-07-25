@@ -6,6 +6,7 @@ from typing import Tuple
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash
 
+from constants import MsgType
 from .commands import VERACK, GETDATA, PING, SENDCMPCT, PONG
 from .deserializer import Deserializer
 from .logs import logs
@@ -109,7 +110,7 @@ class Handlers:
     # ----- Special case messages ----- #
 
     async def on_tx(self, special_message: Tuple[int, int]):
-        msg_type = 1  # TX
+        msg_type = MsgType.MSG_TX
         self.session.worker_in_queue_tx_parse.put((msg_type, special_message))
         self.session._msg_handled_count += 1
 

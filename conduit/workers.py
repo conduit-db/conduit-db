@@ -15,7 +15,7 @@ from bitcoinx import read_varint
 from .database.postgres_database import load_pg_database, PG_Database, pg_connect
 from .database.lmdb_database import LMDB_Database
 from .logs import logs
-from .constants import WORKER_COUNT_TX_PARSERS
+from .constants import WORKER_COUNT_TX_PARSERS, MsgType
 
 try:
     from ._algorithms import preprocessor, parse_block  # cython
@@ -96,9 +96,8 @@ class BlockPreProcessor(multiprocessing.Process):
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
                 )
 
-                msg_type = 2  # BLOCK
                 for item in divided_parsing_work:
-                    self.worker_in_queue_tx_parse.put((msg_type, item))
+                    self.worker_in_queue_tx_parse.put((MsgType.MSG_BLOCK, item))
 
                 self.worker_in_queue_mtree.put((blk_hash, blk_start_pos, blk_end_pos, tx_positions))
         except Exception as e:
@@ -376,7 +375,7 @@ class TxParser(multiprocessing.Process):
                 if not item:
                     return  # poison pill stop command
 
-                if msg_type == 1:
+                if msg_type == MsgType.MSG_TX:
                     (tx_start_pos, tx_end_pos) = item
                     rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
 
@@ -392,7 +391,7 @@ class TxParser(multiprocessing.Process):
                     )
                     self.run_coroutine_threadsafe(coro())
 
-                if msg_type == 2:
+                if msg_type == MsgType.MSG_BLOCK:
                     (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div,) = item
                     raw_block = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
