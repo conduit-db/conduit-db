@@ -40,6 +40,13 @@ class BlockWriter(multiprocessing.Process):
         self.time_prev = time.time()
 
     def run(self):
+        setup_tcp_logging()
+        self.logger = logging.getLogger("raw-block-writer")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.debug(f"starting {self.__class__.__name__}...")
+
+        self.lmdb = LMDB_Database()
+
         self.loop = asyncio.get_event_loop()
         self.worker_asyncio_block_writer_in_queue = asyncio.Queue()
 
@@ -47,7 +54,7 @@ class BlockWriter(multiprocessing.Process):
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
             asyncio.get_event_loop().run_until_complete(self.lmdb_inserts_task())
-            print("Coro done...")
+            self.logger("Coro done...")
             while True:
                 time.sleep(0.05)
         except Exception as e:
@@ -55,7 +62,6 @@ class BlockWriter(multiprocessing.Process):
             raise
 
     async def lmdb_inserts_task(self):
-        self.lmdb = LMDB_Database()
         self.batched_blocks = []
         while True:
             try:

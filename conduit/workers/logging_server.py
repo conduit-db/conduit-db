@@ -81,12 +81,12 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
         self.logname = None
         self.stop_event = stop_event
 
-class LoggingServer(multiprocessing.Process):
+class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
     Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
 
     def __init__(self):
-        super(LoggingServer, self).__init__()
+        super(TCPLoggingServer, self).__init__()
         self.tcpserver = None
 
     def setup_local_logging_policy(self):
@@ -110,7 +110,7 @@ class LoggingServer(multiprocessing.Process):
         self.stop_event = threading.Event()
         self.tcpserver = LogRecordSocketReceiver(self.stop_event)
         self.logger = logging.getLogger("logging-server")
-        self.logger.debug('About to start TCP server...')
+        self.logger.debug(f'starting {self.__class__.__name__}...')
 
         main_thread = threading.Thread(target=self.main_thread)
         main_thread.start()
@@ -123,7 +123,7 @@ class LoggingServer(multiprocessing.Process):
 
 if __name__ == "__main__":
     worker_in_queue_logging = multiprocessing.Queue()
-    LoggingServer().start()
+    TCPLoggingServer().start()
     time.sleep(5)
 
     logging.debug("shutting down...")

@@ -21,7 +21,7 @@ from conduit.constants import (
     MAINNET,
 )
 from conduit.logging_client import setup_tcp_logging, set_logging_level
-from conduit.workers.logging_server import LoggingServer
+from conduit.workers.logging_server import TCPLoggingServer
 
 # selector = selectors.SelectSelector()
 # loop = asyncio.SelectorEventLoop(selector)
@@ -89,7 +89,7 @@ def loop_exception_handler(loop, context) -> None:
 
 async def main():
     try:
-        p = LoggingServer()
+        p = TCPLoggingServer()
         p.start()
 
         env_vars = setup()

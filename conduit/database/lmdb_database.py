@@ -7,6 +7,8 @@ from typing import List, Tuple, Dict, Optional
 
 import lmdb
 
+from conduit.logging_client import setup_tcp_logging
+
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
 struct_le_I = Struct("<I")
@@ -20,6 +22,8 @@ class LMDB_Database:
     DEFAULT_DIR = Path(MODULE_DIR).joinpath("lmdb_data").__str__()
 
     def __init__(self, storage_path: str=DEFAULT_DIR):
+        self.logger = logging.getLogger("lmdb-database")
+        self.logger.setLevel(logging.DEBUG)
         self.env: Optional[lmdb.Environment] = None
         self.blocks_db = None
         self.block_nums_db = None
@@ -30,8 +34,7 @@ class LMDB_Database:
         self._map_size = pow(1024, 3) * 30
         self._storage_path = storage_path
         self.open()
-
-        self.logger = logging.getLogger("lmdb_database")
+        self.logger.debug("opened LMDB database")
 
     def open(self):
         self.env = lmdb.open(self._storage_path, max_dbs=3, map_size=self._map_size,

@@ -40,7 +40,7 @@ class SessionManager:
         loop = asyncio.get_event_loop()
         peer = self.get_peer()
         logger.debug(
-            "[connect] connecting to (%s, %s) [%s]", peer.host, peer.port, self.network
+            "connecting to (%s, %s) [%s]", peer.host, peer.port, self.network
         )
         protocol_factory = lambda: Controller(
             self.config, peer, self.host, self.port, self.storage

@@ -31,6 +31,11 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger = logging.getLogger("merkle-tree")
 
     def run(self):
+        setup_tcp_logging()
+        self.logger = logging.getLogger("merkle-tree")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.debug(f"starting {self.__class__.__name__}...")
+
         lmdb_db = LMDB_Database()
         while True:
             try:

@@ -73,6 +73,7 @@ class TxParser(multiprocessing.Process):
         setup_tcp_logging()
         self.logger = logging.getLogger("transaction-parser")
         self.logger.setLevel(logging.DEBUG)
+        self.logger.debug(f"starting {self.__class__.__name__}...")
 
         self.loop = asyncio.get_event_loop()
         self.worker_asyncio_tx_parser_confirmed_tx_queue = asyncio.Queue()
@@ -167,26 +168,9 @@ class TxParser(multiprocessing.Process):
 
     async def pg_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
         await self.pg_db.pg_create_temp_tables()
-        t0 = time.time()
         await self.pg_db.pg_bulk_load_output_rows(out_rows)
-        t1 = time.time() - t0
-        self.logger.info(
-            f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
-        )
-
-        t0 = time.time()
         await self.pg_db.pg_bulk_load_input_rows(in_rows)
-        t1 = time.time() - t0
-        self.logger.info(
-            f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
-        )
-
-        t0 = time.time()
         await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-        t1 = time.time() - t0
-        self.logger.info(
-            f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(set_pd_rows)}"
-        )
         await self.pg_db.pg_drop_temp_tables()
 
     async def pg_flush_rows(

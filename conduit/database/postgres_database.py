@@ -12,7 +12,9 @@ class PG_Database:
 
     def __init__(self, pg_conn: asyncpg.Connection):
         self.pg_conn = pg_conn
-        self.logger = logging.getLogger("pg_database")
+        self.logger = logging.getLogger("pg-database")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.debug("initialized PG_Database")
 
     async def close(self):
         await self.pg_conn.close()
@@ -135,13 +137,8 @@ class PG_Database:
     async def pg_get_unprocessed_txs(self, mined_tx_shashes: List[int]):
         """checking for colliding short hashes is not required -
         - see blueprint section: very fine print"""
-        t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "temp_mined_tx_shashes", columns=["mined_tx_shash"], records=mined_tx_shashes,
-        )
-        t1 = time.time() - t0
-        self.logger.info(
-            f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(mined_tx_shashes)}"
         )
         result: List[Record] = await self.pg_conn.fetch(
             """
@@ -198,6 +195,7 @@ class PG_Database:
         )
 
     async def pg_bulk_load_output_rows(self, out_rows):
+        t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "io_table",
             columns=[
@@ -211,11 +209,16 @@ class PG_Database:
             ],
             records=out_rows,
         )
+        t1 = time.time() - t0
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
+        )
 
     async def pg_bulk_load_input_rows(self, in_rows):
         # Todo - check for collisions in TxParser then:
         #  1) bulk copy to temp table
         #  2) update io table from temp table (no table joins needed)
+        t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "temp_inputs",
             columns=["in_prevout_shash", "out_idx", "in_tx_shash", "in_idx", "in_has_collided"],
@@ -232,8 +235,13 @@ class PG_Database:
             AND temp_inputs.out_idx = io_table.out_idx
             ;"""
         )
+        t1 = time.time() - t0
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
+        )
 
     async def pg_bulk_load_pushdata_rows(self, pd_rows):
+        t0 = time.time()
         await self.pg_conn.copy_records_to_table(
             "pushdata",
             columns=[
@@ -245,6 +253,11 @@ class PG_Database:
                 "pd_tx_has_collided",
             ],
             records=pd_rows,  # exclude pushdata_hash there is no such column in the table
+        )
+
+        t1 = time.time() - t0
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
 
     async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows, pd_rows):

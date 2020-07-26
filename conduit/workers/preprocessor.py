@@ -64,6 +64,11 @@ class BlockPreProcessor(multiprocessing.Process):
         return divided_tx_positions
 
     def run(self):
+        setup_tcp_logging()
+        self.logger = logging.getLogger("pre-processor")
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.debug(f"starting {self.__class__.__name__}...")
+
         try:
             while True:
                 item = self.worker_in_queue_preproc.get()
