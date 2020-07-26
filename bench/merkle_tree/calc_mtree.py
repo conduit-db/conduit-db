@@ -3,14 +3,14 @@ import os
 from pathlib import Path
 from struct import Struct
 
-from bitcoinx import double_sha256, hash_to_hex_str
+from bitcoinx import double_sha256
 
 from conduit.database.lmdb_database import LMDB_Database
 from offsets import TX_OFFSETS
 try:
-    from conduit._algorithms import calc_mtree  # cython
+    from workers._algorithms import calc_mtree  # cython
 except ModuleNotFoundError:
-    from conduit.algorithms import calc_mtree  # pure python
+    from workers.algorithms import calc_mtree  # pure python
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_le_I = Struct("<I")

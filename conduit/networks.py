@@ -1,3 +1,5 @@
+import logging
+
 from bitcoinx import (
     Coin,
     CheckPoint,
@@ -10,11 +12,10 @@ from bitcoinx import (
 )
 from typing import Optional
 
-from .logs import logs
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .peers import Peer, get_seed_peers
 
-logger = logs.get_logger("networks")
+logger = logging.getLogger("networks")
 
 
 class HeadersRegTestMod(Headers):

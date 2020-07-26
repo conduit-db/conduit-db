@@ -1,3 +1,5 @@
+import logging
+
 import bitcoinx
 from bitcoinx import (
     read_le_int32,
@@ -18,10 +20,9 @@ from .constants import CCODES, GENESIS_BLOCK
 from .networks import NetworkConfig
 from .store import Storage
 from .utils import mapped_ipv6_to_ipv4
-from .logs import logs
 
 
-logger = logs.get_logger("deserializer")
+logger = logging.getLogger("deserializer")
 
 
 class Deserializer:

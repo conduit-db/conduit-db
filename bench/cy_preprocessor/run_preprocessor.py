@@ -2,9 +2,9 @@ import io
 import time
 import bitcoinx
 try:
-    from conduit._algorithms import preprocessor  # cython
+    from workers._algorithms import preprocessor  # cython
 except ModuleNotFoundError:
-    from conduit.algorithms import preprocessor  # pure python
+    from workers.algorithms import preprocessor  # pure python
 from bench.utils import print_results
 
 if __name__ == "__main__":

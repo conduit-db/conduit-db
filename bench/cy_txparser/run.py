@@ -1,9 +1,9 @@
 import time
 
 try:
-    from conduit._algorithms import parse_block  # cython
+    from workers._algorithms import parse_block  # cython
 except ModuleNotFoundError:
-    from conduit.algorithms import parse_txs  # pure python
+    from workers.algorithms import parse_txs  # pure python
 from bench.cy_txparser.offsets import TX_OFFSETS
 from bench.utils import print_results
 

@@ -1,4 +1,5 @@
 """https://en.bitcoin.it/wiki/Protocol_documentation#Message_structure"""
+import logging
 import math
 import random
 import time
@@ -32,7 +33,6 @@ from .commands import (
     PONG_BIN,
     SENDCMPCT_BIN,
 )
-from .logs import logs
 from .networks import NetworkConfig
 from .store import Storage
 from .utils import (
@@ -43,7 +43,7 @@ from .utils import (
 )
 from .constants import ZERO_HASH
 
-logger = logs.get_logger("serializer")
+logger = logging.getLogger("serializer")
 
 # ----- MESSAGES ----- #
 class Serializer:

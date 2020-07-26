@@ -1,10 +1,10 @@
+import logging
 import os
 import shutil
 from pathlib import Path
 
 import bitcoinx
 from conduit import database
-from conduit.logs import logs
 from conduit.networks import NetworkConfig, NETWORKS
 from conduit.store import Storage
 
@@ -29,7 +29,7 @@ class TestStorage:
     )
     pg_db = database
     redis = None  # NotImplemented
-    logger = logs.get_logger("TestStorage")
+    logger = logging.getLogger("TestStorage")
 
     @classmethod
     def setup_class(klass) -> None:

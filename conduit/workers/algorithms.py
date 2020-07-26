@@ -1,15 +1,17 @@
 """slower pure python alternative"""
+import logging
 import struct
 from datetime import datetime
 from typing import Dict, Union, List
 
 import bitcoinx
+from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 from hashlib import sha256
 
-from bitcoinx import double_sha256, hash_to_hex_str
+from conduit.logging_client import setup_tcp_logging
 
-from .logs import logs
+# setup_tcp_logging()
 
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
@@ -30,7 +32,7 @@ OP_PUSHDATA1 = 0x4C
 OP_PUSHDATA2 = 0x4D
 OP_PUSHDATA4 = 0x4E
 
-logger = logs.get_logger("algorithms")
+logger = logging.getLogger("algorithms")
 
 
 def unpack_varint(buf, offset):

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Optional
 
 import bitcoinx
@@ -6,7 +7,6 @@ from bitcoinx import Headers
 
 from . import database
 from .constants import REGTEST
-from .logs import logs
 from .networks import (
     NetworkConfig,
     NETWORKS,
@@ -16,7 +16,7 @@ from .peers import Peer
 from .session import BufferedSession
 from .store import Storage, setup_storage
 
-logger = logs.get_logger("session-manager")
+logger = logging.getLogger("session-manager")
 
 
 class SessionManager:

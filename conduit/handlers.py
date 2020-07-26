@@ -1,20 +1,20 @@
 import asyncio
 import io
+import logging
 import multiprocessing
 from typing import Tuple
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash
 
-from constants import MsgType
+from .constants import MsgType
 from .commands import VERACK, GETDATA, PING, SENDCMPCT, PONG
 from .deserializer import Deserializer
-from .logs import logs
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
 
-logger = logs.get_logger("handlers")
+logger = logging.getLogger("handlers")
 
 
 class Handlers:

@@ -9,7 +9,9 @@ from struct import Struct
 from hashlib import sha256
 from libcpp.set cimport set as cppset
 
-from .logs import logs
+from conduit.logging_client import setup_tcp_logging
+
+setup_tcp_logging()
 
 cdef unsigned int HEADER_OFFSET = 80
 cdef unsigned char OP_PUSH_20 = 20

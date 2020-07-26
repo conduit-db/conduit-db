@@ -5,9 +5,9 @@ import time
 from database.postgres_database import load_test_pg_database
 
 try:
-    from conduit._algorithms import preprocessor, parse_block  # cython
+    from workers._algorithms import preprocessor, parse_block  # cython
 except ModuleNotFoundError:
-    from conduit.algorithms import preprocessor, parse_txs  # pure python
+    from workers.algorithms import preprocessor, parse_txs  # pure python
 from bench.utils import print_results, print_results_asyncpg
 
 if __name__ == "__main__":

@@ -13,8 +13,11 @@ import struct
 from typing import Optional, List, Dict
 
 from .database.postgres_database import PG_Database
-from .workers import BlockPreProcessor, TxParser, MTreeCalculator, BlockWriter
-from .commands import (VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL, TX_BIN)
+from .workers.preprocessor import BlockPreProcessor
+from .workers.transaction_parser import TxParser
+from .workers.merkle_tree import MTreeCalculator
+from .workers.raw_blocks import BlockWriter
+from .commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL, TX_BIN
 from .handlers import Handlers
 from .constants import (
     HEADER_LENGTH,
@@ -75,16 +78,12 @@ class BitcoinFramer(BufferedProtocol):
 
     def get_block_tx_count(self, end_blk_header_pos):
         # largest varint (tx_count) is 9 bytes
-        block_tx_count_view = self.shm_buffer_view[
-            end_blk_header_pos : end_blk_header_pos + 10
-        ]
+        block_tx_count_view = self.shm_buffer_view[end_blk_header_pos : end_blk_header_pos + 10]
         return read_varint(io.BytesIO(block_tx_count_view).read)
 
     def make_special_blk_msg(self, cur_msg_start_pos, cur_msg_end_pos):
         end_blk_header_pos = cur_msg_start_pos + 80
-        raw_block_header = self.shm_buffer_view[
-            cur_msg_start_pos:end_blk_header_pos
-        ].tobytes()
+        raw_block_header = self.shm_buffer_view[cur_msg_start_pos:end_blk_header_pos].tobytes()
         block_tx_count = self.get_block_tx_count(end_blk_header_pos)
         return (
             cur_msg_start_pos,
@@ -94,10 +93,7 @@ class BitcoinFramer(BufferedProtocol):
         )
 
     def make_special_tx_msg(self, cur_msg_start_pos, cur_msg_end_pos):
-        return (
-            cur_msg_start_pos,
-            cur_msg_end_pos
-        )
+        return (cur_msg_start_pos, cur_msg_end_pos)
 
     def buffer_updated(self, nbytes):
         self._pos += nbytes
@@ -106,9 +102,7 @@ class BitcoinFramer(BufferedProtocol):
             cur_header = self._unpack_msg_header()
             self._payload_size = cur_header.payload_size
             if self.is_next_payload_available():
-                cur_msg_end_pos = (
-                    self._last_msg_end_pos + HEADER_LENGTH + self._payload_size
-                )
+                cur_msg_end_pos = self._last_msg_end_pos + HEADER_LENGTH + self._payload_size
                 cur_msg_start_pos = self._last_msg_end_pos + HEADER_LENGTH
 
                 # Block messages
@@ -127,9 +121,7 @@ class BitcoinFramer(BufferedProtocol):
 
                 # Non-block messages
                 else:
-                    sub_view_payload = self.shm_buffer_view[
-                        cur_msg_start_pos:cur_msg_end_pos
-                    ]
+                    sub_view_payload = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos]
                     self.message_received(cur_header.command, sub_view_payload)
                 self._last_msg_end_pos = cur_msg_end_pos
             else:
@@ -216,6 +208,7 @@ class BufferedSession(BitcoinFramer):
         self.worker_ack_queue_tx_parse = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
+        self.worker_in_queue_logging = multiprocessing.Queue()  # only for clean shutdown
         self.initial_block_download_event_mp = multiprocessing.Event()
 
         # Mempool and API state
@@ -274,20 +267,22 @@ class BufferedSession(BitcoinFramer):
 
         self.logger.error(f"self._pending_blocks_progress_counter.items():")
         for blk_hash, count in self._pending_blocks_progress_counter.items():
-            self.logger.error(f"blk_hash={bitcoinx.hash_to_hex_str(blk_hash)}, count={count}, "
-                              f"self._pending_blocks_received[blk_hash]={self._pending_blocks_received[blk_hash]}")
+            self.logger.error(
+                f"blk_hash={bitcoinx.hash_to_hex_str(blk_hash)}, count={count}, "
+                f"self._pending_blocks_received[blk_hash]={self._pending_blocks_received[blk_hash]}"
+            )
         expected_blocks_processed_count = self._pending_blocks_batch_size - len(
             self._pending_blocks_batch_set
         )
-        self.logger.error(f"expected_blocks_processed_count={expected_blocks_processed_count},"
-                          f"len(self.done_block_heights)={len(self.done_block_heights)}")
+        self.logger.error(
+            f"expected_blocks_processed_count={expected_blocks_processed_count},"
+            f"len(self.done_block_heights)={len(self.done_block_heights)}"
+        )
 
     async def wait_for_go_signal(self):
         """spawned when buffer goes above HWM level. will then depend on the accounting
         system to ensure all messages have been processed before resetting the buffer."""
-        while not (
-            self.have_processed_non_block_msgs() and
-            self.have_processed_block_msgs()):
+        while not (self.have_processed_non_block_msgs() and self.have_processed_block_msgs()):
             await asyncio.sleep(0.05)
 
         self.logger.debug("resuming reading...")
@@ -366,15 +361,13 @@ class BufferedSession(BitcoinFramer):
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse,
-                self.initial_block_download_event_mp
+                self.initial_block_download_event_mp,
             )
             p.start()
             self.processes.append(p)
         for i in range(WORKER_COUNT_MTREE_CALCULATORS):
             p = MTreeCalculator(
-                self.shm_buffer.name,
-                self.worker_in_queue_mtree,
-                self.worker_ack_queue_mtree,
+                self.shm_buffer.name, self.worker_in_queue_mtree, self.worker_ack_queue_mtree,
             )
             p.start()
             self.processes.append(p)
@@ -428,8 +421,9 @@ class BufferedSession(BitcoinFramer):
     async def _get_max_headers(self):
         block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
         hash_count = len(block_locator_hashes)
-        await self.send_request(GETHEADERS,
-            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
+        await self.send_request(
+            GETHEADERS, self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
+        )
 
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
@@ -446,8 +440,7 @@ class BufferedSession(BitcoinFramer):
             self._headers_msg_processed_event.clear()
             self._local_tip_height = self.update_local_tip_height()
             self.logger.debug(
-                "new headers tip height: %s",
-                self._local_tip_height,
+                "new headers tip height: %s", self._local_tip_height,
             )
             self._blocks_event_new_tip.set()
 
@@ -510,9 +503,7 @@ class BufferedSession(BitcoinFramer):
             try:
                 header = self.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
-                self.logger.warning(
-                    "header with hash=%s not found", inv.get("inv_hash")
-                )
+                self.logger.warning("header with hash=%s not found", inv.get("inv_hash"))
                 if self._pending_blocks_inv_queue.empty():
                     break
                 else:
@@ -520,9 +511,7 @@ class BufferedSession(BitcoinFramer):
 
             if not header.height <= self.stop_header_height:
                 self.logger.debug(f"ignoring block height={header.height} until sync'd")
-                self.logger.debug(
-                    f"len(pending_getdata_requests)={len(pending_getdata_requests)}"
-                )
+                self.logger.debug(f"len(pending_getdata_requests)={len(pending_getdata_requests)}")
                 if len(pending_getdata_requests) == 0:
                     break
                 else:
@@ -580,8 +569,7 @@ class BufferedSession(BitcoinFramer):
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)
                 self.logger.debug(
-                    "requesting max number of blocks (up to 500) for chain tip "
-                    "height=%s",
+                    "requesting max number of blocks (up to 500) for chain tip " "height=%s",
                     self.get_local_block_tip_height(),
                 )
                 hash_stop = ZERO_HASH  # get max
@@ -590,9 +578,7 @@ class BufferedSession(BitcoinFramer):
 
                 await self.send_request(
                     GETBLOCKS,
-                    self.serializer.getblocks(
-                        hash_count, block_locator_hashes, hash_stop
-                    ),
+                    self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop),
                 )
                 await self.sync_batched_blocks()
 
@@ -603,14 +589,9 @@ class BufferedSession(BitcoinFramer):
             raise
 
     # -- Message Types -- #
-    async def send_version(
-        self, recv_host=None, recv_port=None, send_host=None, send_port=None
-    ):
+    async def send_version(self, recv_host=None, recv_port=None, send_host=None, send_port=None):
         message = self.serializer.version(
-            recv_host=recv_host,
-            recv_port=recv_port,
-            send_host=send_host,
-            send_port=send_port,
+            recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
         )
         await self.send_request(VERSION, message)
 

@@ -3,7 +3,6 @@ import ipaddress
 import math
 import socket
 import struct
-import time
 from binascii import hexlify
 from typing import Tuple
 from bitcoinx import (
@@ -14,7 +13,6 @@ from bitcoinx import (
     pack_le_uint32,
 )
 
-from .logs import logs
 from .commands import BLOCK, BLOCK_BIN
 
 def payload_to_checksum(payload):

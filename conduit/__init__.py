@@ -3,7 +3,7 @@ from . import commands
 from . import database
 from . import deserializer
 from . import handlers
-from . import logs
+from . import logging_client
 from . import networks
 from . import peers
 from . import serializer

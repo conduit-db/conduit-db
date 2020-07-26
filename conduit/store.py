@@ -1,9 +1,10 @@
+import logging
+
 from bitcoinx import Headers
 
 from .database.postgres_database import load_pg_database, PG_Database
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
-from .logs import logs
 
 
 class Storage:
@@ -16,7 +17,7 @@ class Storage:
         redis=None,
     ):
         self.pg_database = pg_database
-        self.logger = logs.get_logger("storage")
+        self.logger = logging.getLogger("storage")
         self.headers: Headers = headers
         self.block_headers: Headers = block_headers
         self.redis = redis  # NotImplemented
