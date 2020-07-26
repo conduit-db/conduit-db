@@ -23,21 +23,22 @@ class TxParser(multiprocessing.Process):
     """
     in: blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions_div
     out: N/A - directly updates posgres database
-    ack: blk_hash, count_txs_done
-
+    ack_confirmed: blk_hash, count_txs_done
+    ack_mempool: tx_counts
     """
 
     def __init__(
         self,
         shm_name,
         worker_in_queue_tx_parse,
-        worker_ack_queue_tx_parse,
+        worker_ack_queue_tx_parse_confirmed,
         initial_block_download_event_mp,
     ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
-        self.worker_ack_queue_tx_parse = worker_ack_queue_tx_parse
+        self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
+        # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
         self.initial_block_download_event_mp = initial_block_download_event_mp
 
         self.worker_asyncio_tx_parser_confirmed_tx_queue = None
@@ -48,32 +49,36 @@ class TxParser(multiprocessing.Process):
         self.pg_db = None
         self.loop = None
 
+        # batched confirmed rows
+        self.confirmed_batched_tx_rows = []
+        self.confirmed_batched_in_rows = []
+        self.confirmed_batched_out_rows = []
+        self.confirmed_batched_set_pd_rows = []
+        self.confirmed_batched_block_acks = []
+
         # batched rows
-        self.batched_tx_rows = []
-        self.batched_in_rows = []
-        self.batched_out_rows = []
-        self.batched_set_pd_rows = []
-        self.batched_block_acks = []
-        self.batched_prev_flush_time = time.time()
+        self.mempool_batched_tx_rows = []
+        self.mempool_batched_in_rows = []
+        self.mempool_batched_out_rows = []
+        self.mempool_batched_set_pd_rows = []
+        self.mempool_batched_mempool_tx_acks = []
 
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
-        self.MAX_TX_BATCH_SIZE = 50000
-        self.BATCHED_MAX_WAIT_TIME = 0.3
+        self.CONFIRMED_MAX_TX_BATCH_SIZE = 50000
+        self.CONFIRMED_BATCHED_MAX_WAIT_TIME = 0.3
+        self.MEMPOOL_MAX_TX_BATCH_SIZE = 2000
+        self.MEMPOOL_BATCHED_MAX_WAIT_TIME = 0.1
 
     def run(self):
         setup_tcp_logging()
-        rootLogger = logging.getLogger('')
-        # formatting is done server side after unpickling
-        socketHandler = logging.handlers.SocketHandler('127.0.0.1',
-            logging.handlers.DEFAULT_TCP_LOGGING_PORT)
-        rootLogger.addHandler(socketHandler)
         self.logger = logging.getLogger("transaction-parser")
         self.logger.setLevel(logging.DEBUG)
 
         self.loop = asyncio.get_event_loop()
         self.worker_asyncio_tx_parser_confirmed_tx_queue = asyncio.Queue()
         self.worker_asyncio_tx_parser_mempool_tx_queue = asyncio.Queue()
-        self.worker_asyncio_tx_parser_ack_queue = asyncio.Queue()
+        self.worker_asyncio_tx_parser_ack_queue_confirmed = asyncio.Queue()
+        self.worker_asyncio_tx_parser_ack_queue_mempool = asyncio.Queue()
         self.processed_vs_unprocessed_queue = queue.Queue()
         try:
             main_thread = threading.Thread(target=self.main_thread)
@@ -92,25 +97,49 @@ class TxParser(multiprocessing.Process):
         ]
         await asyncio.gather(*tasks)
 
-    def reset_batched_rows(self):
-        self.batched_tx_rows = []
-        self.batched_in_rows = []
-        self.batched_out_rows = []
-        self.batched_set_pd_rows = []
-        self.batched_block_acks = []
+    # ----- CONFIRMED TXS ----- #
 
-    async def extend_batched_rows(self, blk_rows):
+    def reset_batched_rows_confirmed(self):
+        self.confirmed_batched_tx_rows = []
+        self.confirmed_batched_in_rows = []
+        self.confirmed_batched_out_rows = []
+        self.confirmed_batched_set_pd_rows = []
+        self.confirmed_batched_block_acks = []
+
+    async def extend_batched_rows_confirmed(self, blk_rows):
         tx_rows, in_rows, out_rows, set_pd_rows = blk_rows
-        self.batched_tx_rows.extend(tx_rows)
-        self.batched_in_rows.extend(in_rows)
-        self.batched_out_rows.extend(out_rows)
-        self.batched_set_pd_rows.extend(set_pd_rows)
+        self.confirmed_batched_tx_rows.extend(tx_rows)
+        self.confirmed_batched_in_rows.extend(in_rows)
+        self.confirmed_batched_out_rows.extend(out_rows)
+        self.confirmed_batched_set_pd_rows.extend(set_pd_rows)
 
-    async def append_block_acks(self, blk_acks):
-        self.batched_block_acks.append(blk_acks)
+    async def append_acks_confirmed_txs(self, blk_acks):
+        self.confirmed_batched_block_acks.append(blk_acks)
 
-    def handle_collision(self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks,
-        colliding_tx_shash):
+    # ----- MEMPOOL TXS ----- #
+
+    def reset_batched_rows_mempool(self):
+        self.mempool_batched_tx_rows = []
+        self.mempool_batched_in_rows = []
+        self.mempool_batched_out_rows = []
+        self.mempool_batched_set_pd_rows = []
+        self.confirmed_batched_block_acks = []
+
+    async def extend_batched_rows_mempool(self, mempool_rows):
+        tx_rows, in_rows, out_rows, set_pd_rows = mempool_rows
+        self.mempool_batched_tx_rows.extend(tx_rows)
+        self.mempool_batched_in_rows.extend(in_rows)
+        self.mempool_batched_out_rows.extend(out_rows)
+        self.mempool_batched_set_pd_rows.extend(set_pd_rows)
+
+    async def append_acks_mempool_txs(self, mempool_tx_acks):
+        self.mempool_batched_mempool_tx_acks.append(mempool_tx_acks)
+
+    # ------------------------------------------------- #
+
+    def handle_collision(
+        self, tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, colliding_tx_shash
+    ):
         """only expect to find 1 collision and then reattempt the batch
         (based on probabilities)"""
         try:
@@ -141,12 +170,16 @@ class TxParser(multiprocessing.Process):
         t0 = time.time()
         await self.pg_db.pg_bulk_load_output_rows(out_rows)
         t1 = time.time() - t0
-        self.logger.info(f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}")
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
+        )
 
         t0 = time.time()
         await self.pg_db.pg_bulk_load_input_rows(in_rows)
         t1 = time.time() - t0
-        self.logger.info(f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
+        self.logger.info(
+            f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
+        )
 
         t0 = time.time()
         await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
@@ -162,7 +195,7 @@ class TxParser(multiprocessing.Process):
         in_rows: Sequence,
         out_rows: Sequence,
         set_pd_rows: Sequence,
-        blk_acks: Optional[Sequence],
+        acks: Optional[Sequence],
         confirmed: bool,
     ):
         try:
@@ -170,17 +203,19 @@ class TxParser(multiprocessing.Process):
                 await self.pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
                 # Ack for all flushed blocks
-                for blk_hash, tx_count in blk_acks:
+                for blk_hash, tx_count in acks:
                     # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
-                    self.worker_ack_queue_tx_parse.put((blk_hash, tx_count))
+                    self.worker_ack_queue_tx_parse_confirmed.put((blk_hash, tx_count))
 
-                self.reset_batched_rows()
+                self.reset_batched_rows_confirmed()
+
             else:
-                self.logger.debug(f"confirmed = {confirmed}")
                 await self.pg_db.pg_bulk_load_mempool_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                # for tx_count in acks:
+                # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
 
-            await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                self.reset_batched_rows_mempool()
 
         except asyncpg.exceptions.UniqueViolationError as e:
             error_text = e.as_dict()["detail"]
@@ -188,10 +223,10 @@ class TxParser(multiprocessing.Process):
             colliding_tx_shash = error_text.split("(")[2].split(")")[0]
             self.logger.error(f"colliding tx_shash = {colliding_tx_shash}")
             tx_rows = self.handle_collision(
-                tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, colliding_tx_shash
+                tx_rows, in_rows, out_rows, set_pd_rows, acks, colliding_tx_shash
             )
             # retry without the colliding tx
-            await self.pg_flush_rows(tx_rows, in_rows, out_rows, set_pd_rows, blk_acks, confirmed)
+            await self.pg_flush_rows(tx_rows, in_rows, out_rows, set_pd_rows, acks, confirmed)
             self.logger.error(e)
 
     async def pg_insert_confirmed_tx_rows_task(self):
@@ -204,37 +239,37 @@ class TxParser(multiprocessing.Process):
             while True:
                 try:
                     # see 'footnote_1'
-                    blk_rows = await asyncio.wait_for(
+                    confirmed_rows = await asyncio.wait_for(
                         self.worker_asyncio_tx_parser_confirmed_tx_queue.get(),
-                        timeout=self.BATCHED_MAX_WAIT_TIME,
+                        timeout=self.CONFIRMED_BATCHED_MAX_WAIT_TIME,
                     )
-                    blk_acks = await self.worker_asyncio_tx_parser_ack_queue.get()
-                    await self.extend_batched_rows(blk_rows)
-                    await self.append_block_acks(blk_acks)
+                    block_acks = await self.worker_asyncio_tx_parser_ack_queue_confirmed.get()
+                    await self.extend_batched_rows_confirmed(confirmed_rows)
+                    await self.append_acks_confirmed_txs(block_acks)
 
                 except asyncio.TimeoutError:
                     # print("timed out...")
-                    if len(self.batched_tx_rows) != 0:
+                    if len(self.confirmed_batched_tx_rows) != 0:
                         await self.pg_flush_rows(
-                            self.batched_tx_rows,
-                            self.batched_in_rows,
-                            self.batched_out_rows,
-                            self.batched_set_pd_rows,
-                            self.batched_block_acks,
+                            self.confirmed_batched_tx_rows,
+                            self.confirmed_batched_in_rows,
+                            self.confirmed_batched_out_rows,
+                            self.confirmed_batched_set_pd_rows,
+                            self.confirmed_batched_block_acks,
                             confirmed=True,
                         )
                     continue
 
                 # This is not in the "try block" because I wasn't sure if it would be atomic
                 # i.e. what if it times out half-way through committing rows to the db?
-                if len(self.batched_tx_rows) > self.MAX_TX_BATCH_SIZE:
+                if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
                     # print("hit max tx batch size...")
                     await self.pg_flush_rows(
-                        self.batched_tx_rows,
-                        self.batched_in_rows,
-                        self.batched_out_rows,
-                        self.batched_set_pd_rows,
-                        self.batched_block_acks,
+                        self.confirmed_batched_tx_rows,
+                        self.confirmed_batched_in_rows,
+                        self.confirmed_batched_out_rows,
+                        self.confirmed_batched_set_pd_rows,
+                        self.confirmed_batched_block_acks,
                         confirmed=True,
                     )
         except Exception as e:
@@ -244,15 +279,46 @@ class TxParser(multiprocessing.Process):
     async def pg_insert_mempool_tx_rows_task(self):
         """bulk inserts to postgres. NOTE: Can only have ONE asyncio task pulling from
         worker_ack_queue_asyncio ."""
-
         self.pg_db: PG_Database = await pg_connect()
         await self.pg_db.pg_update_settings()
         try:
             while True:
-                mempool_rows = await self.worker_asyncio_tx_parser_mempool_tx_queue.get()
-                await self.pg_flush_rows(
-                    *mempool_rows, blk_acks=None, confirmed=False,
-                )
+                try:
+                    mempool_rows = await asyncio.wait_for(
+                        self.worker_asyncio_tx_parser_mempool_tx_queue.get(),
+                        timeout=self.MEMPOOL_BATCHED_MAX_WAIT_TIME,
+                    )
+                    mempool_tx_acks = await self.worker_asyncio_tx_parser_ack_queue_mempool.get()
+                    await self.extend_batched_rows_mempool(mempool_rows)
+                    await self.append_acks_mempool_txs(mempool_tx_acks)
+                except asyncio.TimeoutError:
+                    # self.logger.debug("mempool batch timer triggered")
+                    if len(self.mempool_batched_tx_rows) != 0:
+                        await self.pg_flush_rows(
+                            self.mempool_batched_tx_rows,
+                            self.mempool_batched_in_rows,
+                            self.mempool_batched_out_rows,
+                            self.mempool_batched_set_pd_rows,
+                            self.mempool_batched_mempool_tx_acks,
+                            confirmed=False,
+                        )
+                    continue
+
+                # This is not in the "try block" because I wasn't sure if it would be atomic
+                # i.e. what if it times out half-way through committing rows to the db?
+                if len(self.mempool_batched_tx_rows) > self.MEMPOOL_MAX_TX_BATCH_SIZE - 1:
+                    self.logger.debug(
+                        f"hit max mempool batch size ({len(self.mempool_batched_tx_rows)})"
+                    )
+                    await self.pg_flush_rows(
+                        self.mempool_batched_tx_rows,
+                        self.mempool_batched_in_rows,
+                        self.mempool_batched_out_rows,
+                        self.mempool_batched_set_pd_rows,
+                        self.mempool_batched_mempool_tx_acks,
+                        confirmed=False,
+                    )
+
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -288,40 +354,44 @@ class TxParser(multiprocessing.Process):
                     return  # poison pill stop command
 
                 if msg_type == MsgType.MSG_TX:
-                    (tx_start_pos, tx_end_pos) = item
-                    rawtx = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
+                    tx_offsets = item
 
-                    tx_rows, in_rows, out_rows, set_pd_rows, _tx_shashes = parse_txs(
-                        buffer=rawtx,
-                        tx_offsets=[0],
-                        height_or_timestamp=datetime.now(),
-                        confirmed=False,
-                    )
+                    # Todo only does 1 mempool tx at a time at present
+                    for tx_start_pos, tx_end_pos in tx_offsets:
+                        buffer = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
+
+                    result = parse_txs(buffer, [0], datetime.now(), False)
+                    tx_rows, in_rows, out_rows, set_pd_rows, _tx_shashes = result
+
                     coro = partial(
                         self.worker_asyncio_tx_parser_mempool_tx_queue.put,
                         (tx_rows, in_rows, out_rows, set_pd_rows),
                     )
                     self.run_coroutine_threadsafe(coro())
 
+                    # need to ack from asyncio event loop because that's where the context
+                    # is for when the data has indeed been flushed to db
+                    # todo - batch up mempool txs before feeding them into the queue. currently
+                    #  len(item) will always == 1 tx so there is no point in feeding this
+                    item = len(item)
+                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue_mempool.put, item)
+                    self.run_coroutine_threadsafe(coro2())
+
                 if msg_type == MsgType.MSG_BLOCK:
-                    (blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div,) = item
-                    raw_block = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
+                    blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div = item
+                    buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
                     if not self.initial_block_download_event_mp.is_set:
                         self.run_coroutine_threadsafe(
-                            self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_div)
+                            self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_div)
                         )
-                        unprocessed_tx_offsets, processed_tx_offsets = \
-                            self.processed_vs_unprocessed_queue.get()
+                        item = self.processed_vs_unprocessed_queue.get()
+                        unprocessed_tx_offsets, processed_tx_offsets = item
                     else:
                         unprocessed_tx_offsets = tx_offsets_div
 
-                    tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes = parse_txs(
-                        buffer=raw_block,
-                        tx_offsets=unprocessed_tx_offsets,
-                        height_or_timestamp=blk_height,
-                        confirmed=True,
-                    )
+                    result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True)
+                    tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes = result
                     coro = partial(
                         self.worker_asyncio_tx_parser_confirmed_tx_queue.put,
                         (tx_rows, in_rows, out_rows, set_pd_rows),
@@ -331,7 +401,7 @@ class TxParser(multiprocessing.Process):
                     # need to ack from asyncio event loop because that's where the context
                     # is for when the data has indeed been flushed to db
                     item = (blk_hash, len(tx_offsets_div))
-                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue.put, item)
+                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue_confirmed.put, item)
                     self.run_coroutine_threadsafe(coro2())
 
                 # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
@@ -339,6 +409,7 @@ class TxParser(multiprocessing.Process):
             except Exception as e:
                 self.logger.exception(e)
                 raise
+
 
 """
 Footnotes:

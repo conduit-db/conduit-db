@@ -2,7 +2,7 @@ import asyncio
 import io
 import logging
 import multiprocessing
-from typing import Tuple
+from typing import Tuple, List
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash
@@ -109,7 +109,7 @@ class Handlers:
 
     # ----- Special case messages ----- #
 
-    async def on_tx(self, special_message: Tuple[int, int]):
+    async def on_tx(self, special_message: List[Tuple[int, int]]):
         msg_type = MsgType.MSG_TX
         self.session.worker_in_queue_tx_parse.put((msg_type, special_message))
         self.session._msg_handled_count += 1

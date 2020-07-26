@@ -11,8 +11,6 @@ from hashlib import sha256
 
 from conduit.logging_client import setup_tcp_logging
 
-# setup_tcp_logging()
-
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_33 = 33

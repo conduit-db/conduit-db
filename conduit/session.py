@@ -93,7 +93,8 @@ class BitcoinFramer(BufferedProtocol):
         )
 
     def make_special_tx_msg(self, cur_msg_start_pos, cur_msg_end_pos):
-        return (cur_msg_start_pos, cur_msg_end_pos)
+        """returns a list in preparation for future batching of continuous mempool rawtxs"""
+        return [(cur_msg_start_pos, cur_msg_end_pos)]
 
     def buffer_updated(self, nbytes):
         self._pos += nbytes
@@ -205,7 +206,8 @@ class Controller(BitcoinFramer):
         self.worker_in_queue_tx_parse = multiprocessing.Queue()
         self.worker_in_queue_mtree = multiprocessing.Queue()
         self.worker_in_queue_blk_writer = multiprocessing.Queue()
-        self.worker_ack_queue_tx_parse = multiprocessing.Queue()  # blk_hash:tx_count
+        self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
+        # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
         self.worker_in_queue_logging = multiprocessing.Queue()  # only for clean shutdown
@@ -360,7 +362,7 @@ class Controller(BitcoinFramer):
             p = TxParser(
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
-                self.worker_ack_queue_tx_parse,
+                self.worker_ack_queue_tx_parse_confirmed,
                 self.initial_block_download_event_mp,
             )
             p.start()
@@ -463,7 +465,7 @@ class Controller(BitcoinFramer):
         while True:
             try:
                 # This queue should transition to a multiprocessing queue
-                block_hash, txs_done_count = self.worker_ack_queue_tx_parse.get()
+                block_hash, txs_done_count = self.worker_ack_queue_tx_parse_confirmed.get()
                 self._pending_blocks_progress_counter[block_hash] += txs_done_count
 
                 header = self.get_header_for_hash(block_hash)

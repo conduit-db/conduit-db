@@ -10,8 +10,6 @@ from typing import List, Tuple
 from conduit.database.lmdb_database import LMDB_Database
 from conduit.logging_client import setup_tcp_logging
 
-# setup_tcp_logging()
-
 class BlockWriter(multiprocessing.Process):
     """
     Single writer to blocks LMDB database in append only mode (will only ever need one of these to
