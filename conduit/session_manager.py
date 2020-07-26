@@ -13,7 +13,7 @@ from .networks import (
     HeadersRegTestMod,
 )
 from .peers import Peer
-from .session import BufferedSession
+from .session import Controller
 from .store import Storage, setup_storage
 
 logger = logging.getLogger("session-manager")
@@ -24,7 +24,7 @@ class SessionManager:
 
     def __init__(self, network, host, port, env_vars):
         self.network: str = network
-        self.session: Optional[BufferedSession] = None
+        self.session: Optional[Controller] = None
         self.transport = None
         self.config = NetworkConfig(network)
         self.peers = self.config.peers
@@ -42,7 +42,7 @@ class SessionManager:
         logger.debug(
             "[connect] connecting to (%s, %s) [%s]", peer.host, peer.port, self.network
         )
-        protocol_factory = lambda: BufferedSession(
+        protocol_factory = lambda: Controller(
             self.config, peer, self.host, self.port, self.storage
         )
         self.transport, self.session = await loop.create_connection(

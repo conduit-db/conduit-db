@@ -144,7 +144,7 @@ class BitcoinFramer(BufferedProtocol):
             raise NotImplementedError
 
 
-class BufferedSession(BitcoinFramer):
+class Controller(BitcoinFramer):
     """Designed to sync the blockchain as fast as possible.
 
     The main responsibility is for coordinating the networking component with a
