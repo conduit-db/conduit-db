@@ -7,8 +7,7 @@ from . import logging_client
 from . import networks
 from . import peers
 from . import serializer
-from . import session
-from . import session_manager
+from . import controller
 from . import store
 from . import utils
 

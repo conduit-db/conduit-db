@@ -2,12 +2,10 @@ import asyncio
 import logging.handlers
 import logging
 import os
-import socket
-import struct
 from typing import Dict
 
+from conduit.controller import Controller
 from conduit.argparsing import get_parser
-from conduit.session_manager import SessionManager
 from conduit.constants import (
     DATABASE_NAME_VARNAME,
     BITCOIN_NETWORK_VARNAME,
@@ -22,10 +20,10 @@ from conduit.constants import (
 )
 from conduit.logging_client import setup_tcp_logging, set_logging_level
 from conduit.workers.logging_server import TCPLoggingServer
+from conduit.networks import NetworkConfig
 
 # selector = selectors.SelectSelector()
 # loop = asyncio.SelectorEventLoop(selector)
-
 
 loop = asyncio.ProactorEventLoop()
 asyncio.set_event_loop(loop)
@@ -95,11 +93,9 @@ async def main():
         env_vars = setup()
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(loop_exception_handler)
-        session_manager = SessionManager(
-            network=env_vars.get("network"),
-            host="127.0.0.1",
-            port=8000,
-            env_vars=env_vars
+        net_config = NetworkConfig(env_vars.get("network"))
+        session_manager = Controller(
+            config=net_config, host="127.0.0.1", port=8000,
         )
         await session_manager.run()
     except KeyboardInterrupt:

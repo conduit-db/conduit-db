@@ -54,9 +54,7 @@ class BlockWriter(multiprocessing.Process):
             main_thread = threading.Thread(target=self.main_thread)
             main_thread.start()
             asyncio.get_event_loop().run_until_complete(self.lmdb_inserts_task())
-            self.logger("Coro done...")
-            while True:
-                time.sleep(0.05)
+            self.logger.debug("Coro done...")
         except Exception as e:
             self.logger.exception(e)
             raise
@@ -66,7 +64,7 @@ class BlockWriter(multiprocessing.Process):
         while True:
             try:
                 # no timeout functionality on asyncio queues...
-                # todo - perhaps a special message from session.py is better to signal
+                # todo - perhaps a special message from controller.py is better to signal
                 #  a full buffer and just flush a full buffer each time. Would stop the
                 #  wasteful polling.
                 item = await asyncio.wait_for(

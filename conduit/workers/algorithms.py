@@ -323,8 +323,6 @@ def build_mtree_from_base(base_level, mtree):
             try:
                 _hash = double_sha256(hashes[i] + hashes[i + 1])
             except IndexError:
-                # print(f"index error at level={current_level}. i={i+1} index doesn't exist - there are {i+1} "
-                #       f"hashes at this level")
                 _hash = double_sha256(hashes[i] + hashes[i])
             finally:
                 next_level_up.append(_hash)

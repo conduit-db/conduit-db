@@ -1,14 +1,12 @@
-import asyncio
 import io
 import logging
-import multiprocessing
 from typing import Tuple, List
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash
 
 from .constants import MsgType
-from .commands import VERACK, GETDATA, PING, SENDCMPCT, PONG
+from .commands import VERACK, GETDATA, SENDCMPCT, PONG
 from .deserializer import Deserializer
 from .networks import NetworkConfig
 from .serializer import Serializer

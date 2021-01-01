@@ -10,13 +10,14 @@ from collections import namedtuple
 from multiprocessing import shared_memory
 import logging
 import struct
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Callable
 
 from .database.postgres_database import PG_Database
 from .workers.preprocessor import BlockPreProcessor
 from .workers.transaction_parser import TxParser
 from .workers.merkle_tree import MTreeCalculator
 from .workers.raw_blocks import BlockWriter
+from .store import setup_storage
 from .commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL, TX_BIN
 from .handlers import Handlers
 from .constants import (
@@ -35,7 +36,20 @@ from .serializer import Serializer
 Header = namedtuple("Header", "magic command payload_size checksum")
 
 
-class BitcoinFramer(BufferedProtocol):
+class BitcoinNetIO(BufferedProtocol):
+    """
+    A state machine with 'resumed' and 'paused' reading states and corresponding 'resume()'
+    and 'pause()' methods. Contains a large contiguous shared memory buffer for multiprocess
+    block/tx parsing.
+
+    4 callbacks:
+    - on_buffer_full
+    - on_msg  (which provides a memoryview over the message in the shared memory buffer)
+    - on_connection_made
+    - on_connection_lost
+
+    """
+
     logger = logging.getLogger("bitcoin-framer")
     HIGH_WATER = 1024 * 1024 * 256
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
@@ -46,6 +60,38 @@ class BitcoinFramer(BufferedProtocol):
     _last_msg_end_pos = 0
     _msg_received_count = 0
     _msg_handled_count = 0
+
+    def __init__(self, on_buffer_full: Callable, on_msg: Callable, on_connection_made: Callable,
+            on_connection_lost: Callable):
+
+        # Registered callbacks (in order to decouple this class from the Controller)
+        self.on_buffer_full_callback = on_buffer_full
+        self.on_msg_callback = on_msg
+        self.on_connection_made_callback = on_connection_made
+        self.on_connection_lost_callback = on_connection_lost
+
+    # Two states: 'resumed' & 'paused'
+    def resume(self):
+        self.logger.debug("resuming reading...")
+        self._new_buffer()
+        self.transport.resume_reading()
+
+    def pause(self):
+        self.logger.debug("pausing reading...")
+        self.transport.pause_reading()
+
+    def send_message(self, message):
+        self.transport.write(message)
+
+    def connection_made(self, transport):
+        self.transport = transport
+        self._payload_size = None
+        self.logger.info("connection made")
+        self.on_connection_made_callback()
+
+    def connection_lost(self, exc):
+        self.on_connection_lost_callback()
+        self.logger.warning("The server closed the connection")
 
     def _new_buffer(self):
         assert self._pos >= self.HIGH_WATER
@@ -108,14 +154,14 @@ class BitcoinFramer(BufferedProtocol):
 
                 # Block messages
                 if cur_header.command == BLOCK_BIN:
-                    self.message_received(
+                    self.on_msg_callback(
                         cur_header.command,
                         self.make_special_blk_msg(cur_msg_start_pos, cur_msg_end_pos),
                     )
 
                 # Tx messages (via mempool relay)
                 elif cur_header.command == TX_BIN:
-                    self.message_received(
+                    self.on_msg_callback(
                         cur_header.command,
                         self.make_special_tx_msg(cur_msg_start_pos, cur_msg_end_pos),
                     )
@@ -123,29 +169,18 @@ class BitcoinFramer(BufferedProtocol):
                 # Non-block messages
                 else:
                     sub_view_payload = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos]
-                    self.message_received(cur_header.command, sub_view_payload)
+                    self.on_msg_callback(cur_header.command, sub_view_payload)
                 self._last_msg_end_pos = cur_msg_end_pos
             else:
                 break  # recv more data until next full payload available
 
         if self._pos >= self.HIGH_WATER:
             self.logger.debug("buffer reached high-water mark, pausing reading...")
-            self.transport.pause_reading()
-            loop = asyncio.get_running_loop()
-            coro = self.wait_for_go_signal()
-            asyncio.run_coroutine_threadsafe(coro, loop)
-
-        def message_received(self):
-            raise NotImplementedError
-
-        async def wait_for_go_signal(self):
-            raise NotImplementedError
-
-        def reset_msg_counts(self):
-            raise NotImplementedError
+            self.pause()
+            self.on_buffer_full_callback()
 
 
-class Controller(BitcoinFramer):
+class Controller:
     """Designed to sync the blockchain as fast as possible.
 
     The main responsibility is for coordinating the networking component with a
@@ -153,38 +188,28 @@ class Controller(BitcoinFramer):
     such as parsing and committing block data to the (postgres) database - processes
     that can run in parallel leveraging a shared, memory view of each block."""
 
-    def __init__(self, config: NetworkConfig, peer: Peer, host, port, storage):
+    def __init__(self, config: NetworkConfig, host="127.0.0.1", port=8000):
         self.logger = logging.getLogger("session")
         self.loop = asyncio.get_event_loop()
-        self.storage = storage
+
+        # Defined in async method at startup (self.run)
+        self.storage = None
+        self.handlers = None  # Handlers(self, self.net_config, self.storage)
+        self.serializer = None  # Serializer(self.net_config, self.storage)
+        self.deserializer = None  # Deserializer(self.net_config, self.storage)
 
         # Bitcoin network/peer config
         self.net_config = config
-        self.peer = peer
-        self.host = host
-        self.port = port
+        self.peers = self.net_config.peers
+        self.peer = self.get_peer()
+        self.host = host  # bind address
+        self.port = port  # bind port
         self.protocol: BufferedProtocol = None
         self.protocol_factory = None
-
-        # Serialization/Deserialization
-        self.handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer = Serializer(self.net_config, self.storage)
-        self.deserializer = Deserializer(self.net_config, self.storage)
 
         # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
         self.con_lost_event = asyncio.Event()
-
-        # Syncing of chain - two bitcoinx.Headers stores (headers and block_headers)
-        self._headers_msg_processed_event = asyncio.Event()
-        self._headers_event_new_tip = asyncio.Event()
-        self._headers_event_initial_sync = asyncio.Event()
-        self._blocks_event_new_tip = asyncio.Event()
-        self._target_header_height: Optional[int] = None
-        self._target_block_header_height: Optional[int] = None
-        self._local_tip_height: int = self.update_local_tip_height()
-        self._local_block_tip_height: int = self.get_local_block_tip_height()
-        self._initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
         self._incoming_msg_queue = asyncio.Queue()
@@ -219,25 +244,92 @@ class Controller(BitcoinFramer):
         # Database Interfaces
         self.pg_db: Optional[PG_Database] = None
 
-    def run_coro_threadsafe(self, coro, *args, **kwargs):
-        asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
+        # Bitcoin Network IO + callbacks
+        self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
+            self.on_connection_made, self.on_connection_lost)
+        self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
+        self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
-    def connection_made(self, transport):
-        self.transport = transport
-        self._payload_size = None
-        self.logger.info("connection made")
+    async def setup(self):
+        self.storage = await setup_storage(self.net_config)
+        self.handlers = Handlers(self, self.net_config, self.storage)
+        self.serializer = Serializer(self.net_config, self.storage)
+        self.deserializer = Deserializer(self.net_config, self.storage)
 
-        _fut = asyncio.create_task(self.start_jobs())
+        # Todo - this belongs in a dedicated SyncState class
+        # Syncing of chain - two bitcoinx.Headers stores (headers and block_headers)
+        self._headers_msg_processed_event = asyncio.Event()
+        self._headers_event_new_tip = asyncio.Event()
+        self._headers_event_initial_sync = asyncio.Event()
+        self._blocks_event_new_tip = asyncio.Event()
+        self._target_header_height: Optional[int] = None
+        self._target_block_header_height: Optional[int] = None
+        self._local_tip_height: int = self.update_local_tip_height()
+        self._local_block_tip_height: int = self.get_local_block_tip_height()
+        self._initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
-    def connection_lost(self, exc):
-        self.con_lost_event.set()
-        self.logger.warning("The server closed the connection")
+    async def connect_session(self):
+        loop = asyncio.get_event_loop()
+        peer = self.get_peer()
+        self.logger.debug("connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
+        protocol_factory = lambda: self.bitcoin_net_io
+        self.transport, self.session = await loop.create_connection(
+            protocol_factory, peer.host, peer.port
+        )
+        return self.transport, self.session
 
-    def message_received(self, command: bytes, message: memoryview):
-        # self.logger.debug("received: %s message", command.rstrip(b"\0"))
+    async def run(self):
+        try:
+            await self.setup()
+            await self.connect_session()
+            init_handshake = asyncio.create_task(
+                self.send_version(
+                    self.peer.host,
+                    self.peer.port,
+                    self.host,
+                    self.port,
+                )
+            )
+            wait_until_conn_lost = asyncio.create_task(
+                self.con_lost_event.wait()
+            )
+            await asyncio.wait([init_handshake, wait_until_conn_lost])
+        finally:
+            if self.transport:
+                self.transport.close()
+            await self.storage.close()
+
+    def get_peer(self) -> Peer:
+        return self.peers[0]
+
+    # ---------- Callbacks ---------- #
+    def on_buffer_full(self):
+        coro = self._on_buffer_full()
+        asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def on_msg(self, command: bytes, message: memoryview):
         if command != BLOCK_BIN:
             self.incr_msg_received_count()
         self._incoming_msg_queue.put_nowait((command, message))
+
+    def on_connection_made(self):
+        _fut = asyncio.create_task(self.start_jobs())
+
+    def on_connection_lost(self):
+        self.con_lost_event.set()
+
+    # ---------- end callbacks ---------- #
+    async def _on_buffer_full(self):
+        """Waits until all messages in the shared memory buffer have been processed before
+        resuming (and therefore resetting the buffer) BitcoinNetIO."""
+        while not (self.have_processed_non_block_msgs() and self.have_processed_block_msgs()):
+            await asyncio.sleep(0.05)
+
+        self.reset_msg_counts()
+        self.bitcoin_net_io.resume()
+
+    def run_coro_threadsafe(self, coro, *args, **kwargs):
+        asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     def have_processed_block_msgs(self) -> bool:
         # Todo - cover MTree and BlockWriter workers too
@@ -281,17 +373,6 @@ class Controller(BitcoinFramer):
             f"len(self.done_block_heights)={len(self.done_block_heights)}"
         )
 
-    async def wait_for_go_signal(self):
-        """spawned when buffer goes above HWM level. will then depend on the accounting
-        system to ensure all messages have been processed before resetting the buffer."""
-        while not (self.have_processed_non_block_msgs() and self.have_processed_block_msgs()):
-            await asyncio.sleep(0.05)
-
-        self.logger.debug("resuming reading...")
-        self.reset_msg_counts()
-        self._new_buffer()
-        self.transport.resume_reading()
-
     def reset_msg_counts(self):
         with self._msg_handled_count_lock:
             self._msg_handled_count = 0
@@ -328,11 +409,8 @@ class Controller(BitcoinFramer):
                 self.logger.exception("handle: ", e)
                 raise
 
-    def send_message(self, message):
-        self.transport.write(message)
-
     async def send_request(self, command_name: str, message: bytes):
-        self.send_message(message)
+        self.bitcoin_net_io.send_message(message)
 
     def get_local_tip_height(self):
         return self._local_tip_height
@@ -392,32 +470,35 @@ class Controller(BitcoinFramer):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         _sync_headers_task = asyncio.create_task(self.sync_headers_job())
 
-    async def spawn_sync_blocks_task(self):
+    async def spawn_initial_block_download(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
 
-    async def spawn_request_mempool_after_IBD(self):
-        _request_mempool_task = asyncio.create_task(self.request_mempool_after_IBD_job())
+    async def spawn_request_mempool(self):
+        """after initial block download requests the full mempool.
+
+        NOTE: once the _initial_block_download_event is set, relayed mempool txs will also
+        begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
+        _request_mempool_task = asyncio.create_task(self.request_mempool_job())
 
     async def start_jobs(self):
         try:
             self.pg_db: PG_Database = self.storage.pg_database
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
+
             self.start_workers()
             await self.spawn_sync_headers_task()
             await self._headers_event_initial_sync.wait()  # one-off
-            await self.spawn_sync_blocks_task()
-            await self.spawn_request_mempool_after_IBD()
+
+            await self.spawn_initial_block_download()
+            await self._initial_block_download_event.wait()
+            await self.spawn_request_mempool()
         except Exception as e:
             self.logger.exception(e)
             raise
 
-    async def request_mempool_after_IBD_job(self):
-        """waits for initial block download to complete before requesting the full mempool.
-        NOTE: once the _initial_block_download_event is set, relayed mempool txs will also
-        begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
-        await self._initial_block_download_event.wait()
+    async def request_mempool_job(self):
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):

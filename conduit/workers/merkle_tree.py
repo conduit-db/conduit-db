@@ -8,7 +8,6 @@ from conduit.logging_client import setup_tcp_logging
 
 from .algorithms import calc_mtree
 
-# setup_tcp_logging()
 
 class MTreeCalculator(multiprocessing.Process):
     """

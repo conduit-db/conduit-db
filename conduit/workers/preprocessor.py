@@ -10,7 +10,6 @@ from conduit.logging_client import setup_tcp_logging
 
 from .algorithms import preprocessor
 
-# setup_tcp_logging()
 
 class BlockPreProcessor(multiprocessing.Process):
     """
@@ -56,8 +55,6 @@ class BlockPreProcessor(multiprocessing.Process):
     def distribute_load_parsing(
         self, blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions
     ) -> List[Tuple[bytes, int, int, List[int]]]:
-        divided_tx_positions = []
-        count_per_div_parsing = round(len(tx_positions) / WORKER_COUNT_TX_PARSERS)
         # Todo - divide up the block into x number of worker segments for parallel
         #  processing.
         divided_tx_positions = [(blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_positions)]
