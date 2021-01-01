@@ -33,10 +33,12 @@ from .serializer import Serializer
 class Controller:
     """Designed to sync the blockchain as fast as possible.
 
-    The main responsibility is for coordinating the networking component with a
-    single peer (bitcoind daemon).But also coordinates the outsourcing of the other work
-    such as parsing and committing block data to the (postgres) database - processes
-    that can run in parallel leveraging a shared, memory view of each block."""
+    Coordinates:
+    - network via BitcoinNetIO
+    - outsources parsing of block data to workers in workers.py (which work in parallel reading
+    from a shared memory buffer)
+    - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
+    """
 
     def __init__(self, config: NetworkConfig, host="127.0.0.1", port=8000):
         self.logger = logging.getLogger("session")
