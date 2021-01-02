@@ -34,8 +34,6 @@ class BitcoinNetIO(BufferedProtocol):
     shm_buffer_view = shm_buffer.buf
     _pos = 0
     _last_msg_end_pos = 0
-    _msg_received_count = 0
-    _msg_handled_count = 0
 
     def __init__(self, on_buffer_full: Callable, on_msg: Callable, on_connection_made: Callable,
             on_connection_lost: Callable):
