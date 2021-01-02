@@ -32,6 +32,7 @@ DATABASE_HOST_VARNAME = "database_host"
 DATABASE_PORT_VARNAME = "database_port"
 DATABASE_PASSWORD_VARNAME = "database_password"
 LOGGING_LEVEL_VARNAME = "logging_level"
+RESET_VARNAME = "reset"
 
 MAINNET = "mainnet"
 TESTNET = "testnet"

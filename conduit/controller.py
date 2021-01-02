@@ -39,9 +39,11 @@ class Controller:
     - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
     """
 
-    def __init__(self, config: NetworkConfig, host="127.0.0.1", port=8000):
+    def __init__(self, config: Dict, net_config: NetworkConfig, host="127.0.0.1", port=8000):
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
+
+        self.config = config  # cli args & env_vars
 
         # Defined in async method at startup (self.run)
         self.storage = None
@@ -49,8 +51,8 @@ class Controller:
         self.serializer = None  # Serializer(self.net_config, self.storage)
         self.deserializer = None  # Deserializer(self.net_config, self.storage)
 
-        # Bitcoin network/peer config
-        self.net_config = config
+        # Bitcoin network/peer net_config
+        self.net_config = net_config
         self.peers = self.net_config.peers
         self.peer = self.get_peer()
         self.host = host  # bind address
@@ -87,7 +89,7 @@ class Controller:
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
     async def setup(self):
-        self.storage = await setup_storage(self.net_config)
+        self.storage = await setup_storage(self.config, self.net_config)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)

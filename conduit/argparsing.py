@@ -60,4 +60,11 @@ def get_parser():
         "database or redis - for use as a broadcasting "
         "service only (Not implemented)",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        dest="reset",
+        help="will wipe block_headers.mmap, headers.mmap and drop the LMDB and postgres database "
+             "(for convenience when testing on RegTest)",
+    )
     return parser

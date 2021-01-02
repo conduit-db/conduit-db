@@ -294,7 +294,6 @@ async def pg_test_connect() -> PG_Database:
 async def load_pg_database() -> PG_Database:
     pg_database = await pg_connect()
     await pg_database.pg_update_settings()
-    await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
     return pg_database
 
@@ -302,6 +301,5 @@ async def load_pg_database() -> PG_Database:
 async def load_test_pg_database() -> PG_Database:
     pg_database = await pg_test_connect()
     await pg_database.pg_update_settings()
-    await pg_database.pg_drop_tables()
     await pg_database.pg_create_permanent_tables()
     return pg_database
