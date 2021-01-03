@@ -114,6 +114,7 @@ class SyncState:
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
             self.pending_blocks_batch_set.add(block_header.hash)
+        self.logger.debug(self.pending_blocks_batch_set)
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:
@@ -156,7 +157,26 @@ class SyncState:
         self._pending_blocks_received = {}
         self._pending_blocks_progress_counter = {}
 
-    async def wait_for_new_tip(self):
+    async def wait_for_new_headers_tip(self):
+        self.headers_event_initial_sync.set()
+        await self.headers_event_new_tip.wait()
+        self.headers_event_new_tip.clear()
+
+    def is_post_IBD(self):
+        """has initial block download been completed?
+        (to syncronize all blocks with all initially fetched headers)"""
+        return self.initial_block_download_event.is_set()
+
+    def set_post_IBD_mode(self):
         self.initial_block_download_event.set()  # once set the first time will stay set
-        await self.blocks_event_new_tip.wait()
-        self.blocks_event_new_tip.clear()
+
+    async def wait_for_new_block_tip(self):
+        if self.is_post_IBD():
+            await self.blocks_event_new_tip.wait()
+            self.blocks_event_new_tip.clear()
+
+        if not self.is_post_IBD():
+            self.set_post_IBD_mode()
+            self.blocks_event_new_tip.clear()
+            await self.blocks_event_new_tip.wait()
+            self.blocks_event_new_tip.clear()

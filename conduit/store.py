@@ -2,6 +2,8 @@ import logging
 import os
 import shutil
 import stat
+import time
+import mmap
 from pathlib import Path
 
 from bitcoinx import Headers
@@ -12,6 +14,7 @@ from .networks import HeadersRegTestMod
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+MMAP_SIZE = 2_000_000
 
 
 class Storage:
@@ -35,8 +38,9 @@ class Storage:
 
 
 def setup_headers_store(net_config, mmap_filename):
-    Headers.max_cache_size = 2_000_000
-    HeadersRegTestMod.max_cache_size = 2_000_000
+    Headers.max_cache_size = MMAP_SIZE
+    HeadersRegTestMod.max_cache_size = MMAP_SIZE
+
     if net_config.NET == REGTEST:
         headers = HeadersRegTestMod.from_file(
             net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT
@@ -49,15 +53,21 @@ def setup_headers_store(net_config, mmap_filename):
 
 
 async def reset_datastore():
-    # remove headers
+    # remove headers - memory-mapped so need to do it this way to free memory immediately...
     headers_path = MODULE_DIR.parent.joinpath('headers.mmap')
     if os.path.exists(headers_path):
-        os.remove(headers_path)
+        with open(headers_path, 'w+') as f:
+            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+            mm.seek(0)
+            mm.write(b'\00' * mm.size())
 
-    # remove block headers
+    # remove block headers - memory-mapped so need to do it this way to free memory immediately...
     block_headers_path = MODULE_DIR.parent.joinpath('block_headers.mmap')
-    if os.path.exists(headers_path):
-        os.remove(block_headers_path)
+    if os.path.exists(block_headers_path):
+        with open(block_headers_path, 'w+') as f:
+            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+            mm.seek(0)
+            mm.write(b'\00' * mm.size())
 
     # remove postgres tables
     pg_database = await pg_connect()
@@ -69,11 +79,12 @@ async def reset_datastore():
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
-    shutil.rmtree(MODULE_DIR.joinpath('database/lmdb_data'), onerror=remove_readonly)
+    lmdb_path = MODULE_DIR.joinpath('database/lmdb_data')
+    if os.path.exists(lmdb_path):
+        shutil.rmtree(MODULE_DIR.joinpath('database/lmdb_data'), onerror=remove_readonly)
 
 
 async def setup_storage(config, net_config) -> Storage:
-
     if config.get('reset'):
         await reset_datastore()
 

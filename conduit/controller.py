@@ -108,7 +108,7 @@ class Controller:
     async def run(self):
         try:
             await self.setup()
-            await self.connect_session()
+            await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(
                 self.send_version(
                     self.peer.host,
@@ -265,9 +265,7 @@ class Controller:
         self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
         while True:
             if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                self.sync_state.headers_event_initial_sync.set()
-                await self.sync_state.headers_event_new_tip.wait()
-                self.sync_state.headers_event_new_tip.clear()
+                await self.sync_state.wait_for_new_headers_tip()
             await self._get_max_headers()
             await self.sync_state.headers_msg_processed_event.wait()
             self.sync_state.headers_msg_processed_event.clear()
@@ -380,7 +378,7 @@ class Controller:
             while True:
                 if self.sync_state.is_synchronized():
                     self.logger.debug("block tip synced to match headers tip")
-                    await self.sync_state.wait_for_new_tip()
+                    await self.sync_state.wait_for_new_block_tip()
                 chain = self.storage.block_headers.longest_chain()
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)

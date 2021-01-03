@@ -98,6 +98,7 @@ class PG_Database:
                 CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (
                 pushdata_shash);
                 
+                -- ?? should this be an in-memory only table?
                 CREATE UNLOGGED TABLE IF NOT EXISTS mempool_transactions (
                     mp_tx_shash bigint PRIMARY KEY,
                     mp_tx_hash bytea,
