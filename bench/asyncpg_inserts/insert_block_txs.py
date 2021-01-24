@@ -31,7 +31,7 @@ if __name__ == "__main__":
         await pg_db.pg_update_settings()
         await pg_db.pg_drop_tables()
         await pg_db.pg_create_permanent_tables()
-        await pg_db.pg_create_temp_tables()
+        await pg_db.pg_create_temp_inputs_table()
 
         t0 = time.time()
         await pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         #     print(row)
 
         # Close the connection.
-        await pg_db.pg_drop_temp_tables()
+        await pg_db.pg_drop_temp_inputs()
         await pg_db.close()
 
     asyncio.get_event_loop().run_until_complete(main())

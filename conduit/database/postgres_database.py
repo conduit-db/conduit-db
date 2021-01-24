@@ -4,7 +4,8 @@ from typing import List
 
 import asyncpg
 from asyncpg import Record
-from bitcoinx import hash_to_hex_str
+
+from constants import PROFILING
 
 
 class PG_Database:
@@ -14,7 +15,8 @@ class PG_Database:
         self.pg_conn = pg_conn
         self.logger = logging.getLogger("pg-database")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.debug("initialized PG_Database")
+        # self.logger.setLevel(PROFILING)
+        # self.logger.debug("initialized PG_Database")
 
     async def close(self):
         await self.pg_conn.close()
@@ -44,11 +46,18 @@ class PG_Database:
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
 
-    async def pg_drop_temp_tables(self):
+    async def pg_drop_temp_inputs(self):
         try:
             await self.pg_conn.execute("""
             DROP TABLE temp_inputs;
-            DROP TABLE temp_mined_tx_shashes;
+            """)
+        except asyncpg.exceptions.UndefinedTableError as e:
+            self.logger.exception(e)
+
+    async def pg_drop_temp_mined_tx_shashes(self):
+        try:
+            await self.pg_conn.execute("""
+            DROP TABLE IF EXISTS temp_mined_tx_shashes;
             """)
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
@@ -110,52 +119,96 @@ class PG_Database:
                 -- may not be providing the tx_hash in their query (e.g. for key history).
                 
                 CREATE UNLOGGED TABLE IF NOT EXISTS api_state (
+                    id integer,
                     api_tip_height integer,
-                    api_tip_hash bytea
+                    api_tip_hash bytea,
+                    PRIMARY KEY (id)
                 );
+                
                 """
         )
 
-    async def pg_create_temp_tables(self):
+    async def pg_create_temp_inputs_table(self):
         # Todo - prefix the table name with the worker_id to avoid clashes
         #  currently there is only a single worker
         await self.pg_conn.execute(
-            """
-            CREATE TEMPORARY TABLE temp_inputs (
+            """           
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_inputs (
                 in_prevout_shash bigint,
                 out_idx integer,
                 in_tx_shash bigint,
                 in_idx integer,
                 in_has_collided boolean
             );
-            
-            CREATE TEMPORARY TABLE temp_mined_tx_shashes (
-                mined_tx_shash bigint
-            );
             """
         )
 
-    async def pg_get_unprocessed_txs(self, mined_tx_shashes: List[int]):
-        """checking for colliding short hashes is not required -
-        - see blueprint section: very fine print"""
+    async def pg_create_temp_mined_tx_shashes_table(self):
+        # Todo - prefix the table name with the worker_id to avoid clashes
+        #  currently there is only a single worker
+        await self.pg_conn.execute("""
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_shashes (
+                mined_tx_shash bigint
+            );
+            """)
+
+    async def pg_load_temp_mined_tx_shashes(self, mined_tx_shashes):
+        await self.pg_create_temp_mined_tx_shashes_table()
         await self.pg_conn.copy_records_to_table(
             "temp_mined_tx_shashes", columns=["mined_tx_shash"], records=mined_tx_shashes,
         )
+
+    async def pg_get_unprocessed_txs(self, mined_tx_shashes: List[int]):
+        """
+        NOTE: usually (if all mempool txs have been processed, this function will only return
+        the coinbase tx)
+
+        checking for colliding short hashes is not required -
+        - see blueprint section: very fine print
+        """
         result: List[Record] = await self.pg_conn.fetch(
             """
             -- tx_hash ISNULL implies no match therefore not previously processed yet
             SELECT *
             FROM temp_mined_tx_shashes
             LEFT OUTER JOIN mempool_transactions
-            ON (mempool_transactions.tx_shash = temp_mined_tx_shashes.mined_tx_shash)
-            WHERE mempool_transactions.tx_hash ISNULL
+            ON (mempool_transactions.mp_tx_shash = temp_mined_tx_shashes.mined_tx_shash)
+            WHERE mempool_transactions.mp_tx_hash ISNULL
             ;"""
         )
         return result
 
-    async def pg_invalidate_mempool_rows(self, mined_tx_shashes):
+    async def get_temp_mined_tx_shashes(self):
+        result: List[Record] = await self.pg_conn.fetch(
+            """
+            SELECT *
+            FROM temp_mined_tx_shashes;"""
+        )
+        self.logger.debug(f"get_temp_mined_tx_shashes: {result}")
+
+    async def pg_invalidate_mempool_rows(self):
         """Need to deal with collisions here"""
-        raise NotImplementedError
+        result = await self.pg_conn.execute(
+            """
+            DELETE FROM mempool_transactions
+            WHERE mp_tx_shash in 
+            (SELECT mined_tx_shash FROM temp_mined_tx_shashes)
+            """
+        )
+        deleted_count = result.split(" ")[1]
+        self.logger.debug(f"deleted {deleted_count} mempool rows (now included in a block)")
+
+    async def pg_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
+        assert isinstance(api_tip_height, int)
+        assert isinstance(api_tip_hash, bytes)
+        await self.pg_conn.execute(
+            """
+            INSERT INTO api_state(id, api_tip_height, api_tip_hash) 
+            VALUES(0, $1, $2)
+            ON CONFLICT (id)
+            DO UPDATE SET id=0, api_tip_height = $1, api_tip_hash=$2;
+            """, api_tip_height, api_tip_hash
+        )
 
     async def pg_bulk_load_confirmed_tx_rows(self, tx_rows):
         t0 = time.time()
@@ -173,7 +226,7 @@ class PG_Database:
             records=tx_rows,
         )
         t1 = time.time() - t0
-        self.logger.info(
+        self.logger.log(PROFILING,
             f"elapsed time for pg_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
@@ -191,7 +244,7 @@ class PG_Database:
             records=tx_rows,
         )
         t1 = time.time() - t0
-        self.logger.info(
+        self.logger.log(PROFILING,
             f"elapsed time for pg_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
@@ -211,7 +264,7 @@ class PG_Database:
             records=out_rows,
         )
         t1 = time.time() - t0
-        self.logger.info(
+        self.logger.log(PROFILING,
             f"elapsed time for pg_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
         )
 
@@ -237,7 +290,7 @@ class PG_Database:
             ;"""
         )
         t1 = time.time() - t0
-        self.logger.info(
+        self.logger.log(PROFILING,
             f"elapsed time for pg_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
         )
 
@@ -257,17 +310,9 @@ class PG_Database:
         )
 
         t1 = time.time() - t0
-        self.logger.info(
+        self.logger.log(PROFILING,
             f"elapsed time for pg_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
-
-    async def pg_bulk_insert_block_rows(self, tx_rows, out_rows, in_rows, pd_rows):
-        await self.pg_create_temp_tables()
-        await self.pg_bulk_load_confirmed_tx_rows(tx_rows)
-        await self.pg_bulk_load_output_rows(out_rows)
-        await self.pg_bulk_load_input_rows(in_rows)
-        await self.pg_bulk_load_pushdata_rows(pd_rows)
-        await self.pg_drop_temp_tables()
 
 
 async def pg_connect() -> PG_Database:

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import multiprocessing
 import threading
 from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
@@ -41,6 +42,8 @@ class SyncState:
         self._pending_blocks_inv_queue = asyncio.Queue()
         self._pending_blocks_progress_counter = {}
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
+
+        self.initial_block_download_event_mp = multiprocessing.Event()
 
     @property
     def message_received_count(self):
@@ -114,7 +117,6 @@ class SyncState:
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
             self.pending_blocks_batch_set.add(block_header.hash)
-        self.logger.debug(self.pending_blocks_batch_set)
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:
@@ -169,6 +171,7 @@ class SyncState:
 
     def set_post_IBD_mode(self):
         self.initial_block_download_event.set()  # once set the first time will stay set
+        self.initial_block_download_event_mp.set()
 
     async def wait_for_new_block_tip(self):
         if self.is_post_IBD():

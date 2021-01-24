@@ -26,7 +26,7 @@ class Handlers:
         self.storage = storage
 
     async def on_version(self, message):
-        logger.debug("handling version...")
+        # logger.debug("handling version...")
         version = self.session.deserializer.version(io.BytesIO(message))
         self.session.sync_state.set_target_header_height(version["start_height"])
         logger.debug("received version message: %s", version)
@@ -34,36 +34,39 @@ class Handlers:
         await self.session.send_request(VERACK, verack_message)
 
     async def on_verack(self, message):
-        logger.debug("handling verack...")
+        # logger.debug("handling verack...")
         logger.debug("handshake complete")
 
     async def on_protoconf(self, message):
-        logger.debug("handling protoconf...")
+        # logger.debug("handling protoconf...")
         protoconf = self.session.deserializer.protoconf(io.BytesIO(message))
-        logger.debug(f"protoconf: {protoconf}")
+        # logger.debug(f"protoconf: {protoconf}")
         self.session.handshake_complete_event.set()
 
     async def on_sendheaders(self, message):
-        logger.debug("handling sendheaders...")
+        # logger.debug("handling sendheaders...")
+        pass
 
     async def on_sendcmpct(self, message):
         message = message.tobytes()
-        logger.debug("handling sendcmpct...")
-        logger.debug("received sendcmpct message: %s", message)
+        # logger.debug("handling sendcmpct...")
+        # logger.debug("received sendcmpct message: %s", message)
         sendcmpct = self.session.serializer.sendcmpct()
-        logger.debug("responding with message: %s", sendcmpct)
+        # logger.debug("responding with message: %s", sendcmpct)
         await self.session.send_request(SENDCMPCT, sendcmpct)
 
     async def on_ping(self, message):
-        logger.debug("handling ping...")
+        # logger.debug("handling ping...")
         pong_message = self.serializer.pong(message)
         await self.session.send_request(PONG, pong_message)
 
     async def on_addr(self, message):
-        logger.debug("handling addr...")
+        # logger.debug("handling addr...")
+        pass
 
     async def on_feefilter(self, message):
-        logger.debug("handling feefilter...")
+        # logger.debug("handling feefilter...")
+        pass
 
     async def on_inv(self, message):
         """Todo: Optimization
@@ -91,7 +94,7 @@ class Handlers:
                 if hex_str_to_hash(inv["inv_hash"]) in self.session.sync_state.pending_blocks_batch_set:
                     self.session.sync_state._pending_blocks_inv_queue.put_nowait(inv)
                 else:
-                    logger.debug(f"got an unsolicited block {inv['inv_hash']}")
+                    logger.debug(f"got new block notification: {inv['inv_hash']}")
 
         if self.session.sync_state.initial_block_download_event.is_set():
             getdata_msg = self.serializer.getdata(tx_inv_vect)

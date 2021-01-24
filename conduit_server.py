@@ -8,7 +8,7 @@ from conduit.controller import Controller
 from conduit.argparsing import get_parser
 from conduit.constants import (DATABASE_NAME_VARNAME, BITCOIN_NETWORK_VARNAME,
     DATABASE_USER_VARNAME, DATABASE_HOST_VARNAME, DATABASE_PORT_VARNAME, DATABASE_PASSWORD_VARNAME,
-    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, )
+    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, PROFILING, )
 from conduit.logging_client import setup_tcp_logging, set_logging_level
 from conduit.workers.logging_server import TCPLoggingServer
 from conduit.networks import NetworkConfig
@@ -66,7 +66,7 @@ def setup():
     env_vars.update(get_env_vars())
     env_vars.update(parse_args())  # overrides
     get_and_set_network_type(env_vars)
-    set_logging_level()
+    set_logging_level(PROFILING)
     setup_tcp_logging()
     return env_vars
 
@@ -95,4 +95,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main(), debug=True)
+    asyncio.run(main(), debug=False)

@@ -51,3 +51,7 @@ class MsgType(enum.IntEnum):
     MSG_BLOCK = 2
     MSG_FILTERED_BLOCK = 3
     MSG_CMPCT_BLOCK = 4
+
+
+# Log Level
+PROFILING = 9

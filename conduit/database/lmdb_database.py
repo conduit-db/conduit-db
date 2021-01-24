@@ -7,11 +7,12 @@ from typing import List, Tuple, Dict, Optional
 
 import lmdb
 
-from conduit.logging_client import setup_tcp_logging
+from constants import PROFILING
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
 struct_le_I = Struct("<I")
+
 
 class LMDB_Database:
     """simple interface to LMDB"""
@@ -23,7 +24,7 @@ class LMDB_Database:
 
     def __init__(self, storage_path: str=DEFAULT_DIR):
         self.logger = logging.getLogger("lmdb-database")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(PROFILING)
         self.env: Optional[lmdb.Environment] = None
         self.blocks_db = None
         self.block_nums_db = None
@@ -34,7 +35,7 @@ class LMDB_Database:
         self._map_size = pow(1024, 3) * 30
         self._storage_path = storage_path
         self.open()
-        self.logger.debug("opened LMDB database")
+        # self.logger.debug("opened LMDB database")
 
     def open(self):
         self.env = lmdb.open(self._storage_path, max_dbs=3, map_size=self._map_size,
@@ -102,7 +103,8 @@ class LMDB_Database:
 
             t1 = time.time() - t0
             if len(batched_blocks) > 0:
-                self.logger.debug(f"elapsed time for {len(batched_blocks)} raw_blocks took {t1} seconds")
+                self.logger.log(PROFILING,
+                    f"elapsed time for {len(batched_blocks)} raw_blocks took {t1} seconds")
         except Exception as e:
             self.logger.exception(e)
 

@@ -11,6 +11,10 @@ import time
 from pathlib import Path
 
 
+# Log level
+PROFILING = 9
+
+
 class LogRecordStreamHandler(socketserver.StreamRequestHandler):
     """Handler for a streaming logging request.
 
@@ -85,7 +89,7 @@ class TCPLoggingServer(multiprocessing.Process):
 
     def setup_local_logging_policy(self):
         FORMAT = "%(asctime)-25s %(name)-20s %(message)s"
-        logging.basicConfig(format=FORMAT, level=logging.DEBUG)
+        logging.basicConfig(format=FORMAT, level=PROFILING)
         """
         logfile_path = os.path.join(log_path, time.strftime("%Y%m%d-%H%M%S") + ".log")
         file_handler = logging.FileHandler(logfile_path)

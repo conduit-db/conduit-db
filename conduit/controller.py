@@ -74,7 +74,6 @@ class Controller:
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
         self.worker_in_queue_logging = multiprocessing.Queue()  # only for clean shutdown
-        self.initial_block_download_event_mp = multiprocessing.Event()
 
         # Mempool and API state
         self.mempool_tx_hash_set = set()
@@ -191,7 +190,7 @@ class Controller:
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse_confirmed,
-                self.initial_block_download_event_mp,
+                self.sync_state.initial_block_download_event_mp,
             )
             p.start()
             self.processes.append(p)
@@ -288,7 +287,7 @@ class Controller:
     def join_batched_blocks(self):
         """Runs in a thread so it can block on the multiprocessing queue"""
         # join block parser workers
-        self.logger.debug("waiting for block parsers to complete work...")
+        # self.logger.debug("waiting for block parsers to complete work...")
         self.sync_state.done_block_heights = []
 
         while True:
@@ -298,8 +297,7 @@ class Controller:
                 self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
 
                 header = self.get_header_for_hash(block_hash)
-                self.logger.debug(f"block height={header.height} done!")
-
+                # self.logger.debug(f"block height={header.height} done!")
                 self.sync_state.done_block_heights.append(header.height)
 
                 try:
@@ -315,7 +313,7 @@ class Controller:
                     # been updated with any headers.
 
                     for height in sorted(self.sync_state.done_block_heights):
-                        self.logger.debug(f"new block tip height: {height}")
+                        # self.logger.debug(f"new block tip height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
@@ -377,15 +375,22 @@ class Controller:
             # up to 500 blocks per loop
             while True:
                 if self.sync_state.is_synchronized():
-                    self.logger.debug("block tip synced to match headers tip")
+                    # todo - need to call pg_invalidate_mempool_rows() then...
+                    # todo - safe to update api_state.api_chain_tip_height!
+                    api_block_tip_height = self.sync_state.get_local_block_tip_height()
+                    api_block_tip = self.get_header_for_height(api_block_tip_height)
+                    api_block_tip_hash = api_block_tip.hash
+                    await self.pg_db.pg_update_api_tip_height_and_hash(
+                        api_block_tip_height, api_block_tip_hash)
+                    self.logger.debug(f"new block tip height: {api_block_tip_height}")
                     await self.sync_state.wait_for_new_block_tip()
                 chain = self.storage.block_headers.longest_chain()
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)
-                self.logger.debug(
-                    "requesting max number of blocks (up to 500) for chain tip " "height=%s",
-                    self.sync_state.get_local_block_tip_height(),
-                )
+                # self.logger.debug(
+                #     "requesting max number of blocks (up to 500) (current chain tip=%s)",
+                #     self.sync_state.get_local_block_tip_height(),
+                # )
                 hash_stop = ZERO_HASH  # get max
 
                 self.sync_state.reset_pending_blocks_batch_set()

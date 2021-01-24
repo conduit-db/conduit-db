@@ -38,6 +38,9 @@ class Storage:
 
 
 def setup_headers_store(net_config, mmap_filename):
+    bitcoinx_chain_logger = logging.getLogger('chain')
+    bitcoinx_chain_logger.setLevel(logging.WARNING)
+
     Headers.max_cache_size = MMAP_SIZE
     HeadersRegTestMod.max_cache_size = MMAP_SIZE
 
@@ -54,6 +57,7 @@ def setup_headers_store(net_config, mmap_filename):
 
 async def reset_datastore():
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
+
     headers_path = MODULE_DIR.parent.joinpath('headers.mmap')
     if os.path.exists(headers_path):
         with open(headers_path, 'w+') as f:
@@ -71,8 +75,10 @@ async def reset_datastore():
 
     # remove postgres tables
     pg_database = await pg_connect()
-    await pg_database.pg_drop_tables()
-    await pg_database.close()
+    try:
+        await pg_database.pg_drop_tables()
+    finally:
+        await pg_database.close()
 
     # remove lmdb database
     def remove_readonly(func, path, excinfo):

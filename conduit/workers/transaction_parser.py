@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from functools import partial
 from multiprocessing import shared_memory
-from typing import Sequence, Optional
+from typing import Sequence, Optional, Tuple
 
 import asyncpg
 
@@ -167,11 +167,10 @@ class TxParser(multiprocessing.Process):
             raise
 
     async def pg_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
-        await self.pg_db.pg_create_temp_tables()
+        await self.pg_db.pg_create_temp_inputs_table()
         await self.pg_db.pg_bulk_load_output_rows(out_rows)
         await self.pg_db.pg_bulk_load_input_rows(in_rows)
         await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
-        await self.pg_db.pg_drop_temp_tables()
 
     async def pg_flush_rows(
         self,
@@ -186,6 +185,12 @@ class TxParser(multiprocessing.Process):
             if confirmed:
                 await self.pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+
+                if self.initial_block_download_event_mp.is_set():
+                    await self.pg_db.pg_invalidate_mempool_rows()
+                await self.pg_db.pg_drop_temp_mined_tx_shashes()
+
+                await self.pg_db.pg_drop_temp_inputs()
                 # Ack for all flushed blocks
                 for blk_hash, tx_count in acks:
                     # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
@@ -196,6 +201,7 @@ class TxParser(multiprocessing.Process):
             else:
                 await self.pg_db.pg_bulk_load_mempool_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                await self.pg_db.pg_drop_temp_inputs()
                 # for tx_count in acks:
                 # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
 
@@ -205,6 +211,11 @@ class TxParser(multiprocessing.Process):
             error_text = e.as_dict()["detail"]
             # extract tx_shash from brackets - not best practice.. but most efficient
             colliding_tx_shash = error_text.split("(")[2].split(")")[0]
+            # Todo - should have a set of colliding_tx_shash(es) - then update all relevant
+            #  database tables with the necessary metadata to protect clients from
+            #  being affected by this collision.
+            #  Then write good unit tests for this
+
             self.logger.error(f"colliding tx_shash = {colliding_tx_shash}")
             tx_rows = self.handle_collision(
                 tx_rows, in_rows, out_rows, set_pd_rows, acks, colliding_tx_shash
@@ -307,25 +318,38 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise e
 
+    async def get_block_tx_hashes(self, raw_block, tx_offsets) -> Tuple:
+        all_block_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
+            0]
+
+        shashes = []
+        shash_rows = []
+        for full_tx_hash in all_block_tx_hashes:
+            shash = struct_le_q.unpack(full_tx_hash[0:8])[0]
+            shashes.append(shash)
+            shash_rows.append((shash,))
+
+        return shashes, shash_rows
+
     async def get_processed_vs_unprocessed_tx_offsets(self, raw_block, tx_offsets):
         """input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction"""
+        try:
+            shashes, shash_rows = await self.get_block_tx_hashes(raw_block, tx_offsets)
+            await self.pg_db.pg_load_temp_mined_tx_shashes(shash_rows)
+            offsets_map = dict(zip(shashes, tx_offsets))
 
-        all_block_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
-            0
-        ]
+            unprocessed_tx_shashes = await self.pg_db.pg_get_unprocessed_txs(shash_rows)
+            # self.logger.debug(f'unprocessed_tx_shashes: {unprocessed_tx_shashes}')
 
-        shashes = []
-        for full_tx_hash in all_block_tx_hashes:
-            shashes.append(struct_le_q.unpack(full_tx_hash[0:8])[0])
-
-        offsets_map = dict(zip(shashes, tx_offsets))
-        unprocessed_tx_shashes = await self.pg_db.pg_get_unprocessed_txs(shashes)
-
-        relevant_offsets = []
-        for tx_shash in unprocessed_tx_shashes:
-            relevant_offsets.append(offsets_map.pop(tx_shash))
-        self.processed_vs_unprocessed_queue.put_nowait((relevant_offsets, offsets_map))
+            relevant_offsets = []
+            for row in unprocessed_tx_shashes:
+                # self.logger.debug(row[0])
+                relevant_offsets.append(offsets_map.pop(row[0]))
+            self.processed_vs_unprocessed_queue.put_nowait((relevant_offsets, offsets_map))
+        except Exception:
+            self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
+            raise
 
     def run_coroutine_threadsafe(self, coro) -> asyncio.Future:
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
@@ -365,7 +389,10 @@ class TxParser(multiprocessing.Process):
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div = item
                     buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
-                    if not self.initial_block_download_event_mp.is_set:
+                    # if in IBD mode, mempool txs are strictly rejected. So there is no point
+                    # in sorting out which txs are already in the mempool tx table.
+                    # There is also no point performing mempool tx invalidation.
+                    if self.initial_block_download_event_mp.is_set():
                         self.run_coroutine_threadsafe(
                             self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_div)
                         )
@@ -382,7 +409,7 @@ class TxParser(multiprocessing.Process):
                     )
                     self.run_coroutine_threadsafe(coro())
 
-                    # need to ack from asyncio event loop because that's where the context
+                    # Need to ack from asyncio event loop because that's where the context
                     # is for when the data has indeed been flushed to db
                     item = (blk_hash, len(tx_offsets_div))
                     coro2 = partial(self.worker_asyncio_tx_parser_ack_queue_confirmed.put, item)
@@ -393,6 +420,7 @@ class TxParser(multiprocessing.Process):
             except Exception as e:
                 self.logger.exception(e)
                 raise
+
 
 
 """

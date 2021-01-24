@@ -6,8 +6,7 @@ import sys
 from .constants import LOGGING_LEVEL_VARNAME
 
 
-def set_logging_level() -> None:
-    logging_level = logging.DEBUG
+def set_logging_level(logging_level) -> None:
     if LOGGING_LEVEL_VARNAME in os.environ:
         logging_level_name = os.environ[LOGGING_LEVEL_VARNAME].lower()
         logging_levels = {
@@ -25,6 +24,7 @@ def set_logging_level() -> None:
             sys.exit(1)
         logging_level = logging_levels[logging_level_name]
     logging.root.setLevel(logging_level)
+
 
 def setup_tcp_logging():
     rootLogger = logging.getLogger('')
