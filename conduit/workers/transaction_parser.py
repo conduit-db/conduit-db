@@ -33,6 +33,7 @@ class TxParser(multiprocessing.Process):
         worker_in_queue_tx_parse,
         worker_ack_queue_tx_parse_confirmed,
         initial_block_download_event_mp,
+        worker_ack_queue_mined_tx_hashes,
     ):
         super(TxParser, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
@@ -40,6 +41,7 @@ class TxParser(multiprocessing.Process):
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
         self.initial_block_download_event_mp = initial_block_download_event_mp
+        self.worker_ack_queue_mined_tx_hashes = worker_ack_queue_mined_tx_hashes
 
         self.worker_asyncio_tx_parser_confirmed_tx_queue = None
         self.worker_asyncio_tx_parser_mempool_tx_queue = None
@@ -186,15 +188,16 @@ class TxParser(multiprocessing.Process):
                 await self.pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
 
-                if self.initial_block_download_event_mp.is_set():
-                    await self.pg_db.pg_invalidate_mempool_rows()
-                await self.pg_db.pg_drop_temp_mined_tx_shashes()
-
                 await self.pg_db.pg_drop_temp_inputs()
                 # Ack for all flushed blocks
                 for blk_hash, tx_count in acks:
                     # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
                     self.worker_ack_queue_tx_parse_confirmed.put((blk_hash, tx_count))
+
+                # After each block that is fully ACK'd -> atomically..
+                # 1) invalidate mempool rows
+                # 2) update api tip height
+                # This is done via a global cache of mined txshashes to join with mempool db table
 
                 self.reset_batched_rows_confirmed()
 
@@ -318,32 +321,29 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise e
 
-    async def get_block_tx_hashes(self, raw_block, tx_offsets) -> Tuple:
+    async def get_partial_block_tx_hashes(self, raw_block, tx_offsets) -> Tuple:
         all_block_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
             0]
-
-        shashes = []
-        shash_rows = []
+        tx_hash_rows = []
         for full_tx_hash in all_block_tx_hashes:
-            shash = struct_le_q.unpack(full_tx_hash[0:8])[0]
-            shashes.append(shash)
-            shash_rows.append((shash,))
+            tx_hash_rows.append((full_tx_hash,))
+        return all_block_tx_hashes, tx_hash_rows
 
-        return shashes, shash_rows
-
-    async def get_processed_vs_unprocessed_tx_offsets(self, raw_block, tx_offsets):
+    async def get_processed_vs_unprocessed_tx_offsets(self, raw_block, tx_offsets, blk_height):
         """input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction"""
         try:
-            shashes, shash_rows = await self.get_block_tx_hashes(raw_block, tx_offsets)
-            await self.pg_db.pg_load_temp_mined_tx_shashes(shash_rows)
-            offsets_map = dict(zip(shashes, tx_offsets))
+            tx_hashes, new_tx_hashes = await self.get_partial_block_tx_hashes(
+                raw_block, tx_offsets)
+            if self.initial_block_download_event_mp.is_set():
+                self.worker_ack_queue_mined_tx_hashes.put({blk_height: new_tx_hashes})
 
-            unprocessed_tx_shashes = await self.pg_db.pg_get_unprocessed_txs(shash_rows)
+            offsets_map = dict(zip(tx_hashes, tx_offsets))
+            unprocessed_tx_hashes = await self.pg_db.pg_get_unprocessed_txs(new_tx_hashes)
             # self.logger.debug(f'unprocessed_tx_shashes: {unprocessed_tx_shashes}')
 
             relevant_offsets = []
-            for row in unprocessed_tx_shashes:
+            for row in unprocessed_tx_hashes:
                 # self.logger.debug(row[0])
                 relevant_offsets.append(offsets_map.pop(row[0]))
             self.processed_vs_unprocessed_queue.put_nowait((relevant_offsets, offsets_map))
@@ -394,7 +394,8 @@ class TxParser(multiprocessing.Process):
                     # There is also no point performing mempool tx invalidation.
                     if self.initial_block_download_event_mp.is_set():
                         self.run_coroutine_threadsafe(
-                            self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_div)
+                            self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_div,
+                                blk_height)
                         )
                         item = self.processed_vs_unprocessed_queue.get()
                         unprocessed_tx_offsets, processed_tx_offsets = item

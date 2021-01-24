@@ -116,24 +116,8 @@ so these txs should be processed as usual whereas the matching txs should go thr
 a fast-track 
 
 ##### Very fine print
-If there is a collision **in the mempool transaction table** then this would be tracked 
+If there is a collision in the mempool transaction table then this would be tracked 
 in the corresponding collision table for the mempool transaction table.
-
-For 'pg_get_unprocessed_txs' method, checking for colliding short hashes is not required.
-There would have to be a freak scenario where there is already 2 previous collisions 
-(in the mempool) and yours is the 3rd (which has **not been processed / relayed**... but to 
-handle this crazy edge case would need to: 
-1) check all returned rows for a collision
-2) lookup tx_hash in collision table to get final verdict Yes or No (have we processed 
-this one?) 
-
-Instead I will assume that if there's a shash match then it *was* relayed and *has* been 
-processed already.
-
-This can still be added later for 'correctness' though and will likely not have much overhead
-because I expect most transactions to fall into the "already processed" category and so doing a 
-quick scan for any collisions may be acceptable.
-
 
 ## API State
 
@@ -145,7 +129,7 @@ with the confirmed transactions table will exclude txs above the api_chain_tip_h
 txs indicates that the block is not fully committed to the database yet (+ mempool txs invalidated) - if the block
 WAS fully committed then the api_chain_tip_height would be +=1.
 
-# Collision tables (tx, input, output)
+# Collision tables (mempool tx, confirmed tx, input, output)
 
 Need to track all colliding tx_hashes.
 Basically the procedure is:
@@ -169,9 +153,6 @@ based on that...
 - The handling of colliding hashes should not be exposed in the external API - it should be
 entirely handled internally such that the client always receives the correct metadata for the correct
 transaction without necessarily appreciating how it happened under the hood.
-
-Pushdata short hashes are 16 bytes so the chances of collisions are negligible. 
-No such collision table will exist for these.
 
 
 # Pipeline
@@ -246,13 +227,6 @@ the in_has_collided flag is NOT set because the tx_hash for the input has not co
     - if constraint violation occurs, follow similar steps as for (1). 
         - i.e. update collision flags in permanent tables
         - insert both colliding pushdata_hash rows to the collision table.
-
-NOTE: step 4 is only made possible if an edge case is ruled out!:
-- there's an edge case where the input/output could have the same (tx_num AND idx
-AND pushdata_hash AND same ref_type) --- but it's probably very rare... 
-so options are to either rule out input or output row duplicates in the cython parser 
-(**much preferred and much faster**) or avoid bulk copy and instead do bulk upsert 
-with an ON CONFLICT DO NOTHING; to account for this possibility)
 
 
 ## MerkleTree table (LMDB vs postgres)

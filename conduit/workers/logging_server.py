@@ -120,7 +120,6 @@ class TCPLoggingServer(multiprocessing.Process):
         self.logger.debug("tcp server stopped")
 
 if __name__ == "__main__":
-    worker_in_queue_logging = multiprocessing.Queue()
     TCPLoggingServer().start()
     time.sleep(5)
 

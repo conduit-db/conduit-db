@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import List
+from typing import List, Tuple
 
 import asyncpg
 from asyncpg import Record
@@ -54,10 +54,18 @@ class PG_Database:
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
 
-    async def pg_drop_temp_mined_tx_shashes(self):
+    async def pg_drop_temp_mined_tx_hashes(self):
         try:
             await self.pg_conn.execute("""
-            DROP TABLE IF EXISTS temp_mined_tx_shashes;
+            DROP TABLE IF EXISTS temp_mined_tx_hashes;
+            """)
+        except asyncpg.exceptions.UndefinedTableError as e:
+            self.logger.exception(e)
+
+    async def pg_drop_temp_inbound_tx_hashes(self):
+        try:
+            await self.pg_conn.execute("""
+            DROP TABLE IF EXISTS temp_inbound_tx_hashes;
             """)
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
@@ -143,57 +151,80 @@ class PG_Database:
             """
         )
 
-    async def pg_create_temp_mined_tx_shashes_table(self):
-        # Todo - prefix the table name with the worker_id to avoid clashes
-        #  currently there is only a single worker
+    async def pg_create_temp_mined_tx_hashes_table(self):
         await self.pg_conn.execute("""
-            CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_shashes (
-                mined_tx_shash bigint
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_hashes (
+                mined_tx_hash bytea,
+                blk_height bigint
             );
             """)
 
-    async def pg_load_temp_mined_tx_shashes(self, mined_tx_shashes):
-        await self.pg_create_temp_mined_tx_shashes_table()
+    async def pg_create_temp_inbound_tx_hashes_table(self):
+        await self.pg_conn.execute("""
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_inbound_tx_hashes (
+                inbound_tx_hashes bytea
+            );
+            """)
+
+    async def pg_load_temp_mined_tx_hashes(self, mined_tx_hashes):
+        """columns: tx_hashes, blk_height"""
+        await self.pg_create_temp_mined_tx_hashes_table()
         await self.pg_conn.copy_records_to_table(
-            "temp_mined_tx_shashes", columns=["mined_tx_shash"], records=mined_tx_shashes,
+            "temp_mined_tx_hashes", columns=["mined_tx_hash"], records=mined_tx_hashes,
         )
 
-    async def pg_get_unprocessed_txs(self, mined_tx_shashes: List[int]):
+    async def pg_load_temp_inbound_tx_hashes(self, inbound_tx_hashes):
+        """columns: tx_hashes, blk_height"""
+        await self.pg_create_temp_inbound_tx_hashes_table()
+        await self.pg_conn.copy_records_to_table(
+            "temp_inbound_tx_hashes", columns=["inbound_tx_hashes"], records=inbound_tx_hashes,
+        )
+
+    async def pg_get_unprocessed_txs(self, new_tx_hashes):
         """
         NOTE: usually (if all mempool txs have been processed, this function will only return
         the coinbase tx)
 
-        checking for colliding short hashes is not required -
-        - see blueprint section: very fine print
+        Todo(collisions)
+        - if there is a collision between local inbound tx shashes and mempool txs then it would
+        cause a false negative in thinking it has already been processed
+        - solution: use full hashes for correctness
         """
+        await self.pg_load_temp_inbound_tx_hashes(new_tx_hashes)
         result: List[Record] = await self.pg_conn.fetch(
             """
             -- tx_hash ISNULL implies no match therefore not previously processed yet
             SELECT *
-            FROM temp_mined_tx_shashes
+            FROM temp_inbound_tx_hashes
             LEFT OUTER JOIN mempool_transactions
-            ON (mempool_transactions.mp_tx_shash = temp_mined_tx_shashes.mined_tx_shash)
+            ON (mempool_transactions.mp_tx_hash = temp_inbound_tx_hashes.inbound_tx_hashes)
             WHERE mempool_transactions.mp_tx_hash ISNULL
             ;"""
         )
+        await self.pg_drop_temp_inbound_tx_hashes()
         return result
 
-    async def get_temp_mined_tx_shashes(self):
-        result: List[Record] = await self.pg_conn.fetch(
-            """
-            SELECT *
-            FROM temp_mined_tx_shashes;"""
-        )
-        self.logger.debug(f"get_temp_mined_tx_shashes: {result}")
+    # # Debugging
+    # async def get_temp_mined_tx_hashes(self):
+    #     result: List[Record] = await self.pg_conn.fetch(
+    #         """
+    #         SELECT *
+    #         FROM temp_mined_tx_hashes;"""
+    #     )
+    #     self.logger.debug(f"get_temp_mined_tx_hashes: {result}")
 
-    async def pg_invalidate_mempool_rows(self):
+    async def pg_invalidate_mempool_rows(self, api_block_tip_height: int):
         """Need to deal with collisions here"""
         result = await self.pg_conn.execute(
             """
             DELETE FROM mempool_transactions
-            WHERE mp_tx_shash in 
-            (SELECT mined_tx_shash FROM temp_mined_tx_shashes)
-            """
+            WHERE mp_tx_hash in (
+                SELECT mined_tx_hash 
+                FROM temp_mined_tx_hashes 
+                WHERE temp_mined_tx_hashes.blk_height <= $1
+            )
+            """,
+            api_block_tip_height
         )
         deleted_count = result.split(" ")[1]
         self.logger.debug(f"deleted {deleted_count} mempool rows (now included in a block)")

@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from asyncio import BufferedProtocol
 import bitcoinx
@@ -70,10 +71,12 @@ class Controller:
         self.worker_in_queue_mtree = multiprocessing.Queue()
         self.worker_in_queue_blk_writer = multiprocessing.Queue()
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
+        self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
+        self.global_tx_hashes_dict = {}  # blk_height:tx_hashes
+        self.mined_tx_hashes_queue_waiter_executor = ThreadPoolExecutor(max_workers=1)
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
         self.worker_ack_queue_mtree = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer = multiprocessing.Queue()
-        self.worker_in_queue_logging = multiprocessing.Queue()  # only for clean shutdown
 
         # Mempool and API state
         self.mempool_tx_hash_set = set()
@@ -174,6 +177,7 @@ class Controller:
     async def send_request(self, command_name: str, message: bytes):
         self.bitcoin_net_io.send_message(message)
 
+    # Multiprocessing Workers
     def start_workers(self):
         self.processes = []
         for i in range(WORKER_COUNT_PREPROCESSORS):
@@ -191,6 +195,7 @@ class Controller:
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse_confirmed,
                 self.sync_state.initial_block_download_event_mp,
+                self.worker_ack_queue_mined_tx_hashes,
             )
             p.start()
             self.processes.append(p)
@@ -209,6 +214,7 @@ class Controller:
             p.start()
             self.processes.append(p)
 
+    # Asyncio-based Tasks that run on the __main__ thread
     async def spawn_handler_tasks(self):
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
@@ -375,13 +381,45 @@ class Controller:
             # up to 500 blocks per loop
             while True:
                 if self.sync_state.is_synchronized():
-                    # todo - need to call pg_invalidate_mempool_rows() then...
-                    # todo - safe to update api_state.api_chain_tip_height!
                     api_block_tip_height = self.sync_state.get_local_block_tip_height()
                     api_block_tip = self.get_header_for_height(api_block_tip_height)
                     api_block_tip_hash = api_block_tip.hash
-                    await self.pg_db.pg_update_api_tip_height_and_hash(
-                        api_block_tip_height, api_block_tip_hash)
+
+                    # Must ATOMICALLY:
+                    #   1) invalidate mempool rows (that have been mined)
+                    #   2) update api chain tip
+                    if self.sync_state.initial_block_download_event_mp.is_set():
+                        # Get all tx_hashes up to api_block_tip_height
+
+                        # 1) Drain queue
+                        new_mined_tx_hashes = {}
+                        while not self.worker_ack_queue_mined_tx_hashes.empty():
+                            new_mined_tx_hashes = await self.loop.run_in_executor(
+                                self.mined_tx_hashes_queue_waiter_executor,
+                                self.worker_ack_queue_mined_tx_hashes.get
+                            )
+                        # 2) Update dict
+                        for blk_height, new_hashes in new_mined_tx_hashes.items():
+                            if not self.global_tx_hashes_dict.get(blk_height):
+                                self.global_tx_hashes_dict[blk_height] = []
+                            self.global_tx_hashes_dict[blk_height].extend(new_hashes)
+
+                        # 3) Transfer from dict -> Temp Table for Table join with Mempool table
+                        for blk_height, new_mined_tx_hashes in new_mined_tx_hashes.items():
+                            if blk_height <= api_block_tip_height:
+                                await self.pg_db.pg_load_temp_mined_tx_hashes(
+                                    mined_tx_hashes=self.global_tx_hashes_dict[blk_height])
+                                del self.global_tx_hashes_dict[blk_height]
+
+                        # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
+                        async with self.pg_db.pg_conn.transaction():
+                            await self.pg_db.pg_invalidate_mempool_rows(api_block_tip_height)
+                            await self.pg_db.pg_drop_temp_mined_tx_hashes()
+                            await self.pg_db.pg_update_api_tip_height_and_hash(api_block_tip_height,
+                                api_block_tip_hash)
+                    else:
+                        await self.pg_db.pg_update_api_tip_height_and_hash(
+                            api_block_tip_height, api_block_tip_hash)
                     self.logger.debug(f"new block tip height: {api_block_tip_height}")
                     await self.sync_state.wait_for_new_block_tip()
                 chain = self.storage.block_headers.longest_chain()
@@ -404,7 +442,7 @@ class Controller:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self.logger.exception("sync_blocks_job raised an exception", e)
+            self.logger.exception("sync_blocks_job raised an exception")
             raise
 
     # -- Message Types -- #

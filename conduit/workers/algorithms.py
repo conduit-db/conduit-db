@@ -343,6 +343,13 @@ def calc_mtree(raw_block, tx_offsets) -> Dict:
     leaves_count = len(tx_offsets)
     base_level = calc_depth(leaves_count)
     mtree = calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets)
+
+    # Todo(collisions) - need to ack for Mtree completion but also report any collisions so it
+    #  can be meticulously cleaned up
+    all_shashes = set(struct_le_q.unpack(full_hash[0:8])[0] for full_hash in mtree[base_level])
+    assert len(all_shashes) == len(tx_offsets), "An unhandled collision was detected in merkle "\
+        "tree calculation"
+
     build_mtree_from_base(base_level, mtree)
     # logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")
     return mtree
