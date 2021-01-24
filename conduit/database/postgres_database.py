@@ -213,6 +213,25 @@ class PG_Database:
     #     )
     #     self.logger.debug(f"get_temp_mined_tx_hashes: {result}")
 
+    async def check_for_mempool_inbound_collision(self):
+        """Need to check for collisions between mempool and confirmed
+        tx table (on tx_shashes) - can only do LBYL style here because no constraint
+        violations would be raised from the pushdata or io tables.
+
+        Todo(collisions) - If a collision is caught, need to act on it by marking all affected rows
+         and inserting to the collision tables
+        """
+        result = await self.pg_conn.execute(
+            """           
+            SELECT * 
+            FROM mempool_transactions
+            INNER JOIN confirmed_transactions
+            ON confirmed_transactions.tx_shash = mempool_transactions.mp_tx_shash;
+            """
+        )
+        count = int(result.split(" ")[1])
+        assert count == 0, "Collision detected between inbound mempool tx and confirmed tx table!"
+
     async def pg_invalidate_mempool_rows(self, api_block_tip_height: int):
         """Need to deal with collisions here"""
         result = await self.pg_conn.execute(

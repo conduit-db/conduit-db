@@ -153,6 +153,14 @@ based on that...
 - The handling of colliding hashes should not be exposed in the external API - it should be
 entirely handled internally such that the client always receives the correct metadata for the correct
 transaction without necessarily appreciating how it happened under the hood.
+- Because collision detection on insertion only acts within 
+(and not between) the two tx tables, and furthermore, there would
+be no constraint violations raised if a colliding mempool tx were
+to insert into the pushdata and io_tables... we need to "look before
+we leap" when inserting mempool transactions to these other tables.
+- This sounds costly, but seeing as though the mempool transactions
+are relayed incrementally over the 10 minute av. block interval, it 
+should be okay to add in this extra read/check for correctness.
 
 
 # Pipeline

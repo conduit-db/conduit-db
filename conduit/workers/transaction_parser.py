@@ -158,10 +158,10 @@ class TxParser(multiprocessing.Process):
             if colliding_index is not None and tx_row[3] == 0:  # position == 0 (i.e. coinbase)
                 self.logger.error("coinbase colliding tx - ignore")
                 _colliding_tx_row = tx_rows.pop(colliding_index)  # do nothing
-                # todo... need to chase after the in_rows, out_rows and pd_rows
                 return tx_rows
             elif colliding_index is not None and tx_row[3] != 0:  # this is a 'real' collision
                 _colliding_tx_row = tx_rows.pop(colliding_index)
+                # Todo(collisions) - need to mark all relevant rows!
                 self.logger.error("non-coinbase colliding tx - this needs to be handled...")
                 return tx_rows
         except Exception as e:
@@ -202,6 +202,7 @@ class TxParser(multiprocessing.Process):
                 self.reset_batched_rows_confirmed()
 
             else:
+                await self.pg_db.check_for_mempool_inbound_collision()
                 await self.pg_db.pg_bulk_load_mempool_tx_rows(tx_rows)
                 await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
                 await self.pg_db.pg_drop_temp_inputs()
@@ -214,10 +215,9 @@ class TxParser(multiprocessing.Process):
             error_text = e.as_dict()["detail"]
             # extract tx_shash from brackets - not best practice.. but most efficient
             colliding_tx_shash = error_text.split("(")[2].split(")")[0]
-            # Todo - should have a set of colliding_tx_shash(es) - then update all relevant
-            #  database tables with the necessary metadata to protect clients from
-            #  being affected by this collision.
-            #  Then write good unit tests for this
+            # Todo(collisions) - should have a set of colliding_tx_shash(es) -
+            #  then update all relevant database tables with the necessary metadata to protect
+            #  cients from being affected by this collision. Then write good unit tests
 
             self.logger.error(f"colliding tx_shash = {colliding_tx_shash}")
             tx_rows = self.handle_collision(
@@ -381,8 +381,8 @@ class TxParser(multiprocessing.Process):
                     # is for when the data has indeed been flushed to db
                     # todo - batch up mempool txs before feeding them into the queue. currently
                     #  len(item) will always == 1 tx so there is no point in feeding this
-                    item = len(item)
-                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue_mempool.put, item)
+                    tx_offsets = len(tx_offsets)
+                    coro2 = partial(self.worker_asyncio_tx_parser_ack_queue_mempool.put, tx_offsets)
                     self.run_coroutine_threadsafe(coro2())
 
                 if msg_type == MsgType.MSG_BLOCK:
