@@ -9,7 +9,7 @@ from typing import Optional, List, Dict
 
 from .sync_state import SyncState
 from .bitcoin_net_io import BitcoinNetIO
-from .database.postgres_database import PG_Database
+from .database.postgres.postgres_database import PostgresDatabase
 from .workers.preprocessor import BlockPreProcessor
 from .workers.transaction_parser import TxParser
 from .workers.merkle_tree import MTreeCalculator
@@ -82,7 +82,7 @@ class Controller:
         self.mempool_tx_hash_set = set()
 
         # Database Interfaces
-        self.pg_db: Optional[PG_Database] = None
+        self.pg_db: Optional[PostgresDatabase] = None
 
         # Bitcoin Network IO + callbacks
         self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
@@ -238,7 +238,7 @@ class Controller:
 
     async def start_jobs(self):
         try:
-            self.pg_db: PG_Database = self.storage.pg_database
+            self.pg_db: PostgresDatabase = self.storage.pg_database
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 

@@ -4,7 +4,6 @@ import logging
 import multiprocessing
 import queue
 import threading
-import time
 from datetime import datetime
 from functools import partial
 from multiprocessing import shared_memory
@@ -13,10 +12,10 @@ from typing import Sequence, Optional, Tuple
 import asyncpg
 
 from conduit.constants import MsgType
-from conduit.database.postgres_database import PG_Database, pg_connect
+from database.postgres.postgres_database import PostgresDatabase, pg_connect
 from conduit.logging_client import setup_tcp_logging
 
-from .algorithms import calc_mtree_base_level, struct_le_q, parse_txs
+from .algorithms import calc_mtree_base_level, parse_txs
 
 
 class TxParser(multiprocessing.Process):
@@ -231,7 +230,7 @@ class TxParser(multiprocessing.Process):
         """bulk inserts to postgres. NOTE: Can only have ONE asyncio task pulling from
         worker_ack_queue_asyncio ."""
 
-        self.pg_db: PG_Database = await pg_connect()
+        self.pg_db: PostgresDatabase = await pg_connect()
         await self.pg_db.pg_update_settings()
         try:
             while True:
@@ -277,7 +276,7 @@ class TxParser(multiprocessing.Process):
     async def pg_insert_mempool_tx_rows_task(self):
         """bulk inserts to postgres. NOTE: Can only have ONE asyncio task pulling from
         worker_ack_queue_asyncio ."""
-        self.pg_db: PG_Database = await pg_connect()
+        self.pg_db: PostgresDatabase = await pg_connect()
         await self.pg_db.pg_update_settings()
         try:
             while True:

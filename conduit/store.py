@@ -2,13 +2,12 @@ import logging
 import os
 import shutil
 import stat
-import time
 import mmap
 from pathlib import Path
 
 from bitcoinx import Headers
 
-from .database.postgres_database import load_pg_database, PG_Database, pg_connect
+from .database.postgres.postgres_database import load_pg_database, PostgresDatabase, pg_connect
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
 
@@ -23,7 +22,7 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        pg_database: PG_Database,
+        pg_database: PostgresDatabase,
         redis=None,
     ):
         self.pg_database = pg_database

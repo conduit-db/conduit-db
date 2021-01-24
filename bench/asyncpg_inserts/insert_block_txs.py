@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 
-from database.postgres_database import load_test_pg_database
+from database.postgres.postgres_database import load_test_pg_database
 
 try:
     from workers._algorithms import preprocessor, parse_block  # cython
