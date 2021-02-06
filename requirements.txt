@@ -1,6 +1,9 @@
-asyncpg
 lmdb
 bitcoinx>=0.2.4
 requests>=2.21.0
-dnspython
+dnspython~=1.16.0
 async-timeout
+numpy~=1.19.5
+setuptools~=51.3.3
+Cython~=0.29.21
+mysqlclient~=2.0.3

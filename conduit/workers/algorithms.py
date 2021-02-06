@@ -141,7 +141,7 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, datetime], confirmed: bool
+    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str], confirmed: bool
 ):
     """
     This function is dual-purpose - it can:
@@ -170,10 +170,10 @@ def parse_txs(
     set_pd_rows = set()
     count_txs = len(tx_offsets)
 
-    tx_has_collided = False
-    out_has_collided = False
-    in_has_collided = False
-    pd_tx_has_collided = False
+    tx_has_collided = 0
+    out_has_collided = 0
+    in_has_collided = 0
+    pd_tx_has_collided = 0
     try:
         for position in range(count_txs):
             pks = set()
@@ -220,7 +220,7 @@ def parse_txs(
                             set_pd_rows.add(
                                 (
                                     in_pushdata_shash,
-                                    in_pushdata_hash,
+                                    in_pushdata_hash.hex(),
                                     tx_shash,
                                     in_idx,
                                     ref_type,
@@ -239,7 +239,8 @@ def parse_txs(
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]
 
-                out_rows.add((tx_shash, out_idx, out_value, out_has_collided, None, None, None,))
+                # \N is the string representation of NULL for MySQL LOAD DATA INFILE (from .csv)
+                out_rows.add((tx_shash, out_idx, out_value, out_has_collided, r"\N", r"\N", r"\N",))
 
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
@@ -249,7 +250,7 @@ def parse_txs(
                         set_pd_rows.add(
                             (
                                 out_pushdata_shash,
-                                out_pushdata_hash,
+                                out_pushdata_hash.hex(),
                                 tx_shash,
                                 out_idx,
                                 ref_type,
@@ -266,7 +267,7 @@ def parse_txs(
                 tx_rows.append(
                     (
                         tx_shash,
-                        tx_hash,
+                        tx_hash.hex(),
                         height_or_timestamp,
                         position,
                         tx_offset_start,
@@ -276,13 +277,14 @@ def parse_txs(
                 )
                 tx_shashes.append(tx_shash)
             else:
-                tx_rows.append((tx_shash, tx_hash, height_or_timestamp, tx_has_collided, rawtx))
+                tx_rows.append((tx_shash, tx_hash.hex(), height_or_timestamp,
+                    tx_has_collided, rawtx.hex()))
         assert len(tx_rows) == count_txs
         return tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
-            f"txid={bitcoinx.hash_to_hex_str(tx_hash)}"
+            f"txid={hash_to_hex_str(tx_hash)}"
         )
         logger.exception(e)
         raise

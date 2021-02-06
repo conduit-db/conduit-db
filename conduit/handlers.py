@@ -91,8 +91,8 @@ class Handlers:
                 if not have_header(inv):
                     self.session.sync_state.headers_event_new_tip.set()
 
-                if hex_str_to_hash(inv["inv_hash"]) in self.session.sync_state.pending_blocks_batch_set:
-                    self.session.sync_state._pending_blocks_inv_queue.put_nowait(inv)
+                if hex_str_to_hash(inv["inv_hash"]) in self.session.sync_state.outstanding_block_hashes_set:
+                    self.session.sync_state.pending_blocks_inv_queue.put_nowait(inv)
                 else:
                     logger.debug(f"got new block notification: {inv['inv_hash']}")
 
@@ -114,7 +114,6 @@ class Handlers:
         msg_type = MsgType.MSG_TX
         self.session.worker_in_queue_tx_parse.put((msg_type, special_message))
         self.session.sync_state.incr_msg_handled_count()
-
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):
         blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message

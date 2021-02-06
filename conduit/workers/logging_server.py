@@ -13,6 +13,7 @@ from pathlib import Path
 
 # Log level
 PROFILING = 9
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class LogRecordStreamHandler(socketserver.StreamRequestHandler):
@@ -79,6 +80,7 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
         self.logname = None
         self.stop_event = stop_event
 
+
 class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
     Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
@@ -88,14 +90,18 @@ class TCPLoggingServer(multiprocessing.Process):
         self.tcpserver = None
 
     def setup_local_logging_policy(self):
-        FORMAT = "%(asctime)-25s %(name)-20s %(message)s"
+        rootLogger = logging.getLogger('')
+        FORMAT = "%(asctime)-25s %(levelname)-10s %(name)-20s %(message)s"
         logging.basicConfig(format=FORMAT, level=PROFILING)
-        """
-        logfile_path = os.path.join(log_path, time.strftime("%Y%m%d-%H%M%S") + ".log")
+
+        log_dir = Path(MODULE_DIR).parent.parent.joinpath(f"logs")
+        os.makedirs(log_dir, exist_ok=True)
+        logfile_path = os.path.join(log_dir, time.strftime("%Y%m%d-%H%M%S") + ".log")
         file_handler = logging.FileHandler(logfile_path)
-        formatter = logging.Formatter("%(asctime)s:" + logging.BASIC_FORMAT)
+        formatter = logging.Formatter(FORMAT)
         file_handler.setFormatter(formatter)
-        """
+        file_handler.setLevel(PROFILING)
+        rootLogger.addHandler(file_handler)
 
     def main_thread(self):
         self.tcpserver.serve_forever()

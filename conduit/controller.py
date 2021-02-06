@@ -7,9 +7,10 @@ from bitcoinx import hex_str_to_hash, MissingHeader
 import logging
 from typing import Optional, List, Dict
 
+
 from .sync_state import SyncState
 from .bitcoin_net_io import BitcoinNetIO
-from .database.postgres.postgres_database import PostgresDatabase
+from .database.mysql.mysql_database import MySQLDatabase
 from .workers.preprocessor import BlockPreProcessor
 from .workers.transaction_parser import TxParser
 from .workers.merkle_tree import MTreeCalculator
@@ -82,9 +83,11 @@ class Controller:
         self.mempool_tx_hash_set = set()
 
         # Database Interfaces
-        self.pg_db: Optional[PostgresDatabase] = None
+        # self.pg_db: Optional[PostgresDatabase] = None
+        self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network IO + callbacks
+        self.transport = None
         self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
             self.on_connection_made, self.on_connection_lost)
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
@@ -155,6 +158,7 @@ class Controller:
             await asyncio.sleep(0.05)
 
         self.sync_state.reset_msg_counts()
+        self.sync_state.reset_done_block_heights()
         self.bitcoin_net_io.resume()
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
@@ -238,7 +242,8 @@ class Controller:
 
     async def start_jobs(self):
         try:
-            self.pg_db: PostgresDatabase = self.storage.pg_database
+            # self.pg_db: PostgresDatabase = self.storage.pg_database
+            self.mysql_db: MySQLDatabase = self.storage.mysql_database
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 
@@ -290,12 +295,11 @@ class Controller:
         header = headers.header_at_height(chain, height)
         return header
 
-    def join_batched_blocks(self):
+    def join_batched_blocks(self, blocks_batch_set):
         """Runs in a thread so it can block on the multiprocessing queue"""
         # join block parser workers
         # self.logger.debug("waiting for block parsers to complete work...")
-        self.sync_state.done_block_heights = []
-
+        local_done_block_heights = []
         while True:
             try:
                 # This queue should transition to a multiprocessing queue
@@ -303,67 +307,72 @@ class Controller:
                 self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
 
                 header = self.get_header_for_hash(block_hash)
-                # self.logger.debug(f"block height={header.height} done!")
-                self.sync_state.done_block_heights.append(header.height)
+                self.logger.debug(f"block height={header.height} done!")
+                local_done_block_heights.append(header.height)
 
                 try:
-                    self.sync_state.pending_blocks_batch_set.remove(block_hash)
+                    blocks_batch_set.remove(block_hash)
                 except KeyError:
                     header = self.get_header_for_hash(block_hash)
                     self.logger.debug(f"also parsed block: {header.height}")
 
                 # all blocks in batch parsed
-                if len(self.sync_state.pending_blocks_batch_set) == 0:
+                if len(blocks_batch_set) == 0:
                     # in a crash prior to this point, the last 500 blocks will just get
                     # re-done on start-up because the block_headers.mmap file has not
                     # been updated with any headers.
 
-                    for height in sorted(self.sync_state.done_block_heights):
+                    for height in sorted(local_done_block_heights):
                         # self.logger.debug(f"new block tip height: {height}")
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
                     self.sync_state.reset_pending_blocks()
+
+                    # success - update global heights for current buffer
+                    self.sync_state.done_block_heights += local_done_block_heights
                     return
             except Exception as e:
                 self.logger.exception(e)
 
-    async def sync_batched_blocks(self) -> None:
+    async def sync_batched_blocks(self, batch_id, blocks_batch_set,
+            stop_header_height) -> None:
         # one block per loop
-        pending_getdata_requests = list(self.sync_state.pending_blocks_batch_set)
+        pending_getdata_requests = list(blocks_batch_set)
         count_requested = 0
         while True:
-            inv = await self.sync_state._pending_blocks_inv_queue.get()
-            # self.logger.debug(f"got inv: {inv}")
+            inv = await self.sync_state.pending_blocks_inv_queue.get()
+            # self.logger.debug(f"got block inv: {inv}, batch_id={batch_id}")
             try:
                 header = self.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
                 self.logger.warning("header with hash=%s not found", inv.get("inv_hash"))
-                if self.sync_state._pending_blocks_inv_queue.empty():
+                if self.sync_state.pending_blocks_inv_queue.empty():
                     break
                 else:
                     continue
 
-            if not header.height <= self.sync_state.stop_header_height:
+            if not header.height <= stop_header_height:
                 self.logger.debug(f"ignoring block height={header.height} until sync'd")
                 self.logger.debug(f"len(pending_getdata_requests)={len(pending_getdata_requests)}")
                 if len(pending_getdata_requests) == 0:
                     break
                 else:
                     continue
-
             await self.send_request(
                 GETDATA, self.serializer.getdata([inv]),
             )
+
             count_requested += 1
             pending_getdata_requests.pop()
             if len(pending_getdata_requests) == 0:
                 break
 
+        self.logger.debug(f"sync_batched_blocks - post getdata")
         # detect when an unsolicited new block has thrown a spanner in the works
         if not count_requested == 0:
             coro = asyncio.get_running_loop().run_in_executor(
-                self.sync_state._batched_blocks_exec, self.join_batched_blocks
+                self.sync_state._batched_blocks_exec, self.join_batched_blocks, blocks_batch_set
             )
             try:
                 # if a batch of blocks takes more than 5 minutes - it will print out a
@@ -373,71 +382,99 @@ class Controller:
                 self.sync_state.readout_sync_state()
         else:
             # it was an unsolicited block therefore -> recurse (to continue with batch)
-            await self.sync_batched_blocks()
+            await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)
+
+        # success
+        self.logger.debug(f"sync_batched_blocks - post join and batched_blocks_done_event now set")
+        self.sync_state.batched_blocks_done_event.set()
+
+    async def update_mempool(self, api_block_tip_height, api_block_tip_hash):
+        # Get all tx_hashes up to api_block_tip_height
+        # Must ATOMICALLY:
+        #   1) invalidate mempool rows (that have been mined)
+        #   2) update api chain tip
+
+        # 1) Drain queue
+        new_mined_tx_hashes = {}
+        while not self.worker_ack_queue_mined_tx_hashes.empty():
+            new_mined_tx_hashes = await self.loop.run_in_executor(
+                self.mined_tx_hashes_queue_waiter_executor,
+                self.worker_ack_queue_mined_tx_hashes.get)
+        # 2) Update dict
+        for blk_height, new_hashes in new_mined_tx_hashes.items():
+            if not self.global_tx_hashes_dict.get(blk_height):
+                self.global_tx_hashes_dict[blk_height] = []
+            self.global_tx_hashes_dict[blk_height].extend(new_hashes)
+
+        # 3) Transfer from dict -> Temp Table for Table join with Mempool table
+        for blk_height, new_mined_tx_hashes in new_mined_tx_hashes.items():
+            if blk_height <= api_block_tip_height:
+                mined_tx_hashes = []
+                for tx_hash in self.global_tx_hashes_dict[blk_height]:
+                    mined_tx_hashes.append((tx_hash.hex(), blk_height))
+
+                await self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
+                del self.global_tx_hashes_dict[blk_height]
+
+        # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
+        await self.mysql_db.start_transaction()
+        await self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
+        await self.mysql_db.mysql_drop_temp_mined_tx_hashes()
+        await self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+            api_block_tip_hash)
+        await self.mysql_db.commit_transaction()
 
     async def sync_all_blocks_job(self):
-        """supervises completion of syncing all blocks to target height"""
+        """supervises completion of syncing all blocks to target height
+
+        call hierarchy:
+        ---------------
+        sync_all_blocks_job
+            -> sync_batched_blocks
+                -> join_batched_blocks (in thread - blocks on multiprocessing queue)
+        """
         try:
             # up to 500 blocks per loop
+            batch_id = 0
             while True:
-                if self.sync_state.is_synchronized():
+                batch_id += 1
+                if self.sync_state.is_synchronized() or \
+                        self.sync_state.initial_block_download_event_mp.is_set():
                     api_block_tip_height = self.sync_state.get_local_block_tip_height()
                     api_block_tip = self.get_header_for_height(api_block_tip_height)
                     api_block_tip_hash = api_block_tip.hash
 
-                    # Must ATOMICALLY:
-                    #   1) invalidate mempool rows (that have been mined)
-                    #   2) update api chain tip
                     if self.sync_state.initial_block_download_event_mp.is_set():
-                        # Get all tx_hashes up to api_block_tip_height
+                        await self.update_mempool(api_block_tip_height, api_block_tip_hash)
 
-                        # 1) Drain queue
-                        new_mined_tx_hashes = {}
-                        while not self.worker_ack_queue_mined_tx_hashes.empty():
-                            new_mined_tx_hashes = await self.loop.run_in_executor(
-                                self.mined_tx_hashes_queue_waiter_executor,
-                                self.worker_ack_queue_mined_tx_hashes.get
-                            )
-                        # 2) Update dict
-                        for blk_height, new_hashes in new_mined_tx_hashes.items():
-                            if not self.global_tx_hashes_dict.get(blk_height):
-                                self.global_tx_hashes_dict[blk_height] = []
-                            self.global_tx_hashes_dict[blk_height].extend(new_hashes)
-
-                        # 3) Transfer from dict -> Temp Table for Table join with Mempool table
-                        for blk_height, new_mined_tx_hashes in new_mined_tx_hashes.items():
-                            if blk_height <= api_block_tip_height:
-                                await self.pg_db.pg_load_temp_mined_tx_hashes(
-                                    mined_tx_hashes=self.global_tx_hashes_dict[blk_height])
-                                del self.global_tx_hashes_dict[blk_height]
-
-                        # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
-                        async with self.pg_db.pg_conn.transaction():
-                            await self.pg_db.pg_invalidate_mempool_rows(api_block_tip_height)
-                            await self.pg_db.pg_drop_temp_mined_tx_hashes()
-                            await self.pg_db.pg_update_api_tip_height_and_hash(api_block_tip_height,
-                                api_block_tip_hash)
                     else:
-                        await self.pg_db.pg_update_api_tip_height_and_hash(
+                        await self.mysql_db.mysql_update_api_tip_height_and_hash(
                             api_block_tip_height, api_block_tip_hash)
+
                     self.logger.debug(f"new block tip height: {api_block_tip_height}")
                     await self.sync_state.wait_for_new_block_tip()
+
                 chain = self.storage.block_headers.longest_chain()
                 block_locator_hashes = [chain.tip.hash]
                 hash_count = len(block_locator_hashes)
-                # self.logger.debug(
-                #     "requesting max number of blocks (up to 500) (current chain tip=%s)",
-                #     self.sync_state.get_local_block_tip_height(),
-                # )
                 hash_stop = ZERO_HASH  # get max
 
-                self.sync_state.reset_pending_blocks_batch_set()
+                result = self.sync_state.get_next_batched_blocks()
+                batch_size, blocks_batch_set, stop_header_height = result
+
+                self.sync_state.outstanding_blocks_count += batch_size
+                self.sync_state.allocated_blocks_to_height += batch_size
+                for block_hash in blocks_batch_set:
+                    self.sync_state.outstanding_block_hashes_set.add(block_hash)
 
                 await self.send_request(
                     GETBLOCKS,
                     self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop),
                 )
-                await self.sync_batched_blocks()
+                await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)
+                # ------------------------- Batch complete ------------------------- #
+                await self.sync_state.batched_blocks_done_event.wait()
+                self.sync_state.batched_blocks_done_event.clear()
 
         except asyncio.CancelledError:
             raise

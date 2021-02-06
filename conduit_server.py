@@ -85,11 +85,11 @@ async def main():
         loop = asyncio.get_running_loop()
         loop.set_exception_handler(loop_exception_handler)
         net_config = NetworkConfig(env_vars.get("network"))
-        session_manager = Controller(
+        controller = Controller(
             config=env_vars,
             net_config=net_config, host="127.0.0.1", port=8000,
         )
-        await session_manager.run()
+        await controller.run()
     except KeyboardInterrupt:
         pass
 

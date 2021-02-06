@@ -7,7 +7,7 @@ from pathlib import Path
 
 from bitcoinx import Headers
 
-from .database.postgres.postgres_database import load_pg_database, PostgresDatabase, pg_connect
+from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, mysql_connect
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
 
@@ -22,17 +22,20 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        pg_database: PostgresDatabase,
+        # pg_database: PostgresDatabase,
+        mysql_database: MySQLDatabase,
         redis=None,
     ):
-        self.pg_database = pg_database
+        # self.pg_database = pg_database
+        self.mysql_database = mysql_database
         self.logger = logging.getLogger("storage")
         self.headers: Headers = headers
         self.block_headers: Headers = block_headers
         self.redis = redis  # NotImplemented
 
     async def close(self):
-        await self.pg_database.close()
+        # await self.pg_database.close()
+        await self.mysql_database.close()
     # External API
 
 
@@ -73,11 +76,11 @@ async def reset_datastore():
             mm.write(b'\00' * mm.size())
 
     # remove postgres tables
-    pg_database = await pg_connect()
+    mysql_database = await mysql_connect()
     try:
-        await pg_database.pg_drop_tables()
+        await mysql_database.mysql_drop_tables()
     finally:
-        await pg_database.close()
+        await mysql_database.close()
 
     # remove lmdb database
     def remove_readonly(func, path, excinfo):
@@ -96,10 +99,9 @@ async def setup_storage(config, net_config) -> Storage:
     headers = setup_headers_store(net_config, "headers.mmap")
     block_headers = setup_headers_store(net_config, "block_headers.mmap")
 
-    # Postgres db
-    pg_database = await load_pg_database()
+    # pg_database = await load_pg_database()
+    mysql_database = await load_mysql_database()
 
-    # Redis
-    # -- NotImplemented
-    storage = Storage(headers, block_headers, pg_database, None)
+    # storage = Storage(headers, block_headers, pg_database, None)
+    storage = Storage(headers, block_headers, mysql_database, None)
     return storage

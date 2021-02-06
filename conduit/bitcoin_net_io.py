@@ -6,8 +6,8 @@ from multiprocessing import shared_memory
 import logging
 import struct
 
-from commands import BLOCK_BIN, TX_BIN
-from constants import HEADER_LENGTH
+from .commands import BLOCK_BIN, TX_BIN
+from .constants import HEADER_LENGTH
 
 Header = namedtuple("Header", "magic command payload_size checksum")
 

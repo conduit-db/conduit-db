@@ -36,12 +36,16 @@ class SyncState:
         self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
-        self.pending_blocks_batch_set = set()  # usually a set of 500 hashes
-        self.pending_blocks_received = {}  # blk_hash: total_tx_count
-        self._pending_blocks_batch_size = 0
-        self._pending_blocks_inv_queue = asyncio.Queue()
+        self.blocks_batch_set = set()  # usually a set of 500 hashes
+        self.expected_blocks_tx_counts = {}  # blk_hash: total_tx_count
+        self.outstanding_blocks_count = 0
+        self.outstanding_block_hashes_set = set()
+        self.allocated_blocks_to_height = self.local_block_tip_height
+        self.pending_blocks_inv_queue = asyncio.Queue()
         self._pending_blocks_progress_counter = {}
+
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
+        self.batched_blocks_done_event = asyncio.Event()
 
         self.initial_block_download_event_mp = multiprocessing.Event()
 
@@ -52,14 +56,6 @@ class SyncState:
     @property
     def message_handled_count(self):
         return self._msg_handled_count
-
-    @property
-    def pending_blocks_batch_size(self):
-        return self._pending_blocks_batch_size
-
-    @pending_blocks_batch_size.setter
-    def pending_blocks_batch_size(self, value):
-        self._pending_blocks_batch_size = value
 
     def get_local_tip_height(self):
         return self.local_tip_height
@@ -79,14 +75,11 @@ class SyncState:
 
     def have_processed_block_msgs(self) -> bool:
         # Todo - cover MTree and BlockWriter workers too
-        expected_blocks_processed_count = self.pending_blocks_batch_size - len(
-            self.pending_blocks_batch_set
-        )
         for blk_hash, count in self._pending_blocks_progress_counter.items():
-            if not self.pending_blocks_received[blk_hash] == count:
+            if not self.expected_blocks_tx_counts[blk_hash] == count:
                 return False  # not all txs in block ack'd
 
-        if expected_blocks_processed_count != len(self.done_block_heights):
+        if self.outstanding_blocks_count != 0:
             return False
 
         return True
@@ -97,26 +90,46 @@ class SyncState:
     def is_synchronized(self):
         return self.get_local_block_tip_height() >= self.get_local_tip_height()
 
+    def reset_done_block_heights(self):
+        self.done_block_heights = []
+
     def reset_msg_counts(self):
         with self._msg_handled_count_lock:
             self._msg_handled_count = 0
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def reset_pending_blocks_batch_set(self):
-        self.pending_blocks_batch_set = set()
+    def get_next_batched_blocks(self):
+        """Three key variables:
+        - pending_blocks_batch_size
+        - stop_header_height
+        - blocks_batch_set
+
+        Should really just have
+        - outstanding_block_count (global and incremented each loop and reset on each buffer reset)
+        - allocated_block_height
+
+        - stop_header_height (local) - post-IDB can only be at allocated_block_height += 1
+        - blocks_batch_set (local) - pre-IBD can be up to 500 | post-IDB can only contain 1 block
+
+        """
+
+        blocks_batch_set = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
 
         local_headers_tip_height = self.get_local_tip_height()
         local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = min((local_headers_tip_height - local_block_tip_height), 500)
-        self.stop_header_height = local_block_tip_height + block_height_deficit
-        self.pending_blocks_batch_size = self.stop_header_height - local_block_tip_height
+        block_height_deficit = local_headers_tip_height - local_block_tip_height
 
-        for i in range(1, block_height_deficit + 1):
+        batch_size = min(block_height_deficit, 500)
+        stop_header_height = local_block_tip_height + batch_size
+
+        for i in range(1, batch_size + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
-            self.pending_blocks_batch_set.add(block_header.hash)
+            blocks_batch_set.add(block_header.hash)
+
+        return batch_size, blocks_batch_set, stop_header_height
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:
@@ -133,26 +146,21 @@ class SyncState:
         self.logger.error(f"msg_received_count={self.message_received_count}")
         self.logger.error(f"msg_handled_count={self.message_handled_count}")
 
-        self.logger.error(f"pending_blocks_batch_size={self.pending_blocks_batch_size}")
-        self.logger.error(f"pending_blocks_batch_set={self.pending_blocks_batch_set}")
-        self.logger.error(f"pending_blocks_received={self.pending_blocks_received}")
+        self.logger.error(f"outstanding_blocks_count={self.outstanding_blocks_count}")
+        self.logger.error(f"expected_blocks_tx_counts={self.expected_blocks_tx_counts}")
 
         self.logger.error(f"self._pending_blocks_progress_counter.items():")
         for blk_hash, count in self._pending_blocks_progress_counter.items():
             self.logger.error(
                 f"blk_hash={bitcoinx.hash_to_hex_str(blk_hash)}, count={count}, "
-                f"pending_blocks_received[blk_hash]={self.pending_blocks_received[blk_hash]}"
+                f"expected_blocks_tx_counts[blk_hash]={self.expected_blocks_tx_counts[blk_hash]}"
             )
-        expected_blocks_processed_count = self.pending_blocks_batch_size - len(
-            self.pending_blocks_batch_set
-        )
         self.logger.error(
-            f"expected_blocks_processed_count={expected_blocks_processed_count},"
             f"len(self.done_block_heights)={len(self.done_block_heights)}"
         )
 
     def add_pending_block(self, blk_hash, total_tx_count):
-        self.pending_blocks_received[blk_hash] = total_tx_count
+        self.expected_blocks_tx_counts[blk_hash] = total_tx_count
         self._pending_blocks_progress_counter[blk_hash] = 0
 
     def reset_pending_blocks(self):

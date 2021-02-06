@@ -7,14 +7,16 @@ import threading
 from datetime import datetime
 from functools import partial
 from multiprocessing import shared_memory
-from typing import Sequence, Optional, Tuple
+from typing import Sequence, Optional, Tuple, List
 
 import asyncpg
+from MySQLdb import _mysql
+from bitcoinx import hash_to_hex_str
 
-from conduit.constants import MsgType
-from database.postgres.postgres_database import PostgresDatabase, pg_connect
-from conduit.logging_client import setup_tcp_logging
-
+from ..constants import MsgType
+from ..database.mysql.mysql_database import MySQLDatabase, mysql_connect
+# from ..database.postgres.postgres_database import PostgresDatabase, mysql_connect
+from ..logging_client import setup_tcp_logging
 from .algorithms import calc_mtree_base_level, parse_txs
 
 
@@ -47,7 +49,8 @@ class TxParser(multiprocessing.Process):
         self.worker_asyncio_tx_parser_ack_queue = None
         self.processed_vs_unprocessed_queue = None
 
-        self.pg_db = None
+        # self.mysql_db = None
+        self.mysql = None
         self.loop = None
 
         # batched confirmed rows
@@ -94,8 +97,8 @@ class TxParser(multiprocessing.Process):
 
     async def start_asyncio_jobs(self):
         tasks = [
-            asyncio.create_task(self.pg_insert_confirmed_tx_rows_task()),
-            asyncio.create_task(self.pg_insert_mempool_tx_rows_task()),
+            asyncio.create_task(self.mysql_insert_confirmed_tx_rows_task()),
+            asyncio.create_task(self.mysql_insert_mempool_tx_rows_task()),
         ]
         await asyncio.gather(*tasks)
 
@@ -167,13 +170,13 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise
 
-    async def pg_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
-        await self.pg_db.pg_create_temp_inputs_table()
-        await self.pg_db.pg_bulk_load_output_rows(out_rows)
-        await self.pg_db.pg_bulk_load_input_rows(in_rows)
-        await self.pg_db.pg_bulk_load_pushdata_rows(set_pd_rows)
+    async def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
+        await self.mysql_db.mysql_create_temp_inputs_table()
+        await self.mysql_db.mysql_bulk_load_output_rows(out_rows)
+        await self.mysql_db.mysql_bulk_load_input_rows(in_rows)
+        await self.mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
 
-    async def pg_flush_rows(
+    async def mysql_flush_rows(
         self,
         tx_rows: Sequence,
         in_rows: Sequence,
@@ -184,10 +187,10 @@ class TxParser(multiprocessing.Process):
     ):
         try:
             if confirmed:
-                await self.pg_db.pg_bulk_load_confirmed_tx_rows(tx_rows)
-                await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                await self.mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
+                await self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
 
-                await self.pg_db.pg_drop_temp_inputs()
+                await self.mysql_db.mysql_drop_temp_inputs()
                 # Ack for all flushed blocks
                 for blk_hash, tx_count in acks:
                     # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
@@ -201,19 +204,26 @@ class TxParser(multiprocessing.Process):
                 self.reset_batched_rows_confirmed()
 
             else:
-                await self.pg_db.check_for_mempool_inbound_collision()
-                await self.pg_db.pg_bulk_load_mempool_tx_rows(tx_rows)
-                await self.pg_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
-                await self.pg_db.pg_drop_temp_inputs()
+                await self.mysql_db.check_for_mempool_inbound_collision()
+                await self.mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
+                await self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                await self.mysql_db.mysql_drop_temp_inputs()
                 # for tx_count in acks:
                 # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
 
                 self.reset_batched_rows_mempool()
 
-        except asyncpg.exceptions.UniqueViolationError as e:
-            error_text = e.as_dict()["detail"]
-            # extract tx_shash from brackets - not best practice.. but most efficient
-            colliding_tx_shash = error_text.split("(")[2].split(")")[0]
+            ## Postgres remnant
+            # except asyncpg.exceptions.UniqueViolationError as e:  # Todo - migrate to MySQL
+            #     error_text = e.as_dict()["detail"]
+            #     # extract tx_shash from brackets - not best practice.. but most efficient
+            #     colliding_tx_shash = error_text.split("(")[2].split(")")[0]
+
+        except _mysql.IntegrityError as e:
+            # Todo(exceptions) migrate fully to match above Postgres exception handling...
+            self.logger.exception(f"IntegrityError: {e}")
+            raise
+
             # Todo(collisions) - should have a set of colliding_tx_shash(es) -
             #  then update all relevant database tables with the necessary metadata to protect
             #  cients from being affected by this collision. Then write good unit tests
@@ -223,15 +233,15 @@ class TxParser(multiprocessing.Process):
                 tx_rows, in_rows, out_rows, set_pd_rows, acks, colliding_tx_shash
             )
             # retry without the colliding tx
-            await self.pg_flush_rows(tx_rows, in_rows, out_rows, set_pd_rows, acks, confirmed)
+            await self.mysql_flush_rows(tx_rows, in_rows, out_rows, set_pd_rows, acks, confirmed)
             self.logger.error(e)
 
-    async def pg_insert_confirmed_tx_rows_task(self):
+    async def mysql_insert_confirmed_tx_rows_task(self):
         """bulk inserts to postgres. NOTE: Can only have ONE asyncio task pulling from
         worker_ack_queue_asyncio ."""
 
-        self.pg_db: PostgresDatabase = await pg_connect()
-        await self.pg_db.pg_update_settings()
+        self.mysql_db: MySQLDatabase = await mysql_connect()
+        await self.mysql_db.mysql_update_settings()
         try:
             while True:
                 try:
@@ -247,7 +257,7 @@ class TxParser(multiprocessing.Process):
                 except asyncio.TimeoutError:
                     # print("timed out...")
                     if len(self.confirmed_batched_tx_rows) != 0:
-                        await self.pg_flush_rows(
+                        await self.mysql_flush_rows(
                             self.confirmed_batched_tx_rows,
                             self.confirmed_batched_in_rows,
                             self.confirmed_batched_out_rows,
@@ -261,7 +271,7 @@ class TxParser(multiprocessing.Process):
                 # i.e. what if it times out half-way through committing rows to the db?
                 if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
                     # print("hit max tx batch size...")
-                    await self.pg_flush_rows(
+                    await self.mysql_flush_rows(
                         self.confirmed_batched_tx_rows,
                         self.confirmed_batched_in_rows,
                         self.confirmed_batched_out_rows,
@@ -273,11 +283,11 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise e
 
-    async def pg_insert_mempool_tx_rows_task(self):
+    async def mysql_insert_mempool_tx_rows_task(self):
         """bulk inserts to postgres. NOTE: Can only have ONE asyncio task pulling from
         worker_ack_queue_asyncio ."""
-        self.pg_db: PostgresDatabase = await pg_connect()
-        await self.pg_db.pg_update_settings()
+        self.mysql_db: MySQLDatabase = await mysql_connect()
+        await self.mysql_db.mysql_update_settings()
         try:
             while True:
                 try:
@@ -291,7 +301,7 @@ class TxParser(multiprocessing.Process):
                 except asyncio.TimeoutError:
                     # self.logger.debug("mempool batch timer triggered")
                     if len(self.mempool_batched_tx_rows) != 0:
-                        await self.pg_flush_rows(
+                        await self.mysql_flush_rows(
                             self.mempool_batched_tx_rows,
                             self.mempool_batched_in_rows,
                             self.mempool_batched_out_rows,
@@ -307,7 +317,7 @@ class TxParser(multiprocessing.Process):
                     self.logger.debug(
                         f"hit max mempool batch size ({len(self.mempool_batched_tx_rows)})"
                     )
-                    await self.pg_flush_rows(
+                    await self.mysql_flush_rows(
                         self.mempool_batched_tx_rows,
                         self.mempool_batched_in_rows,
                         self.mempool_batched_out_rows,
@@ -320,30 +330,33 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise e
 
-    async def get_partial_block_tx_hashes(self, raw_block, tx_offsets) -> Tuple:
-        all_block_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
+    async def get_block_partition_tx_hashes(self, raw_block, tx_offsets) -> Tuple[List[bytes],
+            List[Tuple]]:
+        """Returns both a list of tx hashes and list of tuples containing tx hashes (the same
+        data) ready for database insertion"""
+        partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
             0]
         tx_hash_rows = []
-        for full_tx_hash in all_block_tx_hashes:
-            tx_hash_rows.append((full_tx_hash,))
-        return all_block_tx_hashes, tx_hash_rows
+        for full_tx_hash in partition_tx_hashes:
+            tx_hash_rows.append((full_tx_hash.hex(),))
+        return partition_tx_hashes, tx_hash_rows
 
     async def get_processed_vs_unprocessed_tx_offsets(self, raw_block, tx_offsets, blk_height):
         """input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction"""
         try:
-            tx_hashes, new_tx_hashes = await self.get_partial_block_tx_hashes(
+            partition_tx_hashes, partition_tx_hash_rows = await self.get_block_partition_tx_hashes(
                 raw_block, tx_offsets)
             if self.initial_block_download_event_mp.is_set():
-                self.worker_ack_queue_mined_tx_hashes.put({blk_height: new_tx_hashes})
+                self.worker_ack_queue_mined_tx_hashes.put({blk_height: partition_tx_hashes})
 
-            offsets_map = dict(zip(tx_hashes, tx_offsets))
-            unprocessed_tx_hashes = await self.pg_db.pg_get_unprocessed_txs(new_tx_hashes)
+            offsets_map = dict(zip(partition_tx_hashes, tx_offsets))
+            unprocessed_tx_hashes = await self.mysql_db.mysql_get_unprocessed_txs(
+                partition_tx_hash_rows)
             # self.logger.debug(f'unprocessed_tx_shashes: {unprocessed_tx_shashes}')
 
             relevant_offsets = []
             for row in unprocessed_tx_hashes:
-                # self.logger.debug(row[0])
                 relevant_offsets.append(offsets_map.pop(row[0]))
             self.processed_vs_unprocessed_queue.put_nowait((relevant_offsets, offsets_map))
         except Exception:
@@ -367,7 +380,9 @@ class TxParser(multiprocessing.Process):
                     for tx_start_pos, tx_end_pos in tx_offsets:
                         buffer = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
 
-                    result = parse_txs(buffer, [0], datetime.now(), False)
+                    dt = datetime.utcnow()
+                    timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    result = parse_txs(buffer, [0], timestamp, False)
                     tx_rows, in_rows, out_rows, set_pd_rows, _tx_shashes = result
 
                     coro = partial(
@@ -426,7 +441,7 @@ class TxParser(multiprocessing.Process):
 """
 Footnotes:
 ----------
-footnote_1: this relies on the fact that if pg_parsed_rows_queue is blocked then 
+footnote_1: this relies on the fact that if mysql_parsed_rows_queue is blocked then 
 worker_ack_queue_asyncio queue should also be blocked and so there should never be a 
 situation where the async_timeout -> timeout after getting from one queue 
 *but not the other*.

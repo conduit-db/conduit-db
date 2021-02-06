@@ -7,7 +7,7 @@ from typing import List, Tuple, Dict, Optional
 
 import lmdb
 
-from constants import PROFILING
+from ..constants import PROFILING
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
