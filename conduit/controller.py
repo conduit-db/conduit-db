@@ -84,7 +84,6 @@ class Controller:
         self.mempool_tx_hash_set = set()
 
         # Database Interfaces
-        # self.pg_db: Optional[PostgresDatabase] = None
         self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network IO + callbacks

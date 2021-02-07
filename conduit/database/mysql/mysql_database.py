@@ -21,10 +21,21 @@ class MySQLDatabase:
         self.bulk_loads = MySQLBulkLoads(self.mysql_conn, self)
         self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
 
+        self.set_myrocks_settings()
+
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logging.getLogger("mysql-database")
         self.logger.setLevel(logging.DEBUG)
         self.logger.setLevel(PROFILING)
+
+    def set_myrocks_settings(self):
+        settings = f"""SET session rocksdb_max_row_locks={100_000_000};
+            SET global rocksdb_write_disable_wal=0;
+            SET global rocksdb_wal_recovery_mode=0;
+            SET global rocksdb_max_background_jobs=8;
+            SET global rocksdb_block_cache_size={1024 ** 3 * 12};"""
+        for sql in settings.splitlines(keepends=False):
+            self.mysql_conn.query(sql)
 
     async def run_in_executor(self, func, *args, **kwargs):
         loop = asyncio.get_running_loop()

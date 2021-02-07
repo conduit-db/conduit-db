@@ -148,7 +148,6 @@ class MySQLQueries:
 
         result_unpacked = result.fetch_row(0)[0][0]
         if result_unpacked is not None:
-            self.logger.debug(f"result_unpacked={result_unpacked}")
             return int(result_unpacked)
         return
 
