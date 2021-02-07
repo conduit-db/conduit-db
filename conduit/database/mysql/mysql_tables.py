@@ -66,7 +66,7 @@ class MySQLTables:
                 tx_offset_start BIGINT,
                 tx_offset_end BIGINT,
                 tx_has_collided INT
-            );
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
@@ -78,7 +78,7 @@ class MySQLTables:
                 in_tx_shash BIGINT,
                 in_idx INT,
                 in_has_collided INT
-            );
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
@@ -95,7 +95,7 @@ class MySQLTables:
                 idx INT,
                 ref_type SMALLINT,
                 pd_tx_has_collided INT
-            );
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         # NOTE - parsing stage ensures there are no duplicates otherwise would need
@@ -118,7 +118,7 @@ class MySQLTables:
                 mp_tx_timestamp TIMESTAMP,
                 mp_tx_has_collided INT,
                 mp_rawtx LONGBLOB
-            );
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
@@ -127,7 +127,7 @@ class MySQLTables:
                 api_tip_height INT,
                 api_tip_hash BINARY(32),
                 PRIMARY KEY (id)
-            );
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
     async def mysql_create_temp_inputs_table(self):
