@@ -18,8 +18,8 @@ class MySQLDatabase:
     def __init__(self, mysql_conn: _mysql.connection):
         self.mysql_conn = mysql_conn
         self.tables = MySQLTables(self.mysql_conn)
-        self.bulk_loads = MySQLBulkLoads(self.mysql_conn)
-        self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads)
+        self.bulk_loads = MySQLBulkLoads(self.mysql_conn, self)
+        self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logging.getLogger("mysql-database")
@@ -35,12 +35,12 @@ class MySQLDatabase:
         """coroutine to maintain async/await API equivalency to postgres"""
         self.mysql_conn.close()
 
-    async def start_transaction(self):
+    def start_transaction(self):
         self.mysql_conn.query(
             """START TRANSACTION;"""
         )
 
-    async def commit_transaction(self):
+    def commit_transaction(self):
         self.mysql_conn.query(
             """COMMIT;"""
         )
@@ -108,6 +108,7 @@ class MySQLDatabase:
     async def mysql_update_settings(self):
         pass
 
+
 async def mysql_connect() -> MySQLDatabase:
     """coroutine to maintain async/await API equivalency to postgres"""
     conn = _mysql.connect(
@@ -132,6 +133,8 @@ async def mysql_test_connect() -> MySQLDatabase:
 
 
 async def load_mysql_database() -> MySQLDatabase:
+    # Todo - SHOW PROCESSLIST; -> kill any sleeping connections (zombies from a previous forced
+    #  kill)
     mysql_database = await mysql_connect()
     await mysql_database.mysql_update_settings()
     await mysql_database.mysql_create_permanent_tables()

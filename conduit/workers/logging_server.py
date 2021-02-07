@@ -91,6 +91,8 @@ class TCPLoggingServer(multiprocessing.Process):
 
     def setup_local_logging_policy(self):
         rootLogger = logging.getLogger('')
+        logging.addLevelName(PROFILING, 'PROFILING')
+
         FORMAT = "%(asctime)-25s %(levelname)-10s %(name)-20s %(message)s"
         logging.basicConfig(format=FORMAT, level=PROFILING)
 

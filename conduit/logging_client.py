@@ -34,6 +34,7 @@ def set_logging_level(logging_level) -> None:
 
 def setup_tcp_logging():
     rootLogger = logging.getLogger('')
+    logging.addLevelName(PROFILING, 'PROFILING')
 
     # Remote Socket Handler (formatting is done server side after unpickling records)
     socketHandler = logging.handlers.SocketHandler('127.0.0.1',

@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from asyncio import BufferedProtocol
@@ -7,10 +8,10 @@ from bitcoinx import hex_str_to_hash, MissingHeader
 import logging
 from typing import Optional, List, Dict
 
-
+from .database.mysql.mysql_queries import MySQLQueries
 from .sync_state import SyncState
 from .bitcoin_net_io import BitcoinNetIO
-from .database.mysql.mysql_database import MySQLDatabase
+from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from .workers.preprocessor import BlockPreProcessor
 from .workers.transaction_parser import TxParser
 from .workers.merkle_tree import MTreeCalculator
@@ -240,12 +241,40 @@ class Controller:
         begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
         _request_mempool_task = asyncio.create_task(self.request_mempool_job())
 
+    async def maybe_rollback(self):
+        """This will have to do a full table scan to find all the transactions with height above
+        what was safetly flushed to disc... It will not be fast at scan but is better than
+        re-syncing the whole chain. It can be thought of as a last resort db repair process."""
+        self.mysql_db: MySQLDatabase = await load_mysql_database()
+        self.mysql_db.queries: MySQLQueries
+
+        # Safe block tip height
+        last_good_block_height = self.sync_state.get_local_block_tip_height()
+        self.logger.debug(f"last_good_block_height={last_good_block_height}")
+
+        # Get max flushed tx height
+        max_flushed_tx_height = await self.mysql_db.queries.mysql_get_max_tx_height()
+        if not max_flushed_tx_height:
+            return
+        self.logger.debug(f"max_flushed_tx_height={max_flushed_tx_height}")
+        if max_flushed_tx_height == last_good_block_height:
+            return
+
+        # Check for any "Unsafe" flushed txs (above the safe tip height)
+        unsafe_tx_rows = await self.mysql_db.queries.mysql_get_txids_above_last_good_height(
+            last_good_block_height)
+
+        # Do rollback
+        await self.mysql_db.queries.mysql_rollback_unsafe_txs(unsafe_tx_rows)
+
     async def start_jobs(self):
         try:
             # self.pg_db: PostgresDatabase = self.storage.pg_database
             self.mysql_db: MySQLDatabase = self.storage.mysql_database
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
+
+            await self.maybe_rollback()
 
             self.start_workers()
             await self.spawn_sync_headers_task()
@@ -368,7 +397,6 @@ class Controller:
             if len(pending_getdata_requests) == 0:
                 break
 
-        self.logger.debug(f"sync_batched_blocks - post getdata")
         # detect when an unsolicited new block has thrown a spanner in the works
         if not count_requested == 0:
             coro = asyncio.get_running_loop().run_in_executor(
@@ -383,10 +411,6 @@ class Controller:
         else:
             # it was an unsolicited block therefore -> recurse (to continue with batch)
             await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)
-
-        # success
-        self.logger.debug(f"sync_batched_blocks - post join and batched_blocks_done_event now set")
-        self.sync_state.batched_blocks_done_event.set()
 
     async def update_mempool(self, api_block_tip_height, api_block_tip_hash):
         # Get all tx_hashes up to api_block_tip_height
@@ -417,12 +441,14 @@ class Controller:
                 del self.global_tx_hashes_dict[blk_height]
 
         # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
-        await self.mysql_db.start_transaction()
-        await self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
-        await self.mysql_db.mysql_drop_temp_mined_tx_hashes()
-        await self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
-            api_block_tip_hash)
-        await self.mysql_db.commit_transaction()
+        self.mysql_db.start_transaction()
+        try:
+            await self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
+            await self.mysql_db.mysql_drop_temp_mined_tx_hashes()
+            await self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+                api_block_tip_hash)
+        finally:
+            self.mysql_db.commit_transaction()
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height
@@ -461,8 +487,6 @@ class Controller:
 
                 result = self.sync_state.get_next_batched_blocks()
                 batch_size, blocks_batch_set, stop_header_height = result
-
-                self.sync_state.outstanding_blocks_count += batch_size
                 self.sync_state.allocated_blocks_to_height += batch_size
                 for block_hash in blocks_batch_set:
                     self.sync_state.outstanding_block_hashes_set.add(block_hash)
@@ -473,8 +497,6 @@ class Controller:
                 )
                 await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)
                 # ------------------------- Batch complete ------------------------- #
-                await self.sync_state.batched_blocks_done_event.wait()
-                self.sync_state.batched_blocks_done_event.clear()
 
         except asyncio.CancelledError:
             raise

@@ -27,7 +27,7 @@ class BitcoinNetIO(BufferedProtocol):
     """
 
     logger = logging.getLogger("bitcoin-framer")
-    HIGH_WATER = 1024 * 1024 * 256
+    HIGH_WATER = 1024 * 1024 * 32
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
     BUFFER_SIZE = HIGH_WATER + BUFFER_OVERFLOW_SIZE
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)

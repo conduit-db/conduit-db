@@ -1,27 +1,31 @@
+import math
 import os
 import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import logging
 
 import bitcoinx
 from MySQLdb import _mysql
+from bitcoinx import hash_to_hex_str
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
+from ...constants import PROFILING
 
 
 class MySQLQueries:
 
     def __init__(self, mysql_conn: _mysql.connection, mysql_tables: MySQLTables, bulk_loads:
-            MySQLBulkLoads):
+            MySQLBulkLoads, mysql_db):
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
         self.mysql_tables = mysql_tables
         self.bulk_loads = bulk_loads
+        self.mysql_db = mysql_db
 
     async def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes):
         """columns: tx_hashes, blk_height"""
@@ -134,3 +138,82 @@ class MySQLQueries:
                 api_tip_hash=UNHEX('{api_tip_hash_hex}');
             """
         self.mysql_conn.query(query)
+
+    async def mysql_get_max_tx_height(self) -> Optional[int]:
+        query = f"""
+            SELECT MAX(tx_height) FROM confirmed_transactions;
+            """
+        self.mysql_conn.query(query)
+        result = self.mysql_conn.store_result()
+
+        result_unpacked = result.fetch_row(0)[0][0]
+        if result_unpacked is not None:
+            self.logger.debug(f"result_unpacked={result_unpacked}")
+            return int(result_unpacked)
+        return
+
+    async def mysql_get_txids_above_last_good_height(self, last_good_height: int):
+        assert isinstance(last_good_height, int)
+        query = f"""
+            SELECT tx_shash, tx_hash 
+            FROM confirmed_transactions 
+            WHERE tx_height >{last_good_height} 
+            ORDER BY tx_height DESC;
+            """
+        # self.logger.debug(query)
+        self.mysql_conn.query(query)
+        result = self.mysql_conn.store_result()
+        count = result.num_rows()
+        if count != 0:
+            self.logger.warning(f"The database was abruptly shutdown ({count} unsafe txs for "
+                f"rollback) - beginning repair process...")
+        return result.fetch_row(0)
+
+    async def mysql_rollback_unsafe_txs(self, unsafe_tx_rows):
+        """Todo(rollback) - Probably need to rollback the corresponding pushdata and io table
+            entries too."""
+        await self.mysql_tables.mysql_create_temp_unsafe_txs_table()
+        unsafe_tx_rows = [(int(row[0]), row[1].hex()) for row in unsafe_tx_rows]
+        await self.bulk_loads.mysql_bulk_load_temp_unsafe_txs(unsafe_tx_rows)
+
+        # Debugging
+        query = f"""
+            SELECT * 
+            FROM confirmed_transactions
+            INNER JOIN temp_unsafe_txs
+            ON confirmed_transactions.tx_shash = temp_unsafe_txs.tx_shash
+            WHERE tx_has_collided != 0;
+            """
+        self.mysql_conn.query(query)
+        result = self.mysql_conn.store_result()
+        count_rows_with_collisions = result.num_rows()
+        assert count_rows_with_collisions == 0, "Some of the unsafe tx rows have collisions with " \
+            "other rows - this has not been encountered before and needs a patch handle it"
+        await self.mysql_tables.mysql_drop_temp_unsafe_txs()
+
+        # Deletion is very slow for large batch sizes
+        t0 = time.time()
+        BATCH_SIZE = 2000
+        BATCHES_COUNT = math.ceil(len(unsafe_tx_rows)/BATCH_SIZE)
+        for i in range(BATCHES_COUNT):
+            self.mysql_db.start_transaction()
+            try:
+                if i == BATCHES_COUNT - 1:
+                    batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:]
+                else:
+                    batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                self.logger.debug(f"batch_size for deletion={len(batched_unsafe_txs)}")
+                stringified_tx_shashes = ','.join([str(row[0]) for row in batched_unsafe_txs])
+                query = f"""
+                    DELETE FROM confirmed_transactions
+                    WHERE tx_shash in ({stringified_tx_shashes})
+                    """
+                self.mysql_conn.query(query)
+            finally:
+                self.mysql_db.commit_transaction()
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for bulk delete all unsafe txs = {t1} seconds for "
+            f"{len(unsafe_tx_rows)}"
+        )
+        self.logger.debug("Successfully completed database repair for ")

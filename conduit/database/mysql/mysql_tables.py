@@ -30,7 +30,7 @@ class MySQLTables:
                 DROP TABLE temp_inputs;
             """)
         except Exception as e:
-            self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
+            self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
 
     async def mysql_drop_temp_mined_tx_hashes(self):
         try:
@@ -38,7 +38,7 @@ class MySQLTables:
                 DROP TABLE IF EXISTS temp_mined_tx_hashes;
             """)
         except Exception:
-            self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
+            self.logger.exception("mysql_drop_temp_mined_tx_hashes failed unexpectedly")
 
     async def mysql_drop_temp_inbound_tx_hashes(self):
         try:
@@ -47,6 +47,14 @@ class MySQLTables:
             """)
         except Exception:
             self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
+
+    async def mysql_drop_temp_unsafe_txs(self):
+        try:
+            self.mysql_conn.query("""
+                DROP TABLE IF EXISTS temp_unsafe_txs;
+            """)
+        except Exception:
+            self.logger.exception("mysql_drop_temp_unsafe_txs failed unexpectedly")
 
     async def mysql_create_permanent_tables(self):
         self.mysql_conn.query("""
@@ -147,5 +155,13 @@ class MySQLTables:
         self.mysql_conn.query("""
             CREATE TEMPORARY TABLE IF NOT EXISTS temp_inbound_tx_hashes (
                 inbound_tx_hashes BINARY(32)
+            );
+            """)
+
+    async def mysql_create_temp_unsafe_txs_table(self):
+        self.mysql_conn.query("""
+            CREATE TEMPORARY TABLE IF NOT EXISTS temp_unsafe_txs (
+                tx_shash BIGINT PRIMARY KEY,
+                tx_hash BINARY(32)
             );
             """)

@@ -13,9 +13,10 @@ from ...constants import PROFILING
 
 class MySQLBulkLoads:
 
-    def __init__(self, mysql_conn: _mysql.connection):
+    def __init__(self, mysql_conn: _mysql.connection, mysql_db):
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
+        self.mysql_db = mysql_db
         self.logger.setLevel(PROFILING)
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
@@ -150,3 +151,19 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
 
+    async def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows):
+        t0 = time.time()
+        outfile = Path(str(uuid.uuid4()) + ".csv")
+        try:
+            string_rows = ["%s,%s\n" % (row) for row in unsafe_tx_rows]
+            column_names = ['tx_shash', 'tx_hash']
+            self._load_data_infile("temp_unsafe_txs", string_rows, column_names,
+                binary_column_indices=[1])
+        finally:
+            if os.path.exists(outfile):
+                os.remove(outfile)
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for mysql_bulk_load_temp_unsafe_txs = {t1} seconds for "
+            f"{len(unsafe_tx_rows)}"
+        )

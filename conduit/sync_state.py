@@ -6,7 +6,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
 
 import bitcoinx
-from bitcoinx import Headers
+from bitcoinx import Headers, hash_to_hex_str
 
 from .store import Storage
 
@@ -38,15 +38,12 @@ class SyncState:
         # Accounting and ack'ing for block msgs
         self.blocks_batch_set = set()  # usually a set of 500 hashes
         self.expected_blocks_tx_counts = {}  # blk_hash: total_tx_count
-        self.outstanding_blocks_count = 0
         self.outstanding_block_hashes_set = set()
         self.allocated_blocks_to_height = self.local_block_tip_height
         self.pending_blocks_inv_queue = asyncio.Queue()
         self._pending_blocks_progress_counter = {}
 
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
-        self.batched_blocks_done_event = asyncio.Event()
-
         self.initial_block_download_event_mp = multiprocessing.Event()
 
     @property
@@ -78,9 +75,6 @@ class SyncState:
         for blk_hash, count in self._pending_blocks_progress_counter.items():
             if not self.expected_blocks_tx_counts[blk_hash] == count:
                 return False  # not all txs in block ack'd
-
-        if self.outstanding_blocks_count != 0:
-            return False
 
         return True
 
@@ -146,8 +140,10 @@ class SyncState:
         self.logger.error(f"msg_received_count={self.message_received_count}")
         self.logger.error(f"msg_handled_count={self.message_handled_count}")
 
-        self.logger.error(f"outstanding_blocks_count={self.outstanding_blocks_count}")
-        self.logger.error(f"expected_blocks_tx_counts={self.expected_blocks_tx_counts}")
+        for blk_hash, count in self._pending_blocks_progress_counter.items():
+            if not self.expected_blocks_tx_counts[blk_hash] == count:
+                self.logger.error(f"self.expected_blocks_tx_counts[blk_hash] != count for "
+                    f"{hash_to_hex_str(blk_hash)}")
 
         self.logger.error(f"self._pending_blocks_progress_counter.items():")
         for blk_hash, count in self._pending_blocks_progress_counter.items():
