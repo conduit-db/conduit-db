@@ -193,8 +193,9 @@ class Controller:
             )
             p.start()
             self.processes.append(p)
-        for i in range(WORKER_COUNT_TX_PARSERS):
+        for worker_id in range(WORKER_COUNT_TX_PARSERS):
             p = TxParser(
+                worker_id+1,
                 self.shm_buffer.name,
                 self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse_confirmed,

@@ -25,6 +25,7 @@ class TxParser(multiprocessing.Process):
 
     def __init__(
         self,
+        worker_id,
         shm_name,
         worker_in_queue_tx_parse,
         worker_ack_queue_tx_parse_confirmed,
@@ -32,6 +33,7 @@ class TxParser(multiprocessing.Process):
         worker_ack_queue_mined_tx_hashes,
     ):
         super(TxParser, self).__init__()
+        self.worker_id = worker_id
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
@@ -67,20 +69,10 @@ class TxParser(multiprocessing.Process):
         self.MEMPOOL_MAX_TX_BATCH_SIZE = 2000
         self.MEMPOOL_BATCHED_MAX_WAIT_TIME = 0.1
 
-        # self.connection_pool = [self.mysql_db]
-
-    # def get_mysql_db_conn(self):
-    #     with self.flush_lock:
-    #         return self.connection_pool[0]
-    #
-    # def release_mysql_db_conn(self, conn):
-    #     with self.flush_lock:
-    #         return self.connection_pool.append(conn)
-
     def run(self):
         self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
         setup_tcp_logging()
-        self.logger = logging.getLogger("transaction-parser")
+        self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
 
@@ -278,8 +270,8 @@ class TxParser(multiprocessing.Process):
             List[Tuple]]:
         """Returns both a list of tx hashes and list of tuples containing tx hashes (the same
         data) ready for database insertion"""
-        partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block, tx_offsets)[
-            0]
+        partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block,
+            tx_offsets)[0]
         tx_hash_rows = []
         for full_tx_hash in partition_tx_hashes:
             tx_hash_rows.append((full_tx_hash.hex(),))
@@ -327,7 +319,7 @@ class TxParser(multiprocessing.Process):
                     tx_rows, in_rows, out_rows, set_pd_rows = result
 
                     # todo - batch up mempool txs before feeding them into the queue.
-                    self.mempool_tx_flush_queue.put(tx_rows, in_rows, out_rows, set_pd_rows)
+                    self.mempool_tx_flush_queue.put( (tx_rows, in_rows, out_rows, set_pd_rows) )
                     self.mempool_tx_flush_ack_queue.put( len(tx_offsets) )
 
                 if msg_type == MsgType.MSG_BLOCK:
