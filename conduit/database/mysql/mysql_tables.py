@@ -25,13 +25,6 @@ class MySQLTables:
             for row in result:
                 table = row[0].decode()
                 queries.append(f"DROP TABLE {table};")
-            # queries = [
-            #     "DROP TABLE confirmed_transactions;",
-            #     "DROP TABLE mempool_transactions;",
-            #     "DROP TABLE io_table;",
-            #     "DROP TABLE pushdata;",
-            #     "DROP TABLE api_state",
-            # ]
             for query in queries:
                 self.mysql_conn.query(query)
         except Exception as e:

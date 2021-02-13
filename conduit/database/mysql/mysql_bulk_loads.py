@@ -22,8 +22,23 @@ class MySQLBulkLoads:
         self.mysql_db = mysql_db
         self.logger.setLevel(PROFILING)
 
+    def set_rocks_db_unsorted_bulk_load_on(self):
+        settings = f"""SET session sql_log_bin=0;
+            SET global rocksdb_bulk_load_allow_unsorted=1;
+            SET global rocksdb_bulk_load=1;"""
+        for sql in settings.splitlines(keepends=False):
+            self.mysql_conn.query(sql)
+
+    def set_rocks_db_unsorted_bulk_load_off(self):
+        settings = f"""SET global rocksdb_bulk_load=0;
+            SET global rocksdb_bulk_load_allow_unsorted=0;"""
+        for sql in settings.splitlines(keepends=False):
+            self.mysql_conn.query(sql)
+
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int]):
+        self.set_rocks_db_unsorted_bulk_load_on()
+
         MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
         outfile = Path(MODULE_DIR).parent.parent.parent.parent / "temp_files" / \
                   (str(uuid.uuid4()) + ".csv")
@@ -50,6 +65,8 @@ class MySQLBulkLoads:
 
             query += ";"
             self.mysql_conn.query(query)
+
+            self.set_rocks_db_unsorted_bulk_load_off()
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
