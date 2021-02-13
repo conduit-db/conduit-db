@@ -129,7 +129,7 @@ class Controller:
         finally:
             if self.transport:
                 self.transport.close()
-            await self.storage.close()
+            self.storage.close()
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -240,23 +240,23 @@ class Controller:
         begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
         _request_mempool_task = asyncio.create_task(self.request_mempool_job())
 
-    async def maybe_rollback(self):
+    def maybe_rollback(self):
         """This will have to do a full table scan to find all the transactions with height above
         what was safetly flushed to disc... It will not be fast at scan but is better than
         re-syncing the whole chain. It can be thought of as a last resort db repair process."""
-        self.mysql_db: MySQLDatabase = await load_mysql_database()
+        self.mysql_db: MySQLDatabase = load_mysql_database()
         self.mysql_db.queries: MySQLQueries
 
         # Drop mempool table
-        await self.mysql_db.tables.mysql_drop_mempool_table()
-        await self.mysql_db.tables.mysql_create_permanent_tables()
+        self.mysql_db.tables.mysql_drop_mempool_table()
+        self.mysql_db.tables.mysql_create_permanent_tables()
 
         # Safe block tip height
         last_good_block_height = self.sync_state.get_local_block_tip_height()
         self.logger.debug(f"last_good_block_height={last_good_block_height}")
 
         # Get max flushed tx height
-        max_flushed_tx_height = await self.mysql_db.queries.mysql_get_max_tx_height()
+        max_flushed_tx_height = self.mysql_db.queries.mysql_get_max_tx_height()
         if not max_flushed_tx_height:
             return
         self.logger.debug(f"max_flushed_tx_height={max_flushed_tx_height}")
@@ -264,11 +264,11 @@ class Controller:
             return
 
         # Check for any "Unsafe" flushed txs (above the safe tip height)
-        unsafe_tx_rows = await self.mysql_db.queries.mysql_get_txids_above_last_good_height(
+        unsafe_tx_rows = self.mysql_db.queries.mysql_get_txids_above_last_good_height(
             last_good_block_height)
 
         # Do rollback
-        await self.mysql_db.queries.mysql_rollback_unsafe_txs(unsafe_tx_rows)
+        self.mysql_db.queries.mysql_rollback_unsafe_txs(unsafe_tx_rows)
 
     async def start_jobs(self):
         try:
@@ -277,7 +277,7 @@ class Controller:
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 
-            await self.maybe_rollback()
+            self.maybe_rollback()
 
             self.start_workers()
             await self.spawn_sync_headers_task()
@@ -441,15 +441,15 @@ class Controller:
                 for tx_hash in self.global_tx_hashes_dict[blk_height]:
                     mined_tx_hashes.append((tx_hash.hex(), blk_height))
 
-                await self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
+                self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
                 del self.global_tx_hashes_dict[blk_height]
 
         # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
         self.mysql_db.start_transaction()
         try:
-            await self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
-            await self.mysql_db.mysql_drop_temp_mined_tx_hashes()
-            await self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+            self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
+            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
+            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
                 api_block_tip_hash)
         finally:
             self.mysql_db.commit_transaction()
@@ -478,7 +478,7 @@ class Controller:
                         await self.update_mempool(api_block_tip_height, api_block_tip_hash)
 
                     else:
-                        await self.mysql_db.mysql_update_api_tip_height_and_hash(
+                        self.mysql_db.mysql_update_api_tip_height_and_hash(
                             api_block_tip_height, api_block_tip_hash)
 
                     self.logger.debug(f"new block tip height: {api_block_tip_height}")

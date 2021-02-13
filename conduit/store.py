@@ -76,11 +76,11 @@ async def reset_datastore():
             mm.write(b'\00' * mm.size())
 
     # remove postgres tables
-    mysql_database = await mysql_connect()
+    mysql_database = mysql_connect()
     try:
-        await mysql_database.mysql_drop_tables()
+        mysql_database.mysql_drop_tables()
     finally:
-        await mysql_database.close()
+        mysql_database.close()
 
     # remove lmdb database
     def remove_readonly(func, path, excinfo):
@@ -100,7 +100,7 @@ async def setup_storage(config, net_config) -> Storage:
     block_headers = setup_headers_store(net_config, "block_headers.mmap")
 
     # pg_database = await load_pg_database()
-    mysql_database = await load_mysql_database()
+    mysql_database = load_mysql_database()
 
     # storage = Storage(headers, block_headers, pg_database, None)
     storage = Storage(headers, block_headers, mysql_database, None)

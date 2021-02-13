@@ -31,7 +31,6 @@ if __name__ == "__main__":
         await mysql_db.mysql_update_settings()
         await mysql_db.mysql_drop_tables()
         await mysql_db.tables.mysql_create_permanent_tables()
-        await mysql_db.mysql_create_temp_inputs_table()
 
         t0 = time.time()
         await mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
@@ -46,7 +45,6 @@ if __name__ == "__main__":
         #     print(row)
 
         # Close the connection.
-        await mysql_db.mysql_drop_temp_inputs()
         await mysql_db.close()
 
     asyncio.get_event_loop().run_until_complete(main())

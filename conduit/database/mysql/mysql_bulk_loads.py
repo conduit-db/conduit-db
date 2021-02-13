@@ -3,10 +3,9 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
 
 from ...constants import PROFILING
 
@@ -37,7 +36,6 @@ class MySQLBulkLoads:
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int]):
-        self.set_rocks_db_unsorted_bulk_load_on()
 
         MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
         outfile = Path(MODULE_DIR).parent.parent.parent.parent / "temp_files" / \
@@ -66,20 +64,20 @@ class MySQLBulkLoads:
             query += ";"
             self.mysql_conn.query(query)
 
-            self.set_rocks_db_unsorted_bulk_load_off()
+            # self.set_rocks_db_unsorted_bulk_load_off()
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    async def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):
+    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in tx_rows]
-            column_names = ['tx_shash', 'tx_hash', 'tx_height', 'tx_position', 'tx_offset_start',
-                'tx_offset_end', 'tx_has_collided']
+            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in tx_rows]
+            column_names = ['tx_hash', 'tx_height', 'tx_position', 'tx_offset_start',
+                'tx_offset_end']
             self._load_data_infile("confirmed_transactions", string_rows, column_names,
-                binary_column_indices=[1])
+                binary_column_indices=[0])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -88,15 +86,14 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    async def mysql_bulk_load_mempool_tx_rows(self, tx_rows):
+    def mysql_bulk_load_mempool_tx_rows(self, tx_rows):
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in tx_rows]
-            column_names = ['mp_tx_shash', 'mp_tx_hash', 'mp_tx_timestamp', 'mp_tx_has_collided',
-                'mp_rawtx']
+            string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
+            column_names = ['mp_tx_hash', 'mp_tx_timestamp', 'mp_rawtx']
             self._load_data_infile("mempool_transactions", string_rows, column_names,
-                binary_column_indices=[1, 4])
+                binary_column_indices=[0, 2])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -106,15 +103,15 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    async def mysql_bulk_load_output_rows(self, out_rows):
+    def mysql_bulk_load_output_rows(self, out_rows):
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in out_rows]
-            column_names = ['out_tx_shash', 'out_idx', 'out_value', 'out_has_collided', 'in_tx_shash',
-                'in_idx', 'in_has_collided']
-            self._load_data_infile("io_table", string_rows, column_names,
-                binary_column_indices=[])
+            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in out_rows]
+            column_names = ['out_tx_hash', 'out_idx', 'out_value', 'out_offset_start',
+                'out_offset_end']
+            self._load_data_infile("txo_table", string_rows, column_names,
+                binary_column_indices=[0])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -124,48 +121,34 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
         )
 
-    async def mysql_bulk_load_input_rows(self, in_rows):
+    def mysql_bulk_load_input_rows(self, in_rows):
         # Todo - check for collisions in TxParser then:
         #  1) bulk copy to temp table
         #  2) update io table from temp table (no table joins needed)
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in in_rows]
-            column_names = ['in_prevout_shash', 'out_idx', 'in_tx_shash', 'in_idx',
-                'in_has_collided']
-            self._load_data_infile("temp_inputs", string_rows, column_names,
-                binary_column_indices=[])
+            string_rows = ["%s,%s,%s,%s,%s,%s\n" % (row) for row in in_rows]
+            column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx',
+                'in_offset_start', 'in_offset_end']
+            self._load_data_infile("inputs_table", string_rows, column_names,
+                binary_column_indices=[0, 2])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
-
-        query = """
-        UPDATE io_table
-            INNER JOIN temp_inputs
-            ON temp_inputs.in_prevout_shash = io_table.out_tx_shash 
-                AND temp_inputs.out_idx = io_table.out_idx
-        SET io_table.in_tx_shash = temp_inputs.in_tx_shash,
-            io_table.in_idx = temp_inputs.in_idx,
-            io_table.in_has_collided = temp_inputs.in_has_collided
-        WHERE temp_inputs.in_prevout_shash = io_table.out_tx_shash
-            AND temp_inputs.out_idx = io_table.out_idx;"""
-        self.mysql_conn.query(query)
-
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
         )
 
-    async def mysql_bulk_load_pushdata_rows(self, pd_rows):
+    def mysql_bulk_load_pushdata_rows(self, pd_rows):
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s,%s\n" % (row) for row in pd_rows]
-            column_names = ['pushdata_shash', 'pushdata_hash', 'tx_shash', 'idx',
-                'ref_type', 'pd_tx_has_collided']
+            string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
+            column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
             self._load_data_infile("pushdata", string_rows, column_names,
-                binary_column_indices=[1])
+                binary_column_indices=[0, 1])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -174,14 +157,14 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
 
-    async def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows):
+    def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows):
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s\n" % (row) for row in unsafe_tx_rows]
-            column_names = ['tx_shash', 'tx_hash']
+            string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
+            column_names = ['tx_hash']
             self._load_data_infile("temp_unsafe_txs", string_rows, column_names,
-                binary_column_indices=[1])
+                binary_column_indices=[0])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)

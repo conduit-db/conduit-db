@@ -10,7 +10,7 @@ class MySQLTables:
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 
-    async def get_tables(self):
+    def get_tables(self):
         try:
             self.mysql_conn.query("""SHOW TABLES""")
             result = self.mysql_conn.store_result()
@@ -18,9 +18,9 @@ class MySQLTables:
         except Exception as e:
             self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
 
-    async def mysql_drop_tables(self):
+    def mysql_drop_tables(self):
         try:
-            result = await self.get_tables()
+            result = self.get_tables()
             queries = []
             for row in result:
                 table = row[0].decode()
@@ -30,9 +30,9 @@ class MySQLTables:
         except Exception as e:
             self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
 
-    async def mysql_drop_mempool_table(self):
+    def mysql_drop_mempool_table(self):
         try:
-            result = await self.get_tables()
+            result = self.get_tables()
             for row in result:
                 table = row[0].decode()
                 if table == "mempool_transactions":
@@ -44,15 +44,7 @@ class MySQLTables:
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
 
-    async def mysql_drop_temp_inputs(self):
-        try:
-            self.mysql_conn.query("""
-                DROP TABLE temp_inputs;
-            """)
-        except Exception as e:
-            self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
-
-    async def mysql_drop_temp_mined_tx_hashes(self):
+    def mysql_drop_temp_mined_tx_hashes(self):
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_mined_tx_hashes;
@@ -60,7 +52,7 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_mined_tx_hashes failed unexpectedly")
 
-    async def mysql_drop_temp_inbound_tx_hashes(self):
+    def mysql_drop_temp_inbound_tx_hashes(self):
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_inbound_tx_hashes;
@@ -68,7 +60,7 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
 
-    async def mysql_drop_temp_unsafe_txs(self):
+    def mysql_drop_mysql_afe_txs(self):
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_unsafe_txs;
@@ -76,45 +68,60 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_unsafe_txs failed unexpectedly")
 
-    async def mysql_create_permanent_tables(self):
+    def mysql_create_permanent_tables(self):
+        # tx_offset_start is relative to start of the raw block
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS confirmed_transactions (
-                tx_shash BIGINT PRIMARY KEY,
-                tx_hash BINARY(32),
-                tx_height INT,
-                tx_position BIGINT,
-                tx_offset_start BIGINT,
-                tx_offset_end BIGINT,
-                tx_has_collided INT
+                tx_hash BINARY(32) PRIMARY KEY,
+                tx_height INT UNSIGNED,
+                tx_position BIGINT UNSIGNED,
+                tx_offset_start BIGINT UNSIGNED,
+                tx_offset_end BIGINT UNSIGNED
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+            """)
+
+        # offset is relative to start of rawtx
+        self.mysql_conn.query("""
+            CREATE TABLE IF NOT EXISTS txo_table (
+                out_tx_hash BINARY(32),
+                out_idx INT UNSIGNED,
+                out_value BIGINT UNSIGNED,
+                out_offset_start INT UNSIGNED,
+                out_offset_end INT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
-            CREATE TABLE IF NOT EXISTS io_table (
-                out_tx_shash BIGINT,
-                out_idx INT,
-                out_value BIGINT,
-                out_has_collided INT,
-                in_tx_shash BIGINT,
-                in_idx INT,
-                in_has_collided INT
+            CREATE INDEX IF NOT EXISTS io_idx ON txo_table (out_tx_hash, out_idx);
+            """)
+
+        # offset is relative to start of rawtx
+        # this table may look wasteful (due to repetition of the out_tx_hash but the
+        # write throughput advantage is considerable (as it avoids the random io burden of
+        # updating each row of the combined inputs and outputs table one at a time...)
+        self.mysql_conn.query("""
+            CREATE TABLE IF NOT EXISTS inputs_table (
+                out_tx_hash BINARY(32),
+                out_idx INT UNSIGNED,
+                in_tx_hash BINARY(32),
+                in_idx INT UNSIGNED,
+                in_offset_start INT UNSIGNED,
+                in_offset_end INT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS io_idx ON io_table (out_tx_shash, out_idx);
+            CREATE INDEX IF NOT EXISTS io_idx ON inputs_table (out_tx_hash, out_idx);
             """)
 
         # I think I can get away with not storing full pushdata hashes
         # unless they collide because the client provides the full pushdata_hash
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS pushdata (
-                pushdata_shash BIGINT,
                 pushdata_hash BINARY(32),
-                tx_shash BIGINT,
+                tx_hash BINARY (32),
                 idx INT,
-                ref_type SMALLINT,
-                pd_tx_has_collided INT
+                ref_type SMALLINT
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
@@ -125,7 +132,7 @@ class MySQLTables:
         # Things like B:// maybe could be dealt with as special cases perhaps?
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS pushdata_multi_idx ON pushdata (pushdata_shash);
+            CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
         """)
 
         # ?? should this be an in-memory only table?
@@ -133,37 +140,21 @@ class MySQLTables:
         # may not be providing the tx_hash in their query (e.g. for key history).
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS mempool_transactions (
-                mp_tx_shash BIGINT PRIMARY KEY,
-                mp_tx_hash BINARY(32),
+                mp_tx_hash BINARY(32) PRIMARY KEY,
                 mp_tx_timestamp TIMESTAMP,
-                mp_tx_has_collided INT,
                 mp_rawtx LONGBLOB
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS api_state (
-                id INT,
+                id INT PRIMARY KEY,
                 api_tip_height INT,
-                api_tip_hash BINARY(32),
-                PRIMARY KEY (id)
-            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+                api_tip_hash BINARY(32)
+            );
             """)
 
-    async def mysql_create_temp_inputs_table(self):
-      # Todo - prefix the table name with the worker_id to avoid clashes
-      #  currently there is only a single worker
-      self.mysql_conn.query("""           
-        CREATE TEMPORARY TABLE IF NOT EXISTS temp_inputs (
-            in_prevout_shash BIGINT,
-            out_idx INT,
-            in_tx_shash BIGINT,
-            in_idx INT,
-            in_has_collided INT
-        );
-        """)
-
-    async def mysql_create_temp_mined_tx_hashes_table(self):
+    def mysql_create_temp_mined_tx_hashes_table(self):
         self.mysql_conn.query("""
             CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_hashes (
                 mined_tx_hash BINARY(32),
@@ -171,17 +162,9 @@ class MySQLTables:
             );
             """)
 
-    async def mysql_create_temp_inbound_tx_hashes_table(self):
+    def mysql_create_temp_inbound_tx_hashes_table(self):
         self.mysql_conn.query("""
             CREATE TEMPORARY TABLE IF NOT EXISTS temp_inbound_tx_hashes (
                 inbound_tx_hashes BINARY(32)
-            );
-            """)
-
-    async def mysql_create_temp_unsafe_txs_table(self):
-        self.mysql_conn.query("""
-            CREATE TEMPORARY TABLE IF NOT EXISTS temp_unsafe_txs (
-                tx_shash BIGINT PRIMARY KEY,
-                tx_hash BINARY(32)
             );
             """)

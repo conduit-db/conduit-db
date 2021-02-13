@@ -152,28 +152,17 @@ def parse_txs(
     mempool transactions at a later date (where buffer=contiguous array of rawtxs)
 
     returns
-        tx_rows =       [(tx_shash, tx_hash, height, position, offset_start, offset_end, tx_has_collided)...]
-        in_rows =       [(prevout_shash, out_idx, tx_shash, in_idx, out_has_collided)...)...]
-        out_rows =      [(out_tx_shash, idx, value, in_has_collided)...)]
-        pd_rows =       [(pushdata_shash, pushdata_hash, tx_shash, idx, ref_type=0 or 1,
-            pd_tx_has_collided)...]
-
-        NOTE: full pushdata_hash is not committed to the database but is temporarily included in
-        these rows in case of a collision -> committed to collision table.
+        tx_rows =       [(tx_hash, height, position, offset_start, offset_end)...]
+        in_rows =       [(prevout_hash, out_idx, tx_hash, in_idx, in_offset_start, in_offset_end)...)...]
+        out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
+        pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
     tx_rows = []
-    tx_shashes = []
-
-    # sets rule out possibility of duplicate pushdata in same input / output
     in_rows = set()
     out_rows = set()
     set_pd_rows = set()
     count_txs = len(tx_offsets)
 
-    tx_has_collided = 0
-    out_has_collided = 0
-    in_has_collided = 0
-    pd_tx_has_collided = 0
     try:
         for position in range(count_txs):
             pks = set()
@@ -189,7 +178,6 @@ def parse_txs(
 
             rawtx = buffer[tx_offset_start:next_tx_offset]
             tx_hash = double_sha256(rawtx)
-            tx_shash = struct_le_q.unpack(tx_hash[0:8])[0]
 
             # version
             offset += 4
@@ -197,67 +185,62 @@ def parse_txs(
             # inputs
             count_tx_in, offset = unpack_varint(buffer, offset)
             ref_type = 1
+            in_offset_start = offset
             for in_idx in range(count_tx_in):
                 in_prevout_hash = buffer[offset : offset + 32]
-                in_prevout_shash = struct_le_q.unpack(in_prevout_hash[0:8])[0]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint(buffer, offset)
                 script_sig = buffer[offset : offset + script_sig_len]
+                offset += script_sig_len
+                offset += 4  # skip sequence
+                in_offset_end = offset
+
                 # some coinbase tx scriptsigs don't obey any rules.
                 if not position == 0:
 
                     in_rows.add(
-                        (in_prevout_shash, in_prevout_idx, tx_shash, in_idx, in_has_collided,),
+                        (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx,
+                            in_offset_start, in_offset_end, ),
                     )
 
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
                     if len(pushdata_hashes):
                         for in_pushdata_hash in pushdata_hashes:
-                            # Todo - in_pushdata_hash needs to be kept in memory for collisions
-                            in_pushdata_shash = struct_le_q.unpack(in_pushdata_hash[0:8])[0]
                             set_pd_rows.add(
                                 (
-                                    in_pushdata_shash,
                                     in_pushdata_hash.hex(),
-                                    tx_shash,
+                                    tx_hash.hex(),
                                     in_idx,
                                     ref_type,
-                                    pd_tx_has_collided,
                                 )
                             )
-                offset += script_sig_len
-                offset += 4  # skip sequence
 
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
             ref_type = 0
+            out_offset_start = offset
             for out_idx in range(count_tx_out):
                 out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]
 
-                # \N is the string representation of NULL for MySQL LOAD DATA INFILE (from .csv)
-                out_rows.add((tx_shash, out_idx, out_value, out_has_collided, r"\N", r"\N", r"\N",))
-
                 pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
-                        # Todo - out_pushdata_hash needs to be kept in memory for collisions...
-                        out_pushdata_shash = struct_le_q.unpack(out_pushdata_hash[0:8])[0]
                         set_pd_rows.add(
                             (
-                                out_pushdata_shash,
                                 out_pushdata_hash.hex(),
-                                tx_shash,
+                                tx_hash.hex(),
                                 out_idx,
                                 ref_type,
-                                pd_tx_has_collided,
                             )
                         )
                 offset += scriptpubkey_len
+                out_offset_end = offset
+                out_rows.add((tx_hash.hex(), out_idx, out_value, out_offset_start, out_offset_end,))
 
             # nlocktime
             offset += 4
@@ -266,21 +249,17 @@ def parse_txs(
             if confirmed:
                 tx_rows.append(
                     (
-                        tx_shash,
                         tx_hash.hex(),
                         height_or_timestamp,
                         position,
                         tx_offset_start,
                         next_tx_offset,
-                        tx_has_collided,
                     )
                 )
-                tx_shashes.append(tx_shash)
             else:
-                tx_rows.append((tx_shash, tx_hash.hex(), height_or_timestamp,
-                    tx_has_collided, rawtx.hex()))
+                tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
         assert len(tx_rows) == count_txs
-        return tx_rows, in_rows, out_rows, set_pd_rows, tx_shashes
+        return tx_rows, in_rows, out_rows, set_pd_rows
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
