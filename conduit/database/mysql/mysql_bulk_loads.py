@@ -21,14 +21,14 @@ class MySQLBulkLoads:
         self.mysql_db = mysql_db
         self.logger.setLevel(PROFILING)
 
-    def set_rocks_db_unsorted_bulk_load_on(self):
+    def set_rocks_db_bulk_load_on(self):
         settings = f"""SET session sql_log_bin=0;
             SET global rocksdb_bulk_load_allow_unsorted=1;
             SET global rocksdb_bulk_load=1;"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
 
-    def set_rocks_db_unsorted_bulk_load_off(self):
+    def set_rocks_db_bulk_load_off(self):
         settings = f"""SET global rocksdb_bulk_load=0;
             SET global rocksdb_bulk_load_allow_unsorted=0;"""
         for sql in settings.splitlines(keepends=False):
@@ -63,8 +63,6 @@ class MySQLBulkLoads:
 
             query += ";"
             self.mysql_conn.query(query)
-
-            # self.set_rocks_db_unsorted_bulk_load_off()
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)

@@ -186,6 +186,7 @@ class Controller:
         self.processes = []
         for i in range(WORKER_COUNT_PREPROCESSORS):
             p = BlockPreProcessor(
+                WORKER_COUNT_TX_PARSERS,
                 self.shm_buffer.name,
                 self.worker_in_queue_preproc,
                 self.worker_in_queue_tx_parse,
@@ -344,7 +345,8 @@ class Controller:
                 local_done_block_heights.append(header.height)
 
                 try:
-                    blocks_batch_set.remove(block_hash)
+                    if self.sync_state.block_is_fully_processed(block_hash):
+                        blocks_batch_set.remove(block_hash)
                 except KeyError:
                     header = self.get_header_for_hash(block_hash)
                     self.logger.debug(f"also parsed block: {header.height}")
@@ -360,6 +362,7 @@ class Controller:
                         header = self.get_header_for_height(height)
                         block_headers: bitcoinx.Headers = self.storage.block_headers
                         block_headers.connect(header.raw)
+                        self.storage.block_headers.flush()
                     self.sync_state.reset_pending_blocks()
 
                     # success - update global heights for current buffer

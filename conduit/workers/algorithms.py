@@ -164,6 +164,7 @@ def parse_txs(
     count_txs = len(tx_offsets)
 
     try:
+        # TODO - position is wrong for multiple processes
         for position in range(count_txs):
             pks = set()
             pkhs = set()

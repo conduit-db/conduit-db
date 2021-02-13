@@ -185,15 +185,5 @@ class Deserializer:
         self.storage.headers.flush()
         return True
 
-    def connect_block_header(self, raw_header: bytes):
-        try:
-            self.storage.block_headers.connect(raw_header)
-        except MissingHeader as e:
-            if str(e).find(GENESIS_BLOCK) != -1:
-                logger.debug("skipping prev_out == genesis block")
-            else:
-                logger.exception(e)
-                raise
-
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)

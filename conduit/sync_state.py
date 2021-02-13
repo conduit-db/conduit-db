@@ -155,6 +155,10 @@ class SyncState:
             f"len(self.done_block_heights)={len(self.done_block_heights)}"
         )
 
+    def block_is_fully_processed(self, block_hash: bytes) -> bool:
+        return self._pending_blocks_progress_counter[block_hash] == \
+            self.expected_blocks_tx_counts[block_hash]
+
     def add_pending_block(self, blk_hash, total_tx_count):
         self.expected_blocks_tx_counts[blk_hash] = total_tx_count
         self._pending_blocks_progress_counter[blk_hash] = 0

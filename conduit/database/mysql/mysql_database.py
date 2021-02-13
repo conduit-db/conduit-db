@@ -19,7 +19,10 @@ class MySQLDatabase:
         self.bulk_loads = MySQLBulkLoads(self.mysql_conn, self)
         self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
 
+        self.start_transaction()
+        self.bulk_loads.set_rocks_db_bulk_load_off()
         self.set_myrocks_settings()
+        self.commit_transaction()
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logging.getLogger("mysql-database")

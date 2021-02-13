@@ -86,7 +86,7 @@ class TxParser(multiprocessing.Process):
             main_thread.start()
 
             self.start_flush_threads()
-            self.logger.debug("TxParser event loop completed...")
+            self.logger.info(f"{self.__class__.__name__} exiting")
         except Exception as e:
             self.logger.exception(e)
             raise
@@ -99,6 +99,8 @@ class TxParser(multiprocessing.Process):
         for t in threads:
             t.setDaemon(True)
             t.start()
+        for t in threads:
+            t.join()
 
     # ----- CONFIRMED TXS ----- #
 
@@ -148,7 +150,8 @@ class TxParser(multiprocessing.Process):
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
             set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, ):
         with self.flush_lock:
-            self.mysql_db.bulk_loads.set_rocks_db_unsorted_bulk_load_on()
+            self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
+            self.mysql_db.start_transaction()
             try:
                 if confirmed:
                     self.mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
@@ -178,7 +181,8 @@ class TxParser(multiprocessing.Process):
                 self.logger.exception(f"IntegrityError: {e}")
                 raise
             finally:
-                self.mysql_db.bulk_loads.set_rocks_db_unsorted_bulk_load_off()
+                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
+                self.mysql_db.commit_transaction()
 
     def mysql_insert_confirmed_tx_rows_thread(self):
         self.mysql_db: MySQLDatabase = mysql_connect()

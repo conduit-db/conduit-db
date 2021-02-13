@@ -162,14 +162,13 @@ class MySQLQueries:
                     batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:]
                 else:
                     batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-                self.logger.debug(f"batch_size for deletion={len(batched_unsafe_txs)}")
-                stringified_tx_hashes = ','.join([str(row[0]) for row in batched_unsafe_txs])
+                stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
+                    batched_unsafe_txs])
 
                 # TODO - BINARY tx_hash NOW NOT integer tx_shash - will fail
                 query = f"""
                     DELETE FROM confirmed_transactions
-                    WHERE tx_hash in ({stringified_tx_hashes})
-                    """
+                    WHERE tx_hash in ({stringified_tx_hashes})"""
                 self.mysql_conn.query(query)
             finally:
                 self.mysql_db.commit_transaction()
@@ -178,4 +177,4 @@ class MySQLQueries:
             f"elapsed time for bulk delete all unsafe txs = {t1} seconds for "
             f"{len(unsafe_tx_rows)}"
         )
-        self.logger.debug("Successfully completed database repair for ")
+        self.logger.debug(f"Successfully completed database repair")
