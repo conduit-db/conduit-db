@@ -96,7 +96,7 @@ class TCPLoggingServer(multiprocessing.Process):
         FORMAT = "%(asctime)-25s %(levelname)-10s %(name)-20s %(message)s"
         logging.basicConfig(format=FORMAT, level=PROFILING)
 
-        log_dir = Path(MODULE_DIR).parent.parent.joinpath(f"logs")
+        log_dir = Path(MODULE_DIR).parent.parent.parent.joinpath(f"logs")
         os.makedirs(log_dir, exist_ok=True)
         logfile_path = os.path.join(log_dir, time.strftime("%Y%m%d-%H%M%S") + ".log")
         file_handler = logging.FileHandler(logfile_path)
@@ -109,8 +109,6 @@ class TCPLoggingServer(multiprocessing.Process):
         self.tcpserver.serve_forever()
 
     def run(self):
-        log_path = Path(os.getcwd()).parent.parent.joinpath("logs").__str__()
-        os.makedirs(log_path, exist_ok=True)
         self.setup_local_logging_policy()
 
         self.stop_event = threading.Event()

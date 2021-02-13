@@ -11,6 +11,9 @@ from bitcoinx import hash_to_hex_str
 from ...constants import PROFILING
 
 
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 class MySQLBulkLoads:
 
     def __init__(self, mysql_conn: _mysql.connection, mysql_db):
@@ -21,7 +24,10 @@ class MySQLBulkLoads:
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int]):
-        outfile = Path(str(uuid.uuid4()) + ".csv")
+        MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+        outfile = Path(MODULE_DIR).parent.parent.parent.parent / "temp_files" / \
+                  (str(uuid.uuid4()) + ".csv")
+        os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:
             with open(outfile, 'w') as csvfile:
                 csvfile.writelines(string_rows)

@@ -20,7 +20,7 @@ class LMDB_Database:
     BLOCKS_DB = b"blocks_db"
     BLOCK_NUMS_DB = b"block_nums_db"
     MTREE_DB = b"mtree_db"
-    DEFAULT_DIR = Path(MODULE_DIR).joinpath("lmdb_data").__str__()
+    DEFAULT_DIR = Path(MODULE_DIR).parent.parent.parent.joinpath('lmdb_data').__str__()
 
     def __init__(self, storage_path: str=DEFAULT_DIR):
         self.logger = logging.getLogger("lmdb-database")

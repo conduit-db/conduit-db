@@ -247,6 +247,10 @@ class Controller:
         self.mysql_db: MySQLDatabase = await load_mysql_database()
         self.mysql_db.queries: MySQLQueries
 
+        # Drop mempool table
+        await self.mysql_db.tables.mysql_drop_mempool_table()
+        await self.mysql_db.tables.mysql_create_permanent_tables()
+
         # Safe block tip height
         last_good_block_height = self.sync_state.get_local_block_tip_height()
         self.logger.debug(f"last_good_block_height={last_good_block_height}")
@@ -404,9 +408,10 @@ class Controller:
             try:
                 # if a batch of blocks takes more than 5 minutes - it will print out a
                 # diagnostic overview to assist with troubleshooting the blockage
-                await asyncio.wait_for(coro, timeout=300.0)
+                await asyncio.wait_for(coro, timeout=1200.0)
             except asyncio.TimeoutError:
                 self.sync_state.readout_sync_state()
+                sys.exit(1)
         else:
             # it was an unsolicited block therefore -> recurse (to continue with batch)
             await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)

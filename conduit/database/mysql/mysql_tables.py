@@ -10,17 +10,44 @@ class MySQLTables:
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 
+    async def get_tables(self):
+        try:
+            self.mysql_conn.query("""SHOW TABLES""")
+            result = self.mysql_conn.store_result()
+            return result.fetch_row(0)
+        except Exception as e:
+            self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
+
     async def mysql_drop_tables(self):
         try:
-            queries = [
-                "DROP TABLE confirmed_transactions;",
-                "DROP TABLE mempool_transactions;",
-                "DROP TABLE io_table;",
-                "DROP TABLE pushdata;",
-                "DROP TABLE api_state",
-            ]
+            result = await self.get_tables()
+            queries = []
+            for row in result:
+                table = row[0].decode()
+                queries.append(f"DROP TABLE {table};")
+            # queries = [
+            #     "DROP TABLE confirmed_transactions;",
+            #     "DROP TABLE mempool_transactions;",
+            #     "DROP TABLE io_table;",
+            #     "DROP TABLE pushdata;",
+            #     "DROP TABLE api_state",
+            # ]
             for query in queries:
                 self.mysql_conn.query(query)
+        except Exception as e:
+            self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
+
+    async def mysql_drop_mempool_table(self):
+        try:
+            result = await self.get_tables()
+            for row in result:
+                table = row[0].decode()
+                if table == "mempool_transactions":
+                    break
+            else:
+                return
+
+            self.mysql_conn.query("""DROP TABLE mempool_transactions;""")
         except asyncpg.exceptions.UndefinedTableError as e:
             self.logger.exception(e)
 

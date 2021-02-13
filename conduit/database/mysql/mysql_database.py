@@ -69,9 +69,6 @@ class MySQLDatabase:
     async def mysql_drop_temp_inbound_tx_hashes(self):
         await self.tables.mysql_drop_temp_inbound_tx_hashes()
 
-    async def mysql_create_permanent_tables(self):
-        await self.tables.mysql_create_permanent_tables()
-
     async def mysql_create_temp_inputs_table(self):
         await self.tables.mysql_create_temp_inputs_table()
 
@@ -148,12 +145,10 @@ async def load_mysql_database() -> MySQLDatabase:
     #  kill)
     mysql_database = await mysql_connect()
     await mysql_database.mysql_update_settings()
-    await mysql_database.mysql_create_permanent_tables()
     return mysql_database
 
 
 async def load_test_mysql_database() -> MySQLDatabase:
     mysql_database = await mysql_test_connect()
     await mysql_database.mysql_update_settings()
-    await mysql_database.mysql_create_permanent_tables()
     return mysql_database

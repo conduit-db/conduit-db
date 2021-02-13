@@ -30,7 +30,7 @@ if __name__ == "__main__":
 
         await mysql_db.mysql_update_settings()
         await mysql_db.mysql_drop_tables()
-        await mysql_db.mysql_create_permanent_tables()
+        await mysql_db.tables.mysql_create_permanent_tables()
         await mysql_db.mysql_create_temp_inputs_table()
 
         t0 = time.time()

@@ -87,9 +87,9 @@ async def reset_datastore():
         os.chmod(path, stat.S_IWRITE)
         func(path)
 
-    lmdb_path = MODULE_DIR.joinpath('database/lmdb_data')
+    lmdb_path = Path(MODULE_DIR).parent.parent.joinpath('lmdb_data')
     if os.path.exists(lmdb_path):
-        shutil.rmtree(MODULE_DIR.joinpath('database/lmdb_data'), onerror=remove_readonly)
+        shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
 
 async def setup_storage(config, net_config) -> Storage:
