@@ -32,7 +32,7 @@ class LMDB_Database:
 
         # on windows there is a bug where this requires the disc space to be free
         # on linux can set this to a very large number (e.g. 10 terabytes)
-        self._map_size = pow(1024, 3) * 30
+        self._map_size = pow(1024, 3) * 400  # GB for Mainnet
         self._storage_path = storage_path
         self.open()
         # self.logger.debug("opened LMDB database")

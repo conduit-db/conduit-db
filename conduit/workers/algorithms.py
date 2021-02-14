@@ -31,6 +31,7 @@ OP_PUSHDATA2 = 0x4D
 OP_PUSHDATA4 = 0x4E
 
 logger = logging.getLogger("algorithms")
+logger.setLevel(logging.DEBUG)
 
 
 def unpack_varint(buf, offset):
@@ -141,8 +142,8 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str], confirmed: bool
-):
+    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str], confirmed: bool,
+        first_tx_pos_batch=0):
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
@@ -164,16 +165,16 @@ def parse_txs(
     count_txs = len(tx_offsets)
 
     try:
-        # TODO - position is wrong for multiple processes
-        for position in range(count_txs):
+        for i in range(count_txs):
+            tx_pos = i + first_tx_pos_batch  # for multiprocessing need to track position in block
             pks = set()
             pkhs = set()
 
             # tx_hash
-            offset = tx_offsets[position]
+            offset = tx_offsets[i]
             tx_offset_start = offset
-            if position < count_txs - 1:
-                next_tx_offset = tx_offsets[position + 1]
+            if i < count_txs - 1:
+                next_tx_offset = tx_offsets[i + 1]
             else:
                 next_tx_offset = len(buffer)
 
@@ -199,7 +200,7 @@ def parse_txs(
                 in_offset_end = offset
 
                 # some coinbase tx scriptsigs don't obey any rules.
-                if not position == 0:
+                if not tx_pos == 0:
 
                     in_rows.add(
                         (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx,
@@ -252,7 +253,7 @@ def parse_txs(
                     (
                         tx_hash.hex(),
                         height_or_timestamp,
-                        position,
+                        tx_pos,
                         tx_offset_start,
                         next_tx_offset,
                     )
@@ -263,7 +264,7 @@ def parse_txs(
         return tx_rows, in_rows, out_rows, set_pd_rows
     except Exception as e:
         logger.debug(
-            f"count_txs={count_txs}, position={position}, in_idx={in_idx}, out_idx={out_idx}, "
+            f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
             f"txid={hash_to_hex_str(tx_hash)}"
         )
         logger.exception(e)
@@ -337,5 +338,5 @@ def calc_mtree(raw_block, tx_offsets) -> Dict:
         logger.debug(f"base_layer={base_layer_debug}")
 
     build_mtree_from_base(base_level, mtree)
-    logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")
+    # logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")
     return mtree

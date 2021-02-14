@@ -58,26 +58,33 @@ class BlockPreProcessor(multiprocessing.Process):
     def distribute_load_parsing(
         self, blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets
     ) -> List[Tuple[bytes, int, int, List[int]]]:
-        # Todo - add first_tx_pos_of_batch = 0 (i.e. position number in block to go with offset)
-
-        if self.worker_count_tx_parsers == 1:
-            return [(blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets)]
 
         BATCH_COUNT = self.worker_count_tx_parsers
-        BATCH_SIZE = math.ceil(len(tx_offsets)/BATCH_COUNT)
+        BATCH_SIZE = math.floor(len(tx_offsets)/BATCH_COUNT)
+
+        first_tx_pos_batch = 0
+        if BATCH_COUNT == 1 or BATCH_SIZE == 1:
+            return [(blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets,
+                first_tx_pos_batch)]
+
         divided_tx_positions = []
         # if there is only 1 tx in the block the other batches are empty
         for i in range(BATCH_COUNT):
             if i == BATCH_COUNT - 1:  # last batch
-                positions = tx_offsets[i*BATCH_SIZE:]
-                if len(positions):
+                batch_tx_offsets = tx_offsets[i*BATCH_SIZE:]
+                num_txs = len(batch_tx_offsets)
+                if num_txs:
                     divided_tx_positions.extend(
-                        [(blk_hash, blk_height, blk_start_pos, blk_end_pos, positions)])
+                        [(blk_hash, blk_height, blk_start_pos, blk_end_pos, batch_tx_offsets,
+                            first_tx_pos_batch)])
             else:
-                positions = tx_offsets[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-                if len(positions):
+                batch_tx_offsets = tx_offsets[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                num_txs = len(batch_tx_offsets)
+                if num_txs:
                     divided_tx_positions.extend(
-                        [(blk_hash, blk_height, blk_start_pos, blk_end_pos, positions)])
+                        [(blk_hash, blk_height, blk_start_pos, blk_end_pos, batch_tx_offsets,
+                            first_tx_pos_batch)])
+                    first_tx_pos_batch += num_txs
 
         # for index, batch in enumerate(divided_tx_positions):
         #     self.logger.debug(f"index={index} batch={batch}")

@@ -327,7 +327,8 @@ class TxParser(multiprocessing.Process):
                     self.mempool_tx_flush_ack_queue.put( len(tx_offsets) )
 
                 if msg_type == MsgType.MSG_BLOCK:
-                    blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div = item
+                    blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div, \
+                        first_tx_pos_batch = item
                     buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
                     # if in IBD mode, mempool txs are strictly rejected. So there is no point
@@ -341,7 +342,8 @@ class TxParser(multiprocessing.Process):
                     else:
                         unprocessed_tx_offsets = tx_offsets_div
 
-                    result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True)
+                    result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True,
+                        first_tx_pos_batch)
                     tx_rows, in_rows, out_rows, set_pd_rows = result
 
                     self.confirmed_tx_flush_queue.put( (tx_rows, in_rows, out_rows, set_pd_rows) )

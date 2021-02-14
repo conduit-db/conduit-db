@@ -73,10 +73,6 @@ class BitcoinNetIO(BufferedProtocol):
         remainder = self.shm_buffer_view[self._last_msg_end_pos :].tobytes()
         self.shm_buffer_view[0 : len(remainder)] = remainder
 
-        # For debugging only in development
-        fresh_buf_len = self.BUFFER_SIZE - len(remainder)
-        self.shm_buffer_view[len(remainder) : self.BUFFER_SIZE] = b"x" * fresh_buf_len
-
         # new offset for most recent, partially read msg
         self._pos = self._pos - self._last_msg_end_pos
         self._last_msg_end_pos = 0
