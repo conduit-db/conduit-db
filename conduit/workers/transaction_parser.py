@@ -150,8 +150,6 @@ class TxParser(multiprocessing.Process):
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
             set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, ):
         with self.flush_lock:
-            self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
-            self.mysql_db.start_transaction()
             try:
                 if confirmed:
                     self.mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
@@ -180,9 +178,6 @@ class TxParser(multiprocessing.Process):
             except _mysql.IntegrityError as e:
                 self.logger.exception(f"IntegrityError: {e}")
                 raise
-            finally:
-                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
-                self.mysql_db.commit_transaction()
 
     def mysql_insert_confirmed_tx_rows_thread(self):
         self.mysql_db: MySQLDatabase = mysql_connect()

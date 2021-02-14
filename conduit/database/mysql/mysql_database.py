@@ -56,6 +56,11 @@ class MySQLDatabase:
             """COMMIT;"""
         )
 
+    def rollback_transaction(self):
+        self.mysql_conn.query(
+            """ROLLBACK;"""
+        )
+
     # TABLES
     def mysql_drop_tables(self):
         self.tables.mysql_drop_tables()

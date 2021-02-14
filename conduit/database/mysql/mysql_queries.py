@@ -130,6 +130,8 @@ class MySQLQueries:
         return
 
     def mysql_get_txids_above_last_good_height(self, last_good_height: int):
+        """This query will do a full table scan and so will not scale - instead would need to
+        pull txids by blockhash from merkleproof to get the set of txids..."""
         assert isinstance(last_good_height, int)
         query = f"""
             SELECT tx_hash 
@@ -165,7 +167,6 @@ class MySQLQueries:
                 stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
                     batched_unsafe_txs])
 
-                # TODO - BINARY tx_hash NOW NOT integer tx_shash - will fail
                 query = f"""
                     DELETE FROM confirmed_transactions
                     WHERE tx_hash in ({stringified_tx_hashes})"""
@@ -178,3 +179,35 @@ class MySQLQueries:
             f"{len(unsafe_tx_rows)}"
         )
         self.logger.debug(f"Successfully completed database repair")
+
+    def mysql_get_duplicate_tx_hashes(self, tx_rows):
+        """Todo(rollback) - Probably need to rollback the corresponding pushdata and io table
+            entries too."""
+        candidate_tx_hashes = [(row[0],) for row in tx_rows]
+
+        t0 = time.time()
+        BATCH_SIZE = 2000
+        BATCHES_COUNT = math.ceil(len(candidate_tx_hashes)/BATCH_SIZE)
+        results = []
+        for i in range(BATCHES_COUNT):
+            if i == BATCHES_COUNT - 1:
+                batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:]
+            else:
+                batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+            stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
+                batched_unsafe_txs])
+
+            query = f"""
+                SELECT * FROM confirmed_transactions
+                WHERE tx_hash in ({stringified_tx_hashes})"""
+            self.mysql_conn.query(query)
+            self.logger.debug(f"!!!!!!!!!! query={query}")
+            result = self.mysql_conn.store_result()
+            for row in result.fetch_row(0):
+                results.append(row)
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for "
+            f"{len(candidate_tx_hashes)}"
+        )
+        return results
