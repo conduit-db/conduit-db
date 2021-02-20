@@ -17,14 +17,19 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 class MySQLBulkLoads:
 
     def __init__(self, mysql_conn: _mysql.connection, mysql_db):
-        self.logger = logging.getLogger("mysql-tables")
-        self.mysql_conn = mysql_conn
         self.mysql_db = mysql_db
+        self.worker_id = self.mysql_db.worker_id
+        if self.worker_id:
+            self.logger = logging.getLogger(f"mysql-tables-{self.worker_id}")
+        else:
+            self.logger = logging.getLogger(f"mysql-tables")
+        self.mysql_conn = mysql_conn
         self.logger.setLevel(PROFILING)
+        self.total_db_time = 0
 
     def set_rocks_db_bulk_load_on(self):
         settings = f"""SET session sql_log_bin=0;
-            SET global rocksdb_bulk_load_allow_unsorted=1;
+            SET global rocksdb_bulk_load_allow_unsorted=0;
             SET global rocksdb_bulk_load=1;"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
@@ -38,11 +43,14 @@ class MySQLBulkLoads:
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int], have_retried=False):
 
+        t0 = time.time()
+
         MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
         outfile = Path(MODULE_DIR).parent.parent.parent.parent / "temp_files" / \
                   (str(uuid.uuid4()) + ".csv")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:
+            string_rows.sort()
             with open(outfile, 'w') as csvfile:
                 csvfile.writelines(string_rows)
 
@@ -79,6 +87,9 @@ class MySQLBulkLoads:
             if os.path.exists(outfile):
                 os.remove(outfile)
             self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
+            t1 = time.time() - t0
+            self.total_db_time += t1
+            self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
 
     def handle_coinbase_dup_tx_hash(self, tx_rows):
         time.sleep(5)  # wait for other processes to flush fully so that rows are queriable
@@ -96,15 +107,15 @@ class MySQLBulkLoads:
         dup_rows = self.mysql_db.queries.mysql_get_duplicate_tx_hashes(tx_rows)
         pop_indices = []
 
-        self.logger.debug(f"dup_rows={dup_rows}")
+        self.logger.info(f"duplicate rows={dup_rows}")
         for i, row in enumerate(dup_rows):
             tx_hash = dup_rows[i][0]
             for j, row in enumerate(tx_rows):
                 txid = tx_hash.hex()
-                self.logger.debug(f"txid={txid}")
+                self.logger.debug(f"duplicate txid={txid}")
                 self.logger.debug(f"row[0]={row[0]}")
                 if txid == row[0]:
-                    self.logger.debug(f"MATCH for {txid}")
+                    self.logger.info(f"MATCH for {txid}")
                     pop_indices.append(j)
 
         for i in pop_indices:
@@ -168,9 +179,6 @@ class MySQLBulkLoads:
         )
 
     def mysql_bulk_load_input_rows(self, in_rows):
-        # Todo - check for collisions in TxParser then:
-        #  1) bulk copy to temp table
-        #  2) update io table from temp table (no table joins needed)
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:

@@ -3,12 +3,14 @@ import logging
 import multiprocessing
 import queue
 import threading
+import time
 from datetime import datetime
 from multiprocessing import shared_memory
 from typing import Tuple, List, Sequence, Optional
 
 from MySQLdb import _mysql
 
+from .profiler import cumulative_profiler
 from ..constants import MsgType
 from ..database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from ..logging_client import setup_tcp_logging
@@ -64,10 +66,17 @@ class TxParser(multiprocessing.Process):
         self.mempool_batched_mempool_tx_acks = []
 
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
+        # TODO - during initial block download - should NOT rely on a timeout at all
+        #  Should just keep on pumping the entire batch of blocks as fast as possible to
+        #  Max out CPU. In order to do that need to have a way of knowing when we are onto
+        #  The last few blocks and to no wait around for a "full batch to flush".
         self.CONFIRMED_MAX_TX_BATCH_SIZE = 50000
         self.CONFIRMED_BATCHED_MAX_WAIT_TIME = 0.3
         self.MEMPOOL_MAX_TX_BATCH_SIZE = 2000
         self.MEMPOOL_BATCHED_MAX_WAIT_TIME = 0.1
+
+        self.total_tx_parse_time = 0
+        self.last_time = 0
 
     def run(self):
         self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
@@ -299,7 +308,9 @@ class TxParser(multiprocessing.Process):
             raise
 
     def main_thread(self):
-        while True:
+
+        @cumulative_profiler
+        def iter():
             try:
                 msg_type, item = self.worker_in_queue_tx_parse.get()
                 if not item:
@@ -337,9 +348,16 @@ class TxParser(multiprocessing.Process):
                     else:
                         unprocessed_tx_offsets = tx_offsets_div
 
+                    t0 = time.time()
                     result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True,
                         first_tx_pos_batch)
                     tx_rows, in_rows, out_rows, set_pd_rows = result
+                    t1 = time.time() - t0
+                    self.total_tx_parse_time += t1
+                    if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
+                        self.last_time = self.total_tx_parse_time
+                        self.logger.debug(f"total time for tx parsing algorithm: "
+                                          f"{self.total_tx_parse_time} seconds")
 
                     self.confirmed_tx_flush_queue.put( (tx_rows, in_rows, out_rows, set_pd_rows) )
                     self.confirmed_tx_flush_ack_queue.put( (blk_hash, len(tx_offsets_div)) )
@@ -349,3 +367,6 @@ class TxParser(multiprocessing.Process):
             except Exception as e:
                 self.logger.exception(e)
                 raise
+
+        while True:
+            iter()

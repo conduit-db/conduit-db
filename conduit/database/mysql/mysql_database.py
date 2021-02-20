@@ -13,8 +13,9 @@ from ...constants import PROFILING
 
 class MySQLDatabase:
 
-    def __init__(self, mysql_conn: _mysql.connection):
+    def __init__(self, mysql_conn: _mysql.connection, worker_id=None):
         self.mysql_conn = mysql_conn
+        self.worker_id = worker_id
         self.tables = MySQLTables(self.mysql_conn)
         self.bulk_loads = MySQLBulkLoads(self.mysql_conn, self)
         self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
@@ -30,6 +31,7 @@ class MySQLDatabase:
         self.logger.setLevel(PROFILING)
 
     def set_myrocks_settings(self):
+        # SET global rocksdb_max_subcompactions=8
         settings = f"""SET session rocksdb_max_row_locks={100_000_000};
             SET global rocksdb_write_disable_wal=0;
             SET global rocksdb_wal_recovery_mode=0;
@@ -110,7 +112,7 @@ class MySQLDatabase:
         self.bulk_loads.mysql_bulk_load_pushdata_rows(pd_rows)
 
 
-def mysql_connect() -> MySQLDatabase:
+def mysql_connect(worker_id=None) -> MySQLDatabase:
     conn = _mysql.connect(
         host="127.0.0.1",
         port=3306,
@@ -118,7 +120,7 @@ def mysql_connect() -> MySQLDatabase:
         passwd="conduitpass",
         db="conduitdb",
     )
-    return MySQLDatabase(conn)
+    return MySQLDatabase(conn, worker_id=worker_id)
 
 
 def mysql_test_connect() -> MySQLDatabase:
@@ -141,5 +143,4 @@ def load_mysql_database() -> MySQLDatabase:
 
 def load_test_mysql_database() -> MySQLDatabase:
     mysql_database = mysql_test_connect()
-    mysql_database.mysql_update_settings()
     return mysql_database

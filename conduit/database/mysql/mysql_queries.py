@@ -181,8 +181,6 @@ class MySQLQueries:
         self.logger.debug(f"Successfully completed database repair")
 
     def mysql_get_duplicate_tx_hashes(self, tx_rows):
-        """Todo(rollback) - Probably need to rollback the corresponding pushdata and io table
-            entries too."""
         candidate_tx_hashes = [(row[0],) for row in tx_rows]
 
         t0 = time.time()
@@ -201,7 +199,6 @@ class MySQLQueries:
                 SELECT * FROM confirmed_transactions
                 WHERE tx_hash in ({stringified_tx_hashes})"""
             self.mysql_conn.query(query)
-            self.logger.debug(f"!!!!!!!!!! query={query}")
             result = self.mysql_conn.store_result()
             for row in result.fetch_row(0):
                 results.append(row)

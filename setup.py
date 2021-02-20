@@ -5,7 +5,9 @@ import pathlib
 
 """
 To compile cython module:
-> py -3.8-64 setup.py build_ext --inplace
+> py -3.9-64 setup.py build_ext --inplace --build-lib .\conduit\workers
+
+Ensure you use the corresponding version of python otherwise it won't work
 """
 
 Options.annotate = True
@@ -61,7 +63,7 @@ setup(
     install_requires=[],
     extras_require={},
     tests_require=['pytest'],
-    ext_modules=cythonize("conduit/_algorithms.pyx"),
+    ext_modules=cythonize("conduit/workers/_algorithms.pyx"),
     zip_safe=False,
     packages=find_packages(),
 )
