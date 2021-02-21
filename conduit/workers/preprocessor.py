@@ -100,8 +100,11 @@ class BlockPreProcessor(multiprocessing.Process):
                 # write offsets into shared memory integer array and track current idx of array
                 # block_offset=0 because preprocessing is so fast it doesn't need to be run in
                 # parallel. It's also kind of complicated to actually do correctly
-                count_added = preprocessor(bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
-                    self.tx_offsets_array, block_offset=0)
+                count_added, _tx_offsets_array = preprocessor(
+                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
+                    self.tx_offsets_array,
+                    block_offset=0
+                )
 
                 divided_parsing_work = self.distribute_load_parsing(
                     blk_hash, blk_height, blk_start_pos, blk_end_pos, count_added

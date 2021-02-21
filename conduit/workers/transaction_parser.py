@@ -13,7 +13,6 @@ from typing import Tuple, List, Sequence, Optional
 import zmq
 from MySQLdb import _mysql
 
-from .profiler import cumulative_profiler
 from ..constants import MsgType
 from ..database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from ..logging_client import setup_tcp_logging
@@ -168,7 +167,6 @@ class TxParser(multiprocessing.Process):
         self.mysql_db.mysql_bulk_load_input_rows(in_rows)
         self.mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
 
-    # @cumulative_profiler
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
             set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, ):
         with self.flush_lock:
@@ -395,7 +393,7 @@ class TxParser(multiprocessing.Process):
 
                 num_txs = len(tx_offsets_partition)
                 self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-                self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
+                # self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
                 self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
             except Exception as e:
                 self.logger.exception(e)

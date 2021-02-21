@@ -12,3 +12,4 @@ tests/logs/*
 *.html*
 *.log
 *.mdb
+profile.svg

@@ -20,13 +20,8 @@ from .workers.raw_blocks import BlockWriter
 from .store import setup_storage
 from .commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL
 from .handlers import Handlers
-from .constants import (
-    ZERO_HASH,
-    WORKER_COUNT_PREPROCESSORS,
-    WORKER_COUNT_TX_PARSERS,
-    WORKER_COUNT_MTREE_CALCULATORS,
-    WORKER_COUNT_BLK_WRITER,
-)
+from .constants import (ZERO_HASH, WORKER_COUNT_PREPROCESSORS, WORKER_COUNT_TX_PARSERS,
+    WORKER_COUNT_MTREE_CALCULATORS, WORKER_COUNT_BLK_WRITER, )
 from .deserializer import Deserializer
 from .networks import NetworkConfig
 from .peers import Peer
@@ -342,13 +337,14 @@ class Controller:
             try:
                 # This queue should transition to a multiprocessing queue
                 block_hash, txs_done_count = self.worker_ack_queue_tx_parse_confirmed.get()
-                self.logger.debug(f"getting from ack queue... blk_hash={block_hash}, num_txs"
-                                  f"={txs_done_count}")
                 try:
                     self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
                 except KeyError:
+                    self.logger.debug(f"getting from ack queue... blk_hash={block_hash}, num_txs"
+                                      f"={txs_done_count}")
                     self.logger.debug(f"self.sync_state._pending_blocks_progress_counter="
                                       f"{self.sync_state._pending_blocks_progress_counter}")
+                    raise
 
                 header = self.get_header_for_hash(block_hash)
                 self.logger.debug(f"block height={header.height} done!")
@@ -513,6 +509,7 @@ class Controller:
                     GETBLOCKS,
                     self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop),
                 )
+                # This might be very slow
                 await self.sync_batched_blocks(batch_id, blocks_batch_set, stop_header_height)
                 # ------------------------- Batch complete ------------------------- #
 

@@ -44,6 +44,8 @@ class BitcoinNetIO(BufferedProtocol):
         self.on_connection_made_callback = on_connection_made
         self.on_connection_lost_callback = on_connection_lost
 
+        self.profiling_count = 0
+
     # Two states: 'resumed' & 'paused'
     def resume(self):
         self.logger.debug("resuming reading...")
@@ -113,6 +115,7 @@ class BitcoinNetIO(BufferedProtocol):
         return [(cur_msg_start_pos, cur_msg_end_pos)]
 
     def buffer_updated(self, nbytes):
+
         self._pos += nbytes
 
         while self.is_next_header_available():

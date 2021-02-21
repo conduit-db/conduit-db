@@ -78,7 +78,7 @@ def preprocessor(block_view: bytes, tx_offsets_array: array.array, block_offset:
             # lock_time
             block_offset += 4
             tx_offsets_array[cur_shm_idx], cur_shm_idx = block_offset, cur_shm_idx + 1
-        return count
+        return count, tx_offsets_array
     except IndexError:
         logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
                      f"count of txs in block={count}")
@@ -149,8 +149,8 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str], confirmed: bool,
-        first_tx_pos_batch=0):
+    buffer: bytes, tx_offsets: array.array, height_or_timestamp: Union[int, str],
+        confirmed: bool, first_tx_pos_batch=0):
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
