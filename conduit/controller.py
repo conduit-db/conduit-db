@@ -4,6 +4,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from asyncio import BufferedProtocol
 import bitcoinx
+import zmq
 from bitcoinx import hex_str_to_hash, MissingHeader
 import logging
 from typing import Optional, List, Dict
@@ -69,7 +70,11 @@ class Controller:
 
         # Worker queues & events
         self.worker_in_queue_preproc = multiprocessing.Queue()  # no ack needed
-        self.worker_in_queue_tx_parse = multiprocessing.Queue()
+
+        context = zmq.Context()
+        self.mempool_tx_socket = context.socket(zmq.PUSH)
+        self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")
+
         self.worker_in_queue_mtree = multiprocessing.Queue()
         self.worker_in_queue_blk_writer = multiprocessing.Queue()
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
@@ -130,6 +135,7 @@ class Controller:
             if self.transport:
                 self.transport.close()
             self.storage.close()
+            self.mempool_tx_socket.close()
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -189,7 +195,6 @@ class Controller:
                 WORKER_COUNT_TX_PARSERS,
                 self.shm_buffer.name,
                 self.worker_in_queue_preproc,
-                self.worker_in_queue_tx_parse,
                 self.worker_in_queue_mtree,
             )
             p.start()
@@ -198,7 +203,6 @@ class Controller:
             p = TxParser(
                 worker_id+1,
                 self.shm_buffer.name,
-                self.worker_in_queue_tx_parse,
                 self.worker_ack_queue_tx_parse_confirmed,
                 self.sync_state.initial_block_download_event_mp,
                 self.worker_ack_queue_mined_tx_hashes,
@@ -338,7 +342,13 @@ class Controller:
             try:
                 # This queue should transition to a multiprocessing queue
                 block_hash, txs_done_count = self.worker_ack_queue_tx_parse_confirmed.get()
-                self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
+                self.logger.debug(f"getting from ack queue... blk_hash={block_hash}, num_txs"
+                                  f"={txs_done_count}")
+                try:
+                    self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
+                except KeyError:
+                    self.logger.debug(f"self.sync_state._pending_blocks_progress_counter="
+                                      f"{self.sync_state._pending_blocks_progress_counter}")
 
                 header = self.get_header_for_hash(block_hash)
                 self.logger.debug(f"block height={header.height} done!")

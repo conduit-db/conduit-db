@@ -1,13 +1,16 @@
+import array
 import logging.handlers
 import logging
 import multiprocessing
 import queue
+import struct
 import threading
 import time
 from datetime import datetime
 from multiprocessing import shared_memory
 from typing import Tuple, List, Sequence, Optional
 
+import zmq
 from MySQLdb import _mysql
 
 from .profiler import cumulative_profiler
@@ -29,7 +32,6 @@ class TxParser(multiprocessing.Process):
         self,
         worker_id,
         shm_name,
-        worker_in_queue_tx_parse,
         worker_ack_queue_tx_parse_confirmed,
         initial_block_download_event_mp,
         worker_ack_queue_mined_tx_hashes,
@@ -37,7 +39,7 @@ class TxParser(multiprocessing.Process):
         super(TxParser, self).__init__()
         self.worker_id = worker_id
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
-        self.worker_in_queue_tx_parse = worker_in_queue_tx_parse
+
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
         self.initial_block_download_event_mp = initial_block_download_event_mp
@@ -79,6 +81,16 @@ class TxParser(multiprocessing.Process):
         self.last_time = 0
 
     def run(self):
+        # IPC from Preprocessor to TxParser
+        context1 = zmq.Context()
+        self.mined_tx_socket = context1.socket(zmq.PULL)
+        self.mined_tx_socket.connect("tcp://127.0.0.1:55555")
+
+        # IPC from Controller to TxParser
+        context2 = zmq.Context()
+        self.mempool_tx_socket = context2.socket(zmq.PULL)
+        self.mempool_tx_socket.connect("tcp://127.0.0.1:55556")
+
         self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
         setup_tcp_logging()
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
@@ -156,6 +168,7 @@ class TxParser(multiprocessing.Process):
         self.mysql_db.mysql_bulk_load_input_rows(in_rows)
         self.mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
 
+    # @cumulative_profiler
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
             set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, ):
         with self.flush_lock:
@@ -179,6 +192,8 @@ class TxParser(multiprocessing.Process):
                 else:
                     self.mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                    # Todo - drain - self.mempool_batched_mempool_tx_acks when done and send to
+                    #  controller
                     # for tx_count in acks:
                     # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
 
@@ -307,66 +322,100 @@ class TxParser(multiprocessing.Process):
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
             raise
 
-    def main_thread(self):
-
-        @cumulative_profiler
-        def iter():
+    def mempool_thread(self):
+        def iterate():
             try:
-                msg_type, item = self.worker_in_queue_tx_parse.get()
-                if not item:
+                message = self.mempool_tx_socket.recv()
+                if not message:
                     return  # poison pill stop command
 
-                if msg_type == MsgType.MSG_TX:
-                    tx_offsets = item
+                msg_type, len_array = struct.unpack_from("<II", message)
+                msg_type, len_array, packed_array = struct.unpack(f"<II{len_array}s", message)
+                unpacked_array = array.array("Q", packed_array)
 
-                    # Todo only does 1 mempool tx at a time at present
-                    for tx_start_pos, tx_end_pos in tx_offsets:
-                        buffer = bytes(self.shm.buf[tx_start_pos:tx_end_pos])
+                # Todo only does 1 mempool tx at a time at present
+                for i in range(0, len(unpacked_array) - 1, step=2):
+                    buffer = bytes(self.shm.buf[i:i + 1])  # [cur_msg_start_pos: cur_msg_end_pos]
 
-                    dt = datetime.utcnow()
-                    timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    result = parse_txs(buffer, [0], timestamp, False)
-                    tx_rows, in_rows, out_rows, set_pd_rows = result
+                dt = datetime.utcnow()
+                timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+                result = parse_txs(buffer, [0], timestamp, False)
+                tx_rows, in_rows, out_rows, set_pd_rows = result
 
-                    # todo - batch up mempool txs before feeding them into the queue.
-                    self.mempool_tx_flush_queue.put( (tx_rows, in_rows, out_rows, set_pd_rows) )
-                    self.mempool_tx_flush_ack_queue.put( len(tx_offsets) )
-
-                if msg_type == MsgType.MSG_BLOCK:
-                    blk_hash, blk_height, blk_start_pos, blk_end_pos, tx_offsets_div, \
-                        first_tx_pos_batch = item
-                    buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
-
-                    # if in IBD mode, mempool txs are strictly rejected. So there is no point
-                    # in sorting out which txs are already in the mempool tx table.
-                    # There is also no point performing mempool tx invalidation.
-                    if self.initial_block_download_event_mp.is_set():
-                        self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_div,
-                                blk_height)
-                        item = self.processed_vs_unprocessed_queue.get()
-                        unprocessed_tx_offsets, processed_tx_offsets = item
-                    else:
-                        unprocessed_tx_offsets = tx_offsets_div
-
-                    t0 = time.time()
-                    result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True,
-                        first_tx_pos_batch)
-                    tx_rows, in_rows, out_rows, set_pd_rows = result
-                    t1 = time.time() - t0
-                    self.total_tx_parse_time += t1
-                    if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
-                        self.last_time = self.total_tx_parse_time
-                        self.logger.debug(f"total time for tx parsing algorithm: "
-                                          f"{self.total_tx_parse_time} seconds")
-
-                    self.confirmed_tx_flush_queue.put( (tx_rows, in_rows, out_rows, set_pd_rows) )
-                    self.confirmed_tx_flush_ack_queue.put( (blk_hash, len(tx_offsets_div)) )
-
-                # print(f"parsed rows: len(tx_rows)={len(tx_rows)}, len(in_rows)={len(in_rows)}, "
-                #       f"len(out_rows)={len(out_rows)}")
+                # todo - batch up mempool txs before feeding them into the queue.
+                self.mempool_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
+                self.mempool_tx_flush_ack_queue.put(len(unpacked_array))
             except Exception as e:
                 self.logger.exception(e)
                 raise
 
         while True:
-            iter()
+            iterate()
+
+    def mined_blocks_thread(self):
+
+        def iterate():
+            try:
+                message = self.mined_tx_socket.recv()
+                if not message:
+                    return  # poison pill stop command
+
+                # self.logger.debug(f"message={message}, len(message)={len(message)}")
+
+                msg_type, size_array = struct.unpack_from("<II", message)  # get size_array
+                msg_type, size_array, blk_hash, blk_height, blk_start_pos, blk_end_pos, \
+                    packed_array, first_tx_pos_batch = struct.unpack(f"<II32sQQI{size_array}sI",
+                    message)
+
+                tx_offsets_partition = array.array("Q", packed_array)
+                buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
+
+                # if in IBD mode, mempool txs are strictly rejected. So there is no point
+                # in sorting out which txs are already in the mempool tx table.
+                # There is also no point performing mempool tx invalidation.
+                if self.initial_block_download_event_mp.is_set():
+                    self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
+                        blk_height)
+                    item = self.processed_vs_unprocessed_queue.get()
+                    unprocessed_tx_offsets, processed_tx_offsets = item
+                else:
+                    unprocessed_tx_offsets = tx_offsets_partition
+
+                t0 = time.time()
+                # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
+                result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True,
+                    first_tx_pos_batch)
+                tx_rows, in_rows, out_rows, set_pd_rows = result
+                t1 = time.time() - t0
+                self.total_tx_parse_time += t1
+                if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
+                    self.last_time = self.total_tx_parse_time
+                    self.logger.debug(f"total time for tx parsing algorithm: "
+                                      f"{self.total_tx_parse_time} seconds")
+
+                num_txs = len(tx_offsets_partition)
+                self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
+                self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
+                self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
+            except Exception as e:
+                self.logger.exception(e)
+                raise
+
+        while True:
+            iterate()
+
+    def main_thread(self):
+        try:
+            threads = [
+                threading.Thread(target=self.mempool_thread, daemon=True),
+                threading.Thread(target=self.mined_blocks_thread, daemon=True)
+            ]
+            for t in threads:
+                t.start()
+
+            for t in threads:
+                t.join()
+        finally:
+            self.mined_tx_socket.close()
+            self.mempool_tx_socket.close()
+

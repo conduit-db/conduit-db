@@ -26,19 +26,24 @@ class MySQLBulkLoads:
         self.mysql_conn = mysql_conn
         self.logger.setLevel(PROFILING)
         self.total_db_time = 0
+        self.total_rows_flushed_since_startup = 0  # for current session
 
     def set_rocks_db_bulk_load_on(self):
+        self.mysql_db.start_transaction()
         settings = f"""SET session sql_log_bin=0;
             SET global rocksdb_bulk_load_allow_unsorted=0;
             SET global rocksdb_bulk_load=1;"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
+        self.mysql_db.commit_transaction()
 
     def set_rocks_db_bulk_load_off(self):
+        self.mysql_db.start_transaction()
         settings = f"""SET global rocksdb_bulk_load=0;
             SET global rocksdb_bulk_load_allow_unsorted=0;"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
+        self.mysql_db.commit_transaction()
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int], have_retried=False):
@@ -89,7 +94,10 @@ class MySQLBulkLoads:
             self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
             t1 = time.time() - t0
             self.total_db_time += t1
+            self.total_rows_flushed_since_startup += len(string_rows)
             self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
+            self.logger.log(PROFILING, f"total rows flushed since startup"
+                f"={self.total_rows_flushed_since_startup}")
 
     def handle_coinbase_dup_tx_hash(self, tx_rows):
         time.sleep(5)  # wait for other processes to flush fully so that rows are queriable

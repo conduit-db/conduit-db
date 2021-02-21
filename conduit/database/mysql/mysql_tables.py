@@ -80,7 +80,7 @@ class MySQLTables:
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
-        # offset is relative to start of rawtx
+        # block_offset is relative to start of rawtx
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS txo_table (
                 out_tx_hash BINARY(32),
@@ -95,7 +95,7 @@ class MySQLTables:
             CREATE INDEX IF NOT EXISTS io_idx ON txo_table (out_tx_hash, out_idx);
             """)
 
-        # offset is relative to start of rawtx
+        # block_offset is relative to start of rawtx
         # this table may look wasteful (due to repetition of the out_tx_hash but the
         # write throughput advantage is considerable (as it avoids the random io burden of
         # updating each row of the combined inputs and outputs table one at a time...)

@@ -1,4 +1,5 @@
 """slower pure python alternative"""
+import array
 import logging
 import struct
 from datetime import datetime
@@ -48,35 +49,41 @@ def unpack_varint(buf, offset):
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view, offset=0):
-    offset += HEADER_OFFSET
-    count, offset = unpack_varint(block_view, offset)
+def preprocessor(block_view: bytes, tx_offsets_array: array.array, block_offset: int=0):
+    block_offset += HEADER_OFFSET
+    count, block_offset = unpack_varint(block_view, block_offset)
+    cur_idx = 0
 
-    tx_positions = []  # start byte pos of each tx in the block
-    tx_positions.append(offset)
-    for i in range(count - 1):
-        # version
-        offset += 4
+    try:
+        tx_offsets_array[cur_idx], cur_shm_idx = block_offset, cur_idx + 1
+        for i in range(count - 1):
+            # version
+            block_offset += 4
 
-        # tx_in block
-        count_tx_in, offset = unpack_varint(block_view, offset)
-        for i in range(count_tx_in):
-            offset += 36  # prev_hash + prev_idx
-            script_sig_len, offset = unpack_varint(block_view, offset)
-            offset += script_sig_len
-            offset += 4  # sequence
+            # tx_in block
+            count_tx_in, block_offset = unpack_varint(block_view, block_offset)
+            for i in range(count_tx_in):
+                block_offset += 36  # prev_hash + prev_idx
+                script_sig_len, block_offset = unpack_varint(block_view, block_offset)
+                block_offset += script_sig_len
+                block_offset += 4  # sequence
 
-        # tx_out block
-        count_tx_out, offset = unpack_varint(block_view, offset)
-        for i in range(count_tx_out):
-            offset += 8  # value
-            script_pubkey_len, offset = unpack_varint(block_view, offset)  # script_pubkey
-            offset += script_pubkey_len  # script_sig
+            # tx_out block
+            count_tx_out, block_offset = unpack_varint(block_view, block_offset)
+            for i in range(count_tx_out):
+                block_offset += 8  # value
+                script_pubkey_len, block_offset = unpack_varint(block_view, block_offset)  # script_pubkey
+                block_offset += script_pubkey_len  # script_sig
 
-        # lock_time
-        offset += 4
-        tx_positions.append(offset)
-    return tx_positions
+            # lock_time
+            block_offset += 4
+            tx_offsets_array[cur_shm_idx], cur_shm_idx = block_offset, cur_shm_idx + 1
+        return count
+    except IndexError:
+        logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
+                     f"count of txs in block={count}")
+        logger.exception(f"cur_idx={cur_idx}; tx_offsets_array={tx_offsets_array}; "
+            f"block_offset={block_offset}")
 
 
 # -------------------- PARSE BLOCK TXS -------------------- #

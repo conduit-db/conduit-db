@@ -27,7 +27,7 @@ class BitcoinNetIO(BufferedProtocol):
     """
 
     logger = logging.getLogger("bitcoin-framer")
-    HIGH_WATER = 1024 * 1024 * 256
+    HIGH_WATER = 1024 * 1024 * 128
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
     BUFFER_SIZE = HIGH_WATER + BUFFER_OVERFLOW_SIZE
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)
@@ -73,7 +73,7 @@ class BitcoinNetIO(BufferedProtocol):
         remainder = self.shm_buffer_view[self._last_msg_end_pos :].tobytes()
         self.shm_buffer_view[0 : len(remainder)] = remainder
 
-        # new offset for most recent, partially read msg
+        # new block_offset for most recent, partially read msg
         self._pos = self._pos - self._last_msg_end_pos
         self._last_msg_end_pos = 0
 

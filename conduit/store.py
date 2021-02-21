@@ -60,12 +60,13 @@ def setup_headers_store(net_config, mmap_filename):
 async def reset_datastore():
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
-    headers_path = MODULE_DIR.parent.joinpath('headers.mmap')
-    if os.path.exists(headers_path):
-        with open(headers_path, 'w+') as f:
-            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
-            mm.seek(0)
-            mm.write(b'\00' * mm.size())
+    # TODO - put this back!
+    # headers_path = MODULE_DIR.parent.joinpath('headers.mmap')
+    # if os.path.exists(headers_path):
+    #     with open(headers_path, 'w+') as f:
+    #         mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+    #         mm.seek(0)
+    #         mm.write(b'\00' * mm.size())
 
     # remove block headers - memory-mapped so need to do it this way to free memory immediately...
     block_headers_path = MODULE_DIR.parent.joinpath('block_headers.mmap')

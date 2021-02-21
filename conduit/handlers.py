@@ -1,5 +1,8 @@
+import array
 import io
+from itertools import chain
 import logging
+import struct
 from typing import Tuple, List
 
 import bitcoinx
@@ -73,7 +76,7 @@ class Handlers:
         This could be optimized by staying in bytes. No need to convert the inv_type
         to int to categorise it - rather just match to corresponding byte string.
         payload_len/36 == count and the index in bytearray of each hash is just every 36th byte
-        with an offset of 4."""
+        with an block_offset of 4."""
         inv_vects = self.session.deserializer.inv(io.BytesIO(message))
 
         def have_header(inv_vect) -> bool:
@@ -111,8 +114,18 @@ class Handlers:
     # ----- Special case messages ----- #
 
     async def on_tx(self, special_message: List[Tuple[int, int]]):
-        msg_type = MsgType.MSG_TX
-        self.session.worker_in_queue_tx_parse.put((msg_type, special_message))
+        # TODO - push packed binary message for ZMQ
+        # message is: [(cur_msg_start_pos, cur_msg_end_pos)]  - see bitcoin_net_io
+        len_array = len(special_message) * 8 * 2  # unsigned long long = 8 bytes * 2 integer tuple
+        flattened_list_of_tuples = list(chain.from_iterable(special_message))
+        packed_array = array.array("Q", flattened_list_of_tuples)
+        packed_message = struct.pack(f"<II{len_array}s", MsgType.MSG_TX, len_array,
+            packed_array.tobytes())
+        # Todo - check this is correct
+        # logger.debug(f"flattened_list_of_tuples={flattened_list_of_tuples}")
+        # logger.debug(f"packed_array={packed_array}")
+        # logger.debug(f"packed_message={packed_message}")
+        self.session.mempool_tx_socket.send(packed_message)
         self.session.sync_state.incr_msg_handled_count()
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):

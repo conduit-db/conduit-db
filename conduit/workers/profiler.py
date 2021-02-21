@@ -2,7 +2,7 @@ import cProfile, pstats
 import logging
 from typing import Union, List, Callable, Optional, Tuple, Any
 
-DEFAULT_AMOUNT = 500
+DEFAULT_AMOUNT = 20
 
 
 logger = logging.getLogger("profiler")
@@ -27,7 +27,7 @@ class ProfileFunc:
 
 
 def cumulative_profiler(amount_of_times: Optional[Union[Callable, int]] = DEFAULT_AMOUNT,
-                        sort_stats_by: str='cumtime') -> Callable:
+                        sort_stats_by: str='tottime') -> Callable:
 
     def real_decorator(func: Callable):
         def wrapper(*args, **kwargs):
