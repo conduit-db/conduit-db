@@ -1,7 +1,11 @@
 import logging
 import multiprocessing
+import sys
+import threading
 import time
 from multiprocessing import shared_memory
+
+import zmq
 
 from conduit.database.lmdb_database import LMDB_Database
 from conduit.logging_client import setup_tcp_logging
@@ -35,6 +39,15 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
 
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
+        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
+
+        t1 = threading.Thread(target=self.kill_thread, daemon=True)
+        t1.start()
+
         lmdb_db = LMDB_Database()
         while True:
             try:
@@ -51,6 +64,20 @@ class MTreeCalculator(multiprocessing.Process):
                 # logger.debug(f"full mtree calculation took {t1} seconds")
                 # Todo - add batching to this like the other workers.
 
+                # Todo - NOTHING PULLS FROM THIS YET!
                 self.worker_ack_queue_mtree.put(blk_hash)
+            except Exception as e:
+                self.logger.exception(e)
+
+    def kill_thread(self):
+        while True:
+            try:
+                message = self.kill_worker_socket.recv()
+                if message == b"stop_signal":
+                    self.shm.close()
+                    self.logger.info(f"Process Stopped")
+                    break
+                time.sleep(0.2)
+
             except Exception as e:
                 self.logger.exception(e)

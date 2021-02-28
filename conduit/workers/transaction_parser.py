@@ -4,16 +4,18 @@ import logging
 import multiprocessing
 import queue
 import struct
+import sys
 import threading
 import time
 from datetime import datetime
 from multiprocessing import shared_memory
+
+from bitcoinx import hash_to_hex_str
 from typing import Tuple, List, Sequence, Optional
 
 import zmq
 from MySQLdb import _mysql
 
-from ..constants import MsgType
 from ..database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from ..logging_client import setup_tcp_logging
 from .algorithms import calc_mtree_base_level, parse_txs
@@ -90,6 +92,12 @@ class TxParser(multiprocessing.Process):
         self.mempool_tx_socket = context2.socket(zmq.PULL)
         self.mempool_tx_socket.connect("tcp://127.0.0.1:55556")
 
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
+        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
+
         self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
         setup_tcp_logging()
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
@@ -102,7 +110,7 @@ class TxParser(multiprocessing.Process):
         self.mempool_tx_flush_ack_queue = queue.Queue()
         self.processed_vs_unprocessed_queue = queue.Queue()
         try:
-            main_thread = threading.Thread(target=self.main_thread)
+            main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
 
             self.start_flush_threads()
@@ -113,8 +121,8 @@ class TxParser(multiprocessing.Process):
 
     def start_flush_threads(self):
         threads = [
-            threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread),
-            threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread)
+            threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread, daemon=True),
+            threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread, daemon=True)
         ]
         for t in threads:
             t.setDaemon(True)
@@ -172,13 +180,18 @@ class TxParser(multiprocessing.Process):
         with self.flush_lock:
             try:
                 if confirmed:
+                    # for blk_hash, tx_count in acks:
+                    #     self.logger.debug(f"pre-flush block hash={hash_to_hex_str(blk_hash)}, "
+                    #                       f"with tx_count={tx_count}")
                     self.mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
 
                     # Ack for all flushed blocks
                     for blk_hash, tx_count in acks:
-                        # print(f"updated block hash={blk_hash}, with tx_count={tx_count}")
-                        self.worker_ack_queue_tx_parse_confirmed.put((blk_hash, tx_count))
+                        # self.logger.debug(f"updated block hash={hash_to_hex_str(blk_hash)}, "
+                        #                   f"with tx_count={tx_count}")
+                        self.worker_ack_queue_tx_parse_confirmed.put((self.worker_id, blk_hash,
+                            tx_count))
 
                     # After each block that is fully ACK'd -> atomically..
                     # 1) invalidate mempool rows
@@ -208,12 +221,14 @@ class TxParser(multiprocessing.Process):
                 try:
                     confirmed_rows = self.confirmed_tx_flush_queue.get(
                         timeout=self.CONFIRMED_BATCHED_MAX_WAIT_TIME)
+                    if not confirmed_rows:  # poison pill
+                        break
                     block_acks = self.confirmed_tx_flush_ack_queue.get()
                     self.extend_batched_rows_confirmed(confirmed_rows)
                     self.append_acks_confirmed_txs(block_acks)
 
                 except queue.Empty:
-                    # print("timed out...")
+                    # self.logger.debug("timed out...")
                     if len(self.confirmed_batched_tx_rows) != 0:
                         self.mysql_flush_rows(
                             self.confirmed_batched_tx_rows,
@@ -228,7 +243,7 @@ class TxParser(multiprocessing.Process):
                 # This is not in the "try block" because I wasn't sure if it would be atomic
                 # i.e. what if it times out half-way through committing rows to the db?
                 if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
-                    # print("hit max tx batch size...")
+                    self.logger.debug("hit max tx batch size...")
                     self.mysql_flush_rows(
                         self.confirmed_batched_tx_rows,
                         self.confirmed_batched_in_rows,
@@ -250,6 +265,8 @@ class TxParser(multiprocessing.Process):
                 try:
                     mempool_rows = self.mempool_tx_flush_queue.get(
                         timeout=self.MEMPOOL_BATCHED_MAX_WAIT_TIME)
+                    if not mempool_rows:  # poison pill
+                        break
                     mempool_tx_acks = self.mempool_tx_flush_ack_queue.get()
                     self.extend_batched_rows_mempool(mempool_rows)
                     self.append_acks_mempool_txs(mempool_tx_acks)
@@ -280,7 +297,6 @@ class TxParser(multiprocessing.Process):
                         self.mempool_batched_mempool_tx_acks,
                         confirmed=False,
                     )
-
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -333,6 +349,8 @@ class TxParser(multiprocessing.Process):
 
                 # Todo only does 1 mempool tx at a time at present
                 for i in range(0, len(unpacked_array) - 1, step=2):
+                    if not self.shm:  # a hack for when shared memory gets closed
+                        return "stop"
                     buffer = bytes(self.shm.buf[i:i + 1])  # [cur_msg_start_pos: cur_msg_end_pos]
 
                 dt = datetime.utcnow()
@@ -348,7 +366,8 @@ class TxParser(multiprocessing.Process):
                 raise
 
         while True:
-            iterate()
+            if iterate() == "stop":
+                break
 
     def mined_blocks_thread(self):
 
@@ -364,8 +383,14 @@ class TxParser(multiprocessing.Process):
                 msg_type, size_array, blk_hash, blk_height, blk_start_pos, blk_end_pos, \
                     packed_array, first_tx_pos_batch = struct.unpack(f"<II32sQQI{size_array}sI",
                     message)
+                # if hash_to_hex_str(blk_hash) == \
+                #         "00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470":
+                # self.logger.debug(f"got from queue: blk_height={blk_height}; blk_hash="
+                #                   f"{hash_to_hex_str(blk_hash)}; size_array={size_array}")
 
                 tx_offsets_partition = array.array("Q", packed_array)
+                if not self.shm:  # a hack for when shared memory gets closed
+                    return "stop"
                 buffer = bytes(self.shm.buf[blk_start_pos:blk_end_pos])
 
                 # if in IBD mode, mempool txs are strictly rejected. So there is no point
@@ -400,7 +425,8 @@ class TxParser(multiprocessing.Process):
                 raise
 
         while True:
-            iterate()
+            if iterate() == "stop":
+                break
 
     def main_thread(self):
         try:
@@ -411,9 +437,14 @@ class TxParser(multiprocessing.Process):
             for t in threads:
                 t.start()
 
-            for t in threads:
-                t.join()
+            while True:
+                message = self.kill_worker_socket.recv()
+                if message == b"stop_signal":
+                    self.shm.close()
+                    self.logger.info(f"Process Stopped")
+                    break
+                time.sleep(0.2)
         finally:
-            self.mined_tx_socket.close()
-            self.mempool_tx_socket.close()
+            self.shm.close()
+            sys.exit(0)
 

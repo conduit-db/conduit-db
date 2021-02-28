@@ -2,8 +2,6 @@ import logging.handlers
 import logging
 import os
 import sys
-import time
-from pathlib import Path
 
 from .constants import LOGGING_LEVEL_VARNAME
 
@@ -37,6 +35,5 @@ def setup_tcp_logging():
     logging.addLevelName(PROFILING, 'PROFILING')
 
     # Remote Socket Handler (formatting is done server side after unpickling records)
-    socketHandler = logging.handlers.SocketHandler('127.0.0.1',
-        logging.handlers.DEFAULT_TCP_LOGGING_PORT)
+    socketHandler = logging.handlers.SocketHandler('127.0.0.1', 54545)
     rootLogger.addHandler(socketHandler)

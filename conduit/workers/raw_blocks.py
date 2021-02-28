@@ -1,11 +1,14 @@
 import asyncio
 import logging
 import multiprocessing
+import sys
 import threading
 import time
 from functools import partial
 from multiprocessing import shared_memory
 from typing import List, Tuple
+
+import zmq
 
 from conduit.database.lmdb_database import LMDB_Database
 from conduit.logging_client import setup_tcp_logging
@@ -50,14 +53,24 @@ class BlockWriter(multiprocessing.Process):
         self.loop = asyncio.get_event_loop()
         self.worker_asyncio_block_writer_in_queue = asyncio.Queue()
 
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
+        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
+
         try:
-            main_thread = threading.Thread(target=self.main_thread)
-            main_thread.start()
+            t1 = threading.Thread(target=self.main_thread, daemon=True)
+            t1.start()
+            t2 = threading.Thread(target=self.kill_thread, daemon=True)
+            t2.start()
             asyncio.get_event_loop().run_until_complete(self.lmdb_inserts_task())
             self.logger.debug("Coro done...")
         except Exception as e:
             self.logger.exception(e)
             raise
+        finally:
+            self.lmdb.close()
 
     async def lmdb_inserts_task(self):
         self.batched_blocks = []
@@ -107,6 +120,19 @@ class BlockWriter(multiprocessing.Process):
                     (blk_hash, blk_start_pos, blk_end_pos),
                 )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
+
+            except Exception as e:
+                self.logger.exception(e)
+
+    def kill_thread(self):
+        while True:
+            try:
+                message = self.kill_worker_socket.recv()
+                if message == b"stop_signal":
+                    self.shm.close()
+                    self.logger.info(f"Process Stopped")
+                    break
+                time.sleep(0.2)
 
             except Exception as e:
                 self.logger.exception(e)

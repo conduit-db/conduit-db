@@ -7,6 +7,7 @@ from pathlib import Path
 
 from bitcoinx import Headers
 
+from .database.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, mysql_connect
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
@@ -34,8 +35,8 @@ class Storage:
         self.redis = redis  # NotImplemented
 
     async def close(self):
-        # await self.pg_database.close()
-        await self.mysql_database.close()
+        if self.mysql_database:
+            self.mysql_database.close()
     # External API
 
 
@@ -85,6 +86,8 @@ async def reset_datastore():
 
     # remove lmdb database
     def remove_readonly(func, path, excinfo):
+        lmdb_db = LMDB_Database()
+        lmdb_db.close()
         os.chmod(path, stat.S_IWRITE)
         func(path)
 

@@ -2,6 +2,7 @@ import asyncio
 import logging.handlers
 import logging
 import os
+import sys
 from typing import Dict
 
 from conduit.controller import Controller
@@ -78,21 +79,28 @@ def loop_exception_handler(loop, context) -> None:
 
 
 async def main():
+    loop = asyncio.get_running_loop()
     try:
-        p = TCPLoggingServer()
-        p.start()
+        logging_server_proc = TCPLoggingServer()
+        logging_server_proc.start()
         env_vars = setup()
-        loop = asyncio.get_running_loop()
         loop.set_exception_handler(loop_exception_handler)
         net_config = NetworkConfig(env_vars.get("network"))
         controller = Controller(
             config=env_vars,
             net_config=net_config, host="127.0.0.1", port=8000,
+            logging_server_proc=logging_server_proc
         )
         await controller.run()
     except KeyboardInterrupt:
-        pass
+        loop.stop()
+        loop.run_forever()
+        print("ConduitDB Stopped")
 
 
 if __name__ == "__main__":
-    asyncio.run(main(), debug=False)
+    try:
+        asyncio.run(main(), debug=False)
+    except KeyboardInterrupt:
+        print("ConduitDB Stopped")
+

@@ -1,11 +1,13 @@
 import array
-import io
 import logging
 import math
 import multiprocessing
 import struct
+import threading
+import time
 from multiprocessing import shared_memory
-from multiprocessing import Array
+
+from bitcoinx import hex_str_to_hash
 from typing import List, Tuple
 
 import zmq
@@ -89,6 +91,15 @@ class BlockPreProcessor(multiprocessing.Process):
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
 
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
+        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
+
+        t = threading.Thread(target=self.kill_thread, daemon=True)
+        t.start()
+
         try:
             while True:
                 item = self.worker_in_queue_preproc.get()
@@ -130,6 +141,10 @@ class BlockPreProcessor(multiprocessing.Process):
                         packed_array,
                         first_tx_pos_batch
                     )
+                    if blk_hash == hex_str_to_hash("00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470"):
+                        self.logger.debug(
+                            f"blk_hash=00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470; "
+                            f"start_idx_batch={start_idx_batch}; end_idx_batch={end_idx_batch}")
                     self.mined_tx_socket.send(packed_message)
 
                 # Todo - use shared memory - faster
@@ -140,3 +155,16 @@ class BlockPreProcessor(multiprocessing.Process):
             raise
         finally:
             self.mined_tx_socket.close()
+
+    def kill_thread(self):
+        while True:
+            try:
+                message = self.kill_worker_socket.recv()
+                if message == b"stop_signal":
+                    self.shm.close()
+                    self.logger.info(f"Process Stopped")
+                    break
+                time.sleep(0.2)
+
+            except Exception as e:
+                self.logger.exception(e)

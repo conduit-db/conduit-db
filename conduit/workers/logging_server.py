@@ -6,12 +6,15 @@ import socket
 import socketserver
 import struct
 import multiprocessing
+import sys
 import threading
 import time
 from pathlib import Path
 
 
 # Log level
+import zmq
+
 PROFILING = 9
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -23,30 +26,35 @@ class LogRecordStreamHandler(socketserver.StreamRequestHandler):
     configured locally.
     """
 
+    logger = logging.getLogger("TCPServer-Handler")
+
     def handle(self):
         """
         Handle multiple requests - each expected to be a 4-byte length,
         followed by the LogRecord in pickle format. Logs the record
         according to whatever policy is configured locally.
         """
-        while True:
-            chunk = self.connection.recv(4)
-            if len(chunk) < 4:
-                break
-            slen = struct.unpack(">L", chunk)[0]
-            chunk = self.connection.recv(slen)
-            while len(chunk) < slen:
-                chunk = chunk + self.connection.recv(slen - len(chunk))
+        try:
+            while True:
+                chunk = self.connection.recv(4)
+                if len(chunk) < 4:
+                    break
+                slen = struct.unpack(">L", chunk)[0]
+                chunk = self.connection.recv(slen)
+                while len(chunk) < slen:
+                    chunk = chunk + self.connection.recv(slen - len(chunk))
 
-            if chunk == b"stop":
-                break
+                if chunk == b"stop":
+                    break
 
-            obj = self.unPickle(chunk)
-            record = logging.makeLogRecord(obj)
-            self.handleLogRecord(record)
+                obj = self.unPickle(chunk)
+                record = logging.makeLogRecord(obj)
+                self.handleLogRecord(record)
 
-        logging.debug("server stopping")
-        self.server.stop_event.set()
+        except ConnectionResetError:
+            self.logger.info(f"Forceful disconnect from {repr(self.connection.getpeername())}")
+        finally:
+            self.logger.debug("Server stopping...")
 
     def unPickle(self, data):
         return pickle.loads(data)
@@ -64,21 +72,19 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
     """
     Simple TCP socket-based logging receiver suitable for testing.
     """
-
+    logger = logging.getLogger("TCPServer")
     allow_reuse_address = True
 
     def __init__(
         self,
-        stop_event,
-        host="localhost",
-        port=logging.handlers.DEFAULT_TCP_LOGGING_PORT,
+        host="127.0.0.1",
+        port=54545,
         handler=LogRecordStreamHandler,
     ):
         socketserver.ThreadingTCPServer.__init__(self, (host, port), handler)
         self.abort = 0
         self.timeout = 1
         self.logname = None
-        self.stop_event = stop_event
 
 
 class TCPLoggingServer(multiprocessing.Process):
@@ -112,18 +118,38 @@ class TCPLoggingServer(multiprocessing.Process):
         self.setup_local_logging_policy()
 
         self.stop_event = threading.Event()
-        self.tcpserver = LogRecordSocketReceiver(self.stop_event)
+        self.tcpserver = LogRecordSocketReceiver()
         self.logger = logging.getLogger("logging-server")
         self.logger.debug(f'starting {self.__class__.__name__}...')
 
-        main_thread = threading.Thread(target=self.main_thread)
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
+        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
+
+        main_thread = threading.Thread(target=self.main_thread, daemon=True)
         main_thread.start()
 
         while True:
-            self.stop_event.wait()
-            self.tcpserver.shutdown()
-            break
-        self.logger.debug("tcp server stopped")
+            try:
+                message = self.kill_worker_socket.recv()
+                if message == b"stop_signal":
+                    self.logger.debug("stopping ThreadingTCPServer...")
+                    # s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    # s.connect(('127.0.0.1', 54545))
+                    # len_msg = struct.pack(">L", 4)
+                    # s.sendall(len_msg + b"stop")
+                    self.tcpserver.shutdown()
+                    break
+                time.sleep(0.2)
+            # except KeyboardInterrupt:
+            #     self.logger.debug("Caught KeyboardInterrupt")
+            except Exception as e:
+                self.logger.exception(e)
+
+        self.logger.info("ThreadingTCPServer stopped")
+        self.logger.info(f"Process Stopped")
 
 if __name__ == "__main__":
     TCPLoggingServer().start()
@@ -131,6 +157,6 @@ if __name__ == "__main__":
 
     logging.debug("shutting down...")
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(('127.0.0.1', logging.handlers.DEFAULT_TCP_LOGGING_PORT))
+    s.connect(('127.0.0.1', 54545))
     len_msg = struct.pack(">L", 4)
     s.sendall(len_msg + b"stop")

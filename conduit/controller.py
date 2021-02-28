@@ -1,11 +1,13 @@
 import asyncio
+import queue
+import socket
 import sys
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from asyncio import BufferedProtocol
 import bitcoinx
 import zmq
-from bitcoinx import hex_str_to_hash, MissingHeader
+from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import logging
 from typing import Optional, List, Dict
 
@@ -38,7 +40,12 @@ class Controller:
     - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
     """
 
-    def __init__(self, config: Dict, net_config: NetworkConfig, host="127.0.0.1", port=8000):
+    def __init__(self, config: Dict, net_config: NetworkConfig, host="127.0.0.1", port=8000,
+            logging_server_proc=None):
+        self.running = False
+        self.logging_server_proc = logging_server_proc
+        self.processes = [self.logging_server_proc]
+        self.tasks = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
 
@@ -69,6 +76,11 @@ class Controller:
         context = zmq.Context()
         self.mempool_tx_socket = context.socket(zmq.PUSH)
         self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")
+
+        # PUB-SUB from Controller to worker to kill the worker
+        context3 = zmq.Context()
+        self.kill_worker_socket = context3.socket(zmq.PUB)
+        self.kill_worker_socket.bind("tcp://127.0.0.1:46464")
 
         self.worker_in_queue_mtree = multiprocessing.Queue()
         self.worker_in_queue_blk_writer = multiprocessing.Queue()
@@ -111,6 +123,7 @@ class Controller:
         return self.transport, self.session
 
     async def run(self):
+        self.running = True
         try:
             await self.setup()
             await self.connect_session()  # on_connection_made callback -> starts jobs
@@ -122,15 +135,44 @@ class Controller:
                     self.port,
                 )
             )
+            self.tasks.append(init_handshake)
             wait_until_conn_lost = asyncio.create_task(
                 self.con_lost_event.wait()
             )
+            self.tasks.append(wait_until_conn_lost)
             await asyncio.wait([init_handshake, wait_until_conn_lost])
         finally:
-            if self.transport:
-                self.transport.close()
-            self.storage.close()
-            self.mempool_tx_socket.close()
+            self.running = False
+            try:
+                if self.transport:
+                    self.transport.close()
+                if self.storage:
+                    await self.storage.close()
+                with self.kill_worker_socket as sock:
+                    sock.send(b"stop_signal")
+
+                await asyncio.sleep(1)
+
+                for p in self.processes:
+                    p.terminate()
+                    p.join()
+
+                await asyncio.sleep(1)
+                self.sync_state._batched_blocks_exec.shutdown(wait=False)
+                # Todo - this raises and upsets everything...
+                # self.shm_buffer.close()
+                # self.shm_buffer.unlink()
+                for task in self.tasks:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+            except Exception:
+                self.logger.exception("suppressing raised exceptions on cleanup")
+
+            # self.loop.close()  # cannot close a running event loop -> RuntimeError
+            # self.mempool_tx_socket.close()
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -146,7 +188,7 @@ class Controller:
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self):
-        _fut = asyncio.create_task(self.start_jobs())
+        self.tasks.append(asyncio.create_task(self.start_jobs()))
 
     def on_connection_lost(self):
         self.con_lost_event.set()
@@ -184,7 +226,6 @@ class Controller:
 
     # Multiprocessing Workers
     def start_workers(self):
-        self.processes = []
         for i in range(WORKER_COUNT_PREPROCESSORS):
             p = BlockPreProcessor(
                 WORKER_COUNT_TX_PARSERS,
@@ -224,29 +265,28 @@ class Controller:
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
         for i in range(4):
-            _task = asyncio.create_task(self.handle())
+            self.tasks.append(asyncio.create_task(self.handle()))
 
     async def spawn_sync_headers_task(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        _sync_headers_task = asyncio.create_task(self.sync_headers_job())
+        self.tasks.append(asyncio.create_task(self.sync_headers_job()))
 
     async def spawn_initial_block_download(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        _sync_blocks_task = asyncio.create_task(self.sync_all_blocks_job())
+        self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
     async def spawn_request_mempool(self):
         """after initial block download requests the full mempool.
 
         NOTE: once the sync_state.initial_block_download_event is set, relayed mempool txs will also
         begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
-        _request_mempool_task = asyncio.create_task(self.request_mempool_job())
+        self.tasks.append(asyncio.create_task(self.request_mempool_job()))
 
     def maybe_rollback(self):
         """This will have to do a full table scan to find all the transactions with height above
         what was safetly flushed to disc... It will not be fast at scan but is better than
         re-syncing the whole chain. It can be thought of as a last resort db repair process."""
         self.mysql_db: MySQLDatabase = load_mysql_database()
-        self.mysql_db.queries: MySQLQueries
 
         # Drop mempool table
         self.mysql_db.tables.mysql_drop_mempool_table()
@@ -336,22 +376,33 @@ class Controller:
         while True:
             try:
                 # This queue should transition to a multiprocessing queue
-                block_hash, txs_done_count = self.worker_ack_queue_tx_parse_confirmed.get()
+                worker_id, block_hash, txs_done_count = \
+                    self.worker_ack_queue_tx_parse_confirmed.get(timeout=0.5)
+                # self.logger.debug(f"getting from ack queue (worker_id={worker_id}); "
+                #                   f"blk_hash={hash_to_hex_str(block_hash)}, "
+                #                   f"num_txs={txs_done_count}; "
+                #                   f"total done={self.sync_state._pending_blocks_progress_counter[block_hash]} "
+                #                   f"expected={self.sync_state.expected_blocks_tx_counts[block_hash]}")
+                # self.logger.debug(f"self.sync_state._pending_blocks_progress_counter[block_hash]="
+                #                   f"{self.sync_state._pending_blocks_progress_counter[block_hash]}")
                 try:
                     self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
                 except KeyError:
-                    self.logger.debug(f"getting from ack queue... blk_hash={block_hash}, num_txs"
-                                      f"={txs_done_count}")
-                    self.logger.debug(f"self.sync_state._pending_blocks_progress_counter="
-                                      f"{self.sync_state._pending_blocks_progress_counter}")
+                    self.logger.error(f"getting from ack queue; "
+                        f"blk_hash={block_hash}, "
+                        f"num_txs={txs_done_count}; "
+                        f"total done={self.sync_state._pending_blocks_progress_counter[block_hash]} "
+                        f"expected={self.sync_state.expected_blocks_tx_counts[block_hash]}")
+                    self.logger.error(
+                        f"self.sync_state._pending_blocks_progress_counter[block_hash]="
+                        f"{self.sync_state._pending_blocks_progress_counter[block_hash]}")
                     raise
-
-                header = self.get_header_for_hash(block_hash)
-                self.logger.debug(f"block height={header.height} done!")
-                local_done_block_heights.append(header.height)
 
                 try:
                     if self.sync_state.block_is_fully_processed(block_hash):
+                        header = self.get_header_for_hash(block_hash)
+                        self.logger.debug(f"block height={header.height} done!")
+                        local_done_block_heights.append(header.height)
                         blocks_batch_set.remove(block_hash)
                 except KeyError:
                     header = self.get_header_for_hash(block_hash)
@@ -373,6 +424,10 @@ class Controller:
 
                     # success - update global heights for current buffer
                     self.sync_state.done_block_heights += local_done_block_heights
+                    return
+            except queue.Empty:
+                # self.logger.debug("Empty queue (join_batched_blocks)")
+                if not self.running:
                     return
             except Exception as e:
                 self.logger.exception(e)
@@ -416,9 +471,9 @@ class Controller:
                 self.sync_state._batched_blocks_exec, self.join_batched_blocks, blocks_batch_set
             )
             try:
-                # if a batch of blocks takes more than 5 minutes - it will print out a
+                # if a batch of blocks takes more than x minutes - it will print out a
                 # diagnostic overview to assist with troubleshooting the blockage
-                await asyncio.wait_for(coro, timeout=1200.0)
+                await asyncio.wait_for(coro, timeout=180.0)
             except asyncio.TimeoutError:
                 self.sync_state.readout_sync_state()
                 sys.exit(1)
