@@ -5,26 +5,32 @@ import time
 import os
 from pathlib import Path
 
-from conduit.database.mysql.mysql_database import load_test_mysql_database
-from conduit.workers.logging_server import TCPLoggingServer
+from conduit_lib.database.mysql.mysql_database import load_test_mysql_database
+from conduit_lib.logging_server import TCPLoggingServer
 
 try:
-    from conduit.workers._algorithms import preprocessor, parse_txs  # cython
+    from conduit_raw.conduit_raw.workers._algorithms import preprocessor  # cython
 except ModuleNotFoundError:
-    from conduit.workers.algorithms import preprocessor, parse_txs  # pure python
+    from conduit_lib.algorithms import preprocessor   # pure python
+
+try:
+    from conduit_index.conduit_index.workers._algorithms import parse_txs  # cython
+except ModuleNotFoundError:
+    from conduit_index.conduit_index.workers.algorithms import parse_txs   # pure python
+
 from bench.utils import print_results, print_results_mysql_bench
 
-from conduit.logging_client import setup_tcp_logging
+from conduit_index.conduit_index.logging_client import setup_tcp_logging
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 if __name__ == "__main__":
-    setup_tcp_logging()
+    setup_tcp_logging(port=65421)
     # logging.basicConfig(level=9)
     logger = logging.getLogger("insert_block_txs")
     logger.setLevel(level=9)
 
-    p = TCPLoggingServer()
+    p = TCPLoggingServer(port=65421)
     p.start()
     time.sleep(2)
 

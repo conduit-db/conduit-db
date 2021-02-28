@@ -1,9 +1,13 @@
+*.mmap
+*.pyd
+*.lib
+*.exp
+*.obj
+*.pyc
 *.iml
 *.xml
-*.pyc
 *.idea
 *.egg*
-*.mmap
 *logs/*
 tests/logs/*
 *.cpp*
@@ -12,4 +16,5 @@ tests/logs/*
 *.html*
 *.log
 *.mdb
+../profile.svg
 profile.svg

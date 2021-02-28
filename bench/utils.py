@@ -12,6 +12,7 @@ def print_results(count_txs, t1, block_view):
     )
 
 
+
 def print_results_mysql_bench(count_txs, t1):
     rate = count_txs / t1
 

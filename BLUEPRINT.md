@@ -1,123 +1,110 @@
-# Chain indexer
+# Chain indexer Schema (In Flux)
+
+## Principles for write optimization
+
+In a nutshell: "Minimize random disc IO ops".
+
+LSM databases are by far superior to B-tree databases for handling
+heavy random writes. It turns out that tx_nums for the keys is not worth it
+when considering the pipeline end-to-end. It is far better to just accept that 
+the random writes need to be "eaten" one way or another (with all of those tx 
+hashes and pushdata hashes). If you try to avoid it, you end up seeking
+around on the disc to unpick the relationships between things and this is far
+less efficient than doing large bulk sequential writes of SST tables into an LSM
+database. That's what it's designed to do!
+
+I considered short hashing to 8 bytes instead of 32 bytes but in the end, the 
+added complexity of maintaining collision tables starts to cost you on the read 
+side and the complexities explode when you consider a distributed, horizontally
+scalable system for all parts of the pipeline. Ruling: "Not worth the hassle"
+
+MyRocks (MySQL variant) - which uses RocksDB as the LSM-based engine gives
+far superior performance for these workloads than any B-tree database and 
+you can basically be confident that whatever throughput you're getting with
+testing will be mostly sustainable for larger database sizes. Very much NOT
+the case for B-tree databases...
 
 # Confirmed Block Data
 
-## Transactions table
-    primary_key:     tx_num (NOT autoincrementing - calculated in py/cython algo)
-    other columns:   tx_hash (indexed separately)
-                     height
-                     position
-                     tx_offset (LMDB)
+## Confirmed Transactions table
 
-## IO table (inputs and outputs)
+    tx_hash BINARY(32) PRIMARY KEY,
+    tx_height INT UNSIGNED,
+    tx_position BIGINT UNSIGNED,
+    tx_offset_start BIGINT UNSIGNED,
+    tx_offset_end BIGINT UNSIGNED
 
-    tx_num (aka out_tx_hash + in_prevout_hash joined)
-    out_idx
-    out_value
-    in_tx_num
-    in_idx
-    
+## Inputs
+
+    out_tx_hash BINARY(32),
+    out_idx INT UNSIGNED,
+    in_tx_hash BINARY(32),
+    in_idx INT UNSIGNED,
+    in_offset_start INT UNSIGNED,
+    in_offset_end INT UNSIGNED
+
+## Outputs
+
+    out_tx_hash BINARY(32),
+    out_idx INT UNSIGNED,
+    out_value BIGINT UNSIGNED,
+    out_offset_start INT UNSIGNED,
+    out_offset_end INT UNSIGNED
+
 ## Pushdata_hashes
+
+    pushdata_hash BINARY(32),
+    tx_hash BINARY (32),
+    idx INT,
+    ref_type SMALLINT
     
-    pd_id (generated for uniqueness constraint) as PK
-    tx_num  (indexed)
-    idx (out_idx or in_idx)
-    pushdata_hash  (indexed)
-    ref_type (bit = 0 for output, bit = 1 for input)
+## Mempool Transactions table
+
+    mp_tx_hash BINARY(32) PRIMARY KEY,
+    mp_tx_timestamp TIMESTAMP,
+    mp_rawtx LONGBLOB
+
+## API State table
+
+    id INT PRIMARY KEY,
+    api_tip_height INT,
+    api_tip_hash BINARY(32)
+
+When IBD is complete, need to request the full mempool and begin accepting relayed mempool txs.
+These 'tx' messages can be fed to the TxParser and the pushdata_rows, input_rows, output_rows
+**can be treated exactly the same as for confirmed transactions (these records are immutable!)**
+BUT the **tx_rows** need to go to a **Mempool transaction table** rather than the confirmed transaction table. 
+
+The mempool transaction table has timestamps in lieu of block heights.
+
+Queries for e.g. pushdata will do an inner join with the confirmed transaction table for confirmed history
+and should exclude height > api_chain_tip (see: api state table below).
+
+Insertions for tx_rows will go in this order for new blocks:
     
-- multi-idx on tx_num, idx, pushdata_hash - which also allows for situations where there is
-no pushdata indexed (20, 33, 65 bytes length) from either the input or the output 
-(if we have decided to not index it).
-- normalizing out the pushdata_hashes is also essential for the many-to-many relationship of
-pushdatas to inputs or outputs. To denormalize this would cause insane disc usage by duplicating
-all of the input and output rows! 
-- retrieving the relationship of pushdata <-> io is only 1 table join away and 
-- utxos could be cached later if we wanted to without much trouble (to provide that as 
-a frequently desired service)
-    
-# Mempool data
-In short - use redis to store the same information as the above permanent postgres tables: 
+    1) insert pushdata, inputs, output rows THAT ARE MISSING (i.e. compatible with compact block paradigm)
+    2) insert ALL tx_rows in raw block to the confirmed table (but do not invalidate mempool txs yet!)
+    3) ATOMICALLY 
+        a) invalidate all confirmed tx_hashes from the mempool tx table + 
+        b) update the api_chain_tip
+        - this has the effect of atomically causing the API to stop returning the unconfirmed txs
+        whilst adding these txs to the return value for *confirmed* history.
 
-    transactions, inputs, outputs and pushdata rows in whatever way is most useful.
+and an inner join with the mempool transactions table for unconfirmed history.
 
-# Pipeline
-## TxParser requirement (will be heavily cythonised)
+#### Further considerations:
+When a new block is mined, a check needs to be done to see which transactions 
+have already been processed.
 
-This design is entirely centered around how to most efficiently
-store this into postgres in bulk with minimal table joins 
-(whilst minimizing db bloat and denormalization in the process). This design is also very friendly
-to the concept of postgres-XL with sharding on tx_hash for (approximately) linearly scaling
-**write** throughput.
-
-####Steps:
-Track a global tx_num and increment it with the tx_count of the block (or block_partition) inside of
-a multiprocessing.Lock'd code segment. 
-
-Then allocate this sequence of tx_nums to 'tx_rows'
-
-    (tx_num, tx_hash, height, position, offset)
-    
-Calculate 'input_rows' (that will -> a SQL UPDATE of the IO table)
-
-    (prevout_hash, out_idx, tx_num, in_idx)
-
-Append input to 'in_pushdata_rows'
-
-    (tx_num, idx, pushdata_hash, ref_type=1)  # NOTE pushdata_hash may be null
-    
-Calculate 'output_rows' (that will be bulk copied directly to IO table)
-
-    (tx_num, idx, value)
-    
-Append output to 'out_pushdata_rows'
-
-    (tx_num, idx, pushdata_hash, ref_type=0)
-
-so in the end there are:
-
-    tx_rows =       [(tx_num, tx_hash, height, position, offset)...]
-    in_rows =       [(prevout_hash, out_idx, tx_num, in_idx)...)...]
-    out_rows =      [(tx_num, idx, value)...)]
-    pd_rows =       [(tx_num, idx, pushdata_hash, ref_type=0 or 1)...]
-
-## Bulk postgres insert algorithm
-
-1) Bulk copy directly to the transaction table
-2) Bulk copy directly to the io table (for the **outputs** - i.e. input columns blank)
-    - sidenote: if we wanted utxos cached now would be the time to update redis too...
-3) Inputs are trickier
-    - Bulk copy to temporary table
-    - INNER JOIN on transaction table to convert prevout_hash to out_tx_num
-    - Bulk UPDATE of input columns based on the tx_num + idx matching
-4) Bulk copy directly to the pushdata table (**outputs and inputs together**)
-
-NOTE: step 4 is only made possible if an edge case is ruled out!:
-- there's an edge case where the input/output could have the same (tx_num AND idx
-AND pushdata_hash AND same ref_type) --- but it's probably very rare... 
-so options are to either rule out input or output row duplicates in the cython parser (**much preferred 
-and much faster**) or avoid bulk copy and instead do bulk upsert with an ON CONFLICT DO NOTHING; 
-to account for this possibility)
-
-
-## MerkleTree table (LMDB vs postgres)
-Merkle Tree key-value store and db structure stored only to mid-level only to avoid 
-excessive disc usage.:
-
-    {header_id + depth + position: binary hashes}
-    
-    where header_id + depth + position is a concatenation of uint_32 integers
-    to form the key
-
-    at depth = 0 have 2^0 32-byte hashes - so keys are (0,0)
-    at depth = 1 have 2^1 32-byte hashes etc. - so keys are (0,0) and (0,1)
-    at depth = 2 have 2^2 32-byte hashes concatenated side by side...
+The api_chain_tip_height modifies the queries for pushdata_hash history in that the inner join for confirmed history
+with the confirmed transactions table will exclude txs above the api_chain_tip_height because the presence of these
+txs indicates that the block is not fully committed to the database yet (+ mempool txs invalidated) - if the block
+WAS fully committed then the api_chain_tip_height would be +=1.
 
 
 ## Headers
 Use bitcoinx Headers object for tracking chain forks and the current chain tip etc.
-
-NOTE: header_id would be a foreign key of the MerkleTree table in order to save space (rather than
-millions of blockhashes...)
+See Reorg Handling section for details.
 
 ## Blocks
 The block headers are tracked the same as above headers but lag behind (and track the 'tip' of sync'd blocks) so 
@@ -126,32 +113,44 @@ that the first, complete set of headers acts as 'training wheels' for the IBD pr
 The raw blocks and rawtx data will be dumped into an LMDB database using append only mode which is very performant 
 for bulk writes. Txs can the be retrieved with the offset (stored via the Transaction table)
 
-## Reorg handling...
+There will be two main LMDB tables for blocks:
 
-When there is a reorg... the affected raw block(s) would be fetched and a list of all tx_hashes
-compiled via double_sha256 at each tx offset.
+#### Blocks table
 
-Then the affected txs in Transactions table either have their `height`, `position` and `offset`
-reset to (0, null and null) or they get a new height, position and offset (if included in the new block(s))
+    block_num (key) - STRICTLY sequential to achieve append-only writes
+    raw_block (val)
 
-The database update (and therefore affecting client side queries) should ideally be done as one atomic event.
-However, the concern would be a deep reorg leading to OOM...
-may need to lock any client queries until the db is once again in a consistent state... if the full reorg
-handling can be completed in <10 seconds maybe that could be acceptable (seeing as though it's quite rare... ).
+#### Block numbers table
+The sole reason for this table to exist is so that the Blocks table has sequential keys 
+and can turn on append-only mode - which is the only reason that using LMDB is in any way acceptable for
+heavy write throughput.
 
-Clients should be using a 30 second timeout so might be okay to just have a delayed response until reorg is
-fully dealt with. I am not 100% sure what's best at this stage.
-
-
-## Tech Stack
-
-Dream stack for performance of a python chain indexer would be:
-
-    1. uvloop
-    2. BufferedProtocols - 600MB/s - (for zero-copy streaming of block data)
-    3. cython optimized parsers etc. that operate on shared memory views (see 6) of each transaction
-    4. asyncpg -> postgres (blindingly fast asyncio/uvloop based driver for postgres)
-    5. multicore parsing of block / mempool data and committing to db
-    6. new python3.8 shared memory feature for multicore workers to parse blocks with zero-cpy
+    block_hash (key) - 32 byte block hash
+    block_num (val) - uint32_t
     
-    Overall "dumber indexer" design (only pulling out what is needed - no utxo tracking).
+## Tx Offsets Set
+Stored in LMDB key is block_hash and value is tx_offsets array
+
+## Reorg Handling
+1. Delete all transactions with a height == to a reorged block.
+2. Request the two or more reorging blocks from the node (avoid compact block 
+protocol complexities for now and just request the entire raw block again)
+3. Sync to tip as usual (and invalidate mempool txs via the usual procedure
+as they are added to the confirmed transaction table)
+4. Now scan the entire remaining mempool for double spends on the basis of
+referencing the same outpoint as a confirmed block (one of the two reorg blocks).
+5. Possibly other safety checks for malleated transactions (i.e. the tx may
+have been orphaned by the reorg and not references a UTXO that doesn't exist)
+6. Flush everything to disc, update the API chain tip to make the new
+changes visible and unlock the API to begin serving requests once again.
+
+Clients should be using a 30 second timeout so the aim would be to complete this
+full procedure in <10 seconds or so. But if it 
+was a really big reorg, the clients would probably timeout and have to reconnect 
+when the service has completed the reorg handling procedure. 
+
+It's not perfect, but it should work for an initial proof of concept.
+
+## Architecture
+
+See ARCHITECTURE.md

@@ -1,0 +1,7 @@
+lmdb
+bitcoinx>=0.4.1
+requests>=2.21.0
+dnspython~=1.16.0
+Cython~=0.29.21
+mysqlclient~=2.0.3
+zmq
