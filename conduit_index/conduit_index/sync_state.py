@@ -11,6 +11,7 @@ from bitcoinx import Headers, hash_to_hex_str
 
 from conduit_lib.headers_state_client import HeadersStateClient
 from conduit_lib.store import Storage
+from .load_balance_algo import distribute_load
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -148,7 +149,7 @@ class SyncState:
         """
         # Todo - must check how large these blocks are to allocate a sensible number
         #  of blocks
-        MAX_BYTES = 1024**3
+        MAX_BYTES = 1024**3 * 1  # 1GB
         PARALLEL_PROCESSING_LIMIT = 10 * 1024**2  # If less than this size send to one worker only
         total_batch_bytes = 0
         allocated_work = []
@@ -163,35 +164,43 @@ class SyncState:
         local_block_tip_height = self.get_local_block_tip_height()
         block_height_deficit = conduit_raw_tip.height - local_block_tip_height
 
-        batch_count = min(block_height_deficit, 500)
-        stop_header_height = local_block_tip_height + batch_count
-
         # May need to use block_hash not height to be more correct
-        for i in range(1, batch_count + 1):
+        batch_count = 0
+        for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
             block_bytes = self.lmdb.get_block_metadata(block_header.hash)
             # self.logger.debug(f"block_bytes={block_bytes}")
-            total_batch_bytes += block_bytes
+
+            # Allocate work
             tx_offsets = self.lmdb.get_tx_offsets(block_header.hash)
-            first_tx_pos_batch = 0  # Todo - update this when work is partitioned
-            if block_bytes > PARALLEL_PROCESSING_LIMIT:
-                # Todo - split up workload
-                allocated_work.append((block_header.hash, block_header.height,
-                    first_tx_pos_batch, tx_offsets))
-            else:
-                allocated_work.append((block_header.hash, block_header.height,
-                    first_tx_pos_batch, tx_offsets))
+
+            # Safety Checks and MAX LIMITS
+            total_batch_bytes += block_bytes
+            # self.logger.debug(f"total_batch_bytes={total_batch_bytes}")
             if batch_is_over_limit():
-                # Todo - adjust batch_size and stop_header_height
                 self.logger.warning(f"Batch is over the MAX_BYTES limit ({MAX_BYTES/1024**2}MB)!")
-                self.logger.warning(f"Exceeding MAX_BYTES is currently not handled!")
-                blocks_batch_set.add(block_header.hash)
-                self.add_pending_block(block_header.hash, len(tx_offsets))
+                break
             else:
                 blocks_batch_set.add(block_header.hash)
                 self.add_pending_block(block_header.hash, len(tx_offsets))
 
-        return batch_count, blocks_batch_set, stop_header_height, allocated_work
+            first_tx_pos_batch = 0  # Todo - update this when work is partitioned
+            if block_bytes > PARALLEL_PROCESSING_LIMIT:
+                # Todo - split up workload
+                tx_count = len(tx_offsets)
+                divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
+                    block_bytes, tx_offsets)
+                for work_part in divided_work:
+                    # block_header.hash, block_header.height, first_tx_pos_batch, part_end_offset, \
+                    #     tx_offsets = work_part
+                    allocated_work.append(work_part)
+            else:
+                part_end_offset = block_bytes
+                allocated_work.append((block_header.hash, block_header.height,
+                    first_tx_pos_batch, part_end_offset, tx_offsets))
+            batch_count = i
+
+        return batch_count, blocks_batch_set, allocated_work
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:

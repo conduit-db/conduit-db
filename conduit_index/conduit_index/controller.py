@@ -3,6 +3,7 @@ import os
 import queue
 import struct
 import sys
+import time
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from asyncio import BufferedProtocol
@@ -95,6 +96,10 @@ class Controller:
 
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
+
+        # Batch Completion
+        self.tx_parser_completion_queue = queue.Queue()
+
         self.global_tx_hashes_dict = {}  # blk_height:tx_hashes
         self.mined_tx_hashes_queue_waiter_executor = ThreadPoolExecutor(max_workers=1)
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
@@ -112,7 +117,8 @@ class Controller:
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
-        self.tx_parser_completion_queue = queue.Queue()
+        self.total_time_allocating_work = 0
+        self.total_time_connecting_headers = 0
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -420,7 +426,8 @@ class Controller:
                 api_block_tip_hash)
         return api_block_tip_height
 
-    async def connect_done_block_headers(self, blocks_batch_set):
+    def connect_done_block_headers(self, blocks_batch_set):
+        t0 = time.perf_counter()
         sorted_headers = sorted([(self.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
         sorted_heights = [height for height, h in sorted_headers]
@@ -439,12 +446,16 @@ class Controller:
             header = self.get_header_for_hash(hash)
             block_headers.connect(header.raw)
 
-            self.storage.block_headers.flush()
-            # ? Add reorg and other sanity checks later here...
+        self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
+        self.storage.block_headers.flush()
+        # ? Add reorg and other sanity checks later here...
 
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"connected up to header.hash, header.height = "
                           f"{tip.height, hash_to_hex_str(tip.hash)}")
+        t1 = time.perf_counter() - t0
+        self.total_time_connecting_headers += t1
+        self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height
@@ -458,30 +469,35 @@ class Controller:
             -> wait_for_batched_blocks_completion
         """
 
-        async def wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set, stop_header_height) -> None:
+        async def wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set) -> None:
             """global_blocks_batch_set is copied into these threads to prevent mutation"""
             try:
                 self.tx_parser_completion_queue.put_nowait(global_blocks_batch_set.copy())
                 await self.sync_state.done_blocks_tx_parser_event.wait()
                 self.sync_state.done_blocks_tx_parser_event.clear()
-                await self.connect_done_block_headers(global_blocks_batch_set.copy())
+                self.connect_done_block_headers(global_blocks_batch_set.copy())
             except Exception:
                 self.logger.exception("unexpected exception in 'wait_for_batched_blocks_completion' ")
 
-        async def allocate_work():
+        def allocate_work():
+            t0 = time.perf_counter()
             next_batch = self.sync_state.get_next_batched_blocks()
             # self.logger.debug(f"next_batch={next_batch}")
-            batch_count, global_blocks_batch_set, stop_header_height, allocated_work = next_batch
+            batch_count, global_blocks_batch_set, allocated_work = next_batch
 
             # ---- PUSH WORK TO WORKERS ---- #
-            for block_hash, block_height, first_tx_pos_batch, tx_offsets_array in allocated_work:
+            for block_hash, block_height, first_tx_pos_batch, part_end_offset, tx_offsets_array in \
+                    allocated_work:
                 len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
                 packed_array = tx_offsets_array.tobytes()
-                packed_msg = struct.pack(f"<II32sII{len_arr}s", MsgType.MSG_BLOCK, len_arr,
-                    block_hash, block_height, first_tx_pos_batch, packed_array)
+                packed_msg = struct.pack(f"<II32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
+                    block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
                 # ? Should this be batched?
                 self.mined_tx_socket.send(packed_msg)
-            return global_blocks_batch_set, stop_header_height
+            t1 = time.perf_counter() - t0
+            self.total_time_allocating_work += t1
+            self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
+            return global_blocks_batch_set
 
         try:
             # up to 500 blocks per loop
@@ -489,9 +505,9 @@ class Controller:
             # Initial sync to current tip == to ConduitRaw
             while self.sync_state.get_local_block_tip_height() < \
                     self.sync_state.get_conduit_raw_header_tip().height:
-                global_blocks_batch_set, stop_header_height = await allocate_work()
-                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set,
-                    stop_header_height)
+                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
+                global_blocks_batch_set = allocate_work()
+                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
                 self.logger.debug(f"new block tip height: {api_block_tip_height}")
 
@@ -508,11 +524,10 @@ class Controller:
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
-                global_blocks_batch_set, stop_header_height = await allocate_work()
+                global_blocks_batch_set = await allocate_work()
 
                 # Workers are loaded by Handlers.on_block handler as messages are received
-                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set,
-                    stop_header_height)
+                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
                 self.logger.debug(f"new block tip height: {api_block_tip_height}")
                 # ------------------------- Batch complete ------------------------- #

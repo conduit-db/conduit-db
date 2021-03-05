@@ -15,6 +15,7 @@ from typing import Tuple, List, Sequence, Optional
 import zmq
 from MySQLdb import _mysql
 from bitcoinx import hash_to_hex_str
+from bitcoinx.packing import struct_be_I
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
@@ -43,6 +44,8 @@ class TxParser(multiprocessing.Process):
         worker_ack_queue_mined_tx_hashes,
     ):
         super(TxParser, self).__init__()
+        # TODO - shm is still needed for relayed mempool transactions
+        self.shm = multiprocessing.shared_memory.SharedMemory(name=shm_name, create=False)
         self.worker_id = worker_id
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
@@ -74,9 +77,9 @@ class TxParser(multiprocessing.Process):
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
         # TODO - during initial block download - should NOT rely on a timeout at all
         #  Should just keep on pumping the entire batch of blocks as fast as possible to
-        #  Max out CPU. In order to do that need to have a way of knowing when we are onto
-        #  The last few blocks and to no wait around for a "full batch to flush".
-        self.CONFIRMED_MAX_TX_BATCH_SIZE = 50000
+        #  Max out CPU.
+        #  This ideally requires reliable PUB/SUB to do properly
+        self.CONFIRMED_MAX_TX_BATCH_SIZE = 200_000
         self.CONFIRMED_BATCHED_MAX_WAIT_TIME = 0.3
         self.MEMPOOL_MAX_TX_BATCH_SIZE = 2000
         self.MEMPOOL_BATCHED_MAX_WAIT_TIME = 0.1
@@ -222,6 +225,7 @@ class TxParser(multiprocessing.Process):
         try:
             while True:
                 try:
+                    # Pre-IBD do large batched flushes
                     confirmed_rows = self.confirmed_tx_flush_queue.get(
                         timeout=self.CONFIRMED_BATCHED_MAX_WAIT_TIME)
                     if not confirmed_rows:  # poison pill
@@ -230,6 +234,18 @@ class TxParser(multiprocessing.Process):
                     self.extend_batched_rows_confirmed(confirmed_rows)
                     self.append_acks_confirmed_txs(block_acks)
 
+                    if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
+                        # self.logger.debug("hit max tx batch size...")
+                        self.mysql_flush_rows(
+                            self.confirmed_batched_tx_rows,
+                            self.confirmed_batched_in_rows,
+                            self.confirmed_batched_out_rows,
+                            self.confirmed_batched_set_pd_rows,
+                            self.confirmed_batched_block_acks,
+                            confirmed=True,
+                        )
+
+                # Post-IBD
                 except queue.Empty:
                     # self.logger.debug("timed out...")
                     if len(self.confirmed_batched_tx_rows) != 0:
@@ -243,18 +259,6 @@ class TxParser(multiprocessing.Process):
                         )
                     continue
 
-                # This is not in the "try block" because I wasn't sure if it would be atomic
-                # i.e. what if it times out half-way through committing rows to the db?
-                if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
-                    self.logger.debug("hit max tx batch size...")
-                    self.mysql_flush_rows(
-                        self.confirmed_batched_tx_rows,
-                        self.confirmed_batched_in_rows,
-                        self.confirmed_batched_out_rows,
-                        self.confirmed_batched_set_pd_rows,
-                        self.confirmed_batched_block_acks,
-                        confirmed=True,
-                    )
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -384,8 +388,8 @@ class TxParser(multiprocessing.Process):
                 # self.logger.debug(f"len(packed_msg)={len(packed_msg)}")
 
                 msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
-                msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, packed_array = \
-                    struct.unpack(f"<II32sII{len_arr}s", packed_msg)
+                msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+                    packed_array = struct.unpack(f"<II32sIIQ{len_arr}s", packed_msg)
 
                 if hash_to_hex_str(blk_hash) == \
                         "00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470":
@@ -395,28 +399,26 @@ class TxParser(multiprocessing.Process):
                 tx_offsets_partition = array.array("Q", packed_array)
                 blk_num = self.lmdb_db.get_block_num(blk_hash)
                 # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
-                # Todo - just gets WHOLE BLOCK - perhaps can operate on the memory view from
-                #  WITHIN THE LMDB TRANSACTION?? To minimize copying??
-                #  This should also only get from first offset to last offset as a slice
-                #  The tx_offsets may need to include an EXTRA tx so that the last offset
-                #  represents the stopping point...
-                buffer = self.lmdb_db.get_block(blk_num)
 
                 # if in IBD mode, mempool txs are strictly rejected. So there is no point
                 # in sorting out which txs are already in the mempool tx table.
                 # There is also no point performing mempool tx invalidation.
                 if self.initial_block_download_event_mp.is_set():
+                    buffer = self.lmdb_db.get_block(blk_num)  # Todo - Wasteful!
                     self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
                         blk_height)
                     item = self.processed_vs_unprocessed_queue.get()
                     unprocessed_tx_offsets, processed_tx_offsets = item
                 else:
                     unprocessed_tx_offsets = tx_offsets_partition
+                # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
 
                 t0 = time.time()
-                # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
-                result = parse_txs(buffer, unprocessed_tx_offsets, blk_height, True,
-                    first_tx_pos_batch)
+                with self.lmdb_db.env.begin(db=self.lmdb_db.blocks_db) as txn:
+                    buf = txn.get(struct_be_I.pack(blk_num))
+                    result = parse_txs(buf, unprocessed_tx_offsets, blk_height, True,
+                        first_tx_pos_batch)
+
                 tx_rows, in_rows, out_rows, set_pd_rows = result
                 t1 = time.time() - t0
                 self.total_tx_parse_time += t1

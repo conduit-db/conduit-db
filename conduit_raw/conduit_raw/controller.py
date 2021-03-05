@@ -404,9 +404,13 @@ class Controller:
             header = self.get_header_for_hash(hash)
             block_headers.connect(header.raw)
 
-            self.storage.block_headers.flush()
-            # ? Add reorg and other sanity checks later here...
-            self.headers_queue.put(header)
+        self.storage.block_headers.flush()
+        # ? Add reorg and other sanity checks later here...
+
+        for height, hash in sorted_headers:
+            header = self.get_header_for_hash(hash)
+            self.headers_queue.put(header)  # must put to queue AFTER the flush NOT before
+
         self.headers_state_client.set_tip(header.raw, header.hash, header.height)
 
         tip = self.sync_state.get_local_block_tip()

@@ -30,8 +30,7 @@ class MySQLBulkLoads:
 
     def set_rocks_db_bulk_load_on(self):
         self.mysql_db.start_transaction()
-        settings = f"""SET session sql_log_bin=0;
-            SET global rocksdb_bulk_load_allow_unsorted=0;
+        settings = f"""SET global rocksdb_bulk_load_allow_unsorted=0;
             SET global rocksdb_bulk_load=1;"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
@@ -77,7 +76,6 @@ class MySQLBulkLoads:
                 query += f"\n{set_statement}"
 
             query += ";"
-            self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
             self.mysql_db.start_transaction()
             self.mysql_conn.query(query)
             self.mysql_db.commit_transaction()
@@ -91,7 +89,6 @@ class MySQLBulkLoads:
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
-            self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
             t1 = time.time() - t0
             self.total_db_time += t1
             self.total_rows_flushed_since_startup += len(string_rows)
@@ -100,36 +97,30 @@ class MySQLBulkLoads:
                 f"={self.total_rows_flushed_since_startup}")
 
     def handle_coinbase_dup_tx_hash(self, tx_rows):
-        time.sleep(5)  # wait for other processes to flush fully so that rows are queriable
+        # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
-
-        # Is the duplicate here in this list of rows for insertion?
-        count_txs = len(tx_rows)
-        set_tx_rows = set(tx_rows)
-        if len(set_tx_rows) != count_txs:
-            self.logger.error(f"duplicate found in rows for insertion")
-            self.mysql_bulk_load_confirmed_tx_rows(set_tx_rows)  # retry without duplicates
-            return
-
-        # Need to do a SELECT for tx_hashes and find the one that is already there.
-        dup_rows = self.mysql_db.queries.mysql_get_duplicate_tx_hashes(tx_rows)
-        pop_indices = []
-
-        self.logger.info(f"duplicate rows={dup_rows}")
-        for i, row in enumerate(dup_rows):
-            tx_hash = dup_rows[i][0]
-            for j, row in enumerate(tx_rows):
-                txid = tx_hash.hex()
-                self.logger.debug(f"duplicate txid={txid}")
-                self.logger.debug(f"row[0]={row[0]}")
-                if txid == row[0]:
-                    self.logger.info(f"MATCH for {txid}")
-                    pop_indices.append(j)
-
-        for i in pop_indices:
-            popped_row = tx_rows.pop(i)
-            self.logger.info(f"popped coinbase tx row: {popped_row}")
-        self.mysql_bulk_load_confirmed_tx_rows(tx_rows)  # retry without problematic coinbase tx
+        # There are only two cases of duplicate tx_hashes:
+        # d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599
+        # e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468
+        # The hashes are stored in reversed byte order in the database for efficiency with parsing
+        # Rather than have a costly, unified detection for these - we just special-case for them
+        dup1 = bytes(reversed(bytes.fromhex(
+            "d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599"))).hex()
+        dup2 = bytes(reversed(bytes.fromhex(
+            "e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468"))).hex()
+        self.logger.debug(f"found duplicate tx_hashes in batch - see BIP_0034 for details")
+        self.logger.debug(f"len(tx_rows)={len(tx_rows)} before de-duplication")
+        new_tx_rows = []
+        for row in tx_rows:
+            if row[0] in {dup1, dup2}:
+                self.logger.debug(f"found 1 duplicate: "
+                                  f"{bytes(reversed(bytes.fromhex(row[0]))).hex()}")
+                pass
+            else:
+                new_tx_rows.append(row)
+        self.logger.debug(f"len(new_tx_rows)={len(new_tx_rows)} after de-duplication")
+        self.logger.debug(f"bulk loading new tx rows")
+        self.mysql_bulk_load_confirmed_tx_rows(new_tx_rows)  # retry without problematic coinbase tx
 
     def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):
         t0 = time.time()

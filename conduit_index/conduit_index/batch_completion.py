@@ -52,7 +52,7 @@ class BatchCompletionTxParser(threading.Thread):
                             f"{hash_to_hex_str(header.hash)} {header.height} to disc")
                         continue
 
-                    self.logger.debug(f"block height={header.height} done!")
+                    # self.logger.debug(f"block height={header.height} done!")
                     blocks_batch_set.remove(block_hash)
                     with self.sync_state.done_blocks_tx_parser_lock:
                         self.sync_state.done_blocks_tx_parser.add(block_hash)

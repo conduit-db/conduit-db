@@ -7,6 +7,7 @@ from struct import Struct
 from typing import List, Tuple, Dict, Optional
 
 import lmdb
+from bitcoinx.packing import struct_le_Q
 
 try:
     from ...constants import PROFILING
@@ -101,7 +102,7 @@ class LMDB_Database:
             last_block_num = self.get_last_block_num()
             next_block_num = last_block_num + 1
 
-            with self.env.begin(db=self.blocks_db, write=True, buffers=True) as txn:
+            with self.env.begin(db=self.blocks_db, write=True, buffers=False) as txn:
 
                 block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
                 # print(f"block_nums={block_nums}")
@@ -113,7 +114,7 @@ class LMDB_Database:
                     block_nums_map[blk_hash] = block_num
 
             # print(block_nums_map)
-            with self.env.begin(db=self.block_nums_db, write=True, buffers=True) as txn:
+            with self.env.begin(db=self.block_nums_db, write=True, buffers=False) as txn:
                 for blk_hash, block_num in block_nums_map.items():
                     txn.put(blk_hash, struct_be_I.pack(block_num), overwrite=False)
 
@@ -137,7 +138,7 @@ class LMDB_Database:
                 byte_array += _hash
             return byte_array
 
-        with self.env.begin(db=self.mtree_db, write=True, buffers=True) as txn:
+        with self.env.begin(db=self.mtree_db, write=True, buffers=False) as txn:
             cursor = txn.cursor()
             entries = []
 
@@ -150,7 +151,7 @@ class LMDB_Database:
             #self.env.sync(True)
 
     def put_tx_offsets(self, block_hash: bytes, tx_offsets: array.array):
-        with self.env.begin(db=self.tx_offsets_db, write=True, buffers=True) as txn:
+        with self.env.begin(db=self.tx_offsets_db, write=True, buffers=False) as txn:
             txn.put(block_hash, tx_offsets)
 
     def get_tx_offsets(self, block_hash: bytes) -> array.array:
@@ -160,10 +161,10 @@ class LMDB_Database:
     def put_block_metadata(self, batched_metadata: List[Tuple[bytes, int]]):
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
-        with self.env.begin(db=self.block_metadata_db, write=True, buffers=True) as txn:
+        with self.env.begin(db=self.block_metadata_db, write=True, buffers=False) as txn:
             # self.logger.debug(f"put_block_metadata called: {batched_metadata}")
             for block_hash, size in batched_metadata:
-                result = txn.put(block_hash, struct_le_I.pack(size))
+                txn.put(block_hash, struct_le_Q.pack(size))
 
     def get_block_metadata(self, block_hash: bytes) -> int:
         """Namely size in bytes but could later include things like compression dictionary id and
@@ -172,7 +173,7 @@ class LMDB_Database:
             val = txn.get(block_hash)
             if val:
                 # Note: This can return zero - which is a "falsey" type value. Take care
-                return struct_le_I.unpack(bytes(val))[0]
+                return struct_le_Q.unpack(bytes(val))[0]
 
     def sync(self):
         self.env.sync(True)
@@ -180,10 +181,11 @@ class LMDB_Database:
 
 if __name__ == "__main__":
     lmdb_db = LMDB_Database()
-    with lmdb_db.env.begin(db=lmdb_db.block_metadata_db, write=False, buffers=True) as txn:
+    with lmdb_db.env.begin(db=lmdb_db.block_metadata_db, write=False, buffers=False) as txn:
         cur = txn.cursor()
-        print(cur.last())
-        print(bytes(cur.value()))
+        print(cur.first())
+        while cur.next():
+            print(bytes(cur.value()))
 
     # fake_blocks = b"11111222223333344444"
     # fake_batched_blocks = [(b'blkhash1', 0, 5), (b'blkhash2', 5, 10), (b'blkhash3', 10, 15),

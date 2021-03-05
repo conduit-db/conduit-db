@@ -88,11 +88,12 @@ async def main():
     try:
         logging_server_proc = TCPLoggingServer(port=65421)
         logging_server_proc.start()
-        env_vars = setup()
+        config = setup()
+        config['server_type'] = "ConduitIndex"
         loop.set_exception_handler(loop_exception_handler)
-        net_config = NetworkConfig(env_vars.get("network"))
+        net_config = NetworkConfig(config.get("network"))
         controller = Controller(
-            config=env_vars,
+            config=config,
             net_config=net_config, host="127.0.0.1", port=8000,
             logging_server_proc=logging_server_proc
         )

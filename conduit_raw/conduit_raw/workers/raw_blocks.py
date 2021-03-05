@@ -8,6 +8,7 @@ from multiprocessing import shared_memory
 from typing import List, Tuple
 
 import zmq
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
@@ -91,11 +92,12 @@ class BlockWriter(multiprocessing.Process):
                     timeout=self.MAX_QUEUE_WAIT_TIME,
                 )
                 blk_hash, blk_start_pos, blk_end_pos = item
-                block_bytes = blk_end_pos - blk_end_pos
                 self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
+                block_bytes = blk_end_pos - blk_start_pos
                 self.batched_metadata.append((blk_hash, block_bytes))
 
-                # print(f"got block from queue unpacked: {blk_hash} {blk_start_pos} {blk_end_pos}")
+                # self.logger.debug(f"got block from queue unpacked: {blk_hash} {blk_start_pos}"
+                #     f" {blk_end_pos} block_bytes={block_bytes}")
 
                 if len(self.batched_blocks) >= self.MIN_BLOCK_BATCH_SIZE:
                     # logger.debug("block batching hit max batch size - loading batched blocks...")

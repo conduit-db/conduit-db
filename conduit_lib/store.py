@@ -4,7 +4,7 @@ import shutil
 import stat
 import mmap
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 from bitcoinx import Headers
 
@@ -58,15 +58,15 @@ def setup_headers_store(net_config, mmap_filename):
     return headers
 
 
-def reset_datastore(headers_path: Path, block_headers_path: Path):
+def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
     # TODO - put this back!
-    if os.path.exists(headers_path):
-        with open(headers_path, 'w+') as f:
-            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
-            mm.seek(0)
-            mm.write(b'\00' * mm.size())
+    # if os.path.exists(headers_path):
+    #     with open(headers_path, 'w+') as f:
+    #         mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+    #         mm.seek(0)
+    #         mm.write(b'\00' * mm.size())
 
     # remove block headers - memory-mapped so need to do it this way to free memory immediately...
     if os.path.exists(block_headers_path):
@@ -82,16 +82,16 @@ def reset_datastore(headers_path: Path, block_headers_path: Path):
     finally:
         mysql_database.close()
 
-    # remove lmdb database
-    def remove_readonly(func, path, excinfo):
-        lmdb_db = LMDB_Database()
-        lmdb_db.close()
-        os.chmod(path, stat.S_IWRITE)
-        func(path)
+    if config['server_type'] == "ConduitRaw":
+        def remove_readonly(func, path, excinfo):
+            lmdb_db = LMDB_Database()
+            lmdb_db.close()
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
 
-    lmdb_path = Path(MODULE_DIR).parent.parent.parent.joinpath('lmdb_data')
-    if os.path.exists(lmdb_path):
-        shutil.rmtree(lmdb_path, onerror=remove_readonly)
+        lmdb_path = Path(MODULE_DIR).parent.parent.parent.joinpath('lmdb_data')
+        if os.path.exists(lmdb_path):
+            shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
 
 def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
@@ -105,7 +105,7 @@ def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
         block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
     if config.get('reset'):
-        reset_datastore(headers_path, block_headers_path)
+        reset_datastore(headers_path, block_headers_path, config)
 
     headers = setup_headers_store(net_config, headers_path)
     block_headers = setup_headers_store(net_config, block_headers_path)

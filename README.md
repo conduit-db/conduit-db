@@ -12,21 +12,23 @@ Conduit can parallelize the chain indexing process across multiple cores
 
 ## Getting Started
 
-## Windows
+## Windows (cmd.exe shell)
 
 To run ConduitRaw
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit/conduit_raw
-    py -m pip install -r .\requirements.txt
-    py .\conduit_server.py
+    cd conduit
+    set PYTHONPATH=.
+    py -m pip install -r .\conduit_raw\requirements.txt
+    py .\conduit_raw\conduit_server.py
     
 To run ConduitIndex (Depends on ConduitRaw)
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit/conduit_index
-    py -m pip install -r .\requirements.txt
-    py .\conduit_server.py
+    cd conduit
+    set PYTHONPATH=.
+    py -m pip install -r .\conduit_index\requirements.txt
+    py .\conduit_index\conduit_server.py
 
 ## Linux
 
