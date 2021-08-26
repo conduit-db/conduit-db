@@ -3,6 +3,8 @@ import threading
 from multiprocessing.managers import SyncManager
 from queue import Queue
 
+from conduit_lib.utils import is_docker, cast_to_valid_ipv4
+
 
 class HeadersStateServer(threading.Thread):
 

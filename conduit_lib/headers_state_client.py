@@ -5,6 +5,8 @@ from multiprocessing.managers import SyncManager
 
 import bitcoinx
 
+from conduit_lib.utils import is_docker, cast_to_valid_ipv4
+
 
 class HeadersStateClient(SyncManager):
     """ConduitIndex should connect first and then "get_tip" to get the current tip
@@ -17,7 +19,12 @@ class HeadersStateClient(SyncManager):
     """
 
     def __init__(self):
-        super().__init__(address=('127.0.0.1', 50000), authkey=b'abracadabra')
+        if is_docker():
+            # This is hardcoded because all of this code will be removed in favour of Kafka soon.
+            host = cast_to_valid_ipv4('conduit-raw')
+        else:
+            host = "127.0.0.1"
+        super().__init__(address=(host, 50000), authkey=b'abracadabra')
         self.logger = logging.getLogger("test-headers-state-client")
         self.register('get_headers_queue')
         self.register('get_tip')  # In case no new blocks come in for a while

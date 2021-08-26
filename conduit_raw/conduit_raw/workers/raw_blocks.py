@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import multiprocessing
+import sys
 import threading
 import time
 from functools import partial
@@ -8,7 +9,6 @@ from multiprocessing import shared_memory
 from typing import List, Tuple
 
 import zmq
-from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
@@ -48,14 +48,16 @@ class BlockWriter(multiprocessing.Process):
         self.time_prev = time.time()
 
     def run(self):
-        setup_tcp_logging(port=54545)
+        if sys.platform == "win32":
+            setup_tcp_logging(port=54545)
         self.logger = logging.getLogger("raw-block-writer")
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
 
         self.lmdb = LMDB_Database()
 
-        self.loop = asyncio.get_event_loop()
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
         self.worker_asyncio_block_writer_in_queue = asyncio.Queue()
 
         # PUB-SUB from Controller to worker to kill the worker
@@ -69,7 +71,8 @@ class BlockWriter(multiprocessing.Process):
             t1.start()
             t2 = threading.Thread(target=self.kill_thread, daemon=True)
             t2.start()
-            asyncio.get_event_loop().run_until_complete(self.lmdb_inserts_task())
+            self.logger.debug(f"event loop running state: {asyncio.get_event_loop().is_running()}")
+            self.loop.run_until_complete(self.lmdb_inserts_task())
             self.logger.debug("Coro done...")
         except Exception as e:
             self.logger.exception(e)
@@ -129,8 +132,8 @@ class BlockWriter(multiprocessing.Process):
                 raise
 
     def main_thread(self):
-        while True:
-            try:
+        try:
+            while True:
                 item = self.worker_in_queue_blk_writer.get()
                 if not item:
                     return  # poison pill stop command
@@ -143,25 +146,23 @@ class BlockWriter(multiprocessing.Process):
                     (blk_hash, blk_start_pos, blk_end_pos),
                 )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
-            except KeyboardInterrupt:
-                self.logger.debug("BlockWriter stopping...")
-            except Exception as e:
-                self.logger.exception(e)
-            finally:
-                self.logger.debug("BlockWriter stopped")
+        except Exception as e:
+            self.logger.exception(e)
 
     def kill_thread(self):
-        while True:
-            try:
+        try:
+            while True:
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
                     self.shm.close()
                     self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)
-
-            except Exception as e:
-                self.logger.exception(e)
+        except Exception as e:
+            self.logger.exception(e)
+        finally:
+            self.logger.info(f"Process Stopped")
+            sys.exit(0)
 
     def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]):
         if len(batched_blocks) == 0:

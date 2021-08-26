@@ -39,12 +39,13 @@ class Handlers:
     async def on_verack(self, message):
         # logger.debug("handling verack...")
         logger.debug("handshake complete")
+        self.controller.handshake_complete_event.set()
 
     async def on_protoconf(self, message):
         # logger.debug("handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
         # logger.debug(f"protoconf: {protoconf}")
-        self.controller.handshake_complete_event.set()
+        # self.controller.handshake_complete_event.set()
 
     async def on_sendheaders(self, message):
         # logger.debug("handling sendheaders...")
@@ -89,6 +90,7 @@ class Handlers:
         tx_inv_vect = []
         for inv in inv_vects:
             if inv["inv_type"] == 1:  # TX
+                logger.debug(f"got inv: {inv}")
                 tx_inv_vect.append(inv)
             elif inv["inv_type"] == 2:  # BLOCK
                 if not have_header(inv):

@@ -1,6 +1,7 @@
 import hashlib
 import ipaddress
 import math
+import os
 import socket
 import struct
 from binascii import hexlify
@@ -14,6 +15,25 @@ from bitcoinx import (
 )
 
 from .commands import BLOCK_BIN
+
+
+def cast_to_valid_ipv4(ipv4: str) -> str:
+    try:
+        ipaddress.ip_address(ipv4)
+        return ipv4
+    except ValueError:
+        # Need to resolve dns name to get ipv4
+        ipv4 = socket.gethostbyname(ipv4)
+        return ipv4
+
+
+def is_docker() -> bool:
+    path = '/proc/self/cgroup'
+    return (
+        os.path.exists('/.dockerenv') or
+        os.path.isfile(path) and any('docker' in line for line in open(path))
+    )
+
 
 def payload_to_checksum(payload):
     return double_sha256(payload)[:4]

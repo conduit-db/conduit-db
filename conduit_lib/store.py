@@ -13,7 +13,6 @@ from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, m
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
 
-
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 MMAP_SIZE = 2_000_000
 
@@ -24,7 +23,7 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        mysql_database: MySQLDatabase,
+        mysql_database: Optional[MySQLDatabase],
         lmdb: LMDB_Database,
     ):
         # self.pg_database = pg_database
@@ -110,7 +109,10 @@ def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
     headers = setup_headers_store(net_config, headers_path)
     block_headers = setup_headers_store(net_config, block_headers_path)
 
-    mysql_database = load_mysql_database()
+    if config['server_type'] == "ConduitIndex":
+        mysql_database = load_mysql_database()
+    else:
+        mysql_database = None
 
     lmdb_db = LMDB_Database()
 

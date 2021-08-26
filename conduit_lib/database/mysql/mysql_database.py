@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
 
@@ -10,6 +11,7 @@ from .mysql_queries import MySQLQueries
 from .mysql_tables import MySQLTables
 
 from ...constants import PROFILING
+from ...utils import is_docker
 
 
 class MySQLDatabase:
@@ -116,10 +118,19 @@ class MySQLDatabase:
 
 
 def mysql_connect(worker_id=None) -> MySQLDatabase:
+    host = os.environ.get('MYSQL_HOST', '127.0.0.1')
+    port = int(os.environ.get('MYSQL_PORT', 3306))
+
+    if is_docker():
+        user = "root"
+    else:
+        # user = "conduitadmin"
+        user = "root"
+
     conn = _mysql.connect(
-        host="127.0.0.1",
-        port=3306,
-        user="conduitadmin",
+        host=host,
+        port=port,
+        user=user,
         passwd="conduitpass",
         db="conduitdb",
     )
@@ -127,9 +138,12 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
 
 
 def mysql_test_connect() -> MySQLDatabase:
+    host = os.environ.get('MYSQL_HOST', '127.0.0.1')
+    port = int(os.environ.get('MYSQL_PORT', 3306))
+
     conn = _mysql.connect(
-        host="127.0.0.1",
-        port=3306,
+        host=host,
+        port=port,
         user="conduitadmin",
         passwd="conduitpass",
         db="conduittestdb"

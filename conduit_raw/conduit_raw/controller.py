@@ -155,11 +155,6 @@ class Controller:
         self.headers_state_client.connect_or_keep_trying()  # blocking
         self.headers_queue = self.headers_state_client.get_headers_queue()
 
-        # Only Limited MySQL interaction (updates the API tip height)
-        # Todo - make a unique API tip entry for ConduitRaw to distinguish it from ConduitIndex
-        self.mysql_db: MySQLDatabase = load_mysql_database()
-        self.mysql_db.tables.mysql_create_permanent_tables()
-
     async def connect_session(self):
         peer = self.get_peer()
         self.logger.debug("connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
@@ -177,6 +172,8 @@ class Controller:
             wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
             self.tasks.append(wait_until_conn_lost)
             await asyncio.wait([init_handshake, wait_until_conn_lost])
+        except Exception:
+            self.logger.exception("unexpected exception")
         finally:
             await self.stop()
 
@@ -488,10 +485,14 @@ class Controller:
 
     # -- Message Types -- #
     async def send_version(self, recv_host=None, recv_port=None, send_host=None, send_port=None):
-        message = self.serializer.version(
-            recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
-        )
-        await self.send_request(VERSION, message)
+        try:
+            message = self.serializer.version(
+                recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
+            )
+            await self.send_request(VERSION, message)
+        except Exception:
+            self.logger.exception("unexpected exception")
+            raise
 
     async def send_inv(self, inv_vects: List[Dict]):
         await self.serializer.inv(inv_vects)

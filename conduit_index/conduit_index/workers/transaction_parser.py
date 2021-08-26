@@ -101,7 +101,8 @@ class TxParser(multiprocessing.Process):
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
-        setup_tcp_logging(port=65421)
+        if sys.platform == 'win32':
+            setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
@@ -389,6 +390,9 @@ class TxParser(multiprocessing.Process):
                                       f"{hash_to_hex_str(blk_hash)}; size_array={len_arr}")
 
                 tx_offsets_partition = array.array("Q", packed_array)
+
+                # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+                #  the network! Currently fails inside of docker...
                 blk_num = self.lmdb_db.get_block_num(blk_hash)
                 # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
 
@@ -396,6 +400,8 @@ class TxParser(multiprocessing.Process):
                 # in sorting out which txs are already in the mempool tx table.
                 # There is also no point performing mempool tx invalidation.
                 if self.initial_block_download_event_mp.is_set():
+                    # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+                    #  the network! Currently fails inside of docker...
                     buffer = self.lmdb_db.get_block(blk_num)  # Todo - Wasteful!
                     self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
                         blk_height)
@@ -406,6 +412,8 @@ class TxParser(multiprocessing.Process):
                 # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
 
                 t0 = time.time()
+                # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+                #  the network! Currently fails inside of docker...
                 with self.lmdb_db.env.begin(db=self.lmdb_db.blocks_db) as txn:
                     buf = txn.get(struct_be_I.pack(blk_num))
                     result = parse_txs(buf, unprocessed_tx_offsets, blk_height, True,
@@ -427,6 +435,8 @@ class TxParser(multiprocessing.Process):
                 self.logger.exception(e)
                 raise
 
+        # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+        #  the network! Currently fails inside of docker...
         self.lmdb_db = LMDB_Database()
         while True:
             if iterate(self) == "stop":

@@ -6,6 +6,7 @@ import logging.handlers
 import logging
 import os
 import selectors
+import sys
 from typing import Dict
 
 from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
@@ -16,10 +17,11 @@ from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 
 from conduit_raw.controller import Controller
-from conduit_raw.argparsing import get_parser
+from conduit_lib.argparsing import get_parser
 
-selector = selectors.SelectSelector()
-loop = asyncio.SelectorEventLoop(selector)
+if sys.platform == 'win32':
+    selector = selectors.SelectSelector()
+    loop = asyncio.SelectorEventLoop(selector)
 
 # loop = asyncio.ProactorEventLoop()
 # asyncio.set_event_loop(loop)
@@ -90,7 +92,7 @@ async def main():
         config = setup()
         config['server_type'] = "ConduitRaw"
         loop.set_exception_handler(loop_exception_handler)
-        net_config = NetworkConfig(config.get("network"))
+        net_config = NetworkConfig(config.get("network"), node_host=config['node_host'])
         controller = Controller(
             config=config,
             net_config=net_config, host="127.0.0.1", port=8000,
@@ -108,4 +110,3 @@ if __name__ == "__main__":
         asyncio.run(main(), debug=False)
     except KeyboardInterrupt:
         print("ConduitDB Stopped")
-

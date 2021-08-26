@@ -1,4 +1,7 @@
+import ipaddress
+from ipaddress import IPv4Address
 import logging
+import socket
 
 from bitcoinx import (
     Coin,
@@ -10,10 +13,11 @@ from bitcoinx import (
     Headers,
     MissingHeader,
 )
-from typing import Optional
+from typing import Optional, List
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .peers import Peer
+from .utils import cast_to_valid_ipv4
 
 logger = logging.getLogger("networks")
 
@@ -146,8 +150,9 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network_type: str):
+    def __init__(self, network_type: str, node_host: Optional[str]=None):
         network: AbstractNetwork = NETWORKS[network_type]
+        self.node_host = node_host
         self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
@@ -160,8 +165,13 @@ class NetworkConfig:
         self.BITCOINX_COIN: Coin = network.BITCOINX_COIN
         self.CHECKPOINT: CheckPoint = network.CHECKPOINT
 
+        self.peers: List[Peer] = []
+        self.set_peers(network)
+
+    def get_default_peers(self, network):
         if isinstance(network, RegTestNet):
             self.peers = [Peer("127.0.0.1", 18444)]
+            # self.peers = [Peer("host.docker.internal", 18444)]
         if isinstance(network, TestNet):
             self.peers = [
                 Peer("127.0.0.1", 18333),
@@ -178,6 +188,15 @@ class NetworkConfig:
             #     Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
             # ]
 
+    def set_peers(self, network):
+        if self.node_host:
+            host = self.node_host.split(":")[0]
+            host = cast_to_valid_ipv4(host)  # in docker a container name needs dns resolution
+            port = int(self.node_host.split(":")[1])
+            self.peers = [Peer(host, port)]
+
+        else:
+            self.get_default_peers(network)
 
 NETWORKS = {
     MAINNET: MainNet(),

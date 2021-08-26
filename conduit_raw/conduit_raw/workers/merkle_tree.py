@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+import sys
 import threading
 import time
 from multiprocessing import shared_memory
@@ -34,7 +35,8 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
 
     def run(self):
-        setup_tcp_logging(port=54545)
+        if sys.platform == "win32":
+            setup_tcp_logging(port=54545)
         self.logger.setLevel(logging.DEBUG)
         self.logger.debug(f"starting {self.__class__.__name__}...")
 
@@ -48,8 +50,8 @@ class MTreeCalculator(multiprocessing.Process):
         t1.start()
 
         lmdb_db = LMDB_Database()
-        while True:
-            try:
+        try:
+            while True:
                 item = self.worker_in_queue_mtree.get()
                 if not item:
                     return
@@ -64,22 +66,20 @@ class MTreeCalculator(multiprocessing.Process):
                 # self.logger.debug(f"mtree and tx_offsets flush took {t1} seconds")
 
                 self.worker_ack_queue_mtree.put(blk_hash)
-            except KeyboardInterrupt:
-                self.logger.debug("MTreeCalculator stopping...")
-            except Exception as e:
-                self.logger.exception(e)
-            finally:
-                self.logger.info(f"Process Stopped")
+        except Exception as e:
+            self.logger.exception(e)
 
     def kill_thread(self):
-        while True:
-            try:
+        try:
+            while True:
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
                     self.shm.close()
                     self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)
-
-            except Exception as e:
-                self.logger.exception(e)
+        except Exception as e:
+            self.logger.exception(e)
+        finally:
+            self.logger.info(f"Process Stopped")
+            sys.exit(0)

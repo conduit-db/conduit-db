@@ -2,7 +2,6 @@ import asyncio
 import os
 import queue
 import struct
-import sys
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
@@ -11,9 +10,9 @@ from pathlib import Path
 
 import bitcoinx
 import zmq
-from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
+from bitcoinx import hash_to_hex_str
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
@@ -27,6 +26,7 @@ from conduit_lib.networks import NetworkConfig
 from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
+from conduit_lib.utils import cast_to_valid_ipv4
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -121,6 +121,11 @@ class Controller:
         self.total_time_connecting_headers = 0
 
     async def setup(self):
+        host = cast_to_valid_ipv4(self.config['mysql_host'].split(":")[0])
+        port = self.config['mysql_host'].split(":")[1]
+        os.environ['MYSQL_HOST'] = host
+        os.environ['MYSQL_PORT'] = port
+
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
@@ -331,10 +336,11 @@ class Controller:
             await self.sync_state.initial_block_download_event.wait()
             await self.spawn_request_mempool()
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("unexpected exception in start jobs")
             raise
 
     async def request_mempool_job(self):
+        # NOTE: if the -preload=1 option is not set on the node, the node disconnects
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
@@ -346,19 +352,22 @@ class Controller:
 
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
-        self.logger.debug("starting sync_headers_job...")
+        try:
+            self.logger.debug("starting sync_headers_job...")
 
-        self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
-        while True:
-            if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                await self.sync_state.wait_for_new_headers_tip()
-            await self._get_max_headers()
-            await self.sync_state.headers_msg_processed_event.wait()
-            self.sync_state.headers_msg_processed_event.clear()
-            self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-            self.logger.debug(
-                "new headers tip height: %s", self.sync_state.local_tip_height,
-            )
+            self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
+            while True:
+                if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
+                    await self.sync_state.wait_for_new_headers_tip()
+                await self._get_max_headers()
+                await self.sync_state.headers_msg_processed_event.wait()
+                self.sync_state.headers_msg_processed_event.clear()
+                self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
+                self.logger.debug(
+                    "new headers tip height: %s", self.sync_state.local_tip_height,
+                )
+        except Exception:
+            self.logger.exception("unexpected exception in sync_headers_job")
 
     def get_header_for_hash(self, block_hash: bytes):
         header, chain = self.storage.headers.lookup(block_hash)
@@ -501,7 +510,7 @@ class Controller:
             # Initial sync to current tip == to ConduitRaw
             while self.sync_state.get_local_block_tip_height() < \
                     self.sync_state.get_conduit_raw_header_tip().height:
-                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
+                # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
                 global_blocks_batch_set = allocate_work()
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()

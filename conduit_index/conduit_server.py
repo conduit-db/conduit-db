@@ -5,6 +5,7 @@ import asyncio
 import logging.handlers
 import logging
 import os
+import sys
 from typing import Dict
 
 from conduit_lib.logging_server import TCPLoggingServer
@@ -15,15 +16,13 @@ from conduit_lib.logging_client import setup_tcp_logging, set_logging_level
 from conduit_lib.networks import NetworkConfig
 
 from conduit_index.controller import Controller
-from conduit_index.argparsing import get_parser
+from conduit_lib.argparsing import get_parser
 # from conduit_index.conduit_index.workers.logging_server import TCPLoggingServer
+from conduit_lib.utils import cast_to_valid_ipv4
 
-
-# selector = selectors.SelectSelector()
-# loop = asyncio.SelectorEventLoop(selector)
-
-loop = asyncio.ProactorEventLoop()
-asyncio.set_event_loop(loop)
+if sys.platform == 'win32':
+    loop = asyncio.ProactorEventLoop()
+    asyncio.set_event_loop(loop)
 
 
 DEFAULT_ENV_VARS = [
@@ -91,7 +90,7 @@ async def main():
         config = setup()
         config['server_type'] = "ConduitIndex"
         loop.set_exception_handler(loop_exception_handler)
-        net_config = NetworkConfig(config.get("network"))
+        net_config = NetworkConfig(config.get("network"), node_host=config['node_host'])
         controller = Controller(
             config=config,
             net_config=net_config, host="127.0.0.1", port=8000,

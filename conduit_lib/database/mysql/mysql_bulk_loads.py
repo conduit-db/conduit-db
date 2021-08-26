@@ -67,7 +67,7 @@ class MySQLBulkLoads:
             set_statement = f"SET " + ",".join(set_params)
 
             query = f"""
-                LOAD DATA INFILE '{outfile.absolute().as_posix()}' 
+                LOAD DATA LOCAL INFILE '{outfile.absolute().as_posix()}' 
                 INTO TABLE {table_name}
                 FIELDS TERMINATED BY ','
                 LINES TERMINATED BY """ + r"'\r\n'" + "\n" + \

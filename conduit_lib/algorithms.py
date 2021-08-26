@@ -87,6 +87,9 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
     i = 0
     pd_hashes = []
     len_script = len(script)
+    # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
+    #  as we do not want to track pubkeys or pkhs etc. from inside of unspendable outputs at this
+    #  stage...
     try:
         while i < len_script:
             try:

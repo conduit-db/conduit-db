@@ -168,6 +168,8 @@ class SyncState:
         batch_count = 0
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
+            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+            #  the network! Currently fails inside of docker...
             block_bytes = self.lmdb.get_block_metadata(block_header.hash)
             # self.logger.debug(f"block_bytes={block_bytes}")
 

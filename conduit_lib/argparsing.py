@@ -54,4 +54,30 @@ def get_parser():
         help="will wipe block_headers.mmap, headers.mmap and drop the LMDB and postgres database "
              "(for convenience when testing on RegTest)",
     )
+    parser.add_argument(
+        "--kafka-host",
+        action="store",
+        dest="kafka_host",
+        type=str,
+        help="e.g. localhost:26638 for use outside of docker or "
+             "kafka:9092 for use within docker",
+    )
+    parser.add_argument(
+        "--mysql-host",
+        action="store",
+        dest="mysql_host",
+        default="127.0.0.1:3306",
+        type=str,
+        help="e.g. localhost:3306 for use outside of docker or "
+             "mysql:3306 for use within docker",
+    )
+    parser.add_argument(
+        "--node-host",
+        action="store",
+        dest="node_host",
+        default="127.0.0.1:18444",
+        type=str,
+        help="e.g. localhost:18444 for use outside of docker or "
+             "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC port)",
+    )
     return parser
