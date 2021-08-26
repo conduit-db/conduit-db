@@ -75,11 +75,12 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
             mm.write(b'\00' * mm.size())
 
     # remove postgres tables
-    mysql_database = mysql_connect()
-    try:
-        mysql_database.mysql_drop_tables()
-    finally:
-        mysql_database.close()
+    if config['server_type'] == "ConduitIndex":
+        mysql_database = mysql_connect()
+        try:
+            mysql_database.mysql_drop_tables()
+        finally:
+            mysql_database.close()
 
     if config['server_type'] == "ConduitRaw":
         def remove_readonly(func, path, excinfo):

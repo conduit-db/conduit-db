@@ -122,7 +122,7 @@ class Controller:
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
-        self.storage = setup_storage(self.config, self.net_config, headers_dir=headers_dir)
+        self.storage = setup_storage(self.config, self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
