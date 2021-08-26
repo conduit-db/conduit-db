@@ -217,7 +217,7 @@ class TxParser(multiprocessing.Process):
                 raise
 
     def mysql_insert_confirmed_tx_rows_thread(self):
-        self.mysql_db: MySQLDatabase = mysql_connect()
+        self.mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
                 try:
@@ -263,7 +263,7 @@ class TxParser(multiprocessing.Process):
 
     def mysql_insert_mempool_tx_rows_thread(self):
         try:
-            self.mysql_db: MySQLDatabase = mysql_connect()
+            self.mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             while True:
                 try:
                     mempool_rows = self.mempool_tx_flush_queue.get(
@@ -449,4 +449,3 @@ class TxParser(multiprocessing.Process):
                 time.sleep(0.2)
         finally:
             sys.exit(0)
-

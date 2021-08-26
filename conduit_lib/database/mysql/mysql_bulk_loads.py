@@ -93,7 +93,8 @@ class MySQLBulkLoads:
             self.total_db_time += t1
             self.total_rows_flushed_since_startup += len(string_rows)
             self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
-            self.logger.log(PROFILING, f"total rows flushed since startup"
+            self.logger.log(PROFILING, f"total rows flushed since startup "
+                                       f"(worker_id={self.worker_id if self.worker_id else None})"
                 f"={self.total_rows_flushed_since_startup}")
 
     def handle_coinbase_dup_tx_hash(self, tx_rows):
