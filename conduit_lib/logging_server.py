@@ -54,8 +54,6 @@ class LogRecordStreamHandler(socketserver.StreamRequestHandler):
 
         except ConnectionResetError:
             self.logger.info(f"Forceful disconnect from {repr(self.connection.getpeername())}")
-        finally:
-            self.logger.debug("Server stopping (Handler)...")
 
     def unPickle(self, data):
         return pickle.loads(data)
@@ -92,9 +90,10 @@ class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
     Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
 
-    def __init__(self, port):
+    def __init__(self, port, kill_port=46464):
         super(TCPLoggingServer, self).__init__()
         self.port = port
+        self.kill_port = kill_port
         self.tcpserver = None
 
     def setup_local_logging_policy(self):
@@ -126,8 +125,11 @@ class TCPLoggingServer(multiprocessing.Process):
 
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context()
+
+        # Todo there is cross-talk of the stop_signal from ConduitIndex and ConduitRaw because
+        #  they both import this common library and use port: 63241
         self.kill_worker_socket = context3.socket(zmq.SUB)
-        self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
+        self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         main_thread = threading.Thread(target=self.main_thread, daemon=True)

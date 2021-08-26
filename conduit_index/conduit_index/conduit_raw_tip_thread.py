@@ -30,15 +30,19 @@ class ConduitRawTipThread(threading.Thread):
 
     def run(self):
         self.headers_state_client.connect_or_keep_trying()  # Blocking
-        self.sync_state.headers_queue = self.headers_state_client.get_remote_headers_queue()
-        while True:
-            # Todo - this starts spinning if ConduitRaw DCs...
-            new_tip = self.sync_state.headers_queue.get()
-            # self.logger.debug(f"new_tip.height={new_tip.height}")
-            if self.sync_state.get_local_block_tip_height() < new_tip.height:
-                # self.logger.debug(f"putting to async queue {new_tip.height}")
-                asyncio.run_coroutine_threadsafe(self.sync_state.headers_queue_async.put(new_tip),
-                    self.loop)
-            else:
-                pass  # drain
-            # time.sleep(0.1)  # otherwise a forceful DC from ConduitIndex causes spinning...
+        try:
+            self.sync_state.headers_queue = self.headers_state_client.get_remote_headers_queue()
+            while True:
+                # Todo - this starts spinning if ConduitRaw DCs...
+                new_tip = self.sync_state.headers_queue.get()
+                # self.logger.debug(f"new_tip.height={new_tip.height}")
+                if self.sync_state.get_local_block_tip_height() < new_tip.height:
+                    # self.logger.debug(f"putting to async queue {new_tip.height}")
+                    asyncio.run_coroutine_threadsafe(self.sync_state.headers_queue_async.put(new_tip),
+                        self.loop)
+                else:
+                    pass  # drain
+        except ConnectionResetError:
+            time.sleep(2)
+            self.logger.debug("Retrying connection to ConduitRaw HeadersStateServer")
+            self.run()

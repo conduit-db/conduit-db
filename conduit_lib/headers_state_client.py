@@ -25,6 +25,9 @@ class HeadersStateClient(SyncManager):
         self.headers_queue = None
 
     def connect_or_keep_trying(self):
+        # Todo - this is never actually able to re-connect when the service starts back up and I
+        #  don't know why. But these unreliable multiprocessing libraries should all be replaced
+        #  with Kafka anyway.
         """This will block the thread"""
         while True:
             try:
