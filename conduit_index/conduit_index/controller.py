@@ -19,14 +19,14 @@ from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.headers_state_client import HeadersStateClient
 from conduit_lib.store import setup_storage
-from conduit_lib.commands import VERSION, GETHEADERS, GETDATA, BLOCK_BIN, MEMPOOL
+from conduit_lib.commands import VERSION, GETHEADERS, BLOCK_BIN, MEMPOOL
 from conduit_lib.handlers import Handlers
 from conduit_lib.constants import ZERO_HASH, WORKER_COUNT_TX_PARSERS, MsgType
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
-from conduit_raw.conduit_raw.workers.logging_server import TCPLoggingServer
+from conduit_lib.logging_server import TCPLoggingServer
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -188,11 +188,10 @@ class Controller:
                 p.terminate()
                 p.join()
 
-            await asyncio.sleep(1)
             self.sync_state._batched_blocks_exec.shutdown(wait=False)
-            # Todo - this raises and upsets everything...
-            # self.shm_buffer.close()
-            # self.shm_buffer.unlink()
+
+            self.shm_buffer.close()
+            self.shm_buffer.unlink()
             for task in self.tasks:
                 task.cancel()
                 try:

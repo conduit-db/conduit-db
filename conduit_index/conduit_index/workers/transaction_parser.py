@@ -442,10 +442,12 @@ class TxParser(multiprocessing.Process):
                 t.start()
 
             while True:
+                # For some reason I am unable to catch a KeyboardInterrupt or SIGINT here so
+                # need to rely on an overt "stop_signal" from the Controller for graceful shutdown
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
-                    self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)
         finally:
+            self.logger.info(f"Process Stopped")
             sys.exit(0)

@@ -183,6 +183,8 @@ class Controller:
     async def stop(self):
         self.running = False
         try:
+            self.headers_manager.stop()
+
             if self.transport:
                 self.transport.close()
             if self.storage:
@@ -196,10 +198,8 @@ class Controller:
                 p.terminate()
                 p.join()
 
-            await asyncio.sleep(1)
-            # Todo - this raises and upsets everything...
-            # self.shm_buffer.close()
-            # self.shm_buffer.unlink()
+            self.shm_buffer.close()
+            self.shm_buffer.unlink()
             for task in self.tasks:
                 task.cancel()
                 try:

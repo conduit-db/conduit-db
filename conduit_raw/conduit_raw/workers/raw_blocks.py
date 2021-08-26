@@ -74,8 +74,11 @@ class BlockWriter(multiprocessing.Process):
         except Exception as e:
             self.logger.exception(e)
             raise
+        except KeyboardInterrupt:
+            self.logger.debug("BlockWriter stopping...")
         finally:
             self.lmdb.close()
+            self.logger.info(f"Process Stopped")
 
     async def lmdb_inserts_task(self):
         self.lmdb: LMDB_Database
@@ -118,6 +121,9 @@ class BlockWriter(multiprocessing.Process):
                 self.batched_metadata = []
                 continue
 
+            except KeyboardInterrupt:
+                self.logger.debug("lmdb_inserts_task stopping...")
+
             except Exception as e:
                 self.logger.exception(e)
                 raise
@@ -137,9 +143,12 @@ class BlockWriter(multiprocessing.Process):
                     (blk_hash, blk_start_pos, blk_end_pos),
                 )
                 asyncio.run_coroutine_threadsafe(coro(), self.loop)
-
+            except KeyboardInterrupt:
+                self.logger.debug("BlockWriter stopping...")
             except Exception as e:
                 self.logger.exception(e)
+            finally:
+                self.logger.debug("BlockWriter stopped")
 
     def kill_thread(self):
         while True:

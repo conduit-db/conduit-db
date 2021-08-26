@@ -253,8 +253,9 @@ class SyncState:
         self.initial_block_download_event_mp.set()
 
     async def wait_for_new_block_tip(self):
-        # TODO - change this over to being triggered by ConduitRaw headers...
-        self.logger.debug(f"wait_for_new_block_tip 1; self.is_post_IBD()={self.is_post_IBD()}")
+        # TODO - ideally headers should be pulled from ConduitRaw rather than also retrieving them
+        #  from the node. ConduitIndex should only listen to the node directly for mempool
+        #  transactions
         if self.is_post_IBD():
             await self.blocks_event_new_tip.wait()
             self.blocks_event_new_tip.clear()

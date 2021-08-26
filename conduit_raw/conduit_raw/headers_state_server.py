@@ -1,3 +1,4 @@
+import logging
 import threading
 from multiprocessing.managers import SyncManager
 from queue import Queue
@@ -8,9 +9,13 @@ class HeadersStateServer(threading.Thread):
     def __init__(self, headers_manager):
         threading.Thread.__init__(self)
         self.headers_manager = headers_manager
+        self.logger = logging.getLogger("headers-state-server")
 
     def run(self):
-        self.headers_manager.serve()
+        try:
+            self.headers_manager.serve()
+        except KeyboardInterrupt:
+            self.logger.debug("HeadersStateServer stopping...")
 
 
 class HeadersStateManager(SyncManager):
@@ -32,11 +37,17 @@ class HeadersStateManager(SyncManager):
         self.register('get_tip', callable=self.get_tip)
         self.register('set_tip', callable=self.set_tip)
         self.server = self.get_server()
+        self.logger = logging.getLogger("headers-state-server")
 
         self.tip_lock = threading.Lock()
 
     def serve(self):
         self.server.serve_forever()
+
+    def stop(self):
+        # This is probably not the intended way of shutting down the SyncManager but all of this
+        # Code is destined for replacement by Kafka eventually anyway!
+        self.server.stop_event.set()
 
     def get_headers_queue(self):
         return self.shared_headers_queue

@@ -1,3 +1,5 @@
+# Todo - change this logging server over to be a kafka-based consumer
+
 import os
 import pickle
 import logging
@@ -53,7 +55,7 @@ class LogRecordStreamHandler(socketserver.StreamRequestHandler):
         except ConnectionResetError:
             self.logger.info(f"Forceful disconnect from {repr(self.connection.getpeername())}")
         finally:
-            self.logger.debug("Server stopping...")
+            self.logger.debug("Server stopping (Handler)...")
 
     def unPickle(self, data):
         return pickle.loads(data)
@@ -131,28 +133,23 @@ class TCPLoggingServer(multiprocessing.Process):
         main_thread = threading.Thread(target=self.main_thread, daemon=True)
         main_thread.start()
 
-        while True:
-            try:
+        try:
+            while True:
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
-                    self.logger.debug("stopping ThreadingTCPServer...")
-                    # s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    # s.connect(('127.0.0.1', 54545))
-                    # len_msg = struct.pack(">L", 4)
-                    # s.sendall(len_msg + b"stop")
-                    self.tcpserver.shutdown()
                     break
                 time.sleep(0.2)
-            # except KeyboardInterrupt:
-            #     self.logger.debug("Caught KeyboardInterrupt")
-            except Exception as e:
-                self.logger.exception(e)
+        except KeyboardInterrupt:
+            self.logger.debug("ThreadingTCPServer stopping...")
+        except Exception as e:
+            self.logger.exception(e)
+        finally:
+            self.tcpserver.shutdown()
+            self.logger.info("Process Stopped")
 
-        self.logger.info("ThreadingTCPServer stopped")
-        self.logger.info(f"Process Stopped")
 
 if __name__ == "__main__":
-    TCPLoggingServer().start()
+    TCPLoggingServer(54545).start()
     time.sleep(5)
 
     logging.debug("shutting down...")

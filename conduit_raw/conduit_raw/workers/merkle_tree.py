@@ -64,8 +64,12 @@ class MTreeCalculator(multiprocessing.Process):
                 # self.logger.debug(f"mtree and tx_offsets flush took {t1} seconds")
 
                 self.worker_ack_queue_mtree.put(blk_hash)
+            except KeyboardInterrupt:
+                self.logger.debug("MTreeCalculator stopping...")
             except Exception as e:
                 self.logger.exception(e)
+            finally:
+                self.logger.info(f"Process Stopped")
 
     def kill_thread(self):
         while True:
