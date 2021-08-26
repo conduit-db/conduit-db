@@ -254,7 +254,7 @@ class SyncState:
 
     async def wait_for_new_block_tip(self):
         # TODO - change this over to being triggered by ConduitRaw headers...
-        self.logger.debug(f"WAITING....")
+        self.logger.debug(f"wait_for_new_block_tip 1; self.is_post_IBD()={self.is_post_IBD()}")
         if self.is_post_IBD():
             await self.blocks_event_new_tip.wait()
             self.blocks_event_new_tip.clear()
@@ -263,5 +263,3 @@ class SyncState:
             self.set_post_IBD_mode()
             self.blocks_event_new_tip.clear()
             await self.wait_for_new_block_tip()
-
-        self.logger.debug(f"STOPPED WAITING....")

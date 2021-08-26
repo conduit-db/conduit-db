@@ -28,7 +28,7 @@ class BatchCompletionTxParser(threading.Thread):
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
             worker_ack_queue_tx_parse_confirmed, tx_parser_completion_queue, daemon=True):
         threading.Thread.__init__(self, daemon=daemon)
-        self.logger = logging.getLogger("batch-completion-raw")
+        self.logger = logging.getLogger("batch-completion-tx-parser")
         self.controller: Controller = controller
         self.sync_state = sync_state
         self.get_header_for_hash = self.controller.get_header_for_hash

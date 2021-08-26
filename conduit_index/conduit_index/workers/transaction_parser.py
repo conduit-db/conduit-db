@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 from datetime import datetime
-from multiprocessing import shared_memory
 
 from typing import Tuple, List, Sequence, Optional
 
@@ -38,14 +37,11 @@ class TxParser(multiprocessing.Process):
     def __init__(
         self,
         worker_id,
-        shm_name,
         worker_ack_queue_tx_parse_confirmed,
         initial_block_download_event_mp,
         worker_ack_queue_mined_tx_hashes,
     ):
         super(TxParser, self).__init__()
-        # TODO - shm is still needed for relayed mempool transactions
-        self.shm = multiprocessing.shared_memory.SharedMemory(name=shm_name, create=False)
         self.worker_id = worker_id
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
@@ -350,24 +346,20 @@ class TxParser(multiprocessing.Process):
                 if not message:
                     return  # poison pill stop command
 
-                msg_type, len_array = struct.unpack_from("<II", message)
-                msg_type, len_array, packed_array = struct.unpack(f"<II{len_array}s", message)
-                unpacked_array = array.array("Q", packed_array)
+                msg_type, size_tx = struct.unpack_from(f"<II", message)
+                msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", message)
 
                 # Todo only does 1 mempool tx at a time at present
-                for i in range(0, len(unpacked_array) - 1, step=2):
-                    if not self.shm:  # a hack for when shared memory gets closed
-                        return "stop"
-                    buffer = bytes(self.shm.buf[i:i + 1])  # [cur_msg_start_pos: cur_msg_end_pos]
-
                 dt = datetime.utcnow()
+                tx_offsets = array.array("Q", [0])
                 timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
-                result = parse_txs(buffer, [0], timestamp, False)
+                result = parse_txs(rawtx, tx_offsets, timestamp, False)
                 tx_rows, in_rows, out_rows, set_pd_rows = result
 
                 # todo - batch up mempool txs before feeding them into the queue.
+                num_mempool_txs_processed = 1
                 self.mempool_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-                self.mempool_tx_flush_ack_queue.put(len(unpacked_array))
+                self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
             except Exception as e:
                 self.logger.exception(e)
                 raise
@@ -452,11 +444,9 @@ class TxParser(multiprocessing.Process):
             while True:
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
-                    self.shm.close()
                     self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)
         finally:
-            self.shm.close()
             sys.exit(0)
 

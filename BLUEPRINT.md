@@ -34,6 +34,23 @@ the case for B-tree databases...
     tx_offset_start BIGINT UNSIGNED,
     tx_offset_end BIGINT UNSIGNED
 
+Consider whether tx_height should be changed to tx_block_hash or tx_block_num
+so that on a reorg, the Transaction table does not need to be modified at all.
+
+However it would lead to duplicate tx_hashes in the Transaction table...
+Which is a PRIMARY KEY. Would need to relax the uniqueness constraint
+and then pick the tx with block hash that is on the longest-chain.
+
+Using tx_height leads to the API doing a "stop-the-world" repair whilst the
+client would need to wait a few seconds... (a much easier implementation 
+though)
+
+An argument can be made that in an ideal world SPV clients should be able
+to request merkle branches for both sides of a fork immediately (rather than
+having to wait until a winner emerges) because if they download
+the wrong one and a long time passes by, their backed up merkle proof will
+be invalidated (and possibly pruned!!)
+
 ## Inputs
 
     out_tx_hash BINARY(32),

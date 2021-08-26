@@ -114,21 +114,10 @@ class Handlers:
 
     # ----- Special case messages ----- #
 
-    async def on_tx(self, special_message: List[Tuple[int, int]]):
-        """Todo - This function should be fed into the Handlers class as a callback at
-            initialization because it is specialized to the ConduitIndex Service"""
-
+    async def on_tx(self, rawtx: memoryview):
         # TODO - push packed binary message for ZMQ
-        # message is: [(cur_msg_start_pos, cur_msg_end_pos)]  - see bitcoin_net_io
-        len_array = len(special_message) * 8 * 2  # unsigned long long = 8 bytes * 2 integer tuple
-        flattened_list_of_tuples = list(chain.from_iterable(special_message))
-        packed_array = array.array("Q", flattened_list_of_tuples)
-        packed_message = struct.pack(f"<II{len_array}s", MsgType.MSG_TX, len_array,
-            packed_array.tobytes())
-        # Todo - check this is correct
-        # logger.debug(f"flattened_list_of_tuples={flattened_list_of_tuples}")
-        # logger.debug(f"packed_array={packed_array}")
-        # logger.debug(f"packed_message={packed_message}")
+        size_tx = len(rawtx)
+        packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
         if hasattr(self.controller, 'mempool_tx_socket'):  # ConduitRaw has no such attr
             self.controller.mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()

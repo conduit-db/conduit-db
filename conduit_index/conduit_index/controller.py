@@ -263,7 +263,6 @@ class Controller:
         for worker_id in range(WORKER_COUNT_TX_PARSERS):
             p = TxParser(
                 worker_id+1,
-                self.shm_buffer.name,
                 self.worker_ack_queue_tx_parse_confirmed,
                 self.sync_state.initial_block_download_event_mp,
                 self.worker_ack_queue_mined_tx_hashes,
@@ -499,9 +498,7 @@ class Controller:
             self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
             return global_blocks_batch_set
 
-        try:
-            # up to 500 blocks per loop
-            batch_id = 0
+        async def do_initial_block_download():
             # Initial sync to current tip == to ConduitRaw
             while self.sync_state.get_local_block_tip_height() < \
                     self.sync_state.get_conduit_raw_header_tip().height:
@@ -511,10 +508,13 @@ class Controller:
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
                 self.logger.debug(f"new block tip height: {api_block_tip_height}")
 
+        async def maintain_chain_tip():
             # Now wait on the queue for notifications
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
+                await self.sync_state.wait_for_new_block_tip()
+
                 batch_id += 1
                 self.logger.debug(f"Controller Batch Start (batch_id={batch_id})")
 
@@ -524,7 +524,7 @@ class Controller:
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
-                global_blocks_batch_set = await allocate_work()
+                global_blocks_batch_set = allocate_work()
 
                 # Workers are loaded by Handlers.on_block handler as messages are received
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
@@ -533,6 +533,13 @@ class Controller:
                 # ------------------------- Batch complete ------------------------- #
                 self.logger.debug(f"Controller Batch Complete (batch_id={batch_id})"
                     f" new tip height={self.sync_state.get_local_block_tip_height()}")
+
+        try:
+            # up to 500 blocks per loop
+            batch_id = 0
+            # Initial sync to current tip == to ConduitRaw
+            await do_initial_block_download()
+            await maintain_chain_tip()
 
         except asyncio.CancelledError:
             raise

@@ -136,9 +136,9 @@ class BitcoinNetIO(BufferedProtocol):
             block_tx_count,
         )
 
-    def make_special_tx_msg(self, cur_msg_start_pos, cur_msg_end_pos):
+    def make_special_tx_msg(self, rawtx: memoryview):
         """returns a list in preparation for future batching of continuous mempool rawtxs"""
-        return [(cur_msg_start_pos, cur_msg_end_pos)]
+        return rawtx
 
     def buffer_updated(self, nbytes):
 
@@ -160,9 +160,11 @@ class BitcoinNetIO(BufferedProtocol):
 
                 # Tx messages (via mempool relay)
                 elif cur_header.command == TX_BIN:
+                    rawtx = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos]
+
                     self.on_msg_callback(
                         cur_header.command,
-                        self.make_special_tx_msg(cur_msg_start_pos, cur_msg_end_pos),
+                        self.make_special_tx_msg(rawtx),
                     )
 
                 # Non-block messages

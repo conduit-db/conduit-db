@@ -61,12 +61,11 @@ def setup_headers_store(net_config, mmap_filename):
 def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
-    # TODO - put this back!
-    # if os.path.exists(headers_path):
-    #     with open(headers_path, 'w+') as f:
-    #         mm = mmap.mmap(f.fileno(), MMAP_SIZE)
-    #         mm.seek(0)
-    #         mm.write(b'\00' * mm.size())
+    if os.path.exists(headers_path):
+        with open(headers_path, 'w+') as f:
+            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+            mm.seek(0)
+            mm.write(b'\00' * mm.size())
 
     # remove block headers - memory-mapped so need to do it this way to free memory immediately...
     if os.path.exists(block_headers_path):
