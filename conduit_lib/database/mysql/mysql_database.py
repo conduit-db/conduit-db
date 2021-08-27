@@ -3,7 +3,9 @@ import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
+from pathlib import Path
 
+import MySQLdb
 from MySQLdb import _mysql
 
 from .mysql_bulk_loads import MySQLBulkLoads
@@ -127,13 +129,14 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
         # user = "conduitadmin"
         user = "root"
 
-    conn = _mysql.connect(
-        host=host,
-        port=port,
-        user=user,
-        passwd="conduitpass",
-        db="conduitdb",
-    )
+    # conn = _mysql.connect(
+    #     host=host,
+    #     port=port,
+    #     user=user,
+    #     passwd="conduitpass",
+    #     db="conduitdb",
+    # )
+    conn = MySQLdb.connect(host, user, 'conduitpass', 'conduitdb', local_infile=1)
     return MySQLDatabase(conn, worker_id=worker_id)
 
 

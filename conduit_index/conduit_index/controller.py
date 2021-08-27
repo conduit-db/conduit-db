@@ -510,7 +510,8 @@ class Controller:
             # Initial sync to current tip == to ConduitRaw
             while self.sync_state.get_local_block_tip_height() < \
                     self.sync_state.get_conduit_raw_header_tip().height:
-                # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
+                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
+                self.mysql_db.bulk_loads.set_local_infile_on()
                 global_blocks_batch_set = allocate_work()
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()

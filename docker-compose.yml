@@ -39,7 +39,7 @@ services:
       MYSQL_USER: conduitadmin
       MYSQL_PASSWORD: conduitpass
     volumes:
-      - ./contrib/mariadb/config:/etc/mysql/conf.d
+      - ./contrib/mariadb/config/my.cnf:/etc/mysql/my.cnf
 
 #  scylla-node1:
 #    image: scylladb/scylla:4.4.0

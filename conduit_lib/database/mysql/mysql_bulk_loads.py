@@ -28,6 +28,10 @@ class MySQLBulkLoads:
         self.total_db_time = 0
         self.total_rows_flushed_since_startup = 0  # for current controller
 
+    def set_local_infile_on(self):
+        extra_settings = f"SET @@GLOBAL.local_infile = 1;"
+        self.mysql_conn.query(extra_settings)
+
     def set_rocks_db_bulk_load_on(self):
         self.mysql_db.start_transaction()
         settings = f"""SET global rocksdb_bulk_load_allow_unsorted=0;

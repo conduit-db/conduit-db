@@ -22,7 +22,8 @@ class MySQLTables:
             result = self.get_tables()
             queries = []
             for row in result:
-                table = row[0].decode()
+                # table = row[0].decode()
+                table = row[0]
                 queries.append(f"DROP TABLE {table};")
             for query in queries:
                 self.mysql_conn.query(query)
@@ -33,7 +34,8 @@ class MySQLTables:
         try:
             result = self.get_tables()
             for row in result:
-                table = row[0].decode()
+                # table = row[0].decode()
+                table = row[0]
                 if table == "mempool_transactions":
                     break
             else:
