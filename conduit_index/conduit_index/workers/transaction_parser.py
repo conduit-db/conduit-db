@@ -371,76 +371,77 @@ class TxParser(multiprocessing.Process):
 
     def mined_blocks_thread(self):
 
-
         def iterate(self):
-            try:
-                packed_msg = self.mined_tx_socket.recv()
-                if not packed_msg:
-                    return  # poison pill stop command
+            packed_msg = self.mined_tx_socket.recv()
+            if not packed_msg:
+                return  # poison pill stop command
 
-                # self.logger.debug(f"len(packed_msg)={len(packed_msg)}")
+            # self.logger.debug(f"len(packed_msg)={len(packed_msg)}")
 
-                msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
-                msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
-                    packed_array = struct.unpack(f"<II32sIIQ{len_arr}s", packed_msg)
+            msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
+            msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+                packed_array = struct.unpack(f"<II32sIIQ{len_arr}s", packed_msg)
 
-                if hash_to_hex_str(blk_hash) == \
-                        "00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470":
-                    self.logger.debug(f"got from queue: blk_height={blk_height}; blk_hash="
-                                      f"{hash_to_hex_str(blk_hash)}; size_array={len_arr}")
+            if hash_to_hex_str(blk_hash) == \
+                    "00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470":
+                self.logger.debug(f"got from queue: blk_height={blk_height}; blk_hash="
+                                  f"{hash_to_hex_str(blk_hash)}; size_array={len_arr}")
 
-                tx_offsets_partition = array.array("Q", packed_array)
+            tx_offsets_partition = array.array("Q", packed_array)
 
+            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+            #  the network! Currently fails inside of docker...
+            blk_num = self.lmdb_db.get_block_num(blk_hash)
+            # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
+
+            # if in IBD mode, mempool txs are strictly rejected. So there is no point
+            # in sorting out which txs are already in the mempool tx table.
+            # There is also no point performing mempool tx invalidation.
+            if self.initial_block_download_event_mp.is_set():
                 # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
                 #  the network! Currently fails inside of docker...
-                blk_num = self.lmdb_db.get_block_num(blk_hash)
-                # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
+                buffer = self.lmdb_db.get_block(blk_num)  # Todo - Wasteful!
+                self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
+                    blk_height)
+                item = self.processed_vs_unprocessed_queue.get()
+                unprocessed_tx_offsets, processed_tx_offsets = item
+            else:
+                unprocessed_tx_offsets = tx_offsets_partition
+            # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
 
-                # if in IBD mode, mempool txs are strictly rejected. So there is no point
-                # in sorting out which txs are already in the mempool tx table.
-                # There is also no point performing mempool tx invalidation.
-                if self.initial_block_download_event_mp.is_set():
-                    # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-                    #  the network! Currently fails inside of docker...
-                    buffer = self.lmdb_db.get_block(blk_num)  # Todo - Wasteful!
-                    self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
-                        blk_height)
-                    item = self.processed_vs_unprocessed_queue.get()
-                    unprocessed_tx_offsets, processed_tx_offsets = item
-                else:
-                    unprocessed_tx_offsets = tx_offsets_partition
-                # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
+            t0 = time.time()
+            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+            #  the network! Currently fails inside of docker...
+            with self.lmdb_db.env.begin(db=self.lmdb_db.blocks_db) as txn:
+                buf = txn.get(struct_be_I.pack(blk_num))
+                result = parse_txs(buf, unprocessed_tx_offsets, blk_height, True,
+                    first_tx_pos_batch)
 
-                t0 = time.time()
-                # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-                #  the network! Currently fails inside of docker...
-                with self.lmdb_db.env.begin(db=self.lmdb_db.blocks_db) as txn:
-                    buf = txn.get(struct_be_I.pack(blk_num))
-                    result = parse_txs(buf, unprocessed_tx_offsets, blk_height, True,
-                        first_tx_pos_batch)
+            tx_rows, in_rows, out_rows, set_pd_rows = result
+            t1 = time.time() - t0
+            self.total_tx_parse_time += t1
+            if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
+                self.last_time = self.total_tx_parse_time
+                self.logger.debug(f"total time for tx parsing algorithm: "
+                                  f"{self.total_tx_parse_time} seconds")
 
-                tx_rows, in_rows, out_rows, set_pd_rows = result
-                t1 = time.time() - t0
-                self.total_tx_parse_time += t1
-                if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
-                    self.last_time = self.total_tx_parse_time
-                    self.logger.debug(f"total time for tx parsing algorithm: "
-                                      f"{self.total_tx_parse_time} seconds")
+            num_txs = len(tx_offsets_partition)
+            self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
+            # self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
+            self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
 
-                num_txs = len(tx_offsets_partition)
-                self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-                # self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
-                self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
-            except Exception as e:
-                self.logger.exception(e)
-                raise
+        try:
+            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
+            #  the network! Currently fails inside of docker...
+            self.lmdb_db = LMDB_Database()
+            while True:
+                if iterate(self) == "stop":
+                    break
 
-        # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-        #  the network! Currently fails inside of docker...
-        self.lmdb_db = LMDB_Database()
-        while True:
-            if iterate(self) == "stop":
-                break
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.logger.exception(e)
 
     def main_thread(self):
         try:

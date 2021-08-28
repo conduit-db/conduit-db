@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import mmap
+import sys
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -57,21 +58,31 @@ def setup_headers_store(net_config, mmap_filename):
     return headers
 
 
+def reset_headers(headers_path: Path, block_headers_path: Path, config: Dict):
+    if sys.platform == 'win32':
+        if os.path.exists(headers_path):
+            with open(headers_path, 'w+') as f:
+                mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+                mm.seek(0)
+                mm.write(b'\00' * mm.size())
+
+        # remove block headers - memory-mapped so need to do it this way to free memory immediately
+        if os.path.exists(block_headers_path):
+            with open(block_headers_path, 'w+') as f:
+                mm = mmap.mmap(f.fileno(), MMAP_SIZE)
+                mm.seek(0)
+                mm.write(b'\00' * mm.size())
+    else:
+        if os.path.exists(headers_path):
+            os.remove(headers_path)
+        if os.path.exists(block_headers_path):
+            os.remove(headers_path)
+
+
 def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
-    if os.path.exists(headers_path):
-        with open(headers_path, 'w+') as f:
-            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
-            mm.seek(0)
-            mm.write(b'\00' * mm.size())
-
-    # remove block headers - memory-mapped so need to do it this way to free memory immediately...
-    if os.path.exists(block_headers_path):
-        with open(block_headers_path, 'w+') as f:
-            mm = mmap.mmap(f.fileno(), MMAP_SIZE)
-            mm.seek(0)
-            mm.write(b'\00' * mm.size())
+    reset_headers(headers_path, block_headers_path, config)
 
     # remove postgres tables
     if config['server_type'] == "ConduitIndex":
@@ -114,7 +125,7 @@ def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
     else:
         mysql_database = None
 
-    lmdb_db = LMDB_Database()
+    lmdb_db = LMDB_Database(storage_path=config.get('lmdb_path'))
 
     storage = Storage(headers, block_headers, mysql_database, lmdb_db)
     return storage

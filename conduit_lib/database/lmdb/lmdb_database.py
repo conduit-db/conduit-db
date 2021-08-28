@@ -29,7 +29,9 @@ class LMDB_Database:
     BLOCK_METADATA_DB = b"block_metadata_db"
     DEFAULT_DIR = Path(MODULE_DIR).parent.parent.parent.parent.joinpath('lmdb_data').__str__()
 
-    def __init__(self, storage_path: str=DEFAULT_DIR):
+    def __init__(self, storage_path: Optional[str]=None):
+        if not storage_path:
+            storage_path = self.DEFAULT_DIR
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
         self.env: Optional[lmdb.Environment] = None

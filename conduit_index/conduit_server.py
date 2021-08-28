@@ -18,7 +18,6 @@ from conduit_lib.networks import NetworkConfig
 from conduit_index.controller import Controller
 from conduit_lib.argparsing import get_parser
 # from conduit_index.conduit_index.workers.logging_server import TCPLoggingServer
-from conduit_lib.utils import cast_to_valid_ipv4
 
 if sys.platform == 'win32':
     loop = asyncio.ProactorEventLoop()

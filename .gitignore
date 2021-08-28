@@ -18,3 +18,4 @@ tests/logs/*
 *.mdb
 ../profile.svg
 profile.svg
+data/**

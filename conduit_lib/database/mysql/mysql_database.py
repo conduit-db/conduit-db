@@ -136,7 +136,7 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
     #     passwd="conduitpass",
     #     db="conduitdb",
     # )
-    conn = MySQLdb.connect(host, user, 'conduitpass', 'conduitdb', local_infile=1)
+    conn = MySQLdb.connect(host, user, 'conduitpass', 'conduitdb', port=port, local_infile=1)
     return MySQLDatabase(conn, worker_id=worker_id)
 
 
@@ -155,8 +155,6 @@ def mysql_test_connect() -> MySQLDatabase:
 
 
 def load_mysql_database() -> MySQLDatabase:
-    # Todo - SHOW PROCESSLIST; -> kill any sleeping connections (zombies from a previous forced
-    #  kill)
     mysql_database = mysql_connect()
     return mysql_database
 

@@ -6,6 +6,7 @@ import socket
 import struct
 from binascii import hexlify
 from typing import Tuple
+
 from bitcoinx import (
     read_le_uint64,
     read_be_uint16,

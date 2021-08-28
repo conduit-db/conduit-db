@@ -1,6 +1,7 @@
 import asyncio
 import os
 import queue
+import socket
 import struct
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -27,6 +28,7 @@ from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.utils import cast_to_valid_ipv4
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -165,7 +167,10 @@ class Controller:
     async def run(self):
         self.running = True
         try:
+            await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
+            await wait_for_node(node_host=self.config['node_host'],
+                serializer=self.serializer, deserializer=self.deserializer)
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))
@@ -173,6 +178,8 @@ class Controller:
             wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
             self.tasks.append(wait_until_conn_lost)
             await asyncio.wait([init_handshake, wait_until_conn_lost])
+        except Exception:
+            self.logger.exception("unexpected exception in Controller.run")
         finally:
             await self.stop()
 

@@ -19,12 +19,13 @@ class HeadersStateClient(SyncManager):
     """
 
     def __init__(self):
+        # This is hardcoded because all of this code will be removed in favour of Kafka soon.
         if is_docker():
-            # This is hardcoded because all of this code will be removed in favour of Kafka soon.
-            host = cast_to_valid_ipv4('conduit-raw')
+            self.host = cast_to_valid_ipv4('conduit-raw')
         else:
-            host = "127.0.0.1"
-        super().__init__(address=(host, 50000), authkey=b'abracadabra')
+            self.host = "127.0.0.1"
+        self.port = 50000
+        super().__init__(address=(self.host, self.port), authkey=b'abracadabra')
         self.logger = logging.getLogger("test-headers-state-client")
         self.register('get_headers_queue')
         self.register('get_tip')  # In case no new blocks come in for a while
@@ -41,7 +42,8 @@ class HeadersStateClient(SyncManager):
                 self.connect()
                 break
             except ConnectionRefusedError:
-                self.logger.debug(f"Could not connect to HeadersStateServer, retrying...")
+                self.logger.debug(f"ConduitRawAPI on: {self.host}:{self.port} is currently "
+                    f"unavailable - waiting...")
                 time.sleep(1)
                 continue  # Keep trying to connect
 

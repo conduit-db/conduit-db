@@ -1,6 +1,8 @@
 import asyncio
+import io
 import os
 import queue
+import socket
 import time
 import typing
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -13,8 +15,9 @@ from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import logging
 from typing import Optional, List, Dict
 
-from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
+from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.headers_state_client import HeadersStateClient
+from conduit_lib.wait_for_dependencies import wait_for_node
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .sync_state import SyncState
@@ -165,6 +168,8 @@ class Controller:
         self.running = True
         try:
             await self.setup()
+            await wait_for_node(node_host=self.config['node_host'],
+                serializer=self.serializer, deserializer=self.deserializer)
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))

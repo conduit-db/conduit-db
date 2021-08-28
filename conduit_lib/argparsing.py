@@ -80,4 +80,11 @@ def get_parser():
         help="e.g. localhost:18444 for use outside of docker or "
              "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC port)",
     )
+    parser.add_argument(
+        "--lmdb-path",
+        action="store",
+        dest="lmdb_path",
+        default=None,
+        type=str,
+    )
     return parser
