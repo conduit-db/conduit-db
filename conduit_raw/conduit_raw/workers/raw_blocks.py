@@ -52,7 +52,7 @@ class BlockWriter(multiprocessing.Process):
             setup_tcp_logging(port=54545)
         self.logger = logging.getLogger("raw-block-writer")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.debug(f"starting {self.__class__.__name__}...")
+        self.logger.debug(f"Starting {self.__class__.__name__}...")
 
         self.lmdb = LMDB_Database()
 
@@ -71,7 +71,6 @@ class BlockWriter(multiprocessing.Process):
             t1.start()
             t2 = threading.Thread(target=self.kill_thread, daemon=True)
             t2.start()
-            self.logger.debug(f"event loop running state: {asyncio.get_event_loop().is_running()}")
             self.loop.run_until_complete(self.lmdb_inserts_task())
             self.logger.debug("Coro done...")
         except Exception as e:

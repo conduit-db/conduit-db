@@ -51,7 +51,7 @@ class LMDB_Database:
 
     def open(self):
         self.env = lmdb.open(self._storage_path, max_dbs=5, map_size=self._map_size,
-            sync=False, readahead=False)
+            sync=False, readahead=False, max_readers=50)
 
         self.blocks_db = self.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)

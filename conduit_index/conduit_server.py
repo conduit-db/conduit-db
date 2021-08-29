@@ -18,6 +18,7 @@ from conduit_lib.networks import NetworkConfig
 from conduit_index.controller import Controller
 from conduit_lib.argparsing import get_parser
 # from conduit_index.conduit_index.workers.logging_server import TCPLoggingServer
+from conduit_lib.utils import cast_to_valid_ipv4
 
 if sys.platform == 'win32':
     loop = asyncio.ProactorEventLoop()
@@ -65,6 +66,18 @@ def parse_args() -> Dict:
     return config_options
 
 
+def set_env_vars(config: Dict):
+    logger = logging.getLogger("set_env_vars")
+    os.environ['KAFKA_HOST'] = config['kafka_host']
+    host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
+    port = config['mysql_host'].split(":")[1]
+    os.environ['MYSQL_HOST'] = host
+    os.environ['MYSQL_PORT'] = port
+    logger.debug(f"KAFKA_HOST: {os.environ['KAFKA_HOST']}")
+    logger.debug(f"MYSQL_HOST: {host}")
+    logger.debug(f"MYSQL_PORT: {port}")
+
+
 def setup():
     env_vars = {}
     env_vars.update(get_env_vars())
@@ -87,6 +100,7 @@ async def main():
         logging_server_proc = TCPLoggingServer(port=65421, kill_port=63241)
         logging_server_proc.start()
         config = setup()
+        set_env_vars(config)
         config['server_type'] = "ConduitIndex"
         loop.set_exception_handler(loop_exception_handler)
         net_config = NetworkConfig(config.get("network"), node_host=config['node_host'])

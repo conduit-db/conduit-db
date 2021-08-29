@@ -4,12 +4,11 @@ import multiprocessing
 import threading
 import typing
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import Optional, Tuple
+from typing import Optional
 
 import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
-from conduit_lib.headers_state_client import HeadersStateClient
 from conduit_lib.store import Storage
 from .load_balance_algo import distribute_load
 
@@ -40,10 +39,10 @@ class SyncState:
         self.storage = storage
         self.controller = controller
         self.lmdb = self.storage.lmdb
-        self.headers_state_client = HeadersStateClient()
-        self.headers_state_client.connect_or_keep_trying()
-        self.headers_queue = self.headers_state_client.get_remote_headers_queue()
-        self.headers_queue_async = asyncio.Queue()
+
+        self.conduit_raw_headers_queue = asyncio.Queue()
+        self.conduit_raw_header_tip: bitcoinx.Header = None
+        self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
 
         self.headers_msg_processed_event = asyncio.Event()
         self.headers_event_new_tip = asyncio.Event()
@@ -99,13 +98,20 @@ class SyncState:
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
 
-    def get_local_block_tip(self) -> int:
+    def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
 
     # ConduitRaw Headers State
     def get_conduit_raw_header_tip(self):
         """Needs to first have a connected headers_state_client"""
-        return self.headers_state_client.get_remote_tip()
+        with self.conduit_raw_header_tip_lock:
+            return self.conduit_raw_header_tip
+
+    def set_conduit_raw_header_tip(self, conduit_raw_header_tip):
+        """Needs to first have a connected headers_state_client"""
+        with self.conduit_raw_header_tip_lock:
+            self.conduit_raw_header_tip = conduit_raw_header_tip
+            return self.conduit_raw_header_tip
 
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height
@@ -258,6 +264,7 @@ class SyncState:
         # TODO - ideally headers should be pulled from ConduitRaw rather than also retrieving them
         #  from the node. ConduitIndex should only listen to the node directly for mempool
         #  transactions
+        self.logger.debug(f"self.is_post_IBD()={self.is_post_IBD()}")
         if self.is_post_IBD():
             await self.blocks_event_new_tip.wait()
             self.blocks_event_new_tip.clear()

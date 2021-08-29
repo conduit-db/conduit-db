@@ -1,6 +1,8 @@
 import asyncio
 import io
 from asyncio import BufferedProtocol
+
+import bitcoinx
 from bitcoinx import read_varint
 from collections import namedtuple, Callable
 from multiprocessing import shared_memory

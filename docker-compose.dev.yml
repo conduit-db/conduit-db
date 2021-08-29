@@ -35,7 +35,7 @@ services:
       - "18332:18332"
       - "18444:18444"
     volumes:
-    - ./data/bitcoin_data:/root/.electrumsv-node
+      - ./data/bitcoin_data:/root/.electrumsv-node
     environment:
       - NODE_RPCALLOWIP=0.0.0.0/0
       - NODE_RPCBIND=0.0.0.0
@@ -56,41 +56,3 @@ services:
       MYSQL_PASSWORD: conduitpass
     volumes:
       - ./contrib/mariadb/config/my.cnf:/etc/mysql/my.cnf
-
-  conduit-raw:
-    build:
-      context: .
-      dockerfile: ./conduit_raw/Dockerfile
-    ports:
-      - "50000:50000"
-#    depends_on:
-#      - zookeeper
-#      - kafka
-    volumes:
-    - ./data/lmdb_data:/opt/lmdb_data
-    working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py --reset --regtest --node-host=node:18444 --lmdb-path=/opt/lmdb_data --kafka-host=kafka:9092'
-
-  conduit-index:
-    build:
-      context: .
-      dockerfile: ./conduit_index/Dockerfile
-    depends_on:
-      - node
-      - mysql
-#      - zookeeper
-#      - kafka
-    volumes:
-      - ./data/lmdb_data:/opt/lmdb_data
-    working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --lmdb-path=/opt/lmdb_data --kafka-host=kafka:9092'
-
-#  scylla-node1:
-#    image: scylladb/scylla:4.4.0
-#    restart: always
-#    command: --seeds=scylla-node1 --api-address 0.0.0.0
-#    volumes:
-#      - "./scylla.yaml:/etc/scylla/scylla.yaml"
-#      - "./cassandra-rackdc.properties.dc1:/etc/scylla/cassandra-rackdc.properties"
-#    ports:
-#      - "9042:9042"

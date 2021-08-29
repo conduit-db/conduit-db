@@ -1,30 +1,27 @@
 import asyncio
-import io
 import os
 import queue
-import socket
 import time
 import typing
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
-
-import bitcoinx
-import zmq
-from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import logging
 from typing import Optional, List, Dict
 
+import bitcoinx
+from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
+import zmq
+from confluent_kafka import Producer
+
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase
-from conduit_lib.headers_state_client import HeadersStateClient
-from conduit_lib.wait_for_dependencies import wait_for_node
+from conduit_lib.wait_for_dependencies import wait_for_node, wait_for_kafka
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .sync_state import SyncState
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from .preprocessor import BlockPreProcessor
 from .workers.merkle_tree import MTreeCalculator
-from .headers_state_server import HeadersStateServer, HeadersStateManager
 from .workers.raw_blocks import BlockWriter
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
@@ -115,7 +112,7 @@ class Controller:
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
         self.headers_state_client = None
-        self.headers_queue = None
+        self.headers_producer: Producer = None
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -150,13 +147,13 @@ class Controller:
 
         # Headers State is shared between ConduitRaw and ConduitIndex via this server
         tip = self.storage.block_headers.longest_chain().tip
-
-        self.headers_manager = HeadersStateManager(tip.raw, tip.hash, tip.height)
-        self.headers_state_server_thread = HeadersStateServer(self.headers_manager)
-        self.headers_state_server_thread.start()
-        self.headers_state_client = HeadersStateClient()
-        self.headers_state_client.connect_or_keep_trying()  # blocking
-        self.headers_queue = self.headers_state_client.get_headers_queue()
+        kafka_producer_config = {
+            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
+        }
+        # Push initial tip (if this message gets pushed more than once on restarts the consumer
+        # should be able to handle it)
+        self.headers_producer = Producer(**kafka_producer_config)
+        self.headers_producer.produce(topic="conduit-raw-headers-state", value=tip.raw)
 
     async def connect_session(self):
         peer = self.get_peer()
@@ -167,6 +164,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
+            await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
@@ -185,8 +183,6 @@ class Controller:
     async def stop(self):
         self.running = False
         try:
-            self.headers_manager.stop()
-
             if self.transport:
                 self.transport.close()
             if self.storage:
@@ -329,7 +325,7 @@ class Controller:
 
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
-        self.logger.debug("starting sync_headers_job...")
+        self.logger.debug("Starting sync_headers_job...")
 
         self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
         while True:
@@ -344,7 +340,7 @@ class Controller:
             )
             self.sync_state.blocks_event_new_tip.set()
 
-    def get_header_for_hash(self, block_hash: bytes):
+    def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
         header, chain = self.storage.headers.lookup(block_hash)
         return header
 
@@ -410,18 +406,19 @@ class Controller:
         # ? Add reorg and other sanity checks later here...
 
         for height, hash in sorted_headers:
+            # must push message AFTER the flush to local headers store and NOT before
             header = self.get_header_for_hash(hash)
-            self.headers_queue.put(header)  # must put to queue AFTER the flush NOT before
-
-        self.headers_state_client.set_tip(header.raw, header.hash, header.height)
+            # TODO - this is actually blocking and should probably be run in a threadpool executor
+            #  in case kafka goes offline and this blocks the entire event loop
+            self.headers_producer.produce(topic="conduit-raw-headers-state", value=header.raw)
 
         tip = self.sync_state.get_local_block_tip()
-        self.logger.debug(f"connected up to header.hash, header.height) = "
+        self.logger.debug(f"Connected up to header.hash, header.height) = "
                           f"{(tip.height, hash_to_hex_str(tip.hash))}")
 
     async def sanity_checks(self):
         api_block_tip_height = self.sync_state.get_local_block_tip_height()
-        self.logger.debug(f"new block tip height: {api_block_tip_height}")
+        # self.logger.debug(f"new block tip height: {api_block_tip_height}")
         await self.sync_state.wait_for_new_block_tip()
 
     async def sync_all_blocks_job(self):
@@ -455,12 +452,15 @@ class Controller:
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
-                batch_id += 1
-                self.logger.debug(f"Controller Batch Start (batch_id={batch_id})")
                 if self.sync_state.is_synchronized() or \
                         self.sync_state.initial_block_download_event_mp.is_set():
                     await self.sanity_checks()
 
+                if batch_id == 0:
+                    self.logger.debug(f"Starting Initial Block Download")
+                else:
+                    batch_id += 1
+                    self.logger.debug(f"Controller Batch {batch_id} Start")
                 chain = self.storage.block_headers.longest_chain()
 
                 block_locator_hashes = [chain.tip.hash]
@@ -479,8 +479,13 @@ class Controller:
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set,
                     stop_header_height)
                 # ------------------------- Batch complete ------------------------- #
-                self.logger.debug(f"Controller Batch Complete (batch_id={batch_id})"
-                    f" new tip height={self.sync_state.get_local_block_tip_height()}")
+                if batch_id == 0:
+                    self.logger.debug(f"Initial Block Download Complete. New block tip height: "
+                        f"{self.sync_state.get_local_block_tip_height()}")
+                else:
+                    self.logger.debug(f"Controller Batch {batch_id} Complete."
+                        f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+
 
         except asyncio.CancelledError:
             raise

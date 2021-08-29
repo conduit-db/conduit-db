@@ -5,3 +5,4 @@ dnspython~=1.16.0
 Cython~=0.29.21
 mysqlclient~=2.0.3
 zmq
+confluent_kafka

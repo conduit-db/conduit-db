@@ -1,7 +1,6 @@
 import asyncio
 import os
 import queue
-import socket
 import struct
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -17,7 +16,6 @@ from typing import Optional, Dict
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
-from conduit_lib.headers_state_client import HeadersStateClient
 from conduit_lib.store import setup_storage
 from conduit_lib.commands import VERSION, GETHEADERS, BLOCK_BIN, MEMPOOL
 from conduit_lib.handlers import Handlers
@@ -28,7 +26,7 @@ from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.utils import cast_to_valid_ipv4
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -123,11 +121,6 @@ class Controller:
         self.total_time_connecting_headers = 0
 
     async def setup(self):
-        host = cast_to_valid_ipv4(self.config['mysql_host'].split(":")[0])
-        port = self.config['mysql_host'].split(":")[1]
-        os.environ['MYSQL_HOST'] = host
-        os.environ['MYSQL_PORT'] = port
-
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
@@ -142,15 +135,12 @@ class Controller:
         self.mysql_db.tables.mysql_create_permanent_tables()
 
         self.batch_completion_raw = BatchCompletionTxParser(
-            self,
+            self.storage,
             self.sync_state,
             self.worker_ack_queue_tx_parse_confirmed,
             self.tx_parser_completion_queue
         )
-        headers_state_client = HeadersStateClient()
-        headers_state_client.connect_or_keep_trying()  # Blocking
-        self.sync_conduit_raw_tip_state_thread = ConduitRawTipThread(self.sync_state,
-            headers_state_client)
+        self.sync_conduit_raw_tip_state_thread = ConduitRawTipThread(self.sync_state, self.storage)
         self.batch_completion_raw.start()
         self.sync_conduit_raw_tip_state_thread.start()
 
@@ -167,6 +157,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
+            await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
@@ -227,6 +218,8 @@ class Controller:
     def on_msg(self, command: bytes, message: memoryview):
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
+        if command == MEMPOOL:
+            self.logger.debug(f"putting mempool tx to queue: {bitcoinx.hash_to_hex_str(bitcoinx.Tx.from_bytes(message).hash())}")
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self):
@@ -301,6 +294,7 @@ class Controller:
 
         NOTE: once the sync_state.initial_block_download_event is set, relayed mempool txs will also
         begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
+        self.logger.debug("Requesting mempool")
         self.tasks.append(asyncio.create_task(self.request_mempool_job()))
 
     def maybe_rollback(self):
@@ -360,7 +354,7 @@ class Controller:
     async def sync_headers_job(self):
         """supervises completion of syncing all headers to target height"""
         try:
-            self.logger.debug("starting sync_headers_job...")
+            self.logger.debug("Starting sync_headers_job...")
 
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             while True:
@@ -371,14 +365,11 @@ class Controller:
                 self.sync_state.headers_msg_processed_event.clear()
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
                 self.logger.debug(
-                    "new headers tip height: %s", self.sync_state.local_tip_height,
+                    "new local headers tip height: %s", self.sync_state.local_tip_height,
                 )
+                self.sync_state.blocks_event_new_tip.set()
         except Exception:
             self.logger.exception("unexpected exception in sync_headers_job")
-
-    def get_header_for_hash(self, block_hash: bytes):
-        header, chain = self.storage.headers.lookup(block_hash)
-        return header
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
         headers = self.storage.headers
@@ -442,7 +433,7 @@ class Controller:
 
     def connect_done_block_headers(self, blocks_batch_set):
         t0 = time.perf_counter()
-        sorted_headers = sorted([(self.get_header_for_hash(h).height, h) for h in
+        sorted_headers = sorted([(self.storage.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
         sorted_heights = [height for height, h in sorted_headers]
         # Assert the resultant blocks are consecutive with no gaps
@@ -457,7 +448,7 @@ class Controller:
         block_headers: bitcoinx.Headers = self.storage.block_headers
         for height, hash in sorted_headers:
             # self.logger.debug(f"new block tip height: {height}")
-            header = self.get_header_for_hash(hash)
+            header = self.storage.get_header_for_hash(hash)
             block_headers.connect(header.raw)
 
         self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
@@ -465,7 +456,7 @@ class Controller:
         # ? Add reorg and other sanity checks later here...
 
         tip = self.sync_state.get_local_block_tip()
-        self.logger.debug(f"connected up to header.hash, header.height = "
+        self.logger.debug(f"Connected up to header.hash, header.height = "
                           f"{tip.height, hash_to_hex_str(tip.hash)}")
         t1 = time.perf_counter() - t0
         self.total_time_connecting_headers += t1
@@ -514,6 +505,11 @@ class Controller:
             return global_blocks_batch_set
 
         async def do_initial_block_download():
+            self.logger.debug(f"Starting Initial Block Download")
+            while self.sync_state.get_conduit_raw_header_tip() is None:
+                self.logger.debug(f"waiting for conduit raw header tip")
+                await asyncio.sleep(2)
+
             # Initial sync to current tip == to ConduitRaw
             while self.sync_state.get_local_block_tip_height() < \
                     self.sync_state.get_conduit_raw_header_tip().height:
@@ -522,33 +518,33 @@ class Controller:
                 global_blocks_batch_set = allocate_work()
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
-                self.logger.debug(f"new block tip height: {api_block_tip_height}")
+                self.logger.debug(f"Initial Block Download Complete. "
+                                  f"New block tip height: {api_block_tip_height}")
+                self.sync_state.set_post_IBD_mode()
 
         async def maintain_chain_tip():
             # Now wait on the queue for notifications
+
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
-                await self.sync_state.wait_for_new_block_tip()
-
-                batch_id += 1
-                self.logger.debug(f"Controller Batch Start (batch_id={batch_id})")
-
                 # This queue is just a trigger to check the new tip and allocate another batch
-                conduit_raw_tip = await self.sync_state.headers_queue_async.get()
-                self.logger.debug(f"got from async queue {conduit_raw_tip}")
+                conduit_raw_tip = await self.sync_state.conduit_raw_headers_queue.get()
+                # self.logger.debug(f"got from async queue {conduit_raw_tip.height}")
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
+                batch_id += 1
+                self.logger.debug(f"Controller Batch {batch_id} Start")
                 global_blocks_batch_set = allocate_work()
 
                 # Workers are loaded by Handlers.on_block handler as messages are received
                 await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
-                self.logger.debug(f"new block tip height: {api_block_tip_height}")
+                self.logger.debug(f"maintain_chain_tip - new block tip height: {api_block_tip_height}")
                 # ------------------------- Batch complete ------------------------- #
-                self.logger.debug(f"Controller Batch Complete (batch_id={batch_id})"
-                    f" new tip height={self.sync_state.get_local_block_tip_height()}")
+                self.logger.debug(f"Controller Batch {batch_id} Complete. "
+                    f"New tip height: {self.sync_state.get_local_block_tip_height()}")
 
         try:
             # up to 500 blocks per loop

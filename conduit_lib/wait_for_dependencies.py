@@ -1,16 +1,17 @@
 import asyncio
 import io
 import logging
+import os
 import socket
-import typing
 
 import MySQLdb
+from confluent_kafka.admin import AdminClient
+from confluent_kafka.cimpl import KafkaException
 
 from .utils import is_docker, cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
-from .headers_state_client import HeadersStateClient
 
 
 async def wait_for_node(node_host: str, deserializer: Deserializer,
@@ -74,8 +75,10 @@ async def wait_for_mysql(mysql_host: str):
             is_available = True
             break
         except ConnectionRefusedError:
+            # logger.exception("unexpected exception")
             pass
         except MySQLdb.OperationalError:
+            # logger.exception("unexpected exception")
             pass
         finally:
             if is_available:
@@ -87,7 +90,33 @@ async def wait_for_mysql(mysql_host: str):
                 await asyncio.sleep(5)
 
 
-async def wait_for_conduit_raw_api(conduit_raw_api_host: str=None):
+async def wait_for_kafka(kafka_host: str = "127.0.0.1:26638"):
+    """There are currently two components to this:
+    1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
+    2) The LMDB database (which should have an API wrapping it)"""
+    logger = logging.getLogger("wait-for-dependencies")
+
+    while True:
+        is_available = False
+        try:
+            kafka_broker = {
+                'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
+            }
+            admin_client = AdminClient(kafka_broker)
+            _topics = admin_client.list_topics(timeout=2).topics
+            is_available = True
+            break
+        except KafkaException:
+            pass
+        finally:
+            if is_available:
+                logger.debug(f"KafkaBroker on: {kafka_host} is available")
+            else:
+                logger.debug(f"KafkaBroker on: {kafka_host} currently unavailable - waiting...")
+                await asyncio.sleep(5)
+
+
+async def wait_for_conduit_raw_api(conduit_raw_api_host: str = None):
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
@@ -96,11 +125,10 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host: str=None):
         # Default
         if is_docker():
             # This is hardcoded because so much is bound to change (likely migrate to gRPC wrapper)
-            conduit_raw_api_host = cast_to_valid_ipv4('conduit-raw')
+            conduit_raw_api_host = f"{cast_to_valid_ipv4('conduit-raw')}:50000"
         else:
-            conduit_raw_api_host = "127.0.0.1"
+            conduit_raw_api_host = "127.0.0.1:50000"
 
-    headers_state_client = None
     while True:
         is_available = False
         try:
@@ -108,20 +136,14 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host: str=None):
             port = int(conduit_raw_api_host.split(":")[1])
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client.connect((host, port))
-
-            headers_state_client = HeadersStateClient()
-            headers_state_client.connect()  # Blocking
             is_available = True
             break
-        except ConnectionRefusedError:
-            pass
-        except MySQLdb.OperationalError:
+        except KafkaException:
             pass
         finally:
             if is_available:
                 logger.debug(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
-                if headers_state_client:
-                    headers_state_client.close()
             else:
-                logger.debug(f"ConduitRawAPI server on: ({conduit_raw_api_host}) currently unavailable - waiting...")
+                logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
+                             f"unavailable - waiting...")
                 await asyncio.sleep(5)

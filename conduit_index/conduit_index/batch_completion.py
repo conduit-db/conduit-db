@@ -1,14 +1,12 @@
 import asyncio
 import logging
-import multiprocessing
-import queue
 import threading
 import typing
 
 from bitcoinx import hash_to_hex_str
 
 if typing.TYPE_CHECKING:
-    from .controller import Controller
+    from conduit_lib.store import Storage
     from .sync_state import SyncState
 
 
@@ -25,13 +23,13 @@ expensive (given the creation of a socket connection).
 class BatchCompletionTxParser(threading.Thread):
     """Only Processes ACK messages from the BlockWriter worker"""
 
-    def __init__(self, controller: 'Controller', sync_state: 'SyncState',
+    def __init__(self, storage: 'Storage', sync_state: 'SyncState',
             worker_ack_queue_tx_parse_confirmed, tx_parser_completion_queue, daemon=True):
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-tx-parser")
-        self.controller: Controller = controller
+        self.storage: Storage = storage
         self.sync_state = sync_state
-        self.get_header_for_hash = self.controller.get_header_for_hash
+        self.get_header_for_hash = self.storage.get_header_for_hash
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         self.tx_parser_completion_queue = tx_parser_completion_queue
         self.loop = asyncio.get_running_loop()
@@ -66,12 +64,15 @@ class BatchCompletionTxParser(threading.Thread):
                 break
 
     def run(self):
-        batch_id = 1
+        batch_id = 0
         while True:
             try:
                 blocks_batch_set = self.tx_parser_completion_queue.get()
                 self.wait_for_batch_completion(blocks_batch_set)
-                self.logger.debug(f"Batch {batch_id} complete")
+                if batch_id == 0:
+                    self.logger.debug(f"ACKs for initial block download received")
+                else:
+                    self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)

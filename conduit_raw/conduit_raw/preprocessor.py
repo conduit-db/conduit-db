@@ -31,7 +31,7 @@ class BlockPreProcessor(threading.Thread):
         self.worker_in_queue_mtree: multiprocessing.Queue = worker_in_queue_mtree
 
     def run(self):
-        self.logger.debug(f"starting {self.__class__.__name__}...")
+        self.logger.debug(f"Starting {self.__class__.__name__}...")
 
         try:
             while True:

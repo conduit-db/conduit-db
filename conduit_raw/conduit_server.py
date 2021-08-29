@@ -19,6 +19,7 @@ from conduit_lib.logging_server import TCPLoggingServer
 
 from conduit_raw.controller import Controller
 from conduit_lib.argparsing import get_parser
+from conduit_lib.utils import cast_to_valid_ipv4
 
 if sys.platform == 'win32':
     selector = selectors.SelectSelector()
@@ -79,6 +80,18 @@ def setup():
     return env_vars
 
 
+def set_env_vars(config: Dict):
+    logger = logging.getLogger("set_env_vars")
+    os.environ['KAFKA_HOST'] = config['kafka_host']
+    host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
+    port = config['mysql_host'].split(":")[1]
+    os.environ['MYSQL_HOST'] = host
+    os.environ['MYSQL_PORT'] = port
+    logger.debug(f"KAFKA_HOST: {os.environ['KAFKA_HOST']}")
+    logger.debug(f"MYSQL_HOST: {host}")
+    logger.debug(f"MYSQL_PORT: {port}")
+
+
 def loop_exception_handler(loop, context) -> None:
     logger = logging.getLogger("loop-exception-handler")
     logger.debug("Exception handler called")
@@ -91,6 +104,7 @@ async def main():
         logging_server_proc = TCPLoggingServer(port=54545, kill_port=46464)
         logging_server_proc.start()
         config = setup()
+        set_env_vars(config)
         config['server_type'] = "ConduitRaw"
         loop.set_exception_handler(loop_exception_handler)
         net_config = NetworkConfig(config.get("network"), node_host=config['node_host'])

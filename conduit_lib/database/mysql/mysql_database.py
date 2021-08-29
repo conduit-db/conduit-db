@@ -136,7 +136,14 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
     #     passwd="conduitpass",
     #     db="conduitdb",
     # )
-    conn = MySQLdb.connect(host, user, 'conduitpass', 'conduitdb', port=port, local_infile=1)
+    conn = MySQLdb.connect(
+        host=host,
+        port=port,
+        user=user,
+        password='conduitpass',
+        database='conduitdb',
+        local_infile=1
+    )
     return MySQLDatabase(conn, worker_id=worker_id)
 
 

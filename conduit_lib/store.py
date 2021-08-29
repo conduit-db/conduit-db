@@ -7,15 +7,21 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict
 
+import bitcoinx
 from bitcoinx import Headers
+from confluent_kafka.admin import AdminClient
+from confluent_kafka.cimpl import Producer, KafkaError, KafkaException
 
 from .database.lmdb.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, mysql_connect
 from .constants import REGTEST
 from .networks import HeadersRegTestMod
+from .utils import is_docker
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 MMAP_SIZE = 2_000_000
+
+logger = logging.getLogger("storage")
 
 
 class Storage:
@@ -29,7 +35,6 @@ class Storage:
     ):
         # self.pg_database = pg_database
         self.mysql_database = mysql_database
-        self.logger = logging.getLogger("storage")
         self.headers: Headers = headers
         self.block_headers: Headers = block_headers
         self.lmdb: LMDB_Database = lmdb
@@ -37,7 +42,12 @@ class Storage:
     async def close(self):
         if self.mysql_database:
             self.mysql_database.close()
+
     # External API
+
+    def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
+        header, chain = self.headers.lookup(block_hash)
+        return header
 
 
 def setup_headers_store(net_config, mmap_filename):
@@ -73,10 +83,13 @@ def reset_headers(headers_path: Path, block_headers_path: Path, config: Dict):
                 mm.seek(0)
                 mm.write(b'\00' * mm.size())
     else:
-        if os.path.exists(headers_path):
-            os.remove(headers_path)
-        if os.path.exists(block_headers_path):
-            os.remove(headers_path)
+        try:
+            if os.path.exists(headers_path):
+                os.remove(headers_path)
+            if os.path.exists(block_headers_path):
+                os.remove(headers_path)
+        except FileNotFoundError:
+            pass
 
 
 def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
@@ -102,6 +115,26 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
         lmdb_path = Path(MODULE_DIR).parent.parent.parent.joinpath('lmdb_data')
         if os.path.exists(lmdb_path):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
+
+        def reset_kafka_topics():
+            kafka_broker = {
+                'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
+            }
+            logger.debug("deleting kafka topics...")
+            admin_client = AdminClient(kafka_broker)
+            futures_dict = admin_client.delete_topics(['logging', 'conduit-raw-headers-state'],
+                operation_timeout=30)
+
+            # Wait for operation to finish.
+            for topic, f in futures_dict.items():
+                try:
+                    f.result()  # The result itself is None
+                    logger.debug("Topic {} deleted".format(topic))
+                except KafkaException as e:
+                    logger.debug("Failed to delete topic {}: {}".format(topic, e))
+
+        if not is_docker():
+            reset_kafka_topics()
 
 
 def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:

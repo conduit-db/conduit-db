@@ -5,6 +5,7 @@ import threading
 import typing
 from typing import Optional
 
+import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
 from conduit_lib.store import Storage
@@ -26,7 +27,7 @@ class SyncState:
         self.storage = storage
         self.controller = controller
         self.headers_state_client = self.controller.headers_state_client
-        self.headers_queue = self.controller.headers_queue
+        self.headers_queue = self.controller.headers_producer
 
         self.headers_msg_processed_event = asyncio.Event()
         self.headers_event_new_tip = asyncio.Event()
@@ -74,7 +75,7 @@ class SyncState:
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
 
-    def get_local_block_tip(self) -> int:
+    def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
 
     def update_local_tip_height(self) -> int:
