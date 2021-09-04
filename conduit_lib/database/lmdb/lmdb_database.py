@@ -72,17 +72,17 @@ class LMDB_Database:
         self._db2 = None
         self._opened = False
 
-    def get_block_num(self, key: bytes):
+    def get_block_num(self, block_hash: bytes) -> int:
         with self.env.begin(db=self.block_nums_db) as txn:
-            return struct_be_I.unpack(txn.get(key))[0]
+            return struct_be_I.unpack(txn.get(block_hash))[0]
 
-    def get_block(self, key: int):
+    def get_block(self, block_num: int) -> bytes:
         with self.env.begin(db=self.blocks_db) as txn:
-            return txn.get(struct_be_I.pack(key))
+            return txn.get(struct_be_I.pack(block_num))
 
-    def get_mtree_row(self, key: bytes):
+    def get_mtree_row(self, blk_hash_and_level: bytes) -> List[int]:
         with self.env.begin(db=self.mtree_db) as txn:
-            return txn.get(key)
+            return txn.get(blk_hash_and_level)
 
     def get_last_block_num(self) -> int:
         with self.env.begin(db=self.blocks_db, write=False) as txn:
@@ -160,7 +160,7 @@ class LMDB_Database:
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             return array.array("Q", bytes(txn.get(block_hash)))
 
-    def put_block_metadata(self, batched_metadata: List[Tuple[bytes, int]]):
+    def put_block_metadata(self, batched_metadata: List[Tuple[bytes, int]]) -> None:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         with self.env.begin(db=self.block_metadata_db, write=True, buffers=False) as txn:
