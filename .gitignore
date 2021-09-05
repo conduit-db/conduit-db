@@ -20,6 +20,8 @@ tests/logs/*
 *.html*
 *.log
 *.mdb
+**/obj/**
+**/bin/**
 ../profile.svg
 profile.svg
 data/**

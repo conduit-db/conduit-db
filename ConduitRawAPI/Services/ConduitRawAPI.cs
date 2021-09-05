@@ -95,7 +95,7 @@ namespace ConduitRawAPI
             {
                 return Task.FromResult(new TransactionOffsetsResponse
                 {
-                    TxOffsetsArray = {_lmdb.GetTxOffsets(request.ToByteArray()).ToArray()}
+                    TxOffsetsArray = {_lmdb.GetTxOffsets(request.ToByteArray())}
                 });
             }
             catch (KeyNotFoundException ex)

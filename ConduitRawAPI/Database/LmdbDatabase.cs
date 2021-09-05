@@ -33,9 +33,12 @@ namespace ConduitRawAPI.Database
 
             var fileDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ??
                           throw new ArgumentNullException(nameof(_lmdbPath));
-            _lmdbPath = _configuration["LmdbDatabasePath"] ?? Path.Join(fileDir, "lmdb_data");
-            _logger.LogInformation($"Got lmdbPath: {_lmdbPath}");
-            long mapSize = 256_000_000_000;
+            var appSettings = _configuration.GetSection("AppSettings");
+            _lmdbPath = string.IsNullOrEmpty(appSettings["LmdbDatabasePath"])
+                ? fileDir
+                : appSettings["LmdbDatabasePath"];
+            _logger.LogInformation($"Creating database at lmdbPath: {_lmdbPath}");
+            long mapSize = 20_000_000_000;
             _lmdbEnv = new LightningEnvironment(_lmdbPath);
             _lmdbEnv.MaxDatabases = 5;
             _lmdbEnv.MapSize = mapSize;
@@ -61,9 +64,7 @@ namespace ConduitRawAPI.Database
                 try
                 {
                     var (resultCode, _, value) = tx.Get(_blockNumsDb, blockHash);
-                    _logger.LogDebug($"resultCode {resultCode}");
                     string humanReadable = BitConverter.ToString(value.CopyToNewArray());
-                    _logger.LogDebug($"theValue={humanReadable}");
                     if (resultCode == MDBResultCode.NotFound)
                     {
                         throw new KeyNotFoundException(
@@ -79,22 +80,19 @@ namespace ConduitRawAPI.Database
             }
         }
 
-        public ReadOnlySpan<byte> GetBlock(uint blockNum)
+        public byte[] GetBlock(uint blockNum)
         {
             using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
             {
                 try
                 {
-                    var (resultCode, _, value) = tx.Get(_blockNumsDb, BitConverter.GetBytes(blockNum));
-
-                    _logger.LogDebug($"GetBlock returned: " +
-                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    var (resultCode, _, value) = tx.Get(_blocksDb, BitConverter.GetBytes(blockNum));
                     if (resultCode == MDBResultCode.NotFound)
                     {
                         throw new KeyNotFoundException($"Block for block number {blockNum} not found");
                     }
 
-                    return value.AsSpan();
+                    return value.CopyToNewArray();
                 }
                 finally
                 {
@@ -103,7 +101,7 @@ namespace ConduitRawAPI.Database
             }
         }
 
-        public ReadOnlySpan<byte> GetMerkleTreeRow(byte[] blockHash, uint level)
+        public byte[] GetMerkleTreeRow(byte[] blockHash, uint level)
         {
             using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
             {
@@ -113,9 +111,6 @@ namespace ConduitRawAPI.Database
                         .Concat(BitConverter.GetBytes(level))
                         .ToArray();
                     var (resultCode, _, value) = tx.Get(_mtreeDb, key);
-
-                    _logger.LogDebug($"GetMerkleTreeRow returned: " +
-                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
                     if (resultCode == MDBResultCode.NotFound)
                     {
                         throw new KeyNotFoundException(
@@ -123,7 +118,7 @@ namespace ConduitRawAPI.Database
                             $"and level {level} not found");
                     }
 
-                    return value.AsSpan();
+                    return value.CopyToNewArray();
                 }
                 finally
                 {
@@ -143,8 +138,6 @@ namespace ConduitRawAPI.Database
                     var (resultCode, _, value) = cur.GetCurrent();
                     if (resultCode == MDBResultCode.Success)
                     {
-                        var result = BitConverter.ToUInt32(value.AsSpan());
-                        _logger.LogDebug($"GetMerkleTreeRow returned: {result}");
                         return BitConverter.ToUInt32(value.AsSpan());
                     }
 
@@ -164,7 +157,7 @@ namespace ConduitRawAPI.Database
             return (uint) (DateTime.UtcNow.Subtract(DateTime.UnixEpoch)).TotalSeconds;
         }
 
-        public void PutBlocks(List<Tuple<byte[], ulong, ulong>> batchedBlocks, ReadOnlySpan<byte> shmBuffer)
+        public void PutBlocks(List<Tuple<byte[], ulong, ulong>> batchedBlocks, byte[] buffer)
         {
             var t0 = GetUnixTimestamp();
             var lastBlockNum = GetLastBlockNumber();
@@ -190,9 +183,14 @@ namespace ConduitRawAPI.Database
                     {
                         (var blockHash, var blockStartPos, var blockEndPos) = blockRow;
                         var key = BitConverter.GetBytes(blockNum);
-                        var value = shmBuffer.Slice((int) blockStartPos, (int) (blockEndPos - blockStartPos));
+                        var blockSize = blockEndPos - blockStartPos;
+                        var value = buffer;
+
+                        _logger.LogDebug(
+                            $"Putting block entry blockNum={blockNum}, blockSize={value.ToArray().Length}");
                         tx.Put(_blocksDb, key, value.ToArray(), PutOptions.AppendData);
                         tx.Put(_blockNumsDb, blockHash, BitConverter.GetBytes(blockNum), PutOptions.NoOverwrite);
+                        tx.Put(_blockMetadataDb, blockHash, BitConverter.GetBytes(blockSize));
                     }
 
                     var tDiff = GetUnixTimestamp() - t0;
@@ -256,16 +254,13 @@ namespace ConduitRawAPI.Database
             }
         }
 
-        public ReadOnlySpan<ulong> GetTxOffsets(byte[] blockHash)
+        public ulong[] GetTxOffsets(byte[] blockHash)
         {
             using (var tx = _lmdbEnv.BeginTransaction())
             {
                 try
                 {
-                    var (resultCode, _, value) = tx.Get(_mtreeDb, blockHash);
-
-                    _logger.LogDebug($"GetMerkleTreeRow returned: " +
-                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    var (resultCode, _, value) = tx.Get(_txOffsetsDb, blockHash);
                     if (resultCode == MDBResultCode.NotFound)
                     {
                         throw new KeyNotFoundException(
@@ -273,7 +268,7 @@ namespace ConduitRawAPI.Database
                             $"not found");
                     }
 
-                    return MemoryMarshal.Cast<byte, ulong>(value.AsSpan());
+                    return MemoryMarshal.Cast<byte, ulong>(value.AsSpan()).ToArray();
                 }
                 finally
                 {
@@ -288,7 +283,7 @@ namespace ConduitRawAPI.Database
             {
                 try
                 {
-                    foreach (var (blockHash,sizeBlock) in batchedMetadata)
+                    foreach (var (blockHash, sizeBlock) in batchedMetadata)
                     {
                         tx.Put(_blockMetadataDb, blockHash, BitConverter.GetBytes(sizeBlock));
                     }
@@ -306,10 +301,7 @@ namespace ConduitRawAPI.Database
             {
                 try
                 {
-                    var (resultCode, _, value) = tx.Get(_mtreeDb, blockHash);
-
-                    _logger.LogDebug($"GetBlockMetadata returned: " +
-                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    var (resultCode, _, value) = tx.Get(_blockMetadataDb, blockHash);
                     if (resultCode == MDBResultCode.NotFound)
                     {
                         throw new KeyNotFoundException(
