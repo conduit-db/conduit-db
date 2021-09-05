@@ -2,17 +2,14 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Xml.Schema;
-using Google.Protobuf;
+using System.Runtime.InteropServices;
 using LightningDB;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace ConduitRawAPI.Database
 {
-    public class LmdbDatabase: ILmdbDatabase, IDisposable
+    public class LmdbDatabase : ILmdbDatabase, IDisposable
     {
         private readonly ILogger<LmdbDatabase> _logger;
         private readonly IConfiguration _configuration;
@@ -23,11 +20,11 @@ namespace ConduitRawAPI.Database
         private string MTREE_DB = "mtree_db";
         private string TX_OFFSETS_DB = "tx_offsets_db";
         private string BLOCK_METADATA_DB = "block_metadata_db";
-        private LightningDatabase _blocksDb;
-        private LightningDatabase _blockNumsDb;
-        private LightningDatabase _mtreeDb;
-        private LightningDatabase _txOffsetsDb;
-        private LightningDatabase _blockMetadataDb;
+        private readonly LightningDatabase _blocksDb;
+        private readonly LightningDatabase _blockNumsDb;
+        private readonly LightningDatabase _mtreeDb;
+        private readonly LightningDatabase _txOffsetsDb;
+        private readonly LightningDatabase _blockMetadataDb;
 
         public LmdbDatabase(ILogger<LmdbDatabase> logger, IConfiguration configuration)
         {
@@ -56,74 +53,277 @@ namespace ConduitRawAPI.Database
                 tx.Commit();
             }
         }
+
         public uint GetBlockNumber(byte[] blockHash)
         {
-            using (var tx = _lmdbEnv.BeginTransaction())
+            using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
             {
-                var result = tx.Get(_blockNumsDb, blockHash);
-                var theValue = result.value.CopyToNewArray();
-                _logger.LogDebug($"theValue={BitConverter.ToString(theValue)}");
-                
-                return BitConverter.ToUInt32(theValue);
+                try
+                {
+                    var (resultCode, _, value) = tx.Get(_blockNumsDb, blockHash);
+                    _logger.LogDebug($"resultCode {resultCode}");
+                    string humanReadable = BitConverter.ToString(value.CopyToNewArray());
+                    _logger.LogDebug($"theValue={humanReadable}");
+                    if (resultCode == MDBResultCode.NotFound)
+                    {
+                        throw new KeyNotFoundException(
+                            $"Block number for block hash {BitConverter.ToString(blockHash)} not found");
+                    }
+
+                    return BitConverter.ToUInt32(value.AsSpan());
+                }
+                finally
+                {
+                    tx.Commit(); // releases reader
+                }
             }
         }
 
-        public byte[] GetBlock(uint blockNum)
+        public ReadOnlySpan<byte> GetBlock(uint blockNum)
         {
-            return new byte[1000];
+            using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
+            {
+                try
+                {
+                    var (resultCode, _, value) = tx.Get(_blockNumsDb, BitConverter.GetBytes(blockNum));
+
+                    _logger.LogDebug($"GetBlock returned: " +
+                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    if (resultCode == MDBResultCode.NotFound)
+                    {
+                        throw new KeyNotFoundException($"Block for block number {blockNum} not found");
+                    }
+
+                    return value.AsSpan();
+                }
+                finally
+                {
+                    tx.Commit(); // releases reader
+                }
+            }
         }
 
-        public byte[] GetMerkleTreeRow(byte[] blockHash, uint level)
+        public ReadOnlySpan<byte> GetMerkleTreeRow(byte[] blockHash, uint level)
         {
-            return new byte[256];
+            using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
+            {
+                try
+                {
+                    var key = blockHash
+                        .Concat(BitConverter.GetBytes(level))
+                        .ToArray();
+                    var (resultCode, _, value) = tx.Get(_mtreeDb, key);
+
+                    _logger.LogDebug($"GetMerkleTreeRow returned: " +
+                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    if (resultCode == MDBResultCode.NotFound)
+                    {
+                        throw new KeyNotFoundException(
+                            $"Merkle tree row for block hash {BitConverter.ToString(blockHash)} " +
+                            $"and level {level} not found");
+                    }
+
+                    return value.AsSpan();
+                }
+                finally
+                {
+                    tx.Commit(); // releases reader
+                }
+            }
         }
 
         public uint GetLastBlockNumber()
         {
-            return 999999999;
-        }
-        
+            using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
+            {
+                try
+                {
+                    var cur = tx.CreateCursor(_blocksDb);
+                    cur.Last();
+                    var (resultCode, _, value) = cur.GetCurrent();
+                    if (resultCode == MDBResultCode.Success)
+                    {
+                        var result = BitConverter.ToUInt32(value.AsSpan());
+                        _logger.LogDebug($"GetMerkleTreeRow returned: {result}");
+                        return BitConverter.ToUInt32(value.AsSpan());
+                    }
 
-        /// Puts to both _blockNumsDb and _blocksDB - At this stage the "putters" are only mocks to fill LMDB with some
-        /// arbitrary data for testing the "getters". The gRPC API only needs to "get" from LMDB what the python
-        /// ConduitRaw process "puts".
-        public void PutBlocks(List<Tuple<byte[], ulong, ulong>> batchedBlocks)
+                    // Return zero because the intention is to determine which is the next
+                    // index (key) to insert to the raw blocks table to remain sequential
+                    return 0;
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
+        }
+
+        private uint GetUnixTimestamp()
         {
+            return (uint) (DateTime.UtcNow.Subtract(DateTime.UnixEpoch)).TotalSeconds;
+        }
+
+        public void PutBlocks(List<Tuple<byte[], ulong, ulong>> batchedBlocks, ReadOnlySpan<byte> shmBuffer)
+        {
+            var t0 = GetUnixTimestamp();
+            var lastBlockNum = GetLastBlockNumber();
+            var nextBlockNum = lastBlockNum + 1;
             using (var tx = _lmdbEnv.BeginTransaction())
             {
-                byte[] blockNum = new byte[4];
-                byte[] blockHash = new byte[32];
-                byte[] rawBlock = new byte[10000];
-                tx.Put(_blockNumsDb, blockHash, blockNum, PutOptions.NoOverwrite);
-                tx.Put(_blocksDb, blockHash, rawBlock, PutOptions.AppendData | PutOptions.NoOverwrite);
-                tx.Commit();
+                try
+                {
+                    // Calculate the next blockNums in sequential order starting at the previous last blockNum
+                    var blockNums = new List<uint>();
+                    for (uint i = 0; i < batchedBlocks.Count; i++)
+                    {
+                        blockNums.Add(i + nextBlockNum);
+                    }
+
+                    // Write raw blocks in batch in append-only mode with sequential blockNum keys
+                    // Additionally update the blockNumsDb with the mapping of blockHash -> blockNum 
+                    // for later retrieval
+                    var blockNumAndBlockRow =
+                        blockNums.Zip(batchedBlocks, (blockNum, blockRow) => (blockNum, blockRow));
+
+                    foreach (var (blockNum, blockRow) in blockNumAndBlockRow)
+                    {
+                        (var blockHash, var blockStartPos, var blockEndPos) = blockRow;
+                        var key = BitConverter.GetBytes(blockNum);
+                        var value = shmBuffer.Slice((int) blockStartPos, (int) (blockEndPos - blockStartPos));
+                        tx.Put(_blocksDb, key, value.ToArray(), PutOptions.AppendData);
+                        tx.Put(_blockNumsDb, blockHash, BitConverter.GetBytes(blockNum), PutOptions.NoOverwrite);
+                    }
+
+                    var tDiff = GetUnixTimestamp() - t0;
+                    if (batchedBlocks.Count > 0)
+                    {
+                        _logger.LogDebug($"Elapsed time for {batchedBlocks.Count} raw blocks took {tDiff} seconds");
+                    }
+                }
+                finally
+                {
+                    tx.Commit();
+                }
             }
+        }
+
+        public static byte[] ConvertUInt64ToBytes(ulong value)
+        {
+            return BitConverter.GetBytes(value);
         }
 
         public void PutMerkleTree(byte[] blockHash, Dictionary<uint, byte[]> merkleTree)
         {
-            throw new System.NotImplementedException();
+            using (var tx = _lmdbEnv.BeginTransaction())
+            {
+                try
+                {
+                    foreach (var item in merkleTree.Reverse())
+                    {
+                        var level = item.Key;
+                        var txHashes = item.Value;
+                        var key = blockHash
+                            .Concat(BitConverter.GetBytes(level))
+                            .ToArray();
+                        var value = txHashes;
+                        tx.Put(_mtreeDb, key, value);
+                    }
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
         }
 
         public void PutTxOffsets(byte[] blockHash, ulong[] txOffsets)
         {
-            throw new System.NotImplementedException();
+            using (var tx = _lmdbEnv.BeginTransaction())
+            {
+                try
+                {
+                    var value = Array
+                        .ConvertAll(txOffsets, ConvertUInt64ToBytes)
+                        .SelectMany(x => x)
+                        .ToArray();
+                    tx.Put(_txOffsetsDb, blockHash, value);
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
         }
 
-        public ulong[] GetTxOffsets(byte[] blockHash)
+        public ReadOnlySpan<ulong> GetTxOffsets(byte[] blockHash)
         {
-            return new ulong[100];
+            using (var tx = _lmdbEnv.BeginTransaction())
+            {
+                try
+                {
+                    var (resultCode, _, value) = tx.Get(_mtreeDb, blockHash);
+
+                    _logger.LogDebug($"GetMerkleTreeRow returned: " +
+                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    if (resultCode == MDBResultCode.NotFound)
+                    {
+                        throw new KeyNotFoundException(
+                            $"Tx offsets for block hash {BitConverter.ToString(blockHash)} " +
+                            $"not found");
+                    }
+
+                    return MemoryMarshal.Cast<byte, ulong>(value.AsSpan());
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
         }
 
         public void PutBlockMetadata(List<Tuple<byte[], ulong>> batchedMetadata)
         {
-            throw new System.NotImplementedException();
+            using (var tx = _lmdbEnv.BeginTransaction())
+            {
+                try
+                {
+                    foreach (var (blockHash,sizeBlock) in batchedMetadata)
+                    {
+                        tx.Put(_blockMetadataDb, blockHash, BitConverter.GetBytes(sizeBlock));
+                    }
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
         }
 
         public ulong GetBlockMetadata(byte[] blockHash)
         {
-            ulong blockSizeBytes = 1000000000000;
-            return blockSizeBytes;
+            using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
+            {
+                try
+                {
+                    var (resultCode, _, value) = tx.Get(_mtreeDb, blockHash);
+
+                    _logger.LogDebug($"GetBlockMetadata returned: " +
+                                     $"{BitConverter.ToString(value.CopyToNewArray())}");
+                    if (resultCode == MDBResultCode.NotFound)
+                    {
+                        throw new KeyNotFoundException(
+                            $"Block size for block hash {BitConverter.ToString(blockHash)} " +
+                            $"not found");
+                    }
+
+                    return BitConverter.ToUInt64(value.AsSpan());
+                }
+                finally
+                {
+                    tx.Commit();
+                }
+            }
         }
 
         public void Dispose()
