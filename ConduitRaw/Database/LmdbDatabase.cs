@@ -7,7 +7,7 @@ using LightningDB;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
-namespace ConduitRawAPI.Database
+namespace ConduitRaw.Database
 {
     public class LmdbDatabase : ILmdbDatabase, IDisposable
     {

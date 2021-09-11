@@ -5,7 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using Moq;
 using Xunit;
-using ConduitRawAPI.Database;
+using ConduitRaw.Database;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;

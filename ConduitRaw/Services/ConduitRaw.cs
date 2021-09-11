@@ -1,15 +1,12 @@
-using Grpc.Core;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Threading.Tasks;
-using ConduitRawAPI.Database;
+using ConduitRaw.Database;
 using Google.Protobuf;
+using Grpc.Core;
+using Microsoft.Extensions.Logging;
 
-
-namespace ConduitRawAPI
+namespace ConduitRaw.Services
 {
     public class ConduitRawService : ConduitRaw.ConduitRawBase
     {

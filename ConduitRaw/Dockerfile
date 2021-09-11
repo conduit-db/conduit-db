@@ -7,16 +7,16 @@ EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:5.0-buster-slim AS build
 WORKDIR /src
-COPY ["ConduitRawAPI/ConduitRawAPI.csproj", "ConduitRawAPI/"]
-RUN dotnet restore "ConduitRawAPI/ConduitRawAPI.csproj"
+COPY ["ConduitRaw/ConduitRaw.csproj", "ConduitRaw/"]
+RUN dotnet restore "ConduitRaw/ConduitRaw.csproj"
 COPY . .
-WORKDIR "/src/ConduitRawAPI"
-RUN dotnet build "ConduitRawAPI.csproj" -c Release -o /app/build
+WORKDIR "/src/ConduitRaw"
+RUN dotnet build "ConduitRaw.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "ConduitRawAPI.csproj" -c Release -o /app/publish
+RUN dotnet publish "ConduitRaw.csproj" -c Release -o /app/publish
 
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "ConduitRawAPI.dll"]
+ENTRYPOINT ["dotnet", "ConduitRaw.dll"]

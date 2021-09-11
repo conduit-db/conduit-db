@@ -21,7 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ConduitRawAPI\ConduitRawAPI.csproj" />
+    <ProjectReference Include="..\ConduitRaw\ConduitRaw.csproj" />
   </ItemGroup>
    
 </Project>

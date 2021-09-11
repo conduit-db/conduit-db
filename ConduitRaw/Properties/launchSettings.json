@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "ConduitRawAPI": {
+    "ConduitRaw": {
       "commandName": "Project",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"

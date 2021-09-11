@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 16
 VisualStudioVersion = 16.0.30804.86
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConduitRawAPI", "ConduitRawAPI\ConduitRawAPI.csproj", "{A5DD2A10-70AD-4263-B972-A514115B1E91}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConduitRaw", "ConduitRaw\ConduitRaw.csproj", "{A5DD2A10-70AD-4263-B972-A514115B1E91}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConduitRaw.Test", "ConduitRaw.Test\ConduitRaw.Test.csproj", "{3385EA1B-F4CE-4A70-9C4C-65DAFD11AA71}"
 EndProject

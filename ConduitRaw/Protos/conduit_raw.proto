@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option csharp_namespace = "ConduitRawAPI";
+option csharp_namespace = "ConduitRaw";
 
 package greet;
 

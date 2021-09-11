@@ -4,6 +4,7 @@
     <TargetFramework>net5.0</TargetFramework>
     <UserSecretsId>0453b8a0-8507-4e41-8e44-32f9c85248bd</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <RootNamespace>ConduitRaw</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

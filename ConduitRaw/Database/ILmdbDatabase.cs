@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using Google.Protobuf;
 
-namespace ConduitRawAPI.Database
+namespace ConduitRaw.Database
 {
     public interface ILmdbDatabase
     {
