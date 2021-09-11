@@ -37,9 +37,9 @@ class LMDB_Database:
         self.LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH",
             None)  # defaults to writable mode
 
-        self.logger.debug(f"self.DEFAULT_DIR={self.DEFAULT_DIR}")
-        self.logger.debug(f"self.LMDB_READONLY={self.LMDB_READONLY}")
-        self.logger.debug(f"self.LMDB_DATABASE_PATH={self.LMDB_DATABASE_PATH}")
+        # self.logger.debug(f"self.DEFAULT_DIR={self.DEFAULT_DIR}")
+        # self.logger.debug(f"self.LMDB_READONLY={self.LMDB_READONLY}")
+        # self.logger.debug(f"self.LMDB_DATABASE_PATH={self.LMDB_DATABASE_PATH}")
 
         if self.LMDB_DATABASE_PATH:
             self.DEFAULT_DIR = self.LMDB_DATABASE_PATH
