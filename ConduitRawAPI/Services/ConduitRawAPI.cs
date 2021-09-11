@@ -2,6 +2,8 @@ using Grpc.Core;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using ConduitRawAPI.Database;
 using Google.Protobuf;
@@ -18,9 +20,11 @@ namespace ConduitRawAPI
             ILogger<ConduitRawService> logger,
             ILmdbDatabase lmdbDatabase)
         {
+            // This constructor is lazily loaded and so does not get executed until after the first gRPC query
             _logger = logger;
             _lmdb = lmdbDatabase;
-            logger.LogInformation($"Got _lmdbEnv: {_lmdb}");
+            // Debug.WriteLine("This only goes to the Debug Output window");
+            _logger.LogDebug($"Got _lmdbEnv: {_lmdb}");
         }
 
         public override Task<PingResponse> Ping(PingRequest request, ServerCallContext context)
@@ -34,9 +38,8 @@ namespace ConduitRawAPI
 
         public override Task<BlockNumberResponse> GetBlockNumber(BlockNumberRequest request, ServerCallContext context)
         {
-            _logger.LogDebug(
-                $"GetBlockNumber got request with blockHash: " +
-                $"{BitConverter.ToString(request.BlockHash.ToByteArray())}");
+            _logger.LogInformation(
+                $"GetBlockNumber got request with blockHash: {request.BlockHash.ToByteArray()}");
             try
             {
                 return Task.FromResult(new BlockNumberResponse
@@ -76,7 +79,7 @@ namespace ConduitRawAPI
             {
                 return Task.FromResult(new MerkleTreeRowResponse
                 {
-                    MtreeRow = ByteString.CopyFrom(_lmdb.GetMerkleTreeRow(request.ToByteArray(), request.Level))
+                    MtreeRow = ByteString.CopyFrom(_lmdb.GetMerkleTreeRow(request.BlockHash.ToByteArray(), request.Level))
                 });
             }
             catch (KeyNotFoundException ex)
@@ -95,7 +98,7 @@ namespace ConduitRawAPI
             {
                 return Task.FromResult(new TransactionOffsetsResponse
                 {
-                    TxOffsetsArray = {_lmdb.GetTxOffsets(request.ToByteArray())}
+                    TxOffsetsArray = {_lmdb.GetTxOffsets(request.BlockHash.ToByteArray())}
                 });
             }
             catch (KeyNotFoundException ex)
@@ -114,7 +117,7 @@ namespace ConduitRawAPI
             {
                 return Task.FromResult(new BlockMetadataResponse
                 {
-                    BlockSizeBytes = _lmdb.GetBlockMetadata(request.ToByteArray())
+                    BlockSizeBytes = _lmdb.GetBlockMetadata(request.BlockHash.ToByteArray())
                 });
             }
             catch (KeyNotFoundException ex)

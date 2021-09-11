@@ -8,6 +8,7 @@ import MySQLdb
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import KafkaException
 
+from .conduit_raw_api_client import ConduitRawAPIClient
 from .utils import is_docker, cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
@@ -116,30 +117,26 @@ async def wait_for_kafka(kafka_host: str = "127.0.0.1:26638"):
                 await asyncio.sleep(5)
 
 
-async def wait_for_conduit_raw_api(conduit_raw_api_host: str = None):
+async def wait_for_conduit_raw_api(conduit_raw_api_host):
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-    if not conduit_raw_api_host:
-        # Default
-        if is_docker():
-            # This is hardcoded because so much is bound to change (likely migrate to gRPC wrapper)
-            conduit_raw_api_host = f"{cast_to_valid_ipv4('conduit-raw')}:50000"
-        else:
-            conduit_raw_api_host = "127.0.0.1:50000"
+    host = cast_to_valid_ipv4(conduit_raw_api_host.split(":")[0])
+    port = int(conduit_raw_api_host.split(":")[1])
 
     while True:
         is_available = False
         try:
-            host = cast_to_valid_ipv4(conduit_raw_api_host.split(":")[0])
-            port = int(conduit_raw_api_host.split(":")[1])
-            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((host, port))
+            client = ConduitRawAPIClient(host=host, port=port)
+            block_hash = bytes.fromhex("deadbeef")
+            # This will fail but establishes connectivity & checks to see if the gRPC API
+            # can access LMDB without errors
+            client.get_block_num(block_hash)
             is_available = True
             break
-        except KafkaException:
-            pass
+        except Exception:
+            logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
         finally:
             if is_available:
                 logger.debug(f"ConduitRawAPI on: {conduit_raw_api_host} is available")

@@ -38,11 +38,10 @@ namespace ConduitRawAPI.Database
                 ? fileDir
                 : appSettings["LmdbDatabasePath"];
             _logger.LogInformation($"Creating database at lmdbPath: {_lmdbPath}");
-            long mapSize = 20_000_000_000;
+            long mapSize = 1_000_000_000;
             _lmdbEnv = new LightningEnvironment(_lmdbPath);
             _lmdbEnv.MaxDatabases = 5;
             _lmdbEnv.MapSize = mapSize;
-            _lmdbEnv.MaxReaders = 10;
             _lmdbEnv.Open(EnvironmentOpenFlags.NoSync | EnvironmentOpenFlags.NoReadAhead);
 
             using (var tx = _lmdbEnv.BeginTransaction())
@@ -295,6 +294,27 @@ namespace ConduitRawAPI.Database
             }
         }
 
+        private void DebugKeyNotFound(LightningTransaction tx, LightningDatabase db)
+        {
+            _logger.LogDebug("GetBlockMetadata -> KeyNotFoundException. Dump of all keys:");
+            var cur = tx.CreateCursor(db);
+            cur.First();
+            var curResultCode = MDBResultCode.Success;
+            while (curResultCode == MDBResultCode.Success)
+            {
+                var (_, curKey, curVal) = cur.GetCurrent();
+                if (curResultCode == MDBResultCode.Success)
+                {
+                    _logger.LogDebug($"Next key = {curKey}, val = {curVal}");
+                }
+                else
+                {
+                    return;
+                }
+                curResultCode = cur.Next();
+            }
+        }
+
         public ulong GetBlockMetadata(byte[] blockHash)
         {
             using (var tx = _lmdbEnv.BeginTransaction(TransactionBeginFlags.ReadOnly))
@@ -304,6 +324,8 @@ namespace ConduitRawAPI.Database
                     var (resultCode, _, value) = tx.Get(_blockMetadataDb, blockHash);
                     if (resultCode == MDBResultCode.NotFound)
                     {
+                        this.DebugKeyNotFound(tx, _blockMetadataDb);
+
                         throw new KeyNotFoundException(
                             $"Block size for block hash {BitConverter.ToString(blockHash)} " +
                             $"not found");

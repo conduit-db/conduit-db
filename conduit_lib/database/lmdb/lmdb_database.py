@@ -27,13 +27,29 @@ class LMDB_Database:
     MTREE_DB = b"mtree_db"
     TX_OFFSETS_DB = b"tx_offsets_db"
     BLOCK_METADATA_DB = b"block_metadata_db"
-    DEFAULT_DIR = Path(MODULE_DIR).parent.parent.parent.parent.joinpath('lmdb_data').__str__()
 
     def __init__(self, storage_path: Optional[str]=None):
-        if not storage_path:
-            storage_path = self.DEFAULT_DIR
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
+
+        self.DEFAULT_DIR = Path(MODULE_DIR).parent.parent.parent.parent.joinpath('lmdb_data').__str__()
+        self.LMDB_READONLY: int = int(os.environ.get("LMDB_READONLY", '0'))  # defaults to writable mode
+        self.LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH",
+            None)  # defaults to writable mode
+
+        self.logger.debug(f"self.DEFAULT_DIR={self.DEFAULT_DIR}")
+        self.logger.debug(f"self.LMDB_READONLY={self.LMDB_READONLY}")
+        self.logger.debug(f"self.LMDB_DATABASE_PATH={self.LMDB_DATABASE_PATH}")
+
+        if self.LMDB_DATABASE_PATH:
+            self.DEFAULT_DIR = self.LMDB_DATABASE_PATH
+
+        if not storage_path:
+            storage_path = self.DEFAULT_DIR
+
+        if not Path(storage_path).exists():
+            os.makedirs(Path(storage_path), exist_ok=True)
+
         self.env: Optional[lmdb.Environment] = None
         self.blocks_db = None
         self.block_nums_db = None
@@ -44,14 +60,21 @@ class LMDB_Database:
 
         # on windows there is a bug where this requires the disc space to be free
         # on linux can set this to a very large number (e.g. 10 terabytes)
-        self._map_size = pow(1024, 3) * 400  # GB for Mainnet
+        self._map_size = pow(1024, 3) * 10  # GB for Mainnet
         self._storage_path = storage_path
         self.open()
-        # self.logger.debug(f"opened LMDB database at {storage_path}")
+        self.logger.debug(f"opened LMDB database at {storage_path}")
 
     def open(self):
-        self.env = lmdb.open(self._storage_path, max_dbs=5, map_size=self._map_size,
-            sync=False, readahead=False, max_readers=50)
+        # try:
+        if self.LMDB_READONLY == 1:
+            self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=self.LMDB_READONLY,
+                readahead=False, sync=False)
+        else:
+            self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
+                readahead=False, sync=False, map_size=self._map_size)
+        # except lmdb.LockError:
+        #     self.logger.error("LMDB temporarily unavailable - retrying...")
 
         self.blocks_db = self.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)
@@ -164,7 +187,7 @@ class LMDB_Database:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         with self.env.begin(db=self.block_metadata_db, write=True, buffers=False) as txn:
-            # self.logger.debug(f"put_block_metadata called: {batched_metadata}")
+            self.logger.debug(f"put_block_metadata called: {batched_metadata}")
             for block_hash, size in batched_metadata:
                 txn.put(block_hash, struct_le_Q.pack(size))
 
@@ -182,10 +205,15 @@ class LMDB_Database:
 
 
 if __name__ == "__main__":
+    # Debugging script - gives a dump of all data for a given hex blockhash
+    logger = logging.getLogger("debug-lmdb")
+    logging.basicConfig(level=logging.DEBUG)
     lmdb_db = LMDB_Database()
+
     with lmdb_db.env.begin(db=lmdb_db.block_metadata_db, write=False, buffers=False) as txn:
         cur = txn.cursor()
         print(cur.first())
+        print(bytes(cur.value()))
         while cur.next():
             print(bytes(cur.value()))
 

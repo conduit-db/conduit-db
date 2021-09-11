@@ -31,13 +31,12 @@ class Storage:
         headers: Headers,
         block_headers: Headers,
         mysql_database: Optional[MySQLDatabase],
-        lmdb: LMDB_Database,
+        lmdb: Optional[LMDB_Database],
     ):
-        # self.pg_database = pg_database
         self.mysql_database = mysql_database
-        self.headers: Headers = headers
-        self.block_headers: Headers = block_headers
-        self.lmdb: LMDB_Database = lmdb
+        self.headers = headers
+        self.block_headers = block_headers
+        self.lmdb = lmdb
 
     async def close(self):
         if self.mysql_database:
@@ -116,6 +115,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
         if os.path.exists(lmdb_path):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
+    if config['server_type'] == "ConduitRaw":
         def reset_kafka_topics():
             kafka_broker = {
                 'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
@@ -158,7 +158,10 @@ def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
     else:
         mysql_database = None
 
-    lmdb_db = LMDB_Database(storage_path=config.get('lmdb_path'))
+    # if config['server_type'] == "ConduitRaw":  # comment out until we have gRPC wrapper
+    lmdb_db = LMDB_Database()
+    # else:
+    #     lmdb_db = None
 
     storage = Storage(headers, block_headers, mysql_database, lmdb_db)
     return storage

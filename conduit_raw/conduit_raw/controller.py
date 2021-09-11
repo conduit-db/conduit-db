@@ -324,21 +324,25 @@ class Controller:
         )
 
     async def sync_headers_job(self):
-        """supervises completion of syncing all headers to target height"""
-        self.logger.debug("Starting sync_headers_job...")
+        try:
+            """supervises completion of syncing all headers to target height"""
+            self.logger.debug("Starting sync_headers_job...")
 
-        self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
-        while True:
-            if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                await self.sync_state.wait_for_new_headers_tip()
-            await self._get_max_headers()
-            await self.sync_state.headers_msg_processed_event.wait()
-            self.sync_state.headers_msg_processed_event.clear()
-            self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-            self.logger.debug(
-                "new headers tip height: %s", self.sync_state.local_tip_height,
-            )
-            self.sync_state.blocks_event_new_tip.set()
+            self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
+            while True:
+                self.logger.debug(f"sync_headers_job while loop")
+                if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
+                    await self.sync_state.wait_for_new_headers_tip()
+                await self._get_max_headers()
+                await self.sync_state.headers_msg_processed_event.wait()
+                self.sync_state.headers_msg_processed_event.clear()
+                self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
+                self.logger.debug(
+                    "new headers tip height: %s", self.sync_state.local_tip_height,
+                )
+                self.sync_state.blocks_event_new_tip.set()
+        except Exception as e:
+            self.logger.exception(f"unexpected exception in sync_headers_job")
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
         header, chain = self.storage.headers.lookup(block_hash)
@@ -457,7 +461,7 @@ class Controller:
                     await self.sanity_checks()
 
                 if batch_id == 0:
-                    self.logger.debug(f"Starting Initial Block Download")
+                    self.logger.info(f"Starting Initial Block Download")
                 else:
                     batch_id += 1
                     self.logger.debug(f"Controller Batch {batch_id} Start")

@@ -26,7 +26,8 @@ from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.utils import cast_to_valid_ipv4
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka, \
+    wait_for_conduit_raw_api
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -35,6 +36,7 @@ from .workers.transaction_parser import TxParser
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:5000')
 
 
 class Controller:
@@ -127,7 +129,6 @@ class Controller:
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
-        self.lmdb = self.storage.lmdb
         self.mysql_db: MySQLDatabase = load_mysql_database()
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
@@ -162,6 +163,10 @@ class Controller:
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
+
+            # DISABLED this because the ASP.NET gRPC service cannot share an LMDB file through docker
+            # So will need to do the gRPC API in python for now...
+            # await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))

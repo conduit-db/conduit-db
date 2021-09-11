@@ -47,8 +47,6 @@ services:
     build:
       context: .
       dockerfile: ./contrib/mariadb/Dockerfile
-    ports:
-      - "3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: conduitpass
       MYSQL_DATABASE: conduitdb
@@ -63,13 +61,17 @@ services:
       dockerfile: ./conduit_raw/Dockerfile
     ports:
       - "50000:50000"
-#    depends_on:
-#      - zookeeper
-#      - kafka
+    depends_on:
+      - zookeeper
+      - kafka
+      - node
     volumes:
-    - ./data/lmdb_data:/opt/lmdb_data
+      - lmdb_data:/opt/lmdb_data
+    environment:
+      - LMDB_READONLY=0
+      - LMDB_DATABASE_PATH=/opt/lmdb_data
     working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py --reset --regtest --node-host=node:18444 --lmdb-path=/opt/lmdb_data --kafka-host=kafka:9092'
+    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py --reset --regtest --node-host=node:18444 --kafka-host=kafka:9092'
 
   conduit-index:
     build:
@@ -78,12 +80,33 @@ services:
     depends_on:
       - node
       - mysql
+      - zookeeper
+      - kafka
+    volumes:
+      - lmdb_data:/opt/lmdb_data
+    environment:
+      - LMDB_READONLY=1
+      - LMDB_DATABASE_PATH=/opt/lmdb_data
+      - CONDUIT_RAW_API_HOST=conduit-raw-api:80
+    working_dir: /opt
+    command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --kafka-host=kafka:9092'
+
+## Unfortunately this service cannot share a common db file with the python-based conduit-raw
+## There seems to be an issue with file permissions through docker with lmdb
+## So will have to wait until the entirety of ConduitRaw is re-written in C# to utilise this gRPC
+## Work
+#  conduit-raw-api:
+#    build:
+#      context: .
+#      dockerfile: ./ConduitRawAPI/Dockerfile
+#    ports:
+#      - "5000:80"
+#    depends_on:
+#      - conduit-raw
 #      - zookeeper
 #      - kafka
-    volumes:
-      - ./data/lmdb_data:/opt/lmdb_data
-    working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --lmdb-path=/opt/lmdb_data --kafka-host=kafka:9092'
+#    volumes:
+#    - lmdb_data:/opt/lmdb_data
 
 #  scylla-node1:
 #    image: scylladb/scylla:4.4.0
@@ -94,3 +117,6 @@ services:
 #      - "./cassandra-rackdc.properties.dc1:/etc/scylla/cassandra-rackdc.properties"
 #    ports:
 #      - "9042:9042"
+
+volumes:
+    lmdb_data:

@@ -105,7 +105,7 @@ class TxParser(multiprocessing.Process):
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.debug(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f"Starting {self.__class__.__name__}...")
 
         self.confirmed_tx_flush_queue = queue.Queue()
         self.mempool_tx_flush_queue = queue.Queue()

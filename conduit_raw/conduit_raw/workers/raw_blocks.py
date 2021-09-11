@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import multiprocessing
+import os
 import sys
 import threading
 import time
@@ -26,7 +27,7 @@ class BlockWriter(multiprocessing.Process):
     """
 
     def __init__(
-        self, shm_name, worker_in_queue_blk_writer, worker_ack_queue_blk_writer,
+        self, shm_name, worker_in_queue_blk_writer, worker_ack_queue_blk_writer
     ):
         super(BlockWriter, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
@@ -52,7 +53,7 @@ class BlockWriter(multiprocessing.Process):
             setup_tcp_logging(port=54545)
         self.logger = logging.getLogger("raw-block-writer")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.debug(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f"Starting {self.__class__.__name__}...")
 
         self.lmdb = LMDB_Database()
 

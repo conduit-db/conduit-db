@@ -34,8 +34,8 @@ services:
     ports:
       - "18332:18332"
       - "18444:18444"
-    volumes:
-      - ./data/bitcoin_data:/root/.electrumsv-node
+#    volumes:
+#      - ./data/bitcoin_data:/root/.electrumsv-node
     environment:
       - NODE_RPCALLOWIP=0.0.0.0/0
       - NODE_RPCBIND=0.0.0.0

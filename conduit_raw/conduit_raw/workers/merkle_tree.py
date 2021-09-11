@@ -1,5 +1,6 @@
 import logging
 import multiprocessing
+import os
 import sys
 import threading
 import time
@@ -25,7 +26,7 @@ class MTreeCalculator(multiprocessing.Process):
     """
 
     def __init__(
-        self, worker_id, shm_name, worker_in_queue_mtree, worker_ack_queue_mtree,
+        self, worker_id, shm_name, worker_in_queue_mtree, worker_ack_queue_mtree
     ):
         super(MTreeCalculator, self).__init__()
         self.worker_id = worker_id
@@ -38,7 +39,7 @@ class MTreeCalculator(multiprocessing.Process):
         if sys.platform == "win32":
             setup_tcp_logging(port=54545)
         self.logger.setLevel(logging.DEBUG)
-        self.logger.debug(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f"Starting {self.__class__.__name__}...")
 
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context()
