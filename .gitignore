@@ -25,6 +25,7 @@ tests/logs/*
 ../profile.svg
 profile.svg
 data/**
+*.*proj.user
 
 *.vs
 **/.classpath
@@ -36,7 +37,6 @@ ConduitRawAPI/.settings
 ConduitRawAPI/.toolstarget
 ConduitRawAPI/.vs
 ConduitRawAPI/.vscode
-ConduitRawAPI/*.*proj.user
 ConduitRawAPI/*.dbmdl
 ConduitRawAPI/*.jfm
 ConduitRawAPI/azds.yaml
