@@ -4,7 +4,7 @@ challenges for keeping applications responsive under load. Scaling-testnet's > 2
 blocks can take some time to index and leads to clients waiting
 unreasonable times for mempool events and confirmations.
 
-ConduitDB can parallelize the chain indexing process so wallets/applications can 
+ConduitDB can parallelize the chain indexing process so wallets/applications can
 continue to get timely notifications despite exponentially increasing blockchain
 transaction throughput.
 
@@ -15,25 +15,30 @@ transaction throughput.
 Please make sure that the file `contrib/mariadb/config/my.cnf` has its file permissions set to
 "Read-only" on windows otherwise the Docker image will reject the RocksDB engine configuration.
 
-## Running MariaDB / Bitcoin Node / Kafka
-These services are required for ConduitRaw and ConduitIndex to begin the chain indexing
-process.
+## Running different combinations of services in Docker
 
-From the top-level directory please run:
+The core services of mysql, kafka, lightkeeper and the  Bitcoin SV node can be run using:
 
-    docker-compose -f docker-compose.dev.yml down
-    docker-compose -f docker-compose.dev.yml up
-    
-This will start these services ready to develop against.
+    docker-compose -f docker-compose.yml up
 
-To run all services (including ConduitRaw and ConduitIndex) there is a 
-docker-compose.yml.
+This is useful to develop the indexer and raw services on bare metal. However, additional Docker
+compose files can be layered to get some or all of the other services running.
 
-To persist data between runs - mount a volume to the host file system. For example
-the bitcoin node data directory can be mounted to a windows directory to persist chain
-state between runs.
+To run all services:
 
-## Running ConduitRaw 
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml -f docker-compose.spvchannels.yml -f docker-compose.api.yml up
+
+To run enough services to debug the REST API service on bare metal:
+
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml up
+
+Most volumes are named, with the current exception of the Bitcoin SV node. The expectation is that
+doing a docker compose stop or down will reuse existing state. If a user wants to reset everything
+they should take everything down and then prune (Docker speak for delete) all volumes.
+
+    docker volume prune
+
+## Running ConduitRaw
 
 Windows cmd.exe:
 
@@ -42,7 +47,7 @@ Windows cmd.exe:
     set PYTHONPATH=.
     py -m pip install -r .\conduit_raw\requirements.txt
     py .\conduit_raw\conduit_server.py          (optional flag: --reset)
-    
+
 Unix:
 
     git clone https://github.com/AustEcon/conduit.git
@@ -82,7 +87,7 @@ Currently the peers are hardcoded.
 ## Warning about new changes
 
 All configuration will soon be moved to exclusively be via environment variables in
-`.env` and `.env.bare.metal` for docker vs bare-metal services respectively. This 
+`.env` and `.env.bare.metal` for docker vs bare-metal services respectively. This
 should apply to ALL services for both python and C# to minimize cognitive strain
 during deployments and end-to-end testing / CI/CD!
 
