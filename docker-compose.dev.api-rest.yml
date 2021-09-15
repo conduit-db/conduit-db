@@ -1,5 +1,7 @@
 version: "3.8"
 
+# This is for use assuming that API.REST is being developed and debugged in Visual Studio.
+
 services:
 
   zookeeper:
@@ -92,47 +94,6 @@ services:
       - CONDUIT_RAW_API_HOST=conduit-raw-api:80
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --kafka-host=kafka:9092'
-
-  conduit-api-rest:
-    build:
-      context: .
-      dockerfile: ./Conduit.API.REST/Dockerfile
-    depends_on:
-      - mysql
-    ports:
-      - "25109:80"
-      - "25110:443"
-    environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-
-
-## Unfortunately this service cannot share a common db file with the python-based conduit-raw
-## There seems to be an issue with file permissions through docker with lmdb
-## So will have to wait until the entirety of ConduitRaw is re-written in C# to utilise this gRPC
-## Work
-#  conduit-raw-api:
-#    build:
-#      context: .
-#      dockerfile: ./ConduitRawAPI/Dockerfile
-#    ports:
-#      - "5000:80"
-#    depends_on:
-#      - conduit-raw
-#      - zookeeper
-#      - kafka
-#    volumes:
-#    - lmdb_data:/opt/lmdb_data
-
-#  scylla-node1:
-#    image: scylladb/scylla:4.4.0
-#    restart: always
-#    command: --seeds=scylla-node1 --api-address 0.0.0.0
-#    volumes:
-#      - "./scylla.yaml:/etc/scylla/scylla.yaml"
-#      - "./cassandra-rackdc.properties.dc1:/etc/scylla/cassandra-rackdc.properties"
-#    ports:
-#      - "9042:9042"
-
 
   spvchannels-db:
     container_name: spvchannels-db
