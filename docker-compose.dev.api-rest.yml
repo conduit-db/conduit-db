@@ -44,12 +44,14 @@ services:
       - "18444:18444"
     volumes:
     - ./data/bitcoin_data:/root/.electrumsv-node
-    environment:
-      - NODE_RPCALLOWIP=0.0.0.0/0
-      - NODE_RPCBIND=0.0.0.0
-      - NODE_PORT=18332
-      - NODE_P2P_PORT=18444
-      - NODE_ZMQ_PORT=28332
+    # This is electrumsv-sdk configuration. We use electrumsv-node module at this time. See
+    # contrib\node\server.py and change with extra options, then rebuild the image and rerun.
+    # environment:
+    #   - NODE_RPCALLOWIP=0.0.0.0/0
+    #   - NODE_RPCBIND=0.0.0.0
+    #   - NODE_PORT=18332
+    #   - NODE_P2P_PORT=18444
+    #   - NODE_ZMQ_PORT=28332
 
   mysql:
     build:
