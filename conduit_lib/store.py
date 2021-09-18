@@ -117,10 +117,9 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
 
     if config['server_type'] == "ConduitRaw":
         def reset_kafka_topics():
-            kafka_broker = {
-                'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-            }
-            logger.debug("deleting kafka topics...")
+            kafka_host = os.environ.get('KAFKA_HOST', "127.0.0.1:26638")
+            kafka_broker = {'bootstrap.servers': kafka_host}
+            logger.debug("deleting kafka topics ()...")
             admin_client = AdminClient(kafka_broker)
             futures_dict = admin_client.delete_topics(['logging', 'conduit-raw-headers-state'],
                 operation_timeout=30)

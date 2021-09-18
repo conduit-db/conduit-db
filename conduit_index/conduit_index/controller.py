@@ -10,9 +10,11 @@ from pathlib import Path
 
 import bitcoinx
 import zmq
-from bitcoinx import hash_to_hex_str
+from bitcoinx import hash_to_hex_str, double_sha256
 import logging
 from typing import Optional, Dict
+
+from confluent_kafka.cimpl import Consumer
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
@@ -27,7 +29,6 @@ from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka
 from .batch_completion import BatchCompletionTxParser
-from .conduit_raw_tip_thread import ConduitRawTipThread
 
 from .sync_state import SyncState
 from .workers.transaction_parser import TxParser
@@ -120,6 +121,17 @@ class Controller:
         self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
 
+        # auto.offset.reset is set to 'earliest' which should be fine because the retention period
+        # will be 24 hours in which case old headers will be removed from the topic in time
+        group = os.urandom(8)  # will give a pub/sub arrangement for all consumers
+        self.headers_state_consumer: Consumer = Consumer({
+            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
+            'group.id': group,
+            'auto.offset.reset': 'earliest'
+        })
+        self.headers_state_consumer.subscribe(['conduit-raw-headers-state'])
+        self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
+
     async def setup(self):
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
@@ -139,9 +151,7 @@ class Controller:
             self.worker_ack_queue_tx_parse_confirmed,
             self.tx_parser_completion_queue
         )
-        self.sync_conduit_raw_tip_state_thread = ConduitRawTipThread(self.sync_state, self.storage)
         self.batch_completion_raw.start()
-        self.sync_conduit_raw_tip_state_thread.start()
 
     async def connect_session(self):
         loop = asyncio.get_event_loop()
@@ -465,6 +475,44 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
+    def convert_to_header_obj(self, tip_raw: bytes) -> bitcoinx.Header:
+        while True:
+            try:
+                tip_raw = tip_raw
+                tip_hash = double_sha256(tip_raw)
+                tip_height = self.storage.get_header_for_hash(tip_hash).height
+                deserialized_tip = bitcoinx.Header(*bitcoinx.unpack_header(tip_raw), tip_hash,
+                    tip_raw, tip_height)
+                return deserialized_tip
+            except bitcoinx.MissingHeader:
+                time.sleep(2)
+                self.logger.debug(f"ConduitRaw has a header we do not yet have: Syncing headers...")
+
+    def drain_kafka_headers_queue(self):
+        conduit_raw_tip = None
+        while True:
+            try:
+                result = self.headers_state_consumer.consume(num_messages=1000, timeout=0.1)
+                for new_tip in result:
+                    conduit_raw_tip = self.convert_to_header_obj(new_tip.value())
+                    if self.sync_state.get_local_block_tip_height() < conduit_raw_tip.height:
+                        self.logger.debug(f"new_tip.height={conduit_raw_tip.height}")
+                        self.sync_state.set_conduit_raw_header_tip(conduit_raw_tip)
+                    else:
+                        self.logger.debug(f"ConduitIndex has already synced this tip at "
+                             f"height: {conduit_raw_tip.height} - skipping...")
+                        pass  # drain until we get to the last message (actual tip)
+
+                drained_all_msgs = not result
+                if conduit_raw_tip and drained_all_msgs:
+                    return conduit_raw_tip
+                else:
+                    continue
+            except Exception:
+                self.logger.exception("unexpected exception in drain_kafka_headers_queue")
+                time.sleep(0.2)
+
+
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height
 
@@ -510,6 +558,8 @@ class Controller:
         async def do_initial_block_download():
             self.logger.debug(f"Starting Initial Block Download")
             while self.sync_state.get_conduit_raw_header_tip() is None:
+                _conduit_raw_tip = await self.loop.run_in_executor(
+                    self.headers_state_consumer_executor, self.drain_kafka_headers_queue)
                 self.logger.debug(f"waiting for conduit raw header tip")
                 await asyncio.sleep(2)
 
@@ -532,8 +582,10 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                conduit_raw_tip = await self.sync_state.conduit_raw_headers_queue.get()
-                # self.logger.debug(f"got from async queue {conduit_raw_tip.height}")
+                conduit_raw_tip = await self.loop.run_in_executor(
+                    self.headers_state_consumer_executor, self.drain_kafka_headers_queue)
+
+                self.logger.debug(f"new conduit_raw header tip height: {conduit_raw_tip.height}")
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 

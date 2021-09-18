@@ -122,7 +122,7 @@ class SyncState:
         with self.conduit_raw_header_tip_lock:
             return self.conduit_raw_header_tip
 
-    def set_conduit_raw_header_tip(self, conduit_raw_header_tip):
+    def set_conduit_raw_header_tip(self, conduit_raw_header_tip: bitcoinx.Header):
         """Needs to first have a connected headers_state_client"""
         with self.conduit_raw_header_tip_lock:
             self.conduit_raw_header_tip = conduit_raw_header_tip
