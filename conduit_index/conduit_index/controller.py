@@ -344,7 +344,7 @@ class Controller:
                     conduit_raw_tip = bitcoinx.Header(*bitcoinx.unpack_header(new_tip), tip_hash,
                         new_tip, tip_height)
 
-                    if self.sync_state.get_local_block_tip_height() <= conduit_raw_tip.height:
+                    if self.sync_state.get_local_block_tip_height() < conduit_raw_tip.height:
                         self.logger.debug(f"new_tip.height={conduit_raw_tip.height}")
                     else:
                         self.logger.debug(f"ConduitIndex has already synced this tip at "
@@ -404,26 +404,6 @@ class Controller:
             self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
             return global_blocks_batch_set
 
-        async def do_initial_block_download():
-            self.logger.debug(f"Starting Initial Block Download")
-            while self.sync_state.get_conduit_raw_header_tip() is None:
-                _conduit_raw_tip = await self.loop.run_in_executor(
-                    self.headers_state_consumer_executor, self.drain_kafka_headers_queue)
-                self.logger.debug(f"waiting for conduit raw header tip")
-                await asyncio.sleep(2)
-
-            # Initial sync to current tip == to ConduitRaw
-            while self.sync_state.get_local_block_tip_height() < \
-                    self.sync_state.get_conduit_raw_header_tip().height:
-                self.mysql_db.bulk_loads.set_rocks_db_bulk_load_on()
-                self.mysql_db.bulk_loads.set_local_infile_on()
-                global_blocks_batch_set = allocate_work()
-                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
-                api_block_tip_height = await self.sanity_checks_and_update_api_tip()
-                self.logger.debug(f"Initial Block Download Complete. "
-                                  f"New block tip height: {api_block_tip_height}")
-                self.sync_state.set_post_IBD_mode()
-
         async def maintain_chain_tip():
             # Now wait on the queue for notifications
 
@@ -452,9 +432,6 @@ class Controller:
 
         try:
             # up to 500 blocks per loop
-            batch_id = 0
-            # Initial sync to current tip == to ConduitRaw
-            await do_initial_block_download()
             await maintain_chain_tip()
 
         except asyncio.CancelledError:
