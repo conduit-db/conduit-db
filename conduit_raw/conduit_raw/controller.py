@@ -14,10 +14,13 @@ from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import zmq
 from confluent_kafka import Producer
 
+from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.wait_for_dependencies import wait_for_node, wait_for_kafka
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
+from .grpc_server.grpc_server import ConduitRaw
 from .sync_state import SyncState
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from .preprocessor import BlockPreProcessor
@@ -68,7 +71,8 @@ class Controller:
         self.handlers = None  # Handlers(self, self.net_config, self.storage)
         self.serializer = None  # Serializer(self.net_config, self.storage)
         self.deserializer = None  # Deserializer(self.net_config, self.storage)
-        self.lmdb = None
+        self.lmdb: Optional[LMDB_Database] = None
+        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
         self.executor = ThreadPoolExecutor(max_workers=1)
 
         # Bitcoin network/peer net_config
@@ -102,7 +106,7 @@ class Controller:
         self.blocks_batch_set_queue_preproc = queue.Queue()
 
         # Database Interfaces
-        self.mysql_db: Optional[MySQLDatabase] = None
+        # self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network IO + callbacks
         self.transport = None
@@ -198,12 +202,20 @@ class Controller:
 
             self.shm_buffer.close()
             self.shm_buffer.unlink()
+
+            self.lmdb_grpc_client.stop()  # stops server
+            time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
+            self.lmdb_grpc_client.close()  # closes client channel
+            self.lmdb.close()
+
+
             for task in self.tasks:
                 task.cancel()
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
+
         except Exception:
             self.logger.exception("suppressing raised exceptions on cleanup")
 
@@ -287,6 +299,9 @@ class Controller:
             self.processes.append(p)
 
     # Asyncio-based Tasks that run on the __main__ thread
+    async def spawn_lmdb_grpc_server(self):
+        self.tasks.append(asyncio.create_task(self.lmdb_grpc_server.serve()))
+
     async def spawn_handler_tasks(self):
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
@@ -303,8 +318,8 @@ class Controller:
 
     async def start_jobs(self):
         try:
-            # self.mysql_db: PostgresDatabase = self.storage.pg_database
-            self.mysql_db: MySQLDatabase = self.storage.mysql_database
+            self.lmdb_grpc_server = ConduitRaw(Path(self.lmdb._storage_path))
+            await self.spawn_lmdb_grpc_server()
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 
@@ -330,7 +345,6 @@ class Controller:
 
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             while True:
-                self.logger.debug(f"sync_headers_job while loop")
                 if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
                     await self.sync_state.wait_for_new_headers_tip()
                 await self._get_max_headers()

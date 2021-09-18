@@ -16,7 +16,7 @@ from MySQLdb import _mysql
 from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_be_I
 
-from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
 
@@ -53,7 +53,7 @@ class TxParser(multiprocessing.Process):
         self.processed_vs_unprocessed_queue = None
 
         self.mysql = None
-        self.lmdb_db = None
+        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
         self.loop = None
 
         # batched confirmed rows
@@ -389,18 +389,15 @@ class TxParser(multiprocessing.Process):
 
             tx_offsets_partition = array.array("Q", packed_array)
 
-            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-            #  the network! Currently fails inside of docker...
-            blk_num = self.lmdb_db.get_block_num(blk_hash)
+            # self.logger.debug(f"self.lmdb_grpc_client.get_block_num() where blk_hash={blk_hash}")
+            blk_num = self.lmdb_grpc_client.get_block_num(blk_hash)
             # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
 
             # if in IBD mode, mempool txs are strictly rejected. So there is no point
             # in sorting out which txs are already in the mempool tx table.
             # There is also no point performing mempool tx invalidation.
             if self.initial_block_download_event_mp.is_set():
-                # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-                #  the network! Currently fails inside of docker...
-                buffer = self.lmdb_db.get_block(blk_num)  # Todo - Wasteful!
+                buffer = self.lmdb_grpc_client.get_block(blk_num)  # Todo - Wasteful!
                 self.get_processed_vs_unprocessed_tx_offsets(buffer, tx_offsets_partition,
                     blk_height)
                 item = self.processed_vs_unprocessed_queue.get()
@@ -410,12 +407,11 @@ class TxParser(multiprocessing.Process):
             # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
 
             t0 = time.time()
-            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-            #  the network! Currently fails inside of docker...
-            with self.lmdb_db.env.begin(db=self.lmdb_db.blocks_db) as txn:
-                buf = txn.get(struct_be_I.pack(blk_num))
-                result = parse_txs(buf, unprocessed_tx_offsets, blk_height, True,
-                    first_tx_pos_batch)
+            # This is wasteful in that it is pulling the *entire* raw block when it will only
+            # need the relevant partition of the block
+            raw_block = self.lmdb_grpc_client.get_block(blk_num)
+            result = parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,
+                first_tx_pos_batch)
 
             tx_rows, in_rows, out_rows, set_pd_rows = result
             t1 = time.time() - t0
@@ -431,9 +427,7 @@ class TxParser(multiprocessing.Process):
             self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
 
         try:
-            # TODO - ConduitRaw needs to have an API wrapper so that this can be requested over
-            #  the network! Currently fails inside of docker...
-            self.lmdb_db = LMDB_Database()
+            self.lmdb_grpc_client = ConduitRawAPIClient()
             while True:
                 if iterate(self) == "stop":
                     break

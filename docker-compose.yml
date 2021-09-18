@@ -41,6 +41,8 @@ services:
     build:
       context: .
       dockerfile: ./contrib/mariadb/Dockerfile
+    ports:
+      - "52525:3306"
     environment:
       MYSQL_ROOT_PASSWORD: conduitpass
       MYSQL_DATABASE: conduitdb

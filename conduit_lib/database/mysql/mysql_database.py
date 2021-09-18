@@ -121,7 +121,7 @@ class MySQLDatabase:
 
 def mysql_connect(worker_id=None) -> MySQLDatabase:
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 3306))
+    port = int(os.environ.get('MYSQL_PORT', 52525))
 
     if is_docker():
         user = "root"
@@ -149,7 +149,7 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
 
 def mysql_test_connect() -> MySQLDatabase:
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 3306))
+    port = int(os.environ.get('MYSQL_PORT', 52525))
 
     conn = _mysql.connect(
         host=host,

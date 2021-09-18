@@ -67,9 +67,9 @@ def get_parser():
         "--mysql-host",
         action="store",
         dest="mysql_host",
-        default="127.0.0.1:3306",
+        default="127.0.0.1:52525",
         type=str,
-        help="e.g. localhost:3306 for use outside of docker or "
+        help="e.g. localhost:52525 for use outside of docker or "
              "mysql:3306 for use within docker",
     )
     parser.add_argument(

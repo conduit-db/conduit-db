@@ -48,32 +48,32 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetBlockNumber(self, request: BlockNumberRequest,
             context: grpc.aio.ServicerContext) -> BlockNumberResponse:
-        self.logger.debug(f"Got BlockNumberRequest.blockHash={request.blockHash}")
+        # self.logger.debug(f"Got BlockNumberRequest.blockHash={request.blockHash}")
         block_number = self.lmdb.get_block_num(request.blockHash)
         return BlockNumberResponse(blockNumber=block_number)
 
     async def GetBlock(self, request: BlockRequest,
             context: grpc.aio.ServicerContext) -> BlockNumberResponse:
-        self.logger.debug(f"Got BlockRequest.blockHash={request.blockNumber}")
+        # self.logger.debug(f"Got BlockRequest.blockHash={request.blockNumber}")
         raw_block = self.lmdb.get_block(request.blockNumber)
         return BlockResponse(rawBlock=raw_block)
 
     async def GetMerkleTreeRow(self, request: MerkleTreeRowRequest,
             context: grpc.aio.ServicerContext) -> MerkleTreeRowResponse:
-        self.logger.debug(f"Got MerkleTreeRowRequest.blockHash={request.blockHash}, "
-              f"MerkleTreeRowRequest.level={request.level}")
+        # self.logger.debug(f"Got MerkleTreeRowRequest.blockHash={request.blockHash}, "
+        #       f"MerkleTreeRowRequest.level={request.level}")
         mtree_row = self.lmdb.get_mtree_row(request.blockHash, request.level)
         return MerkleTreeRowResponse(mtreeRow=mtree_row)
 
     async def GetTransactionOffsets(self, request: TransactionOffsetsRequest,
             context: grpc.aio.ServicerContext) -> TransactionOffsetsResponse:
-        self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
+        # self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
         tx_offsets = self.lmdb.get_tx_offsets(request.blockHash)
         return TransactionOffsetsResponse(txOffsetsArray=tx_offsets)
 
     async def GetBlockMetadata(self, request: BlockMetadataRequest,
             context: grpc.aio.ServicerContext) -> BlockMetadataResponse:
-        self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
+        # self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
         block_size = self.lmdb.get_block_metadata(request.blockHash)
         return BlockMetadataResponse(blockSizeBytes=block_size)
 

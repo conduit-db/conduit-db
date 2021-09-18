@@ -99,8 +99,8 @@ class Handlers:
                 if hex_str_to_hash(inv["inv_hash"]) in \
                         self.controller.sync_state.global_blocks_batch_set:
                     self.controller.sync_state.pending_blocks_inv_queue.put_nowait(inv)
-                else:
-                    logger.debug(f"got new block notification: {inv['inv_hash']}")
+                # else:
+                    # logger.debug(f"got new block notification: {inv['inv_hash']}")
 
         if self.controller.sync_state.initial_block_download_event.is_set():
             getdata_msg = self.serializer.getdata(tx_inv_vect)

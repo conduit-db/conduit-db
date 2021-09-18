@@ -25,9 +25,7 @@ from conduit_lib.networks import NetworkConfig
 from conduit_lib.peers import Peer
 from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.utils import cast_to_valid_ipv4
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka, \
-    wait_for_conduit_raw_api
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka
 from .batch_completion import BatchCompletionTxParser
 from .conduit_raw_tip_thread import ConduitRawTipThread
 
@@ -369,9 +367,9 @@ class Controller:
                 await self.sync_state.headers_msg_processed_event.wait()
                 self.sync_state.headers_msg_processed_event.clear()
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-                self.logger.debug(
-                    "new local headers tip height: %s", self.sync_state.local_tip_height,
-                )
+                # self.logger.debug(
+                    # "new local headers tip height: %s", self.sync_state.local_tip_height,
+                # )
                 self.sync_state.blocks_event_new_tip.set()
         except Exception:
             self.logger.exception("unexpected exception in sync_headers_job")

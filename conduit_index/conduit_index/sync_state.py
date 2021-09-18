@@ -11,6 +11,7 @@ import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
 # from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.store import Storage
 from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
@@ -51,7 +52,7 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.lmdb = self.storage.lmdb
+        self.lmdb_grpc_client = ConduitRawAPIClient()
         # self.lmdb_client = ConduitRawAPIClient(host=CONDUIT_RAW_HOST, port=CONDUIT_RAW_PORT)
 
         self.conduit_raw_headers_queue = asyncio.Queue()
@@ -189,13 +190,11 @@ class SyncState:
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
 
-            # block_bytes = self.lmdb_client.get_block_metadata(block_header.hash[::-1])
-            block_bytes = self.lmdb.get_block_metadata(block_header.hash)
+            block_bytes = self.lmdb_grpc_client.get_block_metadata(block_header.hash)
             # self.logger.debug(f"lmdb block_bytes={block_bytes}")
 
             # Allocate work
-            # tx_offsets = self.lmdb_client.get_tx_offsets(block_header.hash[::-1])
-            tx_offsets = self.lmdb.get_tx_offsets(block_header.hash)
+            tx_offsets = self.lmdb_grpc_client.get_tx_offsets(block_header.hash)
             # self.logger.debug(f"lmdb tx_offsets={tx_offsets}")
 
             # Safety Checks and MAX LIMITS

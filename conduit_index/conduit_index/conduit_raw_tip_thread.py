@@ -60,7 +60,7 @@ class ConduitRawTipThread(threading.Thread):
                             self.sync_state.conduit_raw_headers_queue.put(new_tip), self.loop)
                     else:
                         # self.logger.debug(f"ConduitIndex has already synced this tip at "
-                        #     f"height: {new_tip.height} - skipping...")
+                        #      f"height: {new_tip.height} - skipping...")
                         pass  # drain topic until we get to the last message (actual tip)
         except ConnectionResetError:
             time.sleep(2)

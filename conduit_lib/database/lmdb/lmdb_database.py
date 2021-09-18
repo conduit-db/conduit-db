@@ -133,13 +133,14 @@ class LMDB_Database:
             # print(f"block_nums={block_nums}")
             for block_num, block_row in zip(block_nums, batched_blocks):
                 blk_hash, blk_start_pos, blk_end_pos = block_row
-                # print(f"put: ({block_num}, {shared_mem_buffer[blk_start_pos: blk_end_pos]})")
                 raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
+                # self.logger.debug(f"put_blocks: (block_num={block_num}, blk_hash={blk_hash}")
 
                 tx.put(struct_be_I.pack(block_num), raw_block, db=self.blocks_db, append=True, overwrite=False)
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
                 tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
-                tx.commit()
+
+            tx.commit()
 
             t1 = time.time() - t0
             if len(batched_blocks) > 0:

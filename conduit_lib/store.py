@@ -10,7 +10,7 @@ from typing import Optional, Dict
 import bitcoinx
 from bitcoinx import Headers
 from confluent_kafka.admin import AdminClient
-from confluent_kafka.cimpl import Producer, KafkaError, KafkaException
+from confluent_kafka.cimpl import KafkaException
 
 from .database.lmdb.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, mysql_connect
@@ -158,10 +158,10 @@ def setup_storage(config, net_config, headers_dir: Optional[Path]=None) -> Stora
     else:
         mysql_database = None
 
-    # if config['server_type'] == "ConduitRaw":  # comment out until we have gRPC wrapper
-    lmdb_db = LMDB_Database()
-    # else:
-    #     lmdb_db = None
+    if config['server_type'] == "ConduitRaw":  # comment out until we have gRPC wrapper
+        lmdb_db = LMDB_Database()
+    else:
+        lmdb_db = None
 
     storage = Storage(headers, block_headers, mysql_database, lmdb_db)
     return storage
