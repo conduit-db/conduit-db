@@ -4,7 +4,7 @@ using System;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
 
-namespace ConduitRaw.Test
+namespace Conduit.Test
 {
     public class XunitLogger<T> : ILogger<T>, IDisposable
     {
