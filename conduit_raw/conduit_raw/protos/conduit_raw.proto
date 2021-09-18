@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+option csharp_namespace = "ConduitRaw";
+
+package conduit_raw;
+
+// The greeting service definition.
+service ConduitRaw {
+  // Sends a greeting
+	rpc Ping (PingRequest) returns (PingResponse);
+	rpc Stop (StopRequest) returns (StopResponse);
+	rpc GetBlockNumber (BlockNumberRequest) returns (BlockNumberResponse);
+	rpc GetBlock (BlockRequest) returns (BlockResponse);
+	rpc GetMerkleTreeRow (MerkleTreeRowRequest) returns (MerkleTreeRowResponse);
+	rpc GetTransactionOffsets (TransactionOffsetsRequest) returns (TransactionOffsetsResponse);
+	rpc GetBlockMetadata (BlockMetadataRequest) returns (BlockMetadataResponse);
+}
+
+message PingRequest {
+	string data = 1;
+}
+
+message PingResponse {
+	string message = 1;
+}
+
+message StopRequest {
+	string message = 1;
+}
+
+message StopResponse {
+	string message = 1;
+}
+
+
+message BlockNumberRequest {
+	bytes blockHash = 1;
+}
+
+message BlockNumberResponse {
+	uint64 blockNumber = 1;
+}
+
+message BlockRequest {
+	uint32 blockNumber = 1;
+}
+
+message BlockResponse {
+	bytes rawBlock = 1;
+}
+
+message MerkleTreeRowRequest {
+	bytes blockHash = 1;
+	uint32 level = 2;
+}
+
+message MerkleTreeRowResponse {
+	bytes mtreeRow = 1;
+}
+
+message TransactionOffsetsRequest {
+	bytes blockHash = 1;
+}
+
+message TransactionOffsetsResponse {
+	repeated uint64 txOffsetsArray = 1;
+}
+
+message BlockMetadataRequest {
+	bytes blockHash = 1;
+}
+
+message BlockMetadataResponse {
+	uint64 blockSizeBytes = 1;
+}

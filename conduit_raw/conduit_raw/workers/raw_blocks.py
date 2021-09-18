@@ -37,7 +37,6 @@ class BlockWriter(multiprocessing.Process):
         self.logger = logging.getLogger("raw-block-writer")
 
         self.batched_blocks = None
-        self.batched_metadata = None
         self.lmdb = None
 
         # accumulate x seconds worth of blocks or MAX_BLOCK_BATCH_SIZE (whichever comes first)
@@ -86,7 +85,6 @@ class BlockWriter(multiprocessing.Process):
     async def lmdb_inserts_task(self):
         self.lmdb: LMDB_Database
         self.batched_blocks = []
-        self.batched_metadata = []
         while True:
             try:
                 # no timeout functionality on asyncio queues...
@@ -100,28 +98,21 @@ class BlockWriter(multiprocessing.Process):
                 blk_hash, blk_start_pos, blk_end_pos = item
                 self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
                 block_bytes = blk_end_pos - blk_start_pos
-                self.batched_metadata.append((blk_hash, block_bytes))
 
                 # self.logger.debug(f"got block from queue unpacked: {blk_hash} {blk_start_pos}"
                 #     f" {blk_end_pos} block_bytes={block_bytes}")
 
                 if len(self.batched_blocks) >= self.MIN_BLOCK_BATCH_SIZE:
                     # logger.debug("block batching hit max batch size - loading batched blocks...")
-                    if self.batched_metadata:
-                        self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
-                        self.lmdb.put_block_metadata(self.batched_metadata)
+                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
                     self.ack_for_loaded_blocks(self.batched_blocks)
                     self.batched_blocks = []
-                    self.batched_metadata = []
 
             except asyncio.TimeoutError:
                 # logger.debug("block batching timed out - loading batched blocks...")
-                if self.batched_metadata:
-                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
-                    self.lmdb.put_block_metadata(self.batched_metadata)
+                self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
                 self.ack_for_loaded_blocks(self.batched_blocks)
                 self.batched_blocks = []
-                self.batched_metadata = []
                 continue
 
             except KeyboardInterrupt:
