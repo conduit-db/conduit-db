@@ -35,7 +35,7 @@ services:
       - "18332:18332"
       - "18444:18444"
     volumes:
-    - ./data/bitcoin_data:/root/.electrumsv-node
+    - bitcoin_data:/root/.electrumsv-node
 
   mysql:
     build:
@@ -51,3 +51,5 @@ services:
     volumes:
       - ./contrib/mariadb/config/my.cnf:/etc/mysql/my.cnf
 
+volumes:
+  bitcoin_data:
