@@ -12,8 +12,6 @@ services:
       - zookeeper
       - kafka
       - node
-    volumes:
-      - lmdb_data:/opt/lmdb_data
     environment:
       - LMDB_READONLY=0
       - LMDB_DATABASE_PATH=/opt/lmdb_data
@@ -29,15 +27,8 @@ services:
       - mysql
       - zookeeper
       - kafka
-    volumes:
-      - lmdb_data:/opt/lmdb_data
+      - conduit-raw
     environment:
-      - LMDB_READONLY=1
-      - LMDB_DATABASE_PATH=/opt/lmdb_data
-      # - CONDUIT_RAW_API_HOST=conduit-raw-api:80
+      - CONDUIT_RAW_API_HOST=conduit-raw:50000
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --kafka-host=kafka:9092'
-
-
-volumes:
-  lmdb_data:
