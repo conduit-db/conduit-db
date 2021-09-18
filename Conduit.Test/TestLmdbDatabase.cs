@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Xunit.Abstractions;
 
-namespace ConduitRaw.Test
+namespace Conduit.Test
 {
     public class TestLmdbDatabase : IDisposable
     {

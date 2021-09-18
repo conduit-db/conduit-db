@@ -5,7 +5,7 @@ VisualStudioVersion = 16.0.30804.86
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConduitRaw", "ConduitRaw\ConduitRaw.csproj", "{A5DD2A10-70AD-4263-B972-A514115B1E91}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ConduitRaw.Test", "ConduitRaw.Test\ConduitRaw.Test.csproj", "{3385EA1B-F4CE-4A70-9C4C-65DAFD11AA71}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Conduit.Test", "Conduit.Test\Conduit.Test.csproj", "{3385EA1B-F4CE-4A70-9C4C-65DAFD11AA71}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Conduit.API.REST", "Conduit.API.REST\Conduit.API.REST.csproj", "{A6FD5295-04AD-4056-8C05-AD237A2873D2}"
 EndProject

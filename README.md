@@ -17,7 +17,7 @@ Please make sure that the file `contrib/mariadb/config/my.cnf` has its file perm
 
 ## Running different combinations of services in Docker
 
-The core services of mysql, kafka, lightkeeper and the  Bitcoin SV node can be run using:
+The core services of mysql, kafka, zookeeper and the  Bitcoin SV node can be run using:
 
     docker-compose -f docker-compose.yml up
 

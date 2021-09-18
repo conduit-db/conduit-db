@@ -103,9 +103,9 @@ class LMDB_Database:
         with self.env.begin(db=self.blocks_db) as txn:
             return txn.get(struct_be_I.pack(block_num))
 
-    def get_mtree_row(self, blk_hash_and_level: bytes) -> List[int]:
+    def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
-            return txn.get(blk_hash_and_level)
+            return txn.get(blk_hash + struct_le_I.pack(level))
 
     def get_last_block_num(self) -> int:
         with self.env.begin(db=self.blocks_db, write=False) as txn:
@@ -119,7 +119,7 @@ class LMDB_Database:
             else:
                 return 0  # so that first entry is key==1
 
-    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]], shared_mem_buffer :memoryview):
+    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]], shared_mem_buffer: memoryview):
         """write blocks in append-only mode to disc"""
         try:
             t0 = time.time()
@@ -127,21 +127,19 @@ class LMDB_Database:
             last_block_num = self.get_last_block_num()
             next_block_num = last_block_num + 1
 
-            with self.env.begin(db=self.blocks_db, write=True, buffers=False) as txn:
+            tx = self.env.begin(write=True, buffers=False)
 
-                block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
-                # print(f"block_nums={block_nums}")
-                for block_num, block_row in zip(block_nums, batched_blocks):
-                    blk_hash, blk_start_pos, blk_end_pos = block_row
-                    # print(f"put: ({block_num}, {shared_mem_buffer[blk_start_pos: blk_end_pos]})")
-                    txn.put(struct_be_I.pack(block_num), shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes(),
-                        append=True, overwrite=False)
-                    block_nums_map[blk_hash] = block_num
+            block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
+            # print(f"block_nums={block_nums}")
+            for block_num, block_row in zip(block_nums, batched_blocks):
+                blk_hash, blk_start_pos, blk_end_pos = block_row
+                # print(f"put: ({block_num}, {shared_mem_buffer[blk_start_pos: blk_end_pos]})")
+                raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
 
-            # print(block_nums_map)
-            with self.env.begin(db=self.block_nums_db, write=True, buffers=False) as txn:
-                for blk_hash, block_num in block_nums_map.items():
-                    txn.put(blk_hash, struct_be_I.pack(block_num), overwrite=False)
+                tx.put(struct_be_I.pack(block_num), raw_block, db=self.blocks_db, append=True, overwrite=False)
+                tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
+                tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
+                tx.commit()
 
             t1 = time.time() - t0
             if len(batched_blocks) > 0:
@@ -182,14 +180,6 @@ class LMDB_Database:
     def get_tx_offsets(self, block_hash: bytes) -> array.array:
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             return array.array("Q", bytes(txn.get(block_hash)))
-
-    def put_block_metadata(self, batched_metadata: List[Tuple[bytes, int]]) -> None:
-        """Namely size in bytes but could later include things like compression dictionary id and
-        maybe interesting things like MinerID"""
-        with self.env.begin(db=self.block_metadata_db, write=True, buffers=False) as txn:
-            self.logger.debug(f"put_block_metadata called: {batched_metadata}")
-            for block_hash, size in batched_metadata:
-                txn.put(block_hash, struct_le_Q.pack(size))
 
     def get_block_metadata(self, block_hash: bytes) -> int:
         """Namely size in bytes but could later include things like compression dictionary id and
