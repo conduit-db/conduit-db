@@ -2,6 +2,7 @@ import array
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Optional
 
 import grpc
@@ -13,16 +14,14 @@ try:
     from conduit_lib import conduit_raw_pb2
     from conduit_lib import conduit_raw_pb2_grpc
     from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
-        BlockMetadataResponse, PingResponse)
+    BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
+    BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
 except ImportError:
     import conduit_raw_pb2
     import conduit_raw_pb2_grpc
-    from conduit_raw_pb2 import (
-        BlockRequest, MerkleTreeRowRequest, BlockResponse,
-        TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-        BlockMetadataResponse
-    )
+    from conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+    BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
+    BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
 
 from grpc._channel import _InactiveRpcError
 
@@ -31,16 +30,31 @@ from conduit_lib.conduit_raw_pb2 import BlockNumberRequest
 
 class ConduitRawAPIClient:
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 5000):
+    def __init__(self, host: str = '127.0.0.1', port: int = 50000):
         self.logger = logging.getLogger("conduit-raw-api-client")
         self.host = host
         self.port = port
         self.channel = grpc.insecure_channel(f"{host}:{port}")
         self.stub = conduit_raw_pb2_grpc.ConduitRawStub(self.channel)
 
+    def close(self):
+        self.channel.close()
+
     def ping(self, count):
         try:
-            response: PingResponse = self.stub.Ping(conduit_raw_pb2.PingRequest(data='ping'))
+            response: PingResponse = self.stub.Ping(conduit_raw_pb2.PingRequest(data='ping'),
+                wait_for_ready=True)
+            return response.message
+        except _InactiveRpcError as e:
+            self.logger.error(f"The ConduitRaw gRPC service is unreachable on: "
+                              f"{self.host}:{self.port}")
+        except Exception:
+            self.logger.exception("unexpected exception")
+
+    def stop(self):
+        try:
+            response: StopResponse = self.stub.Stop(conduit_raw_pb2.StopRequest(message='stop'),
+                wait_for_ready=True)
             return response.message
         except _InactiveRpcError as e:
             self.logger.error(f"The ConduitRaw gRPC service is unreachable on: "
@@ -50,8 +64,9 @@ class ConduitRawAPIClient:
 
     def get_block_num(self, block_hash: bytes) -> Optional[int]:
         try:
-            response = self.stub.GetBlockNumber(BlockNumberRequest(blockHash=block_hash))
-            return response.message
+            response: BlockNumberResponse = self.stub.GetBlockNumber(BlockNumberRequest(blockHash=block_hash),
+                wait_for_ready=True)
+            return response.blockNumber
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
                 self.logger.error(f"Block num for block_hash: {block_hash.hex()} not found")
@@ -62,7 +77,8 @@ class ConduitRawAPIClient:
 
     def get_block(self, block_number: int) -> Optional[bytes]:
         try:
-            response: BlockResponse = self.stub.GetBlock(BlockRequest(blockNumber=block_number))
+            response: BlockResponse = self.stub.GetBlock(BlockRequest(blockNumber=block_number),
+                wait_for_ready=True)
             return response.rawBlock
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -74,7 +90,8 @@ class ConduitRawAPIClient:
 
     def get_mtree_row(self, block_hash: bytes, level: int):
         try:
-            response = self.stub.GetMerkleTreeRow(MerkleTreeRowRequest(blockHash=block_hash, level=level))
+            response = self.stub.GetMerkleTreeRow(MerkleTreeRowRequest(blockHash=block_hash, level=level),
+                wait_for_ready=True)
             return response.mtreeRow
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -87,8 +104,9 @@ class ConduitRawAPIClient:
     def get_tx_offsets(self, block_hash: bytes) -> array.array:
         try:
             response: TransactionOffsetsResponse = self.stub.GetTransactionOffsets(
-                TransactionOffsetsRequest(blockHash=block_hash))
-            return response.txOffsetsArray
+                TransactionOffsetsRequest(blockHash=block_hash),
+                wait_for_ready=True)
+            return array.array("Q", response.txOffsetsArray)
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
                 self.logger.error(f"Tx offsets for block_hash: {block_hash.hex()} not found")
@@ -100,7 +118,8 @@ class ConduitRawAPIClient:
     def get_block_metadata(self, block_hash: bytes) -> int:
         try:
             response: BlockMetadataResponse = self.stub.GetBlockMetadata(
-                BlockMetadataRequest(blockHash=block_hash))
+                BlockMetadataRequest(blockHash=block_hash),
+                wait_for_ready=True)
             return response.blockSizeBytes
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -116,24 +135,24 @@ if __name__ == '__main__':
 
     client = ConduitRawAPIClient()
     print(client.ping(0))
-    # response = client.get_block_num(block_hash)
-    # if response:
-    #     print(response)
-    #
-    # response = client.get_block(10)
-    # if response:
-    #     print(response)
-    # # print(f"len get_block response = {len(response)}")
-    #
-    # response = client.get_mtree_row(block_hash, level=0)
-    # if response:
-    #     print(response)
-    # # print(f"len get_mtree_row response = {len(response)}")
-    #
-    # response = client.get_tx_offsets(block_hash)
-    # if response:
-    #     print(response)
-    #
-    # response = client.get_block_metadata(block_hash)
-    # if response:
-    #     print(response)
+    response = client.get_block_num(block_hash)
+    if response:
+        print(response)
+
+    response = client.get_block(10)
+    if response:
+        print(response)
+    # print(f"len get_block response = {len(response)}")
+
+    response = client.get_mtree_row(block_hash, level=0)
+    if response:
+        print(response)
+    # print(f"len get_mtree_row response = {len(response)}")
+
+    response = client.get_tx_offsets(block_hash)
+    if response:
+        print(response)
+
+    response = client.get_block_metadata(block_hash)
+    if response:
+        print(response)

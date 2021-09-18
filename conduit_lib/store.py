@@ -137,7 +137,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
             reset_kafka_topics()
 
 
-def setup_storage(config, net_config, headers_dir=Optional[Path]) -> Storage:
+def setup_storage(config, net_config, headers_dir: Optional[Path]=None) -> Storage:
     if not headers_dir:
         headers_dir = MODULE_DIR.parent
         headers_path = headers_dir.joinpath("headers.mmap")

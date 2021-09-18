@@ -40,8 +40,7 @@ if __name__ == "__main__":
           f"for av. tx size of 642 bytes/tx")
 
     for level in mtree.keys():
-        key = blk_hash + struct_le_I.pack(level)
-        result = lmdb_db.get_mtree_row(key)
+        result = lmdb_db.get_mtree_row(blk_hash, level)
         print(len(result))
 
     # 142MB/sec to calculate mtree
