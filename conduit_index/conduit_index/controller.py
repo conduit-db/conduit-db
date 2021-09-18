@@ -93,6 +93,10 @@ class Controller:
         self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
 
+        self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
+        self.batch_completion_raw: Optional[BatchCompletionTxParser]
+
+    def setup_kafka_consumer(self):
         # auto.offset.reset is set to 'earliest' which should be fine because the retention period
         # will be 24 hours in which case old headers will be removed from the topic in time
         group = os.urandom(8)  # will give a pub/sub arrangement for all consumers
@@ -102,9 +106,6 @@ class Controller:
             'auto.offset.reset': 'earliest'
         })
         self.headers_state_consumer.subscribe(['conduit-raw-headers-state'])
-        self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
-
-        self.batch_completion_raw: Optional[BatchCompletionTxParser]
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -127,10 +128,13 @@ class Controller:
     async def run(self):
         self.running = True
         try:
+            await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
             await wait_for_kafka(kafka_host=self.config['kafka_host'])
+            # Must setup kafka consumer after conduit_raw_api is ready in case conduit_raw
+            # does a full kafka reset
+            self.setup_kafka_consumer()
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
-            await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
             await self.start_jobs()
             while True:
                 await asyncio.sleep(0.5)
