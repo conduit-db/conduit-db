@@ -129,10 +129,9 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
         is_available = False
         try:
             client = ConduitRawAPIClient(host=host, port=port)
-            block_hash = bytes.fromhex("deadbeef")
             # This will fail but establishes connectivity & checks to see if the gRPC API
             # can access LMDB without errors
-            client.get_block_num(block_hash)
+            client.ping(1)
             is_available = True
             break
         except Exception:

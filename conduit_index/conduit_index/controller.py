@@ -1,41 +1,35 @@
 import asyncio
+import bitcoinx
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
+from confluent_kafka.cimpl import Consumer
+import io
+import logging
 import os
 import queue
 import struct
 import time
+from typing import Optional, Dict
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
-from asyncio import BufferedProtocol
 from pathlib import Path
-
-import bitcoinx
 import zmq
-from bitcoinx import hash_to_hex_str, double_sha256
-import logging
-from typing import Optional, Dict
 
-from confluent_kafka.cimpl import Consumer
 
-from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.store import setup_storage
-from conduit_lib.commands import VERSION, GETHEADERS, BLOCK_BIN, MEMPOOL
-from conduit_lib.handlers import Handlers
-from conduit_lib.constants import ZERO_HASH, WORKER_COUNT_TX_PARSERS, MsgType
-from conduit_lib.deserializer import Deserializer
+from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType
 from conduit_lib.networks import NetworkConfig
-from conduit_lib.peers import Peer
-from conduit_lib.serializer import Serializer
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_node, wait_for_kafka
-from .batch_completion import BatchCompletionTxParser
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
+    wait_for_conduit_raw_api
 
+from .batch_completion import BatchCompletionTxParser
 from .sync_state import SyncState
 from .workers.transaction_parser import TxParser
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:5000')
+CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
 
 
 class Controller:
@@ -66,20 +60,8 @@ class Controller:
         self.serializer = None  # Serializer(self.net_config, self.storage)
         self.deserializer = None  # Deserializer(self.net_config, self.storage)
 
-        # Bitcoin network/peer net_config
         self.net_config = net_config
-        self.peers = self.net_config.peers
-        self.peer = self.get_peer()
-        self.host = host  # bind address
-        self.port = port  # bind port
-        self.protocol: BufferedProtocol = None
-        self.protocol_factory = None
 
-        # Connection entry/exit
-        self.handshake_complete_event = asyncio.Event()
-        self.con_lost_event = asyncio.Event()
-
-        # Todo - try changing to inproc://
         # IPC from Controller to TxParser
         context1 = zmq.Context()
         self.mined_tx_socket = context1.socket(zmq.PUSH)
@@ -105,18 +87,8 @@ class Controller:
         self.mined_tx_hashes_queue_waiter_executor = ThreadPoolExecutor(max_workers=1)
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
 
-        # Mempool and API state
-        self.mempool_tx_hash_set = set()
-
         # Database Interfaces
         self.mysql_db: Optional[MySQLDatabase] = None
-
-        # Bitcoin Network IO + callbacks
-        self.transport = None
-        self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
-            self.on_connection_made, self.on_connection_lost)
-        self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
-        self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
         self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
@@ -132,12 +104,11 @@ class Controller:
         self.headers_state_consumer.subscribe(['conduit-raw-headers-state'])
         self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
 
+        self.batch_completion_raw: Optional[BatchCompletionTxParser]
+
     async def setup(self):
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
-        self.handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer = Serializer(self.net_config, self.storage)
-        self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
         self.mysql_db: MySQLDatabase = load_mysql_database()
 
@@ -153,35 +124,16 @@ class Controller:
         )
         self.batch_completion_raw.start()
 
-    async def connect_session(self):
-        loop = asyncio.get_event_loop()
-        peer = self.get_peer()
-        self.logger.debug("connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
-        protocol_factory = lambda: self.bitcoin_net_io
-        self.transport, self.session = await loop.create_connection(
-            protocol_factory, peer.host, peer.port
-        )
-        return self.transport, self.session
-
     async def run(self):
         self.running = True
         try:
             await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
-            await wait_for_node(node_host=self.config['node_host'],
-                serializer=self.serializer, deserializer=self.deserializer)
-
-            # DISABLED this because the ASP.NET gRPC service cannot share an LMDB file through docker
-            # So will need to do the gRPC API in python for now...
-            # await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            await self.connect_session()  # on_connection_made callback -> starts jobs
-            init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
-                self.host, self.port))
-            self.tasks.append(init_handshake)
-            wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
-            self.tasks.append(wait_until_conn_lost)
-            await asyncio.wait([init_handshake, wait_until_conn_lost])
+            await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
+            await self.start_jobs()
+            while True:
+                await asyncio.sleep(0.5)
         except Exception:
             self.logger.exception("unexpected exception in Controller.run")
         finally:
@@ -190,8 +142,6 @@ class Controller:
     async def stop(self):
         self.running = False
         try:
-            if self.transport:
-                self.transport.close()
             if self.storage:
                 await self.storage.close()
 
@@ -206,8 +156,6 @@ class Controller:
 
             self.sync_state._batched_blocks_exec.shutdown(wait=False)
 
-            self.shm_buffer.close()
-            self.shm_buffer.unlink()
             for task in self.tasks:
                 task.cancel()
                 try:
@@ -217,63 +165,8 @@ class Controller:
         except Exception:
             self.logger.exception("suppressing raised exceptions on cleanup")
 
-        # self.loop.close()  cannot close a running event loop -> RuntimeError
-        # self.mempool_tx_socket.close()
-
-    def get_peer(self) -> 'Peer':
-        return self.peers[0]
-
-    # ---------- Callbacks ---------- #
-    def on_buffer_full(self):
-        coro = self._on_buffer_full()
-        asyncio.run_coroutine_threadsafe(coro, self.loop)
-
-    def on_msg(self, command: bytes, message: memoryview):
-        if command != BLOCK_BIN:
-            self.sync_state.incr_msg_received_count()
-        if command == MEMPOOL:
-            self.logger.debug(f"putting mempool tx to queue: {bitcoinx.hash_to_hex_str(bitcoinx.Tx.from_bytes(message).hash())}")
-        self.sync_state.incoming_msg_queue.put_nowait((command, message))
-
-    def on_connection_made(self):
-        self.tasks.append(asyncio.create_task(self.start_jobs()))
-
-    def on_connection_lost(self):
-        self.con_lost_event.set()
-
-    # ---------- end callbacks ---------- #
-    async def _on_buffer_full(self):
-        """Waits until all messages in the shared memory buffer have been processed before
-        resuming (and therefore resetting the buffer) BitcoinNetIO."""
-        while not self.sync_state.have_processed_all_msgs_in_buffer():
-            await asyncio.sleep(0.05)
-
-        self.sync_state.reset_msg_counts()
-        with self.sync_state.done_blocks_tx_parser_lock:
-            self.sync_state.done_blocks_tx_parser = set()
-
-        self.sync_state.received_blocks = set()
-        self.bitcoin_net_io.resume()
-
     def run_coro_threadsafe(self, coro, *args, **kwargs):
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
-
-    async def handle(self):
-        while True:
-            command, message = await self.sync_state.incoming_msg_queue.get()
-            try:
-                # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
-                handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
-                handler_func = getattr(self.handlers, handler_func_name)
-                await handler_func(message)
-                if command != BLOCK_BIN:
-                    self.sync_state.incr_msg_handled_count()
-            except Exception as e:
-                self.logger.exception("handle: ", e)
-                raise
-
-    async def send_request(self, command_name: str, message: bytes):
-        self.bitcoin_net_io.send_message(message)
 
     # Multiprocessing Workers
     def start_workers(self):
@@ -287,28 +180,9 @@ class Controller:
             p.start()
             self.processes.append(p)
 
-    # Asyncio-based Tasks that run on the __main__ thread
-    async def spawn_handler_tasks(self):
-        """spawn 4 tasks so that if one handler is waiting on an event that depends on
-        another handler, progress will continue to be made."""
-        for i in range(4):
-            self.tasks.append(asyncio.create_task(self.handle()))
-
-    async def spawn_sync_headers_task(self):
-        """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self.tasks.append(asyncio.create_task(self.sync_headers_job()))
-
     async def spawn_initial_block_download(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
-
-    async def spawn_request_mempool(self):
-        """after initial block download requests the full mempool.
-
-        NOTE: once the sync_state.initial_block_download_event is set, relayed mempool txs will also
-        begin getting processed by the "on_inv" handler -> triggering a 'getdata' for the txs."""
-        self.logger.debug("Requesting mempool")
-        self.tasks.append(asyncio.create_task(self.request_mempool_job()))
 
     def maybe_rollback(self):
         """This will have to do a full table scan to find all the transactions with height above
@@ -335,54 +209,15 @@ class Controller:
 
     async def start_jobs(self):
         try:
-            # self.mysql_db: PostgresDatabase = self.storage.pg_database
             self.mysql_db: MySQLDatabase = self.storage.mysql_database
-            await self.spawn_handler_tasks()
-            await self.handshake_complete_event.wait()
-
             self.maybe_rollback()
-
             self.start_workers()
-            await self.spawn_sync_headers_task()
-            await self.sync_state.headers_event_initial_sync.wait()  # one-off
-
             await self.spawn_initial_block_download()
             await self.sync_state.initial_block_download_event.wait()
-            await self.spawn_request_mempool()
+            # await self.spawn_request_mempool()  # Todo - wait on mempool kafka topic
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
             raise
-
-    async def request_mempool_job(self):
-        # NOTE: if the -preload=1 option is not set on the node, the node disconnects
-        await self.send_request(MEMPOOL, self.serializer.mempool())
-
-    async def _get_max_headers(self):
-        block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
-        hash_count = len(block_locator_hashes)
-        await self.send_request(
-            GETHEADERS, self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
-        )
-
-    async def sync_headers_job(self):
-        """supervises completion of syncing all headers to target height"""
-        try:
-            self.logger.debug("Starting sync_headers_job...")
-
-            self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
-            while True:
-                if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                    await self.sync_state.wait_for_new_headers_tip()
-                await self._get_max_headers()
-                await self.sync_state.headers_msg_processed_event.wait()
-                self.sync_state.headers_msg_processed_event.clear()
-                self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-                # self.logger.debug(
-                    # "new local headers tip height: %s", self.sync_state.local_tip_height,
-                # )
-                self.sync_state.blocks_event_new_tip.set()
-        except Exception:
-            self.logger.exception("unexpected exception in sync_headers_job")
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
         headers = self.storage.headers
@@ -475,29 +310,38 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-    def convert_to_header_obj(self, tip_raw: bytes) -> bitcoinx.Header:
-        while True:
-            try:
-                tip_raw = tip_raw
-                tip_hash = double_sha256(tip_raw)
-                tip_height = self.storage.get_header_for_hash(tip_hash).height
-                deserialized_tip = bitcoinx.Header(*bitcoinx.unpack_header(tip_raw), tip_hash,
-                    tip_raw, tip_height)
-                return deserialized_tip
-            except bitcoinx.MissingHeader:
-                time.sleep(2)
-                self.logger.debug(f"ConduitRaw has a header we do not yet have: Syncing headers...")
+    def connect_headers(self, f) -> bool:
+        """Two mmap files - one for "headers-first download" and the other for the
+        blocks we then download."""
+        try:
+            raw_header = f.read(80)
+            self.storage.headers.connect(raw_header)
+            self.storage.headers.flush()
+            return True
+        except MissingHeader as e:
+            if str(e).find("0000000000000000000000000000000000000000000000000000000000000000") != -1:
+                self.logger.debug("skipping - prev_out == genesis block")
+                return True
+            else:
+                self.logger.exception(e)
+                raise
 
     def drain_kafka_headers_queue(self):
+
         conduit_raw_tip = None
         while True:
             try:
                 result = self.headers_state_consumer.consume(num_messages=1000, timeout=0.1)
                 for new_tip in result:
-                    conduit_raw_tip = self.convert_to_header_obj(new_tip.value())
-                    if self.sync_state.get_local_block_tip_height() < conduit_raw_tip.height:
+                    new_tip = new_tip.value()
+                    tip_hash = double_sha256(new_tip)
+                    self.connect_headers(io.BytesIO(new_tip))
+                    tip_height = self.storage.get_header_for_hash(tip_hash).height
+                    conduit_raw_tip = bitcoinx.Header(*bitcoinx.unpack_header(new_tip), tip_hash,
+                        new_tip, tip_height)
+
+                    if self.sync_state.get_local_block_tip_height() <= conduit_raw_tip.height:
                         self.logger.debug(f"new_tip.height={conduit_raw_tip.height}")
-                        self.sync_state.set_conduit_raw_header_tip(conduit_raw_tip)
                     else:
                         self.logger.debug(f"ConduitIndex has already synced this tip at "
                              f"height: {conduit_raw_tip.height} - skipping...")
@@ -505,6 +349,7 @@ class Controller:
 
                 drained_all_msgs = not result
                 if conduit_raw_tip and drained_all_msgs:
+                    self.sync_state.set_conduit_raw_header_tip(conduit_raw_tip)
                     return conduit_raw_tip
                 else:
                     continue
@@ -614,9 +459,3 @@ class Controller:
             self.logger.exception("sync_blocks_job raised an exception")
             raise
 
-    # -- Message Types -- #
-    async def send_version(self, recv_host=None, recv_port=None, send_host=None, send_port=None):
-        message = self.serializer.version(
-            recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
-        )
-        await self.send_request(VERSION, message)

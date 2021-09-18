@@ -116,6 +116,7 @@ class Handlers:
 
     # ----- Special case messages ----- #
 
+    # Todo - send this instead to a kafka topic for ConduitIndex to consume
     async def on_tx(self, rawtx: memoryview):
         # TODO - push packed binary message for ZMQ
         size_tx = len(rawtx)

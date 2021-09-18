@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
 
 
 try:
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:5000')
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
     CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
     CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
 except Exception:
@@ -59,11 +59,7 @@ class SyncState:
         self.conduit_raw_header_tip: bitcoinx.Header = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
 
-        self.headers_msg_processed_event = asyncio.Event()
-        self.headers_event_new_tip = asyncio.Event()
-        self.headers_event_initial_sync = asyncio.Event()
-        self.blocks_event_new_tip = asyncio.Event()
-        self.blocks_event_new_tip.set()
+        # Not actually used by Indexer but cannot remove because it's in the shared lib
         self.target_header_height: Optional[int] = None
         self.target_block_header_height: Optional[int] = None
         self.local_tip_height: int = self.update_local_tip_height()
@@ -261,11 +257,6 @@ class SyncState:
         self._pending_blocks_received = {}
         self._pending_blocks_progress_counter = {}
 
-    async def wait_for_new_headers_tip(self):
-        self.headers_event_initial_sync.set()
-        await self.headers_event_new_tip.wait()
-        self.headers_event_new_tip.clear()
-
     def is_post_IBD(self):
         """has initial block download been completed?
         (to syncronize all blocks with all initially fetched headers)"""
@@ -274,17 +265,3 @@ class SyncState:
     def set_post_IBD_mode(self):
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()
-
-    async def wait_for_new_block_tip(self):
-        # TODO - ideally headers should be pulled from ConduitRaw rather than also retrieving them
-        #  from the node. ConduitIndex should only listen to the node directly for mempool
-        #  transactions
-        self.logger.debug(f"self.is_post_IBD()={self.is_post_IBD()}")
-        if self.is_post_IBD():
-            await self.blocks_event_new_tip.wait()
-            self.blocks_event_new_tip.clear()
-
-        if not self.is_post_IBD():  # one-time thing to trap the loop here on first IBD completion
-            self.set_post_IBD_mode()
-            self.blocks_event_new_tip.clear()
-            await self.wait_for_new_block_tip()
