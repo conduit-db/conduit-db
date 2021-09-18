@@ -41,7 +41,10 @@ def get_blockchain_info() -> BlockchainInfo:
 
 
 def get_header_bytes(height: int) -> bytes:
-    response = requests.get(f"{REST_URI}/headers/{height}/{GENESIS_HASH_HEX}.bin")
+    # Height is a 0-based index up to the best block. This is count of the blocks after Genesis.
+    # We want to include Genesis, as it is our starting block.
+    block_count = height + 1
+    response = requests.get(f"{REST_URI}/headers/{block_count}/{GENESIS_HASH_HEX}.bin")
     return response.content
 
 
@@ -66,10 +69,13 @@ def main() -> None:
         print("Connection error.")
         sys.exit(1)
 
-    height = info["blocks"]
-    if height == 0:
+    # This is the number of blocks above the genesis block.
+    block_count_excluding_genesis = info["blocks"]
+    if block_count_excluding_genesis == 0:
         print("The blockchain is empty.")
         sys.exit(1)
+
+    height = block_count_excluding_genesis
 
     print(f"Blockchain height: {height}")
     try:
@@ -78,8 +84,9 @@ def main() -> None:
         print("Connection error.")
         sys.exit(1)
 
-    if height != len(headers_bytes)//80:
-        print(f"Blockchain mismatch: height={height} does not match headers_count={len(headers_bytes)//80}")
+    # Genesis block plus height amount of additional blocks above it.
+    if height+1 != len(headers_bytes)//80:
+        print(f"Blockchain mismatch: height={height+1} does not match headers_count={len(headers_bytes)//80}")
         sys.exit(1)
 
     bestblockhash_hex = info["bestblockhash"]
@@ -93,12 +100,16 @@ def main() -> None:
     header_io = io.StringIO()
     headers_view = memoryview(headers_bytes)
     header_hash_hexs: List[str] = []
-    for i in range(height):
+    for i in range(height+1):
         header_hash = double_sha256(headers_view[i*80:i*80+80])
         header_hash_hex = hash_to_hex_str(header_hash)
         header_io.write(header_hash_hex)
         header_io.write("\n")
         header_hash_hexs.append(header_hash_hex)
+
+    if header_hash_hexs[-1] != bestblockhash_hex:
+        print(f"Tip mismatch, export code is buggy: {header_hash_hexs[-1][:6]} != {bestblockhash_hex[:6]}")
+        sys.exit(1)
 
     for i, header_hash_hex in enumerate(header_hash_hexs):
         print(f"Fetching block {i} {header_hash_hex[:6]}")
