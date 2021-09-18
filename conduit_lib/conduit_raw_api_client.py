@@ -1,12 +1,12 @@
+import grpc
 import array
 import logging
 import os
 import sys
-from pathlib import Path
 from typing import Optional
-
-import grpc
 from bitcoinx import hex_str_to_hash
+
+from conduit_lib.utils import cast_to_valid_ipv4
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(MODULE_DIR)
@@ -32,9 +32,11 @@ class ConduitRawAPIClient:
 
     def __init__(self, host: str = '127.0.0.1', port: int = 50000):
         self.logger = logging.getLogger("conduit-raw-api-client")
-        self.host = host
-        self.port = port
-        self.channel = grpc.insecure_channel(f"{host}:{port}")
+        # Todo - this is horrible, unsightly code - need to unify configuration better
+        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1:50000')
+        self.host = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
+        self.port = int(CONDUIT_RAW_API_HOST.split(":")[1])
+        self.channel = grpc.insecure_channel(f"{self.host}:{self.port}")
         self.stub = conduit_raw_pb2_grpc.ConduitRawStub(self.channel)
 
     def close(self):

@@ -122,13 +122,11 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-    host = cast_to_valid_ipv4(conduit_raw_api_host.split(":")[0])
-    port = int(conduit_raw_api_host.split(":")[1])
 
     while True:
         is_available = False
         try:
-            client = ConduitRawAPIClient(host=host, port=port)
+            client = ConduitRawAPIClient()
             # This will fail but establishes connectivity & checks to see if the gRPC API
             # can access LMDB without errors
             client.ping(1)
