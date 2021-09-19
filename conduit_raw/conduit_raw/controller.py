@@ -3,8 +3,10 @@ import os
 import queue
 import time
 import typing
+from asyncio import BaseTransport, BaseProtocol
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 import logging
 from typing import Optional, List, Dict
@@ -16,7 +18,6 @@ from confluent_kafka import Producer
 
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.wait_for_dependencies import wait_for_node, wait_for_kafka
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
@@ -27,7 +28,7 @@ from .preprocessor import BlockPreProcessor
 from .workers.merkle_tree import MTreeCalculator
 from .workers.raw_blocks import BlockWriter
 from conduit_lib.store import setup_storage, Storage
-from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
+from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL
 from conduit_lib.handlers import Handlers
 from conduit_lib.constants import (
     ZERO_HASH, WORKER_COUNT_MTREE_CALCULATORS, WORKER_COUNT_BLK_WRITER
@@ -58,8 +59,8 @@ class Controller:
             logging_server_proc=None):
 
         self.running = False
-        self.logging_server_proc = logging_server_proc
-        self.processes = [self.logging_server_proc]
+        self.logging_server_proc: BaseProcess = logging_server_proc
+        self.processes: List[BaseProcess] = [self.logging_server_proc]
         self.tasks = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
@@ -68,9 +69,9 @@ class Controller:
 
         # Defined in async method at startup (self.run)
         self.storage: Optional[Storage] = None
-        self.handlers = None  # Handlers(self, self.net_config, self.storage)
-        self.serializer = None  # Serializer(self.net_config, self.storage)
-        self.deserializer = None  # Deserializer(self.net_config, self.storage)
+        self.handlers: Optional[Handlers] = None
+        self.serializer: Optional[Serializer] = None
+        self.deserializer: Optional[Deserializer] = None
         self.lmdb: Optional[LMDB_Database] = None
         self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -109,14 +110,17 @@ class Controller:
         # self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network IO + callbacks
-        self.transport = None
+        self.transport: Optional[BaseTransport] = None
+        self.session: Optional[BaseProtocol] = None
         self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
             self.on_connection_made, self.on_connection_lost)
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
-        self.headers_state_client = None
-        self.headers_producer: Producer = None
+        self.sync_state: Optional[SyncState] = None
+        self.headers_producer: Optional[Producer] = None
+        self.mempool_tx_producer: Optional[Producer] = None
+
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -158,6 +162,7 @@ class Controller:
         # should be able to handle it)
         self.headers_producer = Producer(**kafka_producer_config)
         self.headers_producer.produce(topic="conduit-raw-headers-state", value=tip.raw)
+        self.mempool_tx_producer = Producer(**kafka_producer_config)
 
     async def connect_session(self):
         peer = self.get_peer()
@@ -327,9 +332,14 @@ class Controller:
             await self.spawn_sync_headers_task()
             await self.sync_state.headers_event_initial_sync.wait()  # one-off
             await self.spawn_initial_block_download()
+            await self.request_mempool()
         except Exception as e:
             self.logger.exception(e)
             raise
+
+    async def request_mempool(self):
+        # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
+        await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
         block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]

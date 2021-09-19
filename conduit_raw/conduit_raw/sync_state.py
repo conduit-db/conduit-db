@@ -26,8 +26,6 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.headers_state_client = self.controller.headers_state_client
-        self.headers_queue = self.controller.headers_producer
 
         self.headers_msg_processed_event = asyncio.Event()
         self.headers_event_new_tip = asyncio.Event()

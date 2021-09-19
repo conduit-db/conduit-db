@@ -1,9 +1,8 @@
-import array
 import io
-from itertools import chain
+import typing
 import logging
 import struct
-from typing import Tuple, List
+from typing import Tuple
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
@@ -18,9 +17,12 @@ from .store import Storage
 logger = logging.getLogger("handlers")
 
 
+if typing.TYPE_CHECKING:
+    from conduit_raw.conduit_raw.controller import Controller
+
 class Handlers:
     def __init__(
-        self, controller: "Controller", net_config: NetworkConfig, storage: Storage
+        self, controller: 'Controller', net_config: NetworkConfig, storage: Storage
     ):
         self.net_config = net_config
         self.controller = controller
@@ -114,20 +116,18 @@ class Handlers:
         if self.deserializer.connect_headers(io.BytesIO(message)):
             self.controller.sync_state.headers_msg_processed_event.set()
 
-    # ----- Special case messages ----- #
+    # ----- Special case messages ----- #  # Todo - should probably be registered callbacks
 
-    # Todo - send this instead to a kafka topic for ConduitIndex to consume
     async def on_tx(self, rawtx: memoryview):
-        # TODO - push packed binary message for ZMQ
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
-        if hasattr(self.controller, 'mempool_tx_socket'):  # ConduitRaw has no such attr
-            self.controller.mempool_tx_socket.send(packed_message)
+        if hasattr(self.controller, 'mempool_tx_producer'):
+            # Todo - expensive debug logging here (remove when fixed):
+            logger.debug(f"Got mempool tx: {bitcoinx.Tx.from_bytes(rawtx.tobytes()).hash()}")
+            self.controller.mempool_tx_producer.produce(topic='mempool-txs', value=packed_message)
             self.controller.sync_state.incr_msg_handled_count()
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):
-        """Todo - This function should be fed into the Handlers class as a callback at
-            initialization because it is specialized to the ConduitRaw Service"""
         blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message
         blk_hash = double_sha256(raw_block_header)
         self.controller.sync_state.received_blocks.add(blk_hash)

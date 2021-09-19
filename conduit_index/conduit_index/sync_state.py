@@ -55,7 +55,6 @@ class SyncState:
         self.lmdb_grpc_client = ConduitRawAPIClient()
         # self.lmdb_client = ConduitRawAPIClient(host=CONDUIT_RAW_HOST, port=CONDUIT_RAW_PORT)
 
-        self.conduit_raw_headers_queue = asyncio.Queue()
         self.conduit_raw_header_tip: bitcoinx.Header = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
 
