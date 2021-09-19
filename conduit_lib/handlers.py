@@ -105,8 +105,13 @@ class Handlers:
                     # logger.debug(f"got new block notification: {inv['inv_hash']}")
 
         if self.controller.sync_state.initial_block_download_event.is_set():
-            getdata_msg = self.serializer.getdata(tx_inv_vect)
-            await self.controller.send_request(GETDATA, getdata_msg)
+            max_getdata_size = 50_000
+            num_getdatas = (len(tx_inv_vect) // max_getdata_size) + 1
+            # e.g. if 100001 invs -> 3X getdata
+            for i in range(num_getdatas):
+                getdata_msg = self.serializer.getdata(tx_inv_vect[i:(i+1)*max_getdata_size])
+                # logger.debug(f"sending getdata for tx_inv_vect={tx_inv_vect}")
+                await self.controller.send_request(GETDATA, getdata_msg)
 
     async def on_getdata(self, message):
         logger.debug("handling getdata...")

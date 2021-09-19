@@ -99,7 +99,10 @@ class Controller:
         self.batch_completion_raw: Optional[BatchCompletionTxParser]
 
     def setup_kafka_consumer(self):
-        group = 'conduit-index-headers'
+        # Todo: the group id should actually only change on --reset to refill the local headers
+        #  store. Otherwise it should not have to re-pull old headers again (and filter them)
+        #  Probably should store this group id number in MySQL somewhere
+        group = os.urandom(8)
         self.headers_state_consumer: Consumer = Consumer({
             'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
             'group.id': group,
@@ -178,13 +181,12 @@ class Controller:
             p = TxParser(
                 worker_id+1,
                 self.worker_ack_queue_tx_parse_confirmed,
-                self.sync_state.initial_block_download_event_mp,
                 self.worker_ack_queue_mined_tx_hashes,
             )
             p.start()
             self.processes.append(p)
 
-    async def spawn_initial_block_download(self):
+    async def spawn_sync_all_blocks_job(self):
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
@@ -216,9 +218,7 @@ class Controller:
             self.mysql_db: MySQLDatabase = self.storage.mysql_database
             self.maybe_rollback()
             self.start_workers()
-            await self.spawn_initial_block_download()
-            await self.sync_state.initial_block_download_event.wait()
-            # await self.spawn_request_mempool()  # Todo - wait on mempool kafka topic
+            await self.spawn_sync_all_blocks_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
             raise
@@ -261,6 +261,7 @@ class Controller:
                 del self.global_tx_hashes_dict[blk_height]
 
         # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
+        self.logger.debug(f"Invalidating relevant mempool transactions...")
         self.mysql_db.start_transaction()
         try:
             self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
@@ -275,12 +276,7 @@ class Controller:
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
-        if self.sync_state.initial_block_download_event_mp.is_set():
-            await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
-
-        else:
-            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
-                api_block_tip_hash)
+        await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
         return api_block_tip_height
 
     def connect_done_block_headers(self, blocks_batch_set):

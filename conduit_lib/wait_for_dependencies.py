@@ -8,7 +8,7 @@ import MySQLdb
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import KafkaException
 
-from .conduit_raw_api_client import ConduitRawAPIClient
+from .conduit_raw_api_client import ConduitRawAPIClient, ServiceUnavailableError
 from .utils import is_docker, cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
@@ -129,15 +129,16 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
             client = ConduitRawAPIClient()
             # This will fail but establishes connectivity & checks to see if the gRPC API
             # can access LMDB without errors
-            client.ping(1)
-            is_available = True
-            break
+            result = client.ping(1, wait_for_ready=False)
+            if result:
+                break
+        except ServiceUnavailableError:
+            logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
+                         f"unavailable - waiting...")
+            await asyncio.sleep(5)
         except Exception:
             logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
-        finally:
-            if is_available:
-                logger.debug(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
-            else:
-                logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
-                             f"unavailable - waiting...")
-                await asyncio.sleep(5)
+
+    logger.info(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
+    logger.info(f"Allowing ConduitRaw service to complete initial configuration")
+    await asyncio.sleep(3)

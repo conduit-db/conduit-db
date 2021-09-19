@@ -133,6 +133,7 @@ class SyncState:
         return self.initial_block_download_event.is_set()
 
     def set_post_IBD_mode(self):
+        self.logger.debug(f"setting initial_block_download_event")
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()
 

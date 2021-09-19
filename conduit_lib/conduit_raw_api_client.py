@@ -13,19 +13,25 @@ sys.path.append(MODULE_DIR)
 try:
     from conduit_lib import conduit_raw_pb2
     from conduit_lib import conduit_raw_pb2_grpc
-    from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-    BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
-    BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
+    from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest,
+        MerkleTreeRowResponse, BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse,
+        BlockMetadataRequest, BlockMetadataResponse, PingResponse, BlockNumberResponse,
+        StopResponse)
 except ImportError:
     import conduit_raw_pb2
     import conduit_raw_pb2_grpc
     from conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-    BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
-    BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
+        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
+        BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
 
 from grpc._channel import _InactiveRpcError
 
 from conduit_lib.conduit_raw_pb2 import BlockNumberRequest
+
+
+class ServiceUnavailableError(Exception):
+    """Only raised by ping() method"""
+    pass
 
 
 class ConduitRawAPIClient:
@@ -42,14 +48,13 @@ class ConduitRawAPIClient:
     def close(self):
         self.channel.close()
 
-    def ping(self, count):
+    def ping(self, count, wait_for_ready=True):
         try:
             response: PingResponse = self.stub.Ping(conduit_raw_pb2.PingRequest(data='ping'),
-                wait_for_ready=True)
+                wait_for_ready=wait_for_ready)
             return response.message
         except _InactiveRpcError as e:
-            self.logger.error(f"The ConduitRaw gRPC service is unreachable on: "
-                              f"{self.host}:{self.port}")
+            raise ServiceUnavailableError()
         except Exception:
             self.logger.exception("unexpected exception")
 
@@ -66,8 +71,8 @@ class ConduitRawAPIClient:
 
     def get_block_num(self, block_hash: bytes) -> Optional[int]:
         try:
-            response: BlockNumberResponse = self.stub.GetBlockNumber(BlockNumberRequest(blockHash=block_hash),
-                wait_for_ready=True)
+            response: BlockNumberResponse = self.stub.GetBlockNumber(
+                BlockNumberRequest(blockHash=block_hash), wait_for_ready=True)
             return response.blockNumber
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -92,8 +97,8 @@ class ConduitRawAPIClient:
 
     def get_mtree_row(self, block_hash: bytes, level: int):
         try:
-            response = self.stub.GetMerkleTreeRow(MerkleTreeRowRequest(blockHash=block_hash, level=level),
-                wait_for_ready=True)
+            response = self.stub.GetMerkleTreeRow(
+                MerkleTreeRowRequest(blockHash=block_hash, level=level), wait_for_ready=True)
             return response.mtreeRow
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -106,8 +111,7 @@ class ConduitRawAPIClient:
     def get_tx_offsets(self, block_hash: bytes) -> array.array:
         try:
             response: TransactionOffsetsResponse = self.stub.GetTransactionOffsets(
-                TransactionOffsetsRequest(blockHash=block_hash),
-                wait_for_ready=True)
+                TransactionOffsetsRequest(blockHash=block_hash), wait_for_ready=True)
             return array.array("Q", response.txOffsetsArray)
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
@@ -120,8 +124,7 @@ class ConduitRawAPIClient:
     def get_block_metadata(self, block_hash: bytes) -> int:
         try:
             response: BlockMetadataResponse = self.stub.GetBlockMetadata(
-                BlockMetadataRequest(blockHash=block_hash),
-                wait_for_ready=True)
+                BlockMetadataRequest(blockHash=block_hash), wait_for_ready=True)
             return response.blockSizeBytes
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:

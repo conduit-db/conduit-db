@@ -332,6 +332,7 @@ class Controller:
             await self.spawn_sync_headers_task()
             await self.sync_state.headers_event_initial_sync.wait()  # one-off
             await self.spawn_initial_block_download()
+            await self.sync_state.initial_block_download_event.wait()
             await self.request_mempool()
         except Exception as e:
             self.logger.exception(e)
@@ -339,6 +340,7 @@ class Controller:
 
     async def request_mempool(self):
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
+        self.logger.debug("Requesting mempool...")
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
@@ -446,7 +448,7 @@ class Controller:
 
     async def sanity_checks(self):
         api_block_tip_height = self.sync_state.get_local_block_tip_height()
-        # self.logger.debug(f"new block tip height: {api_block_tip_height}")
+        self.logger.debug(f"new block tip height: {api_block_tip_height}")
         await self.sync_state.wait_for_new_block_tip()
 
     async def sync_all_blocks_job(self):

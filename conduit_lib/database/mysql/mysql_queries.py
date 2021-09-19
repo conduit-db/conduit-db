@@ -92,6 +92,8 @@ class MySQLQueries:
 
     def mysql_invalidate_mempool_rows(self, api_block_tip_height: int):
         """Need to deal with collisions here"""
+        # Todo - block height is unreliable.. should be done based on block_hash
+        self.logger.debug(f"Deleting mempool txs based on block height")
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (
