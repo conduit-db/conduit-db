@@ -48,8 +48,7 @@ services:
       MYSQL_DATABASE: conduitdb
       MYSQL_USER: conduitadmin
       MYSQL_PASSWORD: conduitpass
-    volumes:
-      - ./contrib/mariadb/config/my.cnf:/etc/mysql/my.cnf
+
 
 volumes:
   bitcoin_data:

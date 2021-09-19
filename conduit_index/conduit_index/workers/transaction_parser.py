@@ -52,7 +52,6 @@ class TxParser(multiprocessing.Process):
         self.processed_vs_unprocessed_queue = None
 
         self.mysql = None
-        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
         self.loop = None
 
         # batched confirmed rows
@@ -100,6 +99,8 @@ class TxParser(multiprocessing.Process):
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Starting {self.__class__.__name__}...")
+
+        self.logger.debug(f"os.environ['GRPC_ENABLE_FORK_SUPPORT']={os.environ['GRPC_ENABLE_FORK_SUPPORT']}")
 
         self.confirmed_tx_flush_queue = queue.Queue()
         self.mempool_tx_flush_queue = queue.Queue()
@@ -167,21 +168,22 @@ class TxParser(multiprocessing.Process):
 
     # ------------------------------------------------- #
 
-    def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows):
-        self.mysql_db.mysql_bulk_load_output_rows(out_rows)
-        self.mysql_db.mysql_bulk_load_input_rows(in_rows)
-        self.mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
+    def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows, mysql_db):
+        mysql_db.mysql_bulk_load_output_rows(out_rows)
+        mysql_db.mysql_bulk_load_input_rows(in_rows)
+        mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
 
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
-            set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, ):
+            set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, mysql_db):
         with self.flush_lock:
             try:
                 if confirmed:
                     # for blk_hash, tx_count in acks:
                     #     self.logger.debug(f"pre-flush block hash={hash_to_hex_str(blk_hash)}, "
                     #                       f"with tx_count={tx_count}")
-                    self.mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
-                    self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                    mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
+                    self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
+                        mysql_db)
 
                     # Ack for all flushed blocks
                     for blk_hash, tx_count in acks:
@@ -198,8 +200,9 @@ class TxParser(multiprocessing.Process):
                     self.reset_batched_rows_confirmed()
 
                 else:
-                    self.mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
-                    self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows)
+                    mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
+                    self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
+                        mysql_db)
                     # Todo - drain - self.mempool_batched_mempool_tx_acks when done and send to
                     #  controller
                     # for tx_count in acks:
@@ -212,7 +215,7 @@ class TxParser(multiprocessing.Process):
                 raise
 
     def mysql_insert_confirmed_tx_rows_thread(self):
-        self.mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
                 try:
@@ -234,6 +237,7 @@ class TxParser(multiprocessing.Process):
                             self.confirmed_batched_set_pd_rows,
                             self.confirmed_batched_block_acks,
                             confirmed=True,
+                            mysql_db=mysql_db
                         )
 
                 # Post-IBD
@@ -247,6 +251,7 @@ class TxParser(multiprocessing.Process):
                             self.confirmed_batched_set_pd_rows,
                             self.confirmed_batched_block_acks,
                             confirmed=True,
+                            mysql_db=mysql_db
                         )
                     continue
 
@@ -254,11 +259,11 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise e
         finally:
-            self.mysql_db.close()
+            mysql_db.close()
 
     def mysql_insert_mempool_tx_rows_thread(self):
         try:
-            self.mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+            mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             while True:
                 try:
                     mempool_rows = self.mempool_tx_flush_queue.get(
@@ -278,6 +283,7 @@ class TxParser(multiprocessing.Process):
                             self.mempool_batched_set_pd_rows,
                             self.mempool_batched_mempool_tx_acks,
                             confirmed=False,
+                            mysql_db=mysql_db
                         )
                     continue
 
@@ -294,12 +300,13 @@ class TxParser(multiprocessing.Process):
                         self.mempool_batched_set_pd_rows,
                         self.mempool_batched_mempool_tx_acks,
                         confirmed=False,
+                        mysql_db=mysql_db
                     )
         except Exception as e:
             self.logger.exception(e)
             raise e
         finally:
-            self.mysql_db.close()
+            mysql_db.close()
 
     def get_block_partition_tx_hashes(self, raw_block, tx_offsets) -> Tuple[List[bytes],
             List[Tuple]]:
@@ -325,7 +332,6 @@ class TxParser(multiprocessing.Process):
             offsets_map: Dict[bytes, int] = dict(zip(partition_tx_hashes, tx_offsets))
             unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(
                 partition_tx_hash_rows)
-            # self.logger.debug(f'unprocessed_tx_shashes: {unprocessed_tx_shashes}')
 
             relevant_offsets = []
             for row in unprocessed_tx_hashes:
@@ -397,7 +403,7 @@ class TxParser(multiprocessing.Process):
             tx_offsets_partition = array.array("Q", packed_array)
 
             # self.logger.debug(f"self.lmdb_grpc_client.get_block_num() where blk_hash={blk_hash}")
-            blk_num = self.lmdb_grpc_client.get_block_num(blk_hash)
+            blk_num = lmdb_grpc_client.get_block_num(blk_hash)
             # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
 
             # if in IBD mode, mempool txs are strictly rejected. So there is no point
@@ -406,8 +412,9 @@ class TxParser(multiprocessing.Process):
 
             # Todo - This is wasteful in that it is pulling the * entire * raw block when it will
             #  only need the relevant partition of the block
-            raw_block = self.lmdb_grpc_client.get_block(blk_num)
-            unprocessed_tx_offsets, processed_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_partition,
+            raw_block = lmdb_grpc_client.get_block(blk_num)
+            unprocessed_tx_offsets, processed_tx_offsets = \
+                self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_partition,
                 blk_height, mysql_db)
             # else:
             #     unprocessed_tx_offsets = tx_offsets_partition
@@ -432,7 +439,7 @@ class TxParser(multiprocessing.Process):
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-            self.lmdb_grpc_client = ConduitRawAPIClient()
+            lmdb_grpc_client = ConduitRawAPIClient()
             while True:
                 if iterate(self) == "stop":
                     break

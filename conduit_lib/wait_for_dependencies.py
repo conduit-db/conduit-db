@@ -123,8 +123,8 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
 
+    was_waiting = False
     while True:
-        is_available = False
         try:
             client = ConduitRawAPIClient()
             # This will fail but establishes connectivity & checks to see if the gRPC API
@@ -133,6 +133,7 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
             if result:
                 break
         except ServiceUnavailableError:
+            was_waiting = True
             logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
                          f"unavailable - waiting...")
             await asyncio.sleep(5)
@@ -140,5 +141,8 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
             logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
 
     logger.info(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
-    logger.info(f"Allowing ConduitRaw service to complete initial configuration")
-    await asyncio.sleep(3)
+    if was_waiting:
+        logger.info(f"Allowing ConduitRaw service to complete initial configuration")
+        await asyncio.sleep(3)
+    else:
+        await asyncio.sleep(1)

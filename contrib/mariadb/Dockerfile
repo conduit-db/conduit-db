@@ -1,4 +1,6 @@
 FROM mariadb:10.5
 RUN apt-get update
 RUN apt-get -y install mariadb-plugin-rocksdb && rm -rf /var/cache/apt/lists/*
-
+RUN mkdir -p /etc/mysql
+COPY ./contrib/mariadb/config/my.cnf /etc/mysql/my.cnf
+RUN chmod 644 /etc/mysql/my.cnf

@@ -52,8 +52,7 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.lmdb_grpc_client = ConduitRawAPIClient()
-        # self.lmdb_client = ConduitRawAPIClient(host=CONDUIT_RAW_HOST, port=CONDUIT_RAW_PORT)
+        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
 
         self.conduit_raw_header_tip: bitcoinx.Header = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
@@ -166,6 +165,13 @@ class SyncState:
         """
         # Todo - must check how large these blocks are to allocate a sensible number
         #  of blocks
+        # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
+        #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
+        #   it is something to do with global socket state interfering with the child processes
+        #   when they create their own ConduitRawAPIClient
+        #   see: https://github.com/googleapis/synthtool/issues/902
+        if not self.lmdb_grpc_client:
+            self.lmdb_grpc_client = ConduitRawAPIClient()
         MAX_BYTES = 1024**3 * 1  # 1GB
         PARALLEL_PROCESSING_LIMIT = 10 * 1024**2  # If less than this size send to one worker only
         total_batch_bytes = 0
