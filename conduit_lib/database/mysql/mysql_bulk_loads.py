@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -24,9 +25,11 @@ class MySQLBulkLoads:
         else:
             self.logger = logging.getLogger(f"mysql-tables")
         self.mysql_conn = mysql_conn
+        # self.logger.setLevel(PROFILING)
         self.logger.setLevel(logging.DEBUG)
         self.total_db_time = 0
         self.total_rows_flushed_since_startup = 0  # for current controller
+        self.newline_symbol = r"'\r\n'" if sys.platform == 'win32' else r"'\n'"
 
     def set_local_infile_on(self):
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"
@@ -74,7 +77,7 @@ class MySQLBulkLoads:
                 LOAD DATA LOCAL INFILE '{outfile.absolute().as_posix()}' 
                 INTO TABLE {table_name}
                 FIELDS TERMINATED BY ','
-                LINES TERMINATED BY """ + r"'\r\n'" + "\n" + \
+                LINES TERMINATED BY """ + self.newline_symbol + "\n" + \
                 f"""({", ".join(query_column_names)})"""
             if len(binary_column_indices) != 0:
                 query += f"\n{set_statement}"
@@ -83,11 +86,12 @@ class MySQLBulkLoads:
             self.mysql_db.start_transaction()
             self.mysql_conn.query(query)
             self.mysql_db.commit_transaction()
-        except MySQLdb._exceptions.OperationalError:
+        except MySQLdb.OperationalError:
             if not have_retried:
                 self._load_data_infile(table_name, string_rows, column_names,
                     binary_column_indices, True)
         except Exception:
+            self.logger.exception("unexpected exception in _load_data_infile")
             self.mysql_db.rollback_transaction()
             raise
         finally:

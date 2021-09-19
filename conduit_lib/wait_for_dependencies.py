@@ -8,7 +8,7 @@ import MySQLdb
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import KafkaException
 
-from .conduit_raw_api_client import ConduitRawAPIClient
+from .conduit_raw_api_client import ConduitRawAPIClient, ServiceUnavailableError
 from .utils import is_docker, cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
@@ -122,25 +122,27 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-    host = cast_to_valid_ipv4(conduit_raw_api_host.split(":")[0])
-    port = int(conduit_raw_api_host.split(":")[1])
 
+    was_waiting = False
     while True:
-        is_available = False
         try:
-            client = ConduitRawAPIClient(host=host, port=port)
-            block_hash = bytes.fromhex("deadbeef")
+            client = ConduitRawAPIClient()
             # This will fail but establishes connectivity & checks to see if the gRPC API
             # can access LMDB without errors
-            client.get_block_num(block_hash)
-            is_available = True
-            break
+            result = client.ping(1, wait_for_ready=False)
+            if result:
+                break
+        except ServiceUnavailableError:
+            was_waiting = True
+            logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
+                         f"unavailable - waiting...")
+            await asyncio.sleep(5)
         except Exception:
             logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
-        finally:
-            if is_available:
-                logger.debug(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
-            else:
-                logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
-                             f"unavailable - waiting...")
-                await asyncio.sleep(5)
+
+    logger.info(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
+    if was_waiting:
+        logger.info(f"Allowing ConduitRaw service to complete initial configuration")
+        await asyncio.sleep(3)
+    else:
+        await asyncio.sleep(1)

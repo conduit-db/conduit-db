@@ -26,8 +26,6 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.headers_state_client = self.controller.headers_state_client
-        self.headers_queue = self.controller.headers_producer
 
         self.headers_msg_processed_event = asyncio.Event()
         self.headers_event_new_tip = asyncio.Event()
@@ -135,6 +133,7 @@ class SyncState:
         return self.initial_block_download_event.is_set()
 
     def set_post_IBD_mode(self):
+        self.logger.debug(f"setting initial_block_download_event")
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()
 

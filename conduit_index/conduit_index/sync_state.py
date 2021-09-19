@@ -21,7 +21,7 @@ if typing.TYPE_CHECKING:
 
 
 try:
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:5000')
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
     CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
     CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
 except Exception:
@@ -52,18 +52,12 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.lmdb_grpc_client = ConduitRawAPIClient()
-        # self.lmdb_client = ConduitRawAPIClient(host=CONDUIT_RAW_HOST, port=CONDUIT_RAW_PORT)
+        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
 
-        self.conduit_raw_headers_queue = asyncio.Queue()
         self.conduit_raw_header_tip: bitcoinx.Header = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
 
-        self.headers_msg_processed_event = asyncio.Event()
-        self.headers_event_new_tip = asyncio.Event()
-        self.headers_event_initial_sync = asyncio.Event()
-        self.blocks_event_new_tip = asyncio.Event()
-        self.blocks_event_new_tip.set()
+        # Not actually used by Indexer but cannot remove because it's in the shared lib
         self.target_header_height: Optional[int] = None
         self.target_block_header_height: Optional[int] = None
         self.local_tip_height: int = self.update_local_tip_height()
@@ -91,6 +85,7 @@ class SyncState:
         self.done_blocks_tx_parser_event = asyncio.Event()
 
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
+        self._grpc_exec = ThreadPoolExecutor(10, 'grpc-exec')
         self.initial_block_download_event_mp = multiprocessing.Event()
 
     @property
@@ -122,7 +117,7 @@ class SyncState:
         with self.conduit_raw_header_tip_lock:
             return self.conduit_raw_header_tip
 
-    def set_conduit_raw_header_tip(self, conduit_raw_header_tip):
+    def set_conduit_raw_header_tip(self, conduit_raw_header_tip: bitcoinx.Header):
         """Needs to first have a connected headers_state_client"""
         with self.conduit_raw_header_tip_lock:
             self.conduit_raw_header_tip = conduit_raw_header_tip
@@ -170,6 +165,13 @@ class SyncState:
         """
         # Todo - must check how large these blocks are to allocate a sensible number
         #  of blocks
+        # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
+        #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
+        #   it is something to do with global socket state interfering with the child processes
+        #   when they create their own ConduitRawAPIClient
+        #   see: https://github.com/googleapis/synthtool/issues/902
+        if not self.lmdb_grpc_client:
+            self.lmdb_grpc_client = ConduitRawAPIClient()
         MAX_BYTES = 1024**3 * 1  # 1GB
         PARALLEL_PROCESSING_LIMIT = 10 * 1024**2  # If less than this size send to one worker only
         total_batch_bytes = 0
@@ -186,19 +188,22 @@ class SyncState:
         block_height_deficit = conduit_raw_tip.height - local_block_tip_height
 
         # May need to use block_hash not height to be more correct
+        block_headers = []
         batch_count = 0
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
+            block_headers.append(block_header)
 
-            block_bytes = self.lmdb_grpc_client.get_block_metadata(block_header.hash)
-            # self.logger.debug(f"lmdb block_bytes={block_bytes}")
+        header_hashes = [block_header.hash for block_header in block_headers]
+        block_size_results = self.lmdb_grpc_client.get_block_metadata_batched(header_hashes)
+        tx_offsets_results = self.lmdb_grpc_client.get_tx_offsets_batched(header_hashes)
 
-            # Allocate work
-            tx_offsets = self.lmdb_grpc_client.get_tx_offsets(block_header.hash)
+        for block_size, tx_offsets, block_header in zip(block_size_results, tx_offsets_results, block_headers):
+            # self.logger.debug(f"lmdb block_bytes={block_size}")
             # self.logger.debug(f"lmdb tx_offsets={tx_offsets}")
 
             # Safety Checks and MAX LIMITS
-            total_batch_bytes += block_bytes
+            total_batch_bytes += block_size
             # self.logger.debug(f"total_batch_bytes={total_batch_bytes}")
             if batch_is_over_limit():
                 self.logger.warning(f"Batch is over the MAX_BYTES limit ({MAX_BYTES/1024**2}MB)!")
@@ -208,17 +213,17 @@ class SyncState:
                 self.add_pending_block(block_header.hash, len(tx_offsets))
 
             first_tx_pos_batch = 0  # Todo - update this when work is partitioned
-            if block_bytes > PARALLEL_PROCESSING_LIMIT:
+            if block_size > PARALLEL_PROCESSING_LIMIT:
                 # Todo - split up workload
                 tx_count = len(tx_offsets)
                 divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
-                    block_bytes, tx_offsets)
+                    block_size, tx_offsets)
                 for work_part in divided_work:
                     # block_header.hash, block_header.height, first_tx_pos_batch, part_end_offset, \
                     #     tx_offsets = work_part
                     allocated_work.append(work_part)
             else:
-                part_end_offset = block_bytes
+                part_end_offset = block_size
                 allocated_work.append((block_header.hash, block_header.height,
                     first_tx_pos_batch, part_end_offset, tx_offsets))
             batch_count = i
@@ -261,11 +266,6 @@ class SyncState:
         self._pending_blocks_received = {}
         self._pending_blocks_progress_counter = {}
 
-    async def wait_for_new_headers_tip(self):
-        self.headers_event_initial_sync.set()
-        await self.headers_event_new_tip.wait()
-        self.headers_event_new_tip.clear()
-
     def is_post_IBD(self):
         """has initial block download been completed?
         (to syncronize all blocks with all initially fetched headers)"""
@@ -274,17 +274,3 @@ class SyncState:
     def set_post_IBD_mode(self):
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()
-
-    async def wait_for_new_block_tip(self):
-        # TODO - ideally headers should be pulled from ConduitRaw rather than also retrieving them
-        #  from the node. ConduitIndex should only listen to the node directly for mempool
-        #  transactions
-        self.logger.debug(f"self.is_post_IBD()={self.is_post_IBD()}")
-        if self.is_post_IBD():
-            await self.blocks_event_new_tip.wait()
-            self.blocks_event_new_tip.clear()
-
-        if not self.is_post_IBD():  # one-time thing to trap the loop here on first IBD completion
-            self.set_post_IBD_mode()
-            self.blocks_event_new_tip.clear()
-            await self.wait_for_new_block_tip()

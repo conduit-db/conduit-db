@@ -13,16 +13,20 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 
 try:
     from .conduit_raw_pb2 import (PingRequest, PingResponse, BlockNumberRequest, BlockNumberResponse,
-    BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-    TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-    BlockMetadataResponse, StopRequest, StopResponse)
+        BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+        TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+        BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
+        TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest,
+        BlockMetadataBatchedResponse)
 
     from conduit_raw.conduit_raw.grpc_server import conduit_raw_pb2_grpc
 except ImportError:
     from conduit_raw_pb2 import (PingRequest, PingResponse, BlockNumberRequest, BlockNumberResponse,
-    BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-    TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-    BlockMetadataResponse, StopRequest, StopResponse)
+        BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+        TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+        BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
+        TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest,
+        BlockMetadataBatchedResponse)
 
     import conduit_raw_pb2_grpc
 
@@ -67,15 +71,33 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetTransactionOffsets(self, request: TransactionOffsetsRequest,
             context: grpc.aio.ServicerContext) -> TransactionOffsetsResponse:
-        # self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
+        self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
         tx_offsets = self.lmdb.get_tx_offsets(request.blockHash)
         return TransactionOffsetsResponse(txOffsetsArray=tx_offsets)
 
+    async def GetTransactionOffsetsBatched(self, request: TransactionOffsetsBatchedRequest,
+            context: grpc.aio.ServicerContext):
+        self.logger.debug(f"Got TransactionOffsetsBatchedRequest.blockHashes={request.blockHashes}")
+        batch = []
+        for block_hash in request.blockHashes:
+            tx_offsets = self.lmdb.get_tx_offsets(block_hash)
+            batch.append(TransactionOffsetsResponse(txOffsetsArray=tx_offsets))
+        return TransactionOffsetsBatchedResponse(batch=batch)
+
     async def GetBlockMetadata(self, request: BlockMetadataRequest,
             context: grpc.aio.ServicerContext) -> BlockMetadataResponse:
-        # self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
+        self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
         block_size = self.lmdb.get_block_metadata(request.blockHash)
         return BlockMetadataResponse(blockSizeBytes=block_size)
+
+    async def GetBlockMetadataBatched(self, request: BlockMetadataBatchedRequest,
+            context: grpc.aio.ServicerContext) -> BlockMetadataBatchedResponse:
+        self.logger.debug(f"Got BlockMetadataRequest.blockHashes={request.blockHashes}")
+        batch = []
+        for block_hash in request.blockHashes:
+            block_size = self.lmdb.get_block_metadata(block_hash)
+            batch.append(block_size)
+        return BlockMetadataBatchedResponse(batch=batch)
 
     async def server_graceful_shutdown(self):
         logging.info("Starting graceful shutdown...")
@@ -86,7 +108,7 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
         self.lmdb.close()
 
     async def serve(self) -> None:
-        self.server = grpc.aio.server()
+        self.server = grpc.aio.server(maximum_concurrent_rpcs=10)
         conduit_raw_pb2_grpc.add_ConduitRawServicer_to_server(self, self.server)
         listen_addr = '[::]:50000'
         self.server.add_insecure_port(listen_addr)

@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import logging
 
@@ -20,6 +20,7 @@ class MySQLQueries:
     def __init__(self, mysql_conn: _mysql.connection, mysql_tables: MySQLTables, bulk_loads:
             MySQLBulkLoads, mysql_db):
         self.logger = logging.getLogger("mysql-queries")
+        self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn
         self.mysql_tables = mysql_tables
         self.bulk_loads = bulk_loads
@@ -56,7 +57,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_get_unprocessed_txs(self, new_tx_hashes):
+    def mysql_get_unprocessed_txs(self, new_tx_hashes) -> Optional[Tuple[bytes, bytes, int, bytes]]:
         """
         NOTE: usually (if all mempool txs have been processed, this function will only return
         the coinbase tx)
@@ -92,6 +93,8 @@ class MySQLQueries:
 
     def mysql_invalidate_mempool_rows(self, api_block_tip_height: int):
         """Need to deal with collisions here"""
+        # Todo - block height is unreliable.. should be done based on block_hash
+        self.logger.debug(f"Deleting mempool txs based on block height")
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (

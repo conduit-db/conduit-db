@@ -10,11 +10,6 @@ transaction throughput.
 
 ## Getting Started
 
-## MariaDB (Pre-requisite configuration step)
-
-Please make sure that the file `contrib/mariadb/config/my.cnf` has its file permissions set to
-"Read-only" on windows otherwise the Docker image will reject the RocksDB engine configuration.
-
 ## Running different combinations of services in Docker
 
 The core services of mysql, kafka, zookeeper and the  Bitcoin SV node can be run using:
