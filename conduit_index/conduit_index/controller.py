@@ -93,13 +93,13 @@ class Controller:
         self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
 
+        self.sync_state: Optional[SyncState] = None
+        self.headers_state_consumer: Optional[Consumer] = None
         self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
         self.batch_completion_raw: Optional[BatchCompletionTxParser]
 
     def setup_kafka_consumer(self):
-        # auto.offset.reset is set to 'earliest' which should be fine because the retention period
-        # will be 24 hours in which case old headers will be removed from the topic in time
-        group = os.urandom(8)  # will give a pub/sub arrangement for all consumers
+        group = 'conduit-index-headers'
         self.headers_state_consumer: Consumer = Consumer({
             'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
             'group.id': group,
@@ -387,7 +387,7 @@ class Controller:
         def allocate_work():
             t0 = time.perf_counter()
             next_batch = self.sync_state.get_next_batched_blocks()
-            # self.logger.debug(f"next_batch={next_batch}")
+            self.logger.debug(f"next_batch={len(next_batch)}")
             batch_count, global_blocks_batch_set, allocated_work = next_batch
 
             # ---- PUSH WORK TO WORKERS ---- #

@@ -68,6 +68,7 @@ def parse_args() -> Dict:
 
 def set_env_vars(config: Dict):
     logger = logging.getLogger("set_env_vars")
+    os.environ['GRPC_ENABLE_FORK_SUPPORT'] = '1'
     os.environ['KAFKA_HOST'] = config['kafka_host']
     host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
     port = config['mysql_host'].split(":")[1]

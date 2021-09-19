@@ -32,3 +32,4 @@ services:
       - CONDUIT_RAW_API_HOST=conduit-raw:50000
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --kafka-host=kafka:9092'
+    #command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306 --kafka-host=kafka:9092'
