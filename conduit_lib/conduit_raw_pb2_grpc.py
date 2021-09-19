@@ -6,8 +6,7 @@ import conduit_raw_pb2 as conduit__raw__pb2
 
 
 class ConduitRawStub(object):
-    """The greeting service definition.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -45,20 +44,28 @@ class ConduitRawStub(object):
                 request_serializer=conduit__raw__pb2.TransactionOffsetsRequest.SerializeToString,
                 response_deserializer=conduit__raw__pb2.TransactionOffsetsResponse.FromString,
                 )
+        self.GetTransactionOffsetsBatched = channel.unary_unary(
+                '/conduit_raw.ConduitRaw/GetTransactionOffsetsBatched',
+                request_serializer=conduit__raw__pb2.TransactionOffsetsBatchedRequest.SerializeToString,
+                response_deserializer=conduit__raw__pb2.TransactionOffsetsBatchedResponse.FromString,
+                )
         self.GetBlockMetadata = channel.unary_unary(
                 '/conduit_raw.ConduitRaw/GetBlockMetadata',
                 request_serializer=conduit__raw__pb2.BlockMetadataRequest.SerializeToString,
                 response_deserializer=conduit__raw__pb2.BlockMetadataResponse.FromString,
                 )
+        self.GetBlockMetadataBatched = channel.unary_unary(
+                '/conduit_raw.ConduitRaw/GetBlockMetadataBatched',
+                request_serializer=conduit__raw__pb2.BlockMetadataBatchedRequest.SerializeToString,
+                response_deserializer=conduit__raw__pb2.BlockMetadataBatchedResponse.FromString,
+                )
 
 
 class ConduitRawServicer(object):
-    """The greeting service definition.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def Ping(self, request, context):
-        """Sends a greeting
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -93,7 +100,19 @@ class ConduitRawServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetTransactionOffsetsBatched(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetBlockMetadata(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetBlockMetadataBatched(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -132,10 +151,20 @@ def add_ConduitRawServicer_to_server(servicer, server):
                     request_deserializer=conduit__raw__pb2.TransactionOffsetsRequest.FromString,
                     response_serializer=conduit__raw__pb2.TransactionOffsetsResponse.SerializeToString,
             ),
+            'GetTransactionOffsetsBatched': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTransactionOffsetsBatched,
+                    request_deserializer=conduit__raw__pb2.TransactionOffsetsBatchedRequest.FromString,
+                    response_serializer=conduit__raw__pb2.TransactionOffsetsBatchedResponse.SerializeToString,
+            ),
             'GetBlockMetadata': grpc.unary_unary_rpc_method_handler(
                     servicer.GetBlockMetadata,
                     request_deserializer=conduit__raw__pb2.BlockMetadataRequest.FromString,
                     response_serializer=conduit__raw__pb2.BlockMetadataResponse.SerializeToString,
+            ),
+            'GetBlockMetadataBatched': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetBlockMetadataBatched,
+                    request_deserializer=conduit__raw__pb2.BlockMetadataBatchedRequest.FromString,
+                    response_serializer=conduit__raw__pb2.BlockMetadataBatchedResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -145,8 +174,7 @@ def add_ConduitRawServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class ConduitRaw(object):
-    """The greeting service definition.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def Ping(request,
@@ -251,6 +279,23 @@ class ConduitRaw(object):
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
+    def GetTransactionOffsetsBatched(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetTransactionOffsetsBatched',
+            conduit__raw__pb2.TransactionOffsetsBatchedRequest.SerializeToString,
+            conduit__raw__pb2.TransactionOffsetsBatchedResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
     def GetBlockMetadata(request,
             target,
             options=(),
@@ -264,5 +309,22 @@ class ConduitRaw(object):
         return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetBlockMetadata',
             conduit__raw__pb2.BlockMetadataRequest.SerializeToString,
             conduit__raw__pb2.BlockMetadataResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetBlockMetadataBatched(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetBlockMetadataBatched',
+            conduit__raw__pb2.BlockMetadataBatchedRequest.SerializeToString,
+            conduit__raw__pb2.BlockMetadataBatchedResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

@@ -4,6 +4,7 @@ import shutil
 import stat
 import mmap
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -116,6 +117,7 @@ def reset_kafka_topics():
                 del topics_dict[topic_name]
             except KafkaException as e:
                 logger.debug("Failed to create topic {}: {}".format(topic_name, e))
+                time.sleep(0.2)
                 continue
 
 

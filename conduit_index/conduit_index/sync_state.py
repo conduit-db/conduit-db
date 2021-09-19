@@ -86,6 +86,7 @@ class SyncState:
         self.done_blocks_tx_parser_event = asyncio.Event()
 
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
+        self._grpc_exec = ThreadPoolExecutor(10, 'grpc-exec')
         self.initial_block_download_event_mp = multiprocessing.Event()
 
     @property
@@ -181,19 +182,22 @@ class SyncState:
         block_height_deficit = conduit_raw_tip.height - local_block_tip_height
 
         # May need to use block_hash not height to be more correct
+        block_headers = []
         batch_count = 0
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
+            block_headers.append(block_header)
 
-            block_bytes = self.lmdb_grpc_client.get_block_metadata(block_header.hash)
-            # self.logger.debug(f"lmdb block_bytes={block_bytes}")
+        header_hashes = [block_header.hash for block_header in block_headers]
+        block_size_results = self.lmdb_grpc_client.get_block_metadata_batched(header_hashes)
+        tx_offsets_results = self.lmdb_grpc_client.get_tx_offsets_batched(header_hashes)
 
-            # Allocate work
-            tx_offsets = self.lmdb_grpc_client.get_tx_offsets(block_header.hash)
+        for block_size, tx_offsets, block_header in zip(block_size_results, tx_offsets_results, block_headers):
+            # self.logger.debug(f"lmdb block_bytes={block_size}")
             # self.logger.debug(f"lmdb tx_offsets={tx_offsets}")
 
             # Safety Checks and MAX LIMITS
-            total_batch_bytes += block_bytes
+            total_batch_bytes += block_size
             # self.logger.debug(f"total_batch_bytes={total_batch_bytes}")
             if batch_is_over_limit():
                 self.logger.warning(f"Batch is over the MAX_BYTES limit ({MAX_BYTES/1024**2}MB)!")
@@ -203,17 +207,17 @@ class SyncState:
                 self.add_pending_block(block_header.hash, len(tx_offsets))
 
             first_tx_pos_batch = 0  # Todo - update this when work is partitioned
-            if block_bytes > PARALLEL_PROCESSING_LIMIT:
+            if block_size > PARALLEL_PROCESSING_LIMIT:
                 # Todo - split up workload
                 tx_count = len(tx_offsets)
                 divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
-                    block_bytes, tx_offsets)
+                    block_size, tx_offsets)
                 for work_part in divided_work:
                     # block_header.hash, block_header.height, first_tx_pos_batch, part_end_offset, \
                     #     tx_offsets = work_part
                     allocated_work.append(work_part)
             else:
-                part_end_offset = block_bytes
+                part_end_offset = block_size
                 allocated_work.append((block_header.hash, block_header.height,
                     first_tx_pos_batch, part_end_offset, tx_offsets))
             batch_count = i

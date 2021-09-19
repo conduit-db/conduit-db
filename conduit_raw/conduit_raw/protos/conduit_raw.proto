@@ -4,16 +4,16 @@ option csharp_namespace = "ConduitRaw";
 
 package conduit_raw;
 
-// The greeting service definition.
 service ConduitRaw {
-  // Sends a greeting
 	rpc Ping (PingRequest) returns (PingResponse);
 	rpc Stop (StopRequest) returns (StopResponse);
 	rpc GetBlockNumber (BlockNumberRequest) returns (BlockNumberResponse);
 	rpc GetBlock (BlockRequest) returns (BlockResponse);
 	rpc GetMerkleTreeRow (MerkleTreeRowRequest) returns (MerkleTreeRowResponse);
 	rpc GetTransactionOffsets (TransactionOffsetsRequest) returns (TransactionOffsetsResponse);
+	rpc GetTransactionOffsetsBatched (TransactionOffsetsBatchedRequest) returns (TransactionOffsetsBatchedResponse);
 	rpc GetBlockMetadata (BlockMetadataRequest) returns (BlockMetadataResponse);
+	rpc GetBlockMetadataBatched (BlockMetadataBatchedRequest) returns (BlockMetadataBatchedResponse);
 }
 
 message PingRequest {
@@ -31,7 +31,6 @@ message StopRequest {
 message StopResponse {
 	string message = 1;
 }
-
 
 message BlockNumberRequest {
 	bytes blockHash = 1;
@@ -66,10 +65,26 @@ message TransactionOffsetsResponse {
 	repeated uint64 txOffsetsArray = 1;
 }
 
+message TransactionOffsetsBatchedRequest {
+	repeated bytes blockHashes = 1;
+}
+
+message TransactionOffsetsBatchedResponse {
+	repeated TransactionOffsetsResponse batch = 1;
+}
+
 message BlockMetadataRequest {
 	bytes blockHash = 1;
 }
 
 message BlockMetadataResponse {
 	uint64 blockSizeBytes = 1;
+}
+
+message BlockMetadataBatchedRequest {
+	repeated bytes blockHashes = 1;
+}
+
+message BlockMetadataBatchedResponse {
+	repeated uint64 batch = 1;
 }

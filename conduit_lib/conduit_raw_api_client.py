@@ -3,7 +3,7 @@ import array
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 from bitcoinx import hex_str_to_hash
 
 from conduit_lib.utils import cast_to_valid_ipv4
@@ -13,16 +13,19 @@ sys.path.append(MODULE_DIR)
 try:
     from conduit_lib import conduit_raw_pb2
     from conduit_lib import conduit_raw_pb2_grpc
-    from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest,
-        MerkleTreeRowResponse, BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse,
-        BlockMetadataRequest, BlockMetadataResponse, PingResponse, BlockNumberResponse,
-        StopResponse)
+    from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+        BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse,
+        TransactionOffsetsBatchedResponse, TransactionOffsetsBatchedRequest,
+        BlockMetadataBatchedResponse, BlockMetadataBatchedRequest)
 except ImportError:
     import conduit_raw_pb2
     import conduit_raw_pb2_grpc
     from conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest, \
-        BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse)
+        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+        BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse,
+        TransactionOffsetsBatchedResponse, TransactionOffsetsBatchedRequest,
+        BlockMetadataBatchedResponse, BlockMetadataBatchedRequest)
 
 from grpc._channel import _InactiveRpcError
 
@@ -121,11 +124,34 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
+    def get_tx_offsets_batched(self, block_hashes: List[bytes]) -> List[array.array]:
+        try:
+            response: TransactionOffsetsBatchedResponse = self.stub.GetTransactionOffsetsBatched(
+                TransactionOffsetsBatchedRequest(blockHashes=block_hashes), wait_for_ready=True)
+            return [array.array("Q", r.txOffsetsArray) for r in response.batch]
+        except grpc.RpcError as e:
+            self.logger.exception(e)
+        except Exception as e:
+            raise e
+
     def get_block_metadata(self, block_hash: bytes) -> int:
         try:
             response: BlockMetadataResponse = self.stub.GetBlockMetadata(
                 BlockMetadataRequest(blockHash=block_hash), wait_for_ready=True)
             return response.blockSizeBytes
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+            else:
+                self.logger.exception(e)
+        except Exception as e:
+            raise e
+
+    def get_block_metadata_batched(self, block_hashes: List[bytes]) -> List[int]:
+        try:
+            response: BlockMetadataBatchedResponse = self.stub.GetBlockMetadataBatched(
+                BlockMetadataBatchedRequest(blockHashes=block_hashes), wait_for_ready=True)
+            return response.batch
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
                 self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
