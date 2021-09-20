@@ -8,6 +8,8 @@ extra_config_options = [
     "-rejectmempoolrequest=0",
     "-rpcallowip=0.0.0.0/0",
     "-rpcbind=0.0.0.0",
+    # `docker network ls` then `docker network inspect <network name>` will show the netmask.
+    "-whitelist=172.0.0.0/8",
 ]
 split_command = electrumsv_node.shell_command(print_to_console=True, extra_params=extra_config_options)
 process = subprocess.Popen(" ".join(split_command), shell=True, env=os.environ.copy())

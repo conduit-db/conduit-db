@@ -1,6 +1,14 @@
 Blockchains
 ===========
 
+Note that these are considered old blocks and importing them to the node will leave the node in
+an initial block download state. This is a state in which it will not respond to P2P requests from
+non-whitelisted connections. Docker seems to use incrementally higher addresses each time it
+brings containers up, so it is not possible to whitelist a specific address. Instead we whitelist
+172.0.0.0/8 so that all addresses with a 172 prefix can bypass the initial block download state.
+Note that this is also resolved by generating a new block, which will have a recent timestamp,
+and will exit this state.
+
 blockchain_114_469282
 ---------------------
 
