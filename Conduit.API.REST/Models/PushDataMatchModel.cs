@@ -11,9 +11,11 @@ namespace Conduit.API.REST.Models
         public PushDataMatchModel(PushDataFilterMatch match)
         {
             PushDataHashHex = Convert.ToHexString(match.PushDataHash);
-            TransactionId = Convert.ToHexString(match.PushDataHash.Reverse().ToArray());
+            TransactionId = Convert.ToHexString(match.TransactionHash.Reverse().ToArray());
             Index = match.Index;
             ReferenceType = (int)match.ReferenceType;
+            SpendTransactionId = match.SpendTransactionHash == null ? null : Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray());
+            SpendInputIndex = match.SpendInputIndex;
         }
 
         public string PushDataHashHex { get; set; }
@@ -23,5 +25,9 @@ namespace Conduit.API.REST.Models
         public int Index { get; set; }
 
         public int ReferenceType { get; set; }
+
+        public string SpendTransactionId { get; set; }
+
+        public int SpendInputIndex { get; set; }
     }
 }
