@@ -71,13 +71,13 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetTransactionOffsets(self, request: TransactionOffsetsRequest,
             context: grpc.aio.ServicerContext) -> TransactionOffsetsResponse:
-        self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
+        # self.logger.debug(f"Got TransactionOffsetsRequest.blockHash={request.blockHash}")
         tx_offsets = self.lmdb.get_tx_offsets(request.blockHash)
         return TransactionOffsetsResponse(txOffsetsArray=tx_offsets)
 
     async def GetTransactionOffsetsBatched(self, request: TransactionOffsetsBatchedRequest,
             context: grpc.aio.ServicerContext):
-        self.logger.debug(f"Got TransactionOffsetsBatchedRequest.blockHashes={request.blockHashes}")
+        # self.logger.debug(f"Got TransactionOffsetsBatchedRequest.blockHashes={request.blockHashes}")
         batch = []
         for block_hash in request.blockHashes:
             tx_offsets = self.lmdb.get_tx_offsets(block_hash)
@@ -86,13 +86,13 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetBlockMetadata(self, request: BlockMetadataRequest,
             context: grpc.aio.ServicerContext) -> BlockMetadataResponse:
-        self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
+        # self.logger.debug(f"Got BlockMetadataRequest.blockHash={request.blockHash}")
         block_size = self.lmdb.get_block_metadata(request.blockHash)
         return BlockMetadataResponse(blockSizeBytes=block_size)
 
     async def GetBlockMetadataBatched(self, request: BlockMetadataBatchedRequest,
             context: grpc.aio.ServicerContext) -> BlockMetadataBatchedResponse:
-        self.logger.debug(f"Got BlockMetadataRequest.blockHashes={request.blockHashes}")
+        # self.logger.debug(f"Got BlockMetadataRequest.blockHashes={request.blockHashes}")
         batch = []
         for block_hash in request.blockHashes:
             block_size = self.lmdb.get_block_metadata(block_hash)
