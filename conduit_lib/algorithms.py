@@ -203,14 +203,14 @@ def parse_txs(
                 offset += 4  # skip sequence
                 in_offset_end = offset
 
-                # some coinbase tx scriptsigs don't obey any rules so for now they are not
-                # included in the inputs table at all
-                if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
+                in_rows.add(
+                    (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx, in_offset_start,
+                    in_offset_end,),
+                )
 
-                    in_rows.add(
-                        (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx,
-                            in_offset_start, in_offset_end, ),
-                    )
+                # some coinbase tx scriptsigs don't obey any rules so for now they are not
+                # included in the pushdata table at all
+                if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
 
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
                     if len(pushdata_hashes):
