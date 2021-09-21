@@ -334,6 +334,8 @@ class TxParser(multiprocessing.Process):
             relevant_offsets = []
             for row in unprocessed_tx_hashes:
                 relevant_offsets.append(offsets_map.pop(row[0]))
+
+            relevant_offsets.sort()
             return relevant_offsets, offsets_map
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
@@ -416,7 +418,9 @@ class TxParser(multiprocessing.Process):
                 blk_height, mysql_db)
             # else:
             #     unprocessed_tx_offsets = tx_offsets_partition
-            # self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
+            self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
+            self.logger.debug(f"blk_height={blk_height}")
+            self.logger.debug(f"raw_block={raw_block}")
 
             t0 = time.time()
             result = parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,
