@@ -146,8 +146,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
     if config['server_type'] == "ConduitRaw":
-        if not is_docker():
-            reset_kafka_topics()
+        reset_kafka_topics()
 
 
 def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
