@@ -166,6 +166,12 @@ class TxParser(multiprocessing.Process):
 
     # ------------------------------------------------- #
 
+    # Todo - A late-arriving mempool tx could theoretically cause duplicate
+    #  input / output / pushdata rows for a given tx... This is an extreme edge case reliant on
+    #  a timing window of milliseconds due to an (only theoretical) out-of-order arrival of a block
+    #  tx before a mempool tx leading to commit of a confirmed tx before the mempool tx.
+    #  To check for this would be ridiculously wasteful compared to having the External API merely
+    #  de-duplicate as necessary (if it is even deemed as necessary).
     def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows, mysql_db):
         mysql_db.mysql_bulk_load_output_rows(out_rows)
         mysql_db.mysql_bulk_load_input_rows(in_rows)
@@ -421,6 +427,10 @@ class TxParser(multiprocessing.Process):
             self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
             self.logger.debug(f"blk_height={blk_height}")
             self.logger.debug(f"raw_block={raw_block}")
+
+            # Todo - I think 'processed_tx_offsets' need to be inserted to the confirmed tx table
+            #  But NOT the inputs / pushdata / output rows as that is already done for the mempool
+            #  tx - this is missing!
 
             t0 = time.time()
             result = parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,

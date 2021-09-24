@@ -61,11 +61,6 @@ class MySQLQueries:
         """
         NOTE: usually (if all mempool txs have been processed, this function will only return
         the coinbase tx)
-
-        Todo(collisions)
-        - if there is a collision between local inbound tx shashes and mempool txs then it would
-        cause a false negative in thinking it has already been processed
-        - solution: use full hashes for correctness
         """
         self.mysql_load_temp_inbound_tx_hashes(new_tx_hashes)
         self.mysql_conn.query(

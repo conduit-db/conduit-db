@@ -326,6 +326,9 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
+    # Todo - change from kafka-based to gRPC (batched) long-polling - makes far more sense here
+    #  and avoids any potential for out-of-order messages. Could even request multiple contiguous
+    #  chain segments asynchronously later on to parallelize the CPU-bound connecting of headers.
     def drain_kafka_headers_queue(self):
 
         conduit_raw_tip = None
