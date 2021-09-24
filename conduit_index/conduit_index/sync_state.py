@@ -60,7 +60,6 @@ class SyncState:
         # Not actually used by Indexer but cannot remove because it's in the shared lib
         self.target_header_height: Optional[int] = None
         self.target_block_header_height: Optional[int] = None
-        self.local_tip_height: int = self.update_local_tip_height()
         self.local_block_tip_height: int = self.get_local_block_tip_height()
         self.initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
@@ -96,14 +95,6 @@ class SyncState:
     def message_handled_count(self):
         return self._msg_handled_count
 
-    # Headers
-    def get_local_tip_height(self):
-        return self.local_tip_height
-
-    def update_local_tip_height(self) -> int:
-        self.local_tip_height = self.storage.headers.longest_chain().tip.height
-        return self.local_tip_height
-
     # Block Headers
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
@@ -112,7 +103,7 @@ class SyncState:
         return self.storage.block_headers.longest_chain().tip
 
     # ConduitRaw Headers State
-    def get_conduit_raw_header_tip(self):
+    def get_conduit_raw_header_tip(self) -> Optional[bitcoinx.Header]:
         """Needs to first have a connected headers_state_client"""
         with self.conduit_raw_header_tip_lock:
             return self.conduit_raw_header_tip

@@ -7,26 +7,28 @@ import shutil
 import threading
 from pathlib import Path
 
+import bitcoinx
 import grpc
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 
+
 try:
     from .conduit_raw_pb2 import (PingRequest, PingResponse, BlockNumberRequest, BlockNumberResponse,
-        BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-        TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-        BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
-        TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest,
-        BlockMetadataBatchedResponse)
+    BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+    TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+    BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
+    TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest, BlockMetadataBatchedResponse,
+    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse)
 
     from conduit_raw.conduit_raw.grpc_server import conduit_raw_pb2_grpc
 except ImportError:
     from conduit_raw_pb2 import (PingRequest, PingResponse, BlockNumberRequest, BlockNumberResponse,
-        BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-        TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-        BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
-        TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest,
-        BlockMetadataBatchedResponse)
+    BlockResponse, BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
+    TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+    BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
+    TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest, BlockMetadataBatchedResponse,
+    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse)
 
     import conduit_raw_pb2_grpc
 
@@ -37,10 +39,11 @@ _cleanup_coroutines = []
 
 class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
-    def __init__(self, storage_path: Path):
+    def __init__(self, storage_path: Path, block_headers: bitcoinx.Headers):
         super().__init__()
         self.logger = logging.getLogger("conduit-raw-grpc")
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
+        self.block_headers = block_headers
 
     async def Ping(self, request: PingRequest,
             context: grpc.aio.ServicerContext) -> PingResponse:
@@ -99,6 +102,34 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
             batch.append(block_size)
         return BlockMetadataBatchedResponse(batch=batch)
 
+    def _get_header_for_height(self, height: int) -> bitcoinx.Header:
+        headers = self.block_headers
+        chain = self.block_headers.longest_chain()
+        header = headers.header_at_height(chain, height)
+        return header
+
+    async def GetHeadersBatched(self, request: BlockHeadersBatchedRequest,
+            context: grpc.aio.ServicerContext) -> BlockHeadersBatchedResponse:
+        MAX_BATCH_SIZE = 2000
+        start_height = request.startHeight
+        while True:
+
+            headers_batch = []
+            for height in range(start_height, start_height + MAX_BATCH_SIZE):
+                try:
+                    header = self._get_header_for_height(height)
+                except bitcoinx.MissingHeader:
+                    break
+                headers_batch.append(header.raw)
+
+            if headers_batch:
+                break
+            else:
+                await asyncio.sleep(0.2)  # Allows client to long-poll for latest tip
+                continue
+
+        return BlockHeadersBatchedResponse(headers=headers_batch)
+
     async def server_graceful_shutdown(self):
         logging.info("Starting graceful shutdown...")
         # Shuts down the server with 0 seconds of grace period. During the
@@ -119,10 +150,10 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
         await self.server.wait_for_termination()
 
 
-def run_server_thread(loop, storage_path):
+def run_server_thread(loop, storage_path, block_headers):
     logging.basicConfig(level=logging.DEBUG)
     try:
-        server = ConduitRaw(storage_path)
+        server = ConduitRaw(storage_path, block_headers)
         loop.run_until_complete(server.serve())
     except KeyboardInterrupt:
         logging.debug("caught KeyboardInterrupt")
@@ -134,7 +165,10 @@ def run_server_thread(loop, storage_path):
 
 
 if __name__ == '__main__':
+    from conduit_lib.store import setup_headers_store
+    from conduit_lib.networks import RegTestNet
     loop = asyncio.get_event_loop()
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
-    threading.Thread(target=run_server_thread, args=(loop,storage_path)).start()
+    block_headers = setup_headers_store(RegTestNet(), "test_headers")
+    threading.Thread(target=run_server_thread, args=(loop, storage_path, block_headers)).start()

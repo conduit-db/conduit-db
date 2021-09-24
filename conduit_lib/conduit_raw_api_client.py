@@ -14,10 +14,11 @@ try:
     from conduit_lib import conduit_raw_pb2
     from conduit_lib import conduit_raw_pb2_grpc
     from conduit_lib.conduit_raw_pb2 import (BlockRequest, MerkleTreeRowRequest, MerkleTreeRowResponse,
-        BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
-        BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse,
-        TransactionOffsetsBatchedResponse, TransactionOffsetsBatchedRequest,
-        BlockMetadataBatchedResponse, BlockMetadataBatchedRequest)
+    BlockResponse, TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
+    BlockMetadataResponse, PingResponse, BlockNumberResponse, StopResponse,
+    TransactionOffsetsBatchedResponse, TransactionOffsetsBatchedRequest,
+    BlockMetadataBatchedResponse, BlockMetadataBatchedRequest, BlockHeadersBatchedRequest,
+    BlockHeadersBatchedResponse)
 except ImportError:
     import conduit_raw_pb2
     import conduit_raw_pb2_grpc
@@ -160,30 +161,47 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
+    def get_block_headers_batched(self, start_height: int=0, wait_for_ready=True, timeout=None):
+        """If end_height=0 it means give me the max batch size (2000 headers)"""
+        try:
+            response: BlockHeadersBatchedResponse = self.stub.GetHeadersBatched(
+                BlockHeadersBatchedRequest(startHeight=start_height),
+                wait_for_ready=wait_for_ready, timeout=timeout)
+
+            return response.headers
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+            else:
+                self.logger.exception(e)
+        except Exception as e:
+            raise e
+
 
 if __name__ == '__main__':
     block_hash = hex_str_to_hash("3b98a9b60e872b7328566ac1ea26608fc617d8805aabfc03ff075a7885cbe000")
 
     client = ConduitRawAPIClient()
-    print(client.ping(0))
-    response = client.get_block_num(block_hash)
-    if response:
-        print(response)
-
-    response = client.get_block(10)
-    if response:
-        print(response)
-    # print(f"len get_block response = {len(response)}")
-
-    response = client.get_mtree_row(block_hash, level=0)
-    if response:
-        print(response)
-    # print(f"len get_mtree_row response = {len(response)}")
-
-    response = client.get_tx_offsets(block_hash)
-    if response:
-        print(response)
-
-    response = client.get_block_metadata(block_hash)
-    if response:
-        print(response)
+    print(client.get_block_headers_batched(0,0))
+    # print(client.ping(0))
+    # response = client.get_block_num(block_hash)
+    # if response:
+    #     print(response)
+    #
+    # response = client.get_block(10)
+    # if response:
+    #     print(response)
+    # # print(f"len get_block response = {len(response)}")
+    #
+    # response = client.get_mtree_row(block_hash, level=0)
+    # if response:
+    #     print(response)
+    # # print(f"len get_mtree_row response = {len(response)}")
+    #
+    # response = client.get_tx_offsets(block_hash)
+    # if response:
+    #     print(response)
+    #
+    # response = client.get_block_metadata(block_hash)
+    # if response:
+    #     print(response)

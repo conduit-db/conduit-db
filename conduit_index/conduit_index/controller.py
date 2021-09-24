@@ -2,7 +2,6 @@ import asyncio
 import bitcoinx
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
 from confluent_kafka.cimpl import Consumer
-import io
 import logging
 import os
 import queue
@@ -14,7 +13,7 @@ import multiprocessing
 from pathlib import Path
 import zmq
 
-
+from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType
@@ -22,6 +21,7 @@ from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
     wait_for_conduit_raw_api
+from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
 from .batch_completion import BatchCompletionTxParser
 from .sync_state import SyncState
@@ -90,6 +90,8 @@ class Controller:
         # Database Interfaces
         self.mysql_db: Optional[MySQLDatabase] = None
 
+        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
+
         self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
 
@@ -114,7 +116,8 @@ class Controller:
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
         self.sync_state = SyncState(self.storage, self)
-        self.mysql_db: MySQLDatabase = load_mysql_database()
+        self.mysql_db = load_mysql_database()
+        self.lmdb_grpc_client = ConduitRawAPIClient()
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.mysql_db.tables.mysql_drop_mempool_table()
@@ -257,7 +260,6 @@ class Controller:
                     mined_tx_hashes.append((tx_hash.hex(), blk_height))
 
                 self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-                # Todo - maybe blk_height is fragile... use blk_hash instead
                 del self.global_tx_hashes_dict[blk_height]
 
         # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
@@ -310,16 +312,16 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-    def connect_headers(self, f) -> bool:
+    def connect_headers(self, raw_header) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         try:
-            raw_header = f.read(80)
             self.storage.headers.connect(raw_header)
             self.storage.headers.flush()
             return True
         except MissingHeader as e:
-            if str(e).find("0000000000000000000000000000000000000000000000000000000000000000") != -1:
+            if str(e).find(GENESIS_HASH_HEX) != -1 or \
+                str(e).find('0000000000000000000000000000000000000000000000000000000000000000') != -1:
                 self.logger.debug("skipping - prev_out == genesis block")
                 return True
             else:
@@ -331,29 +333,30 @@ class Controller:
     #  chain segments asynchronously later on to parallelize the CPU-bound connecting of headers.
     def drain_kafka_headers_queue(self):
 
-        conduit_raw_tip = None
+        conduit_raw_tip = self.sync_state.get_conduit_raw_header_tip()
+        deserialized_tip = None
         while True:
             try:
-                result = self.headers_state_consumer.consume(num_messages=1000, timeout=0.1)
+                start_height = 0
+                if conduit_raw_tip:
+                    start_height = conduit_raw_tip.height + 1
+
+                # Long-polling
+                result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
+                    wait_for_ready=True)
+
                 for new_tip in result:
-                    new_tip = new_tip.value()
+                    self.connect_headers(new_tip)
+
+                    # For debugging only
                     tip_hash = double_sha256(new_tip)
-                    self.connect_headers(io.BytesIO(new_tip))
-                    tip_height = self.storage.get_header_for_hash(tip_hash).height
-                    conduit_raw_tip = bitcoinx.Header(*bitcoinx.unpack_header(new_tip), tip_hash,
-                        new_tip, tip_height)
+                    deserialized_tip = self.storage.get_header_for_hash(tip_hash)
 
-                    if self.sync_state.get_local_block_tip_height() < conduit_raw_tip.height:
-                        self.logger.debug(f"new_tip.height={conduit_raw_tip.height}")
-                    else:
-                        self.logger.debug(f"ConduitIndex has already synced this tip at "
-                             f"height: {conduit_raw_tip.height} - skipping...")
-                        pass  # drain until we get to the last message (actual tip)
-
-                drained_all_msgs = not result
-                if conduit_raw_tip and drained_all_msgs:
-                    self.sync_state.set_conduit_raw_header_tip(conduit_raw_tip)
-                    return conduit_raw_tip
+                if deserialized_tip:
+                    self.sync_state.set_conduit_raw_header_tip(deserialized_tip)
+                    self.logger.debug(f"Got new tip from ConduitRaw service for "
+                                      f"parsing at height: {deserialized_tip.height}")
+                    return deserialized_tip
                 else:
                     continue
             except Exception:

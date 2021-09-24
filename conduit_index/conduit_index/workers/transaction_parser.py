@@ -412,21 +412,18 @@ class TxParser(multiprocessing.Process):
             blk_num = lmdb_grpc_client.get_block_num(blk_hash)
             # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
 
-            # if in IBD mode, mempool txs are strictly rejected. So there is no point
-            # in sorting out which txs are already in the mempool tx table.
-            # There is also no point performing mempool tx invalidation.
-
             # Todo - This is wasteful in that it is pulling the * entire * raw block when it will
             #  only need the relevant partition of the block
             raw_block = lmdb_grpc_client.get_block(blk_num)
             unprocessed_tx_offsets, processed_tx_offsets = \
                 self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_partition,
                 blk_height, mysql_db)
+
+            # This is a remnant from when I had the concept of "initial block download mode"
+            # I may need to put it back because checking the mempool table seems to be quite
+            # Costly for IBD performance
             # else:
             #     unprocessed_tx_offsets = tx_offsets_partition
-            self.logger.debug(f"unprocessed_tx_offsets={unprocessed_tx_offsets}")
-            self.logger.debug(f"blk_height={blk_height}")
-            self.logger.debug(f"raw_block={raw_block}")
 
             # Todo - I think 'processed_tx_offsets' need to be inserted to the confirmed tx table
             #  But NOT the inputs / pushdata / output rows as that is already done for the mempool

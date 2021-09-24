@@ -14,6 +14,7 @@ service ConduitRaw {
 	rpc GetTransactionOffsetsBatched (TransactionOffsetsBatchedRequest) returns (TransactionOffsetsBatchedResponse);
 	rpc GetBlockMetadata (BlockMetadataRequest) returns (BlockMetadataResponse);
 	rpc GetBlockMetadataBatched (BlockMetadataBatchedRequest) returns (BlockMetadataBatchedResponse);
+	rpc GetHeadersBatched (BlockHeadersBatchedRequest) returns (BlockHeadersBatchedResponse);
 }
 
 message PingRequest {
@@ -87,4 +88,12 @@ message BlockMetadataBatchedRequest {
 
 message BlockMetadataBatchedResponse {
 	repeated uint64 batch = 1;
+}
+
+message BlockHeadersBatchedRequest {
+	uint32 startHeight = 1;
+}
+
+message BlockHeadersBatchedResponse {
+	repeated bytes headers = 1;  // 80 byte raw header
 }

@@ -323,7 +323,7 @@ class Controller:
 
     async def start_jobs(self):
         try:
-            self.lmdb_grpc_server = ConduitRaw(Path(self.lmdb._storage_path))
+            self.lmdb_grpc_server = ConduitRaw(Path(self.lmdb._storage_path), self.storage.block_headers)
             await self.spawn_lmdb_grpc_server()
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()

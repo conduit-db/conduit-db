@@ -59,6 +59,11 @@ class ConduitRawStub(object):
                 request_serializer=conduit__raw__pb2.BlockMetadataBatchedRequest.SerializeToString,
                 response_deserializer=conduit__raw__pb2.BlockMetadataBatchedResponse.FromString,
                 )
+        self.GetHeadersBatched = channel.unary_unary(
+                '/conduit_raw.ConduitRaw/GetHeadersBatched',
+                request_serializer=conduit__raw__pb2.BlockHeadersBatchedRequest.SerializeToString,
+                response_deserializer=conduit__raw__pb2.BlockHeadersBatchedResponse.FromString,
+                )
 
 
 class ConduitRawServicer(object):
@@ -118,6 +123,12 @@ class ConduitRawServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetHeadersBatched(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ConduitRawServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -165,6 +176,11 @@ def add_ConduitRawServicer_to_server(servicer, server):
                     servicer.GetBlockMetadataBatched,
                     request_deserializer=conduit__raw__pb2.BlockMetadataBatchedRequest.FromString,
                     response_serializer=conduit__raw__pb2.BlockMetadataBatchedResponse.SerializeToString,
+            ),
+            'GetHeadersBatched': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetHeadersBatched,
+                    request_deserializer=conduit__raw__pb2.BlockHeadersBatchedRequest.FromString,
+                    response_serializer=conduit__raw__pb2.BlockHeadersBatchedResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -326,5 +342,22 @@ class ConduitRaw(object):
         return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetBlockMetadataBatched',
             conduit__raw__pb2.BlockMetadataBatchedRequest.SerializeToString,
             conduit__raw__pb2.BlockMetadataBatchedResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetHeadersBatched(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetHeadersBatched',
+            conduit__raw__pb2.BlockHeadersBatchedRequest.SerializeToString,
+            conduit__raw__pb2.BlockHeadersBatchedResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
