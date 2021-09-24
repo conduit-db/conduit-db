@@ -6,7 +6,7 @@ import logging
 import struct
 from struct import Struct
 from hashlib import sha256
-from typing import Union
+from typing import Union, List, Tuple, Set
 
 from bitcoinx import double_sha256, hash_to_hex_str
 
@@ -168,7 +168,7 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 def parse_txs(
     buffer: bytes, tx_offsets: array.array, height_or_timestamp: Union[int, str],
-        confirmed: bool, first_tx_pos_batch=0):
+        confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, Set, Set, Set]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height

@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime
 
-from typing import Tuple, List, Sequence, Optional, Dict
+from typing import Tuple, List, Sequence, Optional, Dict, Set
 
 import zmq
 from MySQLdb import _mysql
@@ -325,7 +325,7 @@ class TxParser(multiprocessing.Process):
 
     def get_processed_vs_unprocessed_tx_offsets(self, raw_block: bytes, tx_offsets: List[int],
             blk_height: int, mysql_db: MySQLDatabase) -> \
-            Tuple[List[int], Dict[bytes, int]]:
+            Tuple[List[int], List[int]]:
         """input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction"""
         try:
@@ -337,12 +337,14 @@ class TxParser(multiprocessing.Process):
             unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(
                 partition_tx_hash_rows)
 
-            relevant_offsets = []
+            not_previously_in_mempool_offsets = []
             for row in unprocessed_tx_hashes:
-                relevant_offsets.append(offsets_map.pop(row[0]))
+                not_previously_in_mempool_offsets.append(offsets_map.pop(row[0]))
 
-            relevant_offsets.sort()
-            return relevant_offsets, offsets_map
+            not_previously_in_mempool_offsets.sort()
+            previously_in_mempool_offsets = list(offsets_map.values())
+            previously_in_mempool_offsets.sort()
+            return not_previously_in_mempool_offsets, previously_in_mempool_offsets
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
             raise
@@ -419,21 +421,22 @@ class TxParser(multiprocessing.Process):
                 self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_partition,
                 blk_height, mysql_db)
 
-            # This is a remnant from when I had the concept of "initial block download mode"
-            # I may need to put it back because checking the mempool table seems to be quite
-            # Costly for IBD performance
-            # else:
-            #     unprocessed_tx_offsets = tx_offsets_partition
-
-            # Todo - I think 'processed_tx_offsets' need to be inserted to the confirmed tx table
-            #  But NOT the inputs / pushdata / output rows as that is already done for the mempool
-            #  tx - this is missing!
 
             t0 = time.time()
-            result = parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,
-                first_tx_pos_batch)
 
-            tx_rows, in_rows, out_rows, set_pd_rows = result
+
+            # These txs have no entries yet for inputs, pushdata or output tables
+            rows_not_previously_in_mempool: Tuple[List, Set, Set, Set] = \
+                parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,
+                first_tx_pos_batch)
+            tx_rows, in_rows, out_rows, set_pd_rows = rows_not_previously_in_mempool
+
+            # These txs already have entries for inputs, pushdata or output tables
+            rows_previously_in_mempool = parse_txs(raw_block, processed_tx_offsets, blk_height, True,
+                first_tx_pos_batch)
+            tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
+            tx_rows.extend(tx_rows_now_confirmed)
+
             t1 = time.time() - t0
             self.total_tx_parse_time += t1
             if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec

@@ -59,10 +59,7 @@ class BatchCompletionRaw(threading.Thread):
             try:
                 blocks_batch_set = self.blocks_batch_set_queue_raw.get()
                 self.wait_for_batch_completion(blocks_batch_set)
-                if batch_id == 0:
-                    self.logger.debug(f"ACKs for initial block download received")
-                else:
-                    self.logger.debug(f"ACKs for batch {batch_id} received")
+                self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)
@@ -105,10 +102,7 @@ class BatchCompletionMtree(threading.Thread):
             try:
                 blocks_batch_set = self.blocks_batch_set_queue_mtree.get()
                 self.wait_for_batch_completion(blocks_batch_set)
-                if batch_id == 0:
-                    self.logger.debug(f"ACKs for initial block download received")
-                else:
-                    self.logger.debug(f"ACKs for batch {batch_id} received")
+                self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)
@@ -151,10 +145,7 @@ class BatchCompletionPreprocessor(threading.Thread):
             try:
                 blocks_batch_set = self.blocks_batch_set_queue_preproc.get()
                 self.wait_for_batch_completion(blocks_batch_set)
-                if batch_id == 0:
-                    self.logger.debug(f"ACKs for initial block download received")
-                else:
-                    self.logger.debug(f"ACKs for batch {batch_id} received")
+                self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)

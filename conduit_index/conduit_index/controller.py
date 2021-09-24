@@ -142,6 +142,8 @@ class Controller:
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
             await self.start_jobs()
+            # Allow time for TxParsers to bind to the zmq socket to distribute load evenly
+            time.sleep(2)
             while True:
                 await asyncio.sleep(0.5)
         except Exception:
@@ -221,6 +223,7 @@ class Controller:
             self.mysql_db: MySQLDatabase = self.storage.mysql_database
             self.maybe_rollback()
             self.start_workers()
+            # Allow time for TxParser workers to bind to ZMQ socket...
             await self.spawn_sync_all_blocks_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
@@ -328,11 +331,7 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
-    # Todo - change from kafka-based to gRPC (batched) long-polling - makes far more sense here
-    #  and avoids any potential for out-of-order messages. Could even request multiple contiguous
-    #  chain segments asynchronously later on to parallelize the CPU-bound connecting of headers.
-    def drain_kafka_headers_queue(self):
-
+    def long_poll_conduit_raw_chain_tip(self):
         conduit_raw_tip = self.sync_state.get_conduit_raw_header_tip()
         deserialized_tip = None
         while True:
@@ -360,7 +359,7 @@ class Controller:
                 else:
                     continue
             except Exception:
-                self.logger.exception("unexpected exception in drain_kafka_headers_queue")
+                self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
 
 
@@ -414,9 +413,12 @@ class Controller:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
                 conduit_raw_tip = await self.loop.run_in_executor(
-                    self.headers_state_consumer_executor, self.drain_kafka_headers_queue)
+                    self.headers_state_consumer_executor, self.long_poll_conduit_raw_chain_tip)
 
-                self.logger.debug(f"new conduit_raw header tip height: {conduit_raw_tip.height}")
+                deficit = conduit_raw_tip.height - self.sync_state.get_local_block_tip_height()
+                self.logger.debug(f"Conduit tip height: {conduit_raw_tip.height}. "
+                                  f"Local tip height: {self.sync_state.get_local_block_tip_height()} "
+                                  f"(deficit={deficit})")
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 

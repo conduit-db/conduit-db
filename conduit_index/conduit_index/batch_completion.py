@@ -69,10 +69,7 @@ class BatchCompletionTxParser(threading.Thread):
             try:
                 blocks_batch_set = self.tx_parser_completion_queue.get()
                 self.wait_for_batch_completion(blocks_batch_set)
-                if batch_id == 0:
-                    self.logger.debug(f"ACKs for initial block download received")
-                else:
-                    self.logger.debug(f"ACKs for batch {batch_id} received")
+                self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)
