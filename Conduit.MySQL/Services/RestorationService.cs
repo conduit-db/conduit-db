@@ -18,6 +18,44 @@ namespace Conduit.MySQL.Services
             this.database = database;
         }
 
+        public uint GetTransactionHeightSync(byte[] transactionHash)
+        {
+            database.Connection.Open();
+
+            using (var command = new MySqlCommand())
+            {
+                command.Parameters.AddWithValue("@tx_hash", transactionHash);
+                command.CommandText = "SELECT tx_height FROM confirmed_transactions WHERE tx_hash=@tx_hash";
+                command.Connection = database.Connection;
+
+                using (var reader = command.ExecuteReader())
+                {
+                    if (!reader.Read())
+                        return uint.MaxValue;
+                    return reader.GetUInt32(0);
+                }
+            }
+        }
+
+        public async Task<uint> GetTransactionHeight(byte[] transactionHash)
+        {
+            await database.Connection.OpenAsync();
+
+            using (var command = new MySqlCommand())
+            {
+                command.Parameters.AddWithValue("@tx_hash", transactionHash);
+                command.CommandText = "SELECT tx_height FROM confirmed_transactions WHERE tx_hash=@tx_hash";
+                command.Connection = database.Connection;
+
+                using (var reader = await command.ExecuteReaderAsync())
+                {
+                    if (!await reader.ReadAsync())
+                        return uint.MaxValue;
+                    return reader.GetUInt32(0);
+                }
+            }
+        }
+
         public async Task<List<PushDataFilterMatch>> GetPushDataFilterMatches(PushDataFilter pushDataFilter)
         {
             List<PushDataFilterMatch> results = new();

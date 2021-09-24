@@ -10,18 +10,48 @@ using Xunit.Abstractions;
 
 namespace Conduit.Test.Conduit.MySQL
 {
-    public class TestRestorationService : IDisposable
+    public class DatabaseHelper: IDisposable
+    {
+        private readonly string _connectionString = "server=127.0.0.1;user id=conduitadmin;password=conduitpass;port=52525;database=conduitdb;";
+        private bool _isTipPresent;
+
+        public DatabaseHelper()
+        {
+            using (var database = new ApplicationDatabase(_connectionString))
+            {
+                var service = new RestorationService(database);
+                var transactionHash = Convert.FromHexString("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6").Reverse().ToArray();
+                var transactionHeight = service.GetTransactionHeightSync(transactionHash);
+                _isTipPresent = transactionHeight == 115;
+            }
+        }
+
+        public bool FoundValidChain { get { return _isTipPresent;  } }
+
+        public ApplicationDatabase ApplicationDatabase {
+            get {
+                return new ApplicationDatabase(_connectionString);
+            }
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    public class TestRestorationService : IClassFixture<DatabaseHelper>, IDisposable
     {
         private XunitLogger<RestorationService> _logger;
         private ApplicationDatabase _database;
         private IRestorationService _service;
+        private DatabaseHelper _dbHelper;
 
-        public TestRestorationService(ITestOutputHelper output)
+        public TestRestorationService(ITestOutputHelper output, DatabaseHelper dbHelper)
         {
             _logger = new XunitLogger<RestorationService>(output);
+            _dbHelper = dbHelper;
 
-            var connectionString = "server=127.0.0.1;user id=conduitadmin;password=conduitpass;port=52525;database=conduitdb;";
-            _database = new ApplicationDatabase(connectionString);
+            _database = dbHelper.ApplicationDatabase;
             _service = new RestorationService(_database);
         }
 
@@ -31,6 +61,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestNonMatch()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter
             {
                 FilterKeys = new List<byte[]> {
@@ -47,6 +79,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestP2PK()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter
             {
                 FilterKeys = new List<byte[]> {
@@ -69,6 +103,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestP2PKH()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter
             {
                 FilterKeys = new List<byte[]> {
@@ -91,6 +127,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestP2SH()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter {
                 FilterKeys = new List<byte[]> {
                     // This is the SHA256 checksum of the hash160 of the P2SH address '2N5338aAPYmKM59AKpvxDB6FRAnGNXRsfBp'.
@@ -112,6 +150,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestP2MS1()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter
             {
                 FilterKeys = new List<byte[]> {
@@ -134,6 +174,8 @@ namespace Conduit.Test.Conduit.MySQL
         [Fact]
         public async void TestP2MS2()
         {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
             var results = await _service.GetPushDataFilterMatches(new PushDataFilter
             {
                 FilterKeys = new List<byte[]> {
