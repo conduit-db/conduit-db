@@ -33,7 +33,10 @@ namespace Conduit.MySQL.Services
                     parameterNames[i] = string.Format("@h{0}", i);
                     command.Parameters.AddWithValue(parameterNames[i], pushDataFilter.FilterKeys[i]);
                 }
-                command.CommandText = string.Format("SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx FROM pushdata PD LEFT JOIN inputs_table IT ON PD.tx_hash=IT.out_tx_hash AND PD.ref_type=0 WHERE PD.pushdata_hash IN ({0})", string.Join(",", parameterNames));
+                command.CommandText = string.Format(
+                    "SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx FROM pushdata PD "+
+                    "LEFT JOIN inputs_table IT ON PD.tx_hash=IT.out_tx_hash AND PD.idx=IT.out_idx AND PD.ref_type=0 "+
+                    "WHERE PD.pushdata_hash IN ({0})", string.Join(",", parameterNames));
                 command.Connection = database.Connection;
 
                 using (var reader = await command.ExecuteReaderAsync())
