@@ -25,8 +25,8 @@ class MySQLBulkLoads:
         else:
             self.logger = logging.getLogger(f"mysql-tables")
         self.mysql_conn = mysql_conn
-        self.logger.setLevel(PROFILING)
-        # self.logger.setLevel(logging.DEBUG)
+        # self.logger.setLevel(PROFILING)
+        self.logger.setLevel(logging.DEBUG)
         self.total_db_time = 0
         self.total_rows_flushed_since_startup = 0  # for current controller
         self.newline_symbol = r"'\r\n'" if sys.platform == 'win32' else r"'\n'"

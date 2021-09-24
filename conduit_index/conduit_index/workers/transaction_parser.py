@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime
 
-from typing import Tuple, List, Sequence, Optional, Dict, Set
+from typing import Tuple, List, Sequence, Optional, Dict
 
 import zmq
 from MySQLdb import _mysql
@@ -25,6 +25,21 @@ try:
     from conduit_lib._algorithms import calc_mtree_base_level, parse_txs
 except ImportError:
     from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
+
+
+def extend_batched_rows(blk_rows: Tuple[List, List, List, List], txs: List, ins: List, outs: List,
+        pds: List) -> Tuple[List, List, List, List]:
+    tx_rows, in_rows, out_rows, set_pd_rows = blk_rows
+    txs.extend(tx_rows)
+    ins.extend(in_rows)
+    outs.extend(out_rows)
+    pds.extend(set_pd_rows)
+    return txs, ins, outs, pds
+
+
+def append_acks(blk_acks, acks: List) -> List:
+    acks.append(blk_acks)
+    return acks
 
 
 class TxParser(multiprocessing.Process):
@@ -54,39 +69,22 @@ class TxParser(multiprocessing.Process):
         self.mysql = None
         self.loop = None
 
-        # batched confirmed rows
-        self.confirmed_batched_tx_rows = []
-        self.confirmed_batched_in_rows = []
-        self.confirmed_batched_out_rows = []
-        self.confirmed_batched_set_pd_rows = []
-        self.confirmed_batched_block_acks = []
-
-        # batched rows
-        self.mempool_batched_tx_rows = []
-        self.mempool_batched_in_rows = []
-        self.mempool_batched_out_rows = []
-        self.mempool_batched_set_pd_rows = []
-        self.mempool_batched_mempool_tx_acks = []
-
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
         # TODO - during initial block download - should NOT rely on a timeout at all
         #  Should just keep on pumping the entire batch of blocks as fast as possible to
         #  Max out CPU.
         #  This ideally requires reliable PUB/SUB to do properly
-        self.CONFIRMED_MAX_TX_BATCH_SIZE = 200_000
-        self.CONFIRMED_BATCHED_MAX_WAIT_TIME = 0.3
-        self.MEMPOOL_MAX_TX_BATCH_SIZE = 2000
-        self.MEMPOOL_BATCHED_MAX_WAIT_TIME = 0.1
+        self.BLOCKS_MAX_TX_BATCH_LIMIT = 200_000
+        self.BLOCK_BATCHING_RATE = 0.3
+        self.MEMPOOL_MAX_TX_BATCH_LIMIT = 2000
+        self.MEMPOOL_BATCHING_RATE = 0.1
 
-        self.total_tx_parse_time = 0
+        self.total_unprocessed_tx_sorting_time = 0
         self.last_time = 0
+        self.grpc_time = 0
+        self.last_grpc_time = 0
 
     def run(self):
-        # IPC from Controller to TxParser
-        context1 = zmq.Context()
-        self.mined_tx_socket = context1.socket(zmq.PULL)
-        self.mined_tx_socket.connect("tcp://127.0.0.1:55555")
-
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context()
         self.kill_worker_socket = context3.socket(zmq.SUB)
@@ -126,44 +124,6 @@ class TxParser(multiprocessing.Process):
         for t in threads:
             t.join()
 
-    # ----- CONFIRMED TXS ----- #
-
-    def reset_batched_rows_confirmed(self):
-        self.confirmed_batched_tx_rows = []
-        self.confirmed_batched_in_rows = []
-        self.confirmed_batched_out_rows = []
-        self.confirmed_batched_set_pd_rows = []
-        self.confirmed_batched_block_acks = []
-
-    def extend_batched_rows_confirmed(self, blk_rows):
-        tx_rows, in_rows, out_rows, set_pd_rows = blk_rows
-        self.confirmed_batched_tx_rows.extend(tx_rows)
-        self.confirmed_batched_in_rows.extend(in_rows)
-        self.confirmed_batched_out_rows.extend(out_rows)
-        self.confirmed_batched_set_pd_rows.extend(set_pd_rows)
-
-    def append_acks_confirmed_txs(self, blk_acks):
-        self.confirmed_batched_block_acks.append(blk_acks)
-
-    # ----- MEMPOOL TXS ----- #
-
-    def reset_batched_rows_mempool(self):
-        self.mempool_batched_tx_rows = []
-        self.mempool_batched_in_rows = []
-        self.mempool_batched_out_rows = []
-        self.mempool_batched_set_pd_rows = []
-        self.confirmed_batched_block_acks = []
-
-    def extend_batched_rows_mempool(self, mempool_rows):
-        tx_rows, in_rows, out_rows, set_pd_rows = mempool_rows
-        self.mempool_batched_tx_rows.extend(tx_rows)
-        self.mempool_batched_in_rows.extend(in_rows)
-        self.mempool_batched_out_rows.extend(out_rows)
-        self.mempool_batched_set_pd_rows.extend(set_pd_rows)
-
-    def append_acks_mempool_txs(self, mempool_tx_acks):
-        self.mempool_batched_mempool_tx_acks.append(mempool_tx_acks)
-
     # ------------------------------------------------- #
 
     # Todo - A late-arriving mempool tx could theoretically cause duplicate
@@ -185,6 +145,7 @@ class TxParser(multiprocessing.Process):
                     # for blk_hash, tx_count in acks:
                     #     self.logger.debug(f"pre-flush block hash={hash_to_hex_str(blk_hash)}, "
                     #                       f"with tx_count={tx_count}")
+
                     mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
                         mysql_db)
@@ -196,67 +157,60 @@ class TxParser(multiprocessing.Process):
                         self.worker_ack_queue_tx_parse_confirmed.put((self.worker_id, blk_hash,
                             tx_count))
 
-                    # After each block that is fully ACK'd -> atomically..
+                    # After each block (or batch of blocks) that is fully ACK'd -> atomically..
                     # 1) invalidate mempool rows
                     # 2) update api tip height
-                    # This is done via a global cache of mined txshashes to join with mempool db table
 
-                    self.reset_batched_rows_confirmed()
+                    # This is done via a table join of the mempool with a temporary table of
+                    # the mined tx hashes for this block (or batch of blocks)
+
+                    # The allocate work -> ack -> invalidate mempool cycle spans all worker
+                    # spans all worker processes. They must all ack for all allocated work
+                    # to satisfy the controller
 
                 else:
                     mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
                         mysql_db)
-                    # Todo - drain - self.mempool_batched_mempool_tx_acks when done and send to
-                    #  controller
+
+                    # Todo - ACKs for mempool txs back to the controller + check for them in the
+                    #  controller.
                     # for tx_count in acks:
                     # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
-
-                    self.reset_batched_rows_mempool()
 
             except _mysql.IntegrityError as e:
                 self.logger.exception(f"IntegrityError: {e}")
                 raise
 
     def mysql_insert_confirmed_tx_rows_thread(self):
+        txs, ins, outs, pds, acks = [], [], [], [], []
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
                 try:
                     # Pre-IBD do large batched flushes
                     confirmed_rows = self.confirmed_tx_flush_queue.get(
-                        timeout=self.CONFIRMED_BATCHED_MAX_WAIT_TIME)
+                        timeout=self.BLOCK_BATCHING_RATE)
                     if not confirmed_rows:  # poison pill
                         break
-                    block_acks = self.confirmed_tx_flush_ack_queue.get()
-                    self.extend_batched_rows_confirmed(confirmed_rows)
-                    self.append_acks_confirmed_txs(block_acks)
 
-                    if len(self.confirmed_batched_tx_rows) > self.CONFIRMED_MAX_TX_BATCH_SIZE:
-                        # self.logger.debug("hit max tx batch size...")
-                        self.mysql_flush_rows(
-                            self.confirmed_batched_tx_rows,
-                            self.confirmed_batched_in_rows,
-                            self.confirmed_batched_out_rows,
-                            self.confirmed_batched_set_pd_rows,
-                            self.confirmed_batched_block_acks,
-                            confirmed=True,
-                            mysql_db=mysql_db
-                        )
+                    block_acks = self.confirmed_tx_flush_ack_queue.get()
+
+                    txs, ins, outs, pds = extend_batched_rows(confirmed_rows, txs, ins, outs,
+                        pds)
+                    acks = append_acks(block_acks, acks)
+
+                    if len(txs) > self.BLOCKS_MAX_TX_BATCH_LIMIT:
+                        self.mysql_flush_rows(txs, ins, outs, pds, acks,
+                            confirmed=True, mysql_db=mysql_db)
+                        txs, inputs, outs, pds, acks = [], [], [], [], []
 
                 # Post-IBD
                 except queue.Empty:
-                    # self.logger.debug("timed out...")
-                    if len(self.confirmed_batched_tx_rows) != 0:
-                        self.mysql_flush_rows(
-                            self.confirmed_batched_tx_rows,
-                            self.confirmed_batched_in_rows,
-                            self.confirmed_batched_out_rows,
-                            self.confirmed_batched_set_pd_rows,
-                            self.confirmed_batched_block_acks,
-                            confirmed=True,
-                            mysql_db=mysql_db
-                        )
+                    if len(txs) != 0:
+                        self.mysql_flush_rows(txs, ins, outs, pds, acks, confirmed=True,
+                            mysql_db=mysql_db)
+                        txs, ins, outs, pds, acks = [], [], [], [], []
                     continue
 
         except Exception as e:
@@ -266,46 +220,33 @@ class TxParser(multiprocessing.Process):
             mysql_db.close()
 
     def mysql_insert_mempool_tx_rows_thread(self):
+        txs, ins, outs, pds, acks = [], [], [], [], []
+        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
-            mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             while True:
                 try:
                     mempool_rows = self.mempool_tx_flush_queue.get(
-                        timeout=self.MEMPOOL_BATCHED_MAX_WAIT_TIME)
+                        timeout=self.MEMPOOL_BATCHING_RATE)
                     if not mempool_rows:  # poison pill
                         break
                     mempool_tx_acks = self.mempool_tx_flush_ack_queue.get()
-                    self.extend_batched_rows_mempool(mempool_rows)
-                    self.append_acks_mempool_txs(mempool_tx_acks)
+                    txs, ins, outs, pds = extend_batched_rows(mempool_rows, txs, ins, outs, pds)
+                    append_acks(mempool_tx_acks, acks)
+
+                    if len(txs) > self.MEMPOOL_MAX_TX_BATCH_LIMIT - 1:
+                        self.logger.debug(f"hit max mempool batch size ({len(txs)})")
+                        self.mysql_flush_rows(txs, ins, outs, pds, acks, confirmed=False,
+                            mysql_db=mysql_db)
+                        txs, ins, outs, pds, acks = [], [], [], [], []
+
                 except queue.Empty:
                     # self.logger.debug("mempool batch timer triggered")
-                    if len(self.mempool_batched_tx_rows) != 0:
-                        self.mysql_flush_rows(
-                            self.mempool_batched_tx_rows,
-                            self.mempool_batched_in_rows,
-                            self.mempool_batched_out_rows,
-                            self.mempool_batched_set_pd_rows,
-                            self.mempool_batched_mempool_tx_acks,
-                            confirmed=False,
-                            mysql_db=mysql_db
-                        )
+                    if len(txs) != 0:
+                        self.mysql_flush_rows(txs, ins, outs, pds, acks, confirmed=False,
+                            mysql_db=mysql_db)
+                        txs, ins, outs, pds, acks = [], [], [], [], []
                     continue
 
-                # This is not in the "try block" because I wasn't sure if it would be atomic
-                # i.e. what if it times out half-way through committing rows to the db?
-                if len(self.mempool_batched_tx_rows) > self.MEMPOOL_MAX_TX_BATCH_SIZE - 1:
-                    self.logger.debug(
-                        f"hit max mempool batch size ({len(self.mempool_batched_tx_rows)})"
-                    )
-                    self.mysql_flush_rows(
-                        self.mempool_batched_tx_rows,
-                        self.mempool_batched_in_rows,
-                        self.mempool_batched_out_rows,
-                        self.mempool_batched_set_pd_rows,
-                        self.mempool_batched_mempool_tx_acks,
-                        confirmed=False,
-                        mysql_db=mysql_db
-                    )
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -315,7 +256,7 @@ class TxParser(multiprocessing.Process):
     def get_block_partition_tx_hashes(self, raw_block, tx_offsets) -> Tuple[List[bytes],
             List[Tuple]]:
         """Returns both a list of tx hashes and list of tuples containing tx hashes (the same
-        data) ready for database insertion"""
+        data ready for database insertion)"""
         partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block,
             tx_offsets)[0]
         tx_hash_rows = []
@@ -323,28 +264,61 @@ class TxParser(multiprocessing.Process):
             tx_hash_rows.append((full_tx_hash.hex(),))
         return partition_tx_hashes, tx_hash_rows
 
-    def get_processed_vs_unprocessed_tx_offsets(self, raw_block: bytes, tx_offsets: List[int],
-            blk_height: int, mysql_db: MySQLDatabase) -> \
-            Tuple[List[int], List[int]]:
-        """input rows, output rows and pushdata rows must not be inserted again if this has
-        already occurred for the mempool transaction"""
+    def get_processed_vs_unprocessed_tx_offsets(self, merged_offsets_map: Dict[bytes, int],
+            merged_tx_to_block_num_map: Dict[bytes, int],
+            partition_tx_hash_rows, mysql_db: MySQLDatabase) \
+                -> Tuple[Dict[int, List[int]], Dict[int, List[int]]]:
+        """
+        input rows, output rows and pushdata rows must not be inserted again if this has
+        already occurred for the mempool transaction hence we calculate which category each tx
+        belongs in before parsing the transactions (This was a design decision to allow for
+        most of the "heavy lifting" to be done on the mempool txs so that when the confirmation
+        comes, the additional work the db has to do is fairly minimal - this should lead to a
+        more responsive end user experience).
+
+        It's a 'merged' offsets map because it has tx_hashes from potentially many blocks. Batching
+        is critically important with this particular MySQL query (for performance reasons)
+
+        Returns a map of {blk_num: offsets} for:
+            a) not_in_mempool_offsets
+            b) in_mempool_offsets
+        """
+        not_in_mempool_offsets = {}
+        in_mempool_offsets = {}
+
         try:
-            partition_tx_hashes, partition_tx_hash_rows = self.get_block_partition_tx_hashes(
-                raw_block, tx_offsets)
-            self.worker_ack_queue_mined_tx_hashes.put({blk_height: partition_tx_hashes})
+            # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
+            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(partition_tx_hash_rows)
 
-            offsets_map: Dict[bytes, int] = dict(zip(partition_tx_hashes, tx_offsets))
-            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(
-                partition_tx_hash_rows)
 
-            not_previously_in_mempool_offsets = []
             for row in unprocessed_tx_hashes:
-                not_previously_in_mempool_offsets.append(offsets_map.pop(row[0]))
+                tx_hash = row[0]
+                tx_offset = merged_offsets_map.pop(tx_hash)  # pop the non-mempool txs out
+                blk_num = merged_tx_to_block_num_map[tx_hash]
 
-            not_previously_in_mempool_offsets.sort()
-            previously_in_mempool_offsets = list(offsets_map.values())
-            previously_in_mempool_offsets.sort()
-            return not_previously_in_mempool_offsets, previously_in_mempool_offsets
+                has_block_num = not_in_mempool_offsets.get(blk_num)
+                if not has_block_num:  # init empty array of offsets
+                    not_in_mempool_offsets[blk_num] = []
+                not_in_mempool_offsets[blk_num].append(tx_offset)
+
+            # left-overs are mempool txs
+            for tx_hash, tx_offset in merged_offsets_map:
+                blk_num = merged_tx_to_block_num_map[tx_hash]
+
+                has_block_num = in_mempool_offsets.get(blk_num)
+                if not has_block_num:  # init empty array of offsets
+                    in_mempool_offsets[blk_num] = []
+                in_mempool_offsets[blk_num].append(tx_offset)
+
+
+            # Remember to sort the offsets!
+            for blk_num in not_in_mempool_offsets:
+                not_in_mempool_offsets[blk_num].sort()
+
+            for blk_num in in_mempool_offsets:
+                in_mempool_offsets[blk_num].sort()
+
+            return not_in_mempool_offsets, in_mempool_offsets
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
             raise
@@ -375,7 +349,7 @@ class TxParser(multiprocessing.Process):
                     dt = datetime.utcnow()
                     tx_offsets = array.array("Q", [0])
                     timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    result = parse_txs(rawtx, tx_offsets, timestamp, False)
+                    result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
                     tx_rows, in_rows, out_rows, set_pd_rows = result
 
                     # todo - batch up mempool txs before feeding them into the queue.
@@ -390,82 +364,124 @@ class TxParser(multiprocessing.Process):
             if iterate() == "stop":
                 break
 
-    def mined_blocks_thread(self):
+    def process_block_partitions(self, batch: List[bytes], lmdb_grpc_client: ConduitRawAPIClient,
+            mysql_db: MySQLDatabase):
 
-        def iterate(self):
-            packed_msg = self.mined_tx_socket.recv()
-            if not packed_msg:
-                return  # poison pill stop command
+        acks = []
 
-            # self.logger.debug(f"len(packed_msg)={len(packed_msg)}")
-
+        # Merge into big data structures for batch-wise processing
+        merged_offsets_map: Dict[bytes: List[int]] = {}       # tx_hash: byte offsets in block
+        merged_tx_to_block_num_map: Dict[bytes, int] = {}     # tx_hash: block_num
+        merged_partition_tx_hash_rows = []
+        batched_raw_blocks = []
+        for packed_msg in batch:
             msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
             msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
                 packed_array = struct.unpack(f"<II32sIIQ{len_arr}s", packed_msg)
-
-            if hash_to_hex_str(blk_hash) == \
-                    "00000000000005dd95107801c8429403e3690435dbc3a919b21ba03387405470":
-                self.logger.debug(f"got from queue: blk_height={blk_height}; blk_hash="
-                                  f"{hash_to_hex_str(blk_hash)}; size_array={len_arr}")
-
             tx_offsets_partition = array.array("Q", packed_array)
 
-            # self.logger.debug(f"self.lmdb_grpc_client.get_block_num() where blk_hash={blk_hash}")
-            blk_num = lmdb_grpc_client.get_block_num(blk_hash)
-            # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
-
+            t0 = time.time()
             # Todo - This is wasteful in that it is pulling the * entire * raw block when it will
             #  only need the relevant partition of the block
+            blk_num = lmdb_grpc_client.get_block_num(blk_hash)
             raw_block = lmdb_grpc_client.get_block(blk_num)
-            unprocessed_tx_offsets, processed_tx_offsets = \
-                self.get_processed_vs_unprocessed_tx_offsets(raw_block, tx_offsets_partition,
-                blk_height, mysql_db)
+            tdiff = time.time() - t0
+            self.grpc_time += tdiff
+            # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
+            partition_tx_hashes, partition_tx_hash_rows = self.get_block_partition_tx_hashes(
+                raw_block, tx_offsets_partition)
 
 
-            t0 = time.time()
+            # Merge into big data structures
+            merged_partition_tx_hash_rows.extend(partition_tx_hash_rows)
+            merged_offsets_map.update(dict(zip(partition_tx_hashes, tx_offsets_partition)))
+            for tx_hash in partition_tx_hashes:
+                merged_tx_to_block_num_map[tx_hash] = blk_num
 
+            batched_raw_blocks.append((raw_block, blk_num, blk_height, first_tx_pos_batch))
+            acks.append((blk_height, blk_hash, partition_tx_hashes))
 
+        t0 = time.time()
+
+        non_mempool_tx_offsets, mempool_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(
+            merged_offsets_map, merged_tx_to_block_num_map, merged_partition_tx_hash_rows, mysql_db)
+
+        t1 = time.time() - t0
+
+        self.total_unprocessed_tx_sorting_time += t1
+        if self.total_unprocessed_tx_sorting_time - self.last_time > 1:  # show every 1 cumulative sec
+            self.last_time = self.total_unprocessed_tx_sorting_time
+            self.logger.debug(f"total unprocessed tx sorting time: "
+                              f"{self.total_unprocessed_tx_sorting_time} seconds")
+
+        for raw_block, blk_num, blk_height, first_tx_pos_batch in batched_raw_blocks:
             # These txs have no entries yet for inputs, pushdata or output tables
-            rows_not_previously_in_mempool: Tuple[List, Set, Set, Set] = \
-                parse_txs(raw_block, unprocessed_tx_offsets, blk_height, True,
-                first_tx_pos_batch)
+            rows_not_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block,
+                non_mempool_tx_offsets[blk_num], blk_height, True, first_tx_pos_batch)
             tx_rows, in_rows, out_rows, set_pd_rows = rows_not_previously_in_mempool
 
-            # These txs already have entries for inputs, pushdata or output tables
-            rows_previously_in_mempool = parse_txs(raw_block, processed_tx_offsets, blk_height, True,
-                first_tx_pos_batch)
-            tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
-            tx_rows.extend(tx_rows_now_confirmed)
+            # Mempool txs already have entries for inputs, pushdata or output tables so we handle
+            # them differently
+            have_mempool_txs = mempool_tx_offsets.get(blk_num)
+            if have_mempool_txs:
+                rows_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block,
+                    mempool_tx_offsets[blk_num], blk_height, True, first_tx_pos_batch)
+                tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
+                tx_rows.extend(tx_rows_now_confirmed)
 
-            t1 = time.time() - t0
-            self.total_tx_parse_time += t1
-            if self.total_tx_parse_time - self.last_time > 1:  # show every 1 cumulative sec
-                self.last_time = self.total_tx_parse_time
-                self.logger.debug(f"total time for tx parsing algorithm: "
-                                  f"{self.total_tx_parse_time} seconds")
+            if self.grpc_time - self.last_grpc_time > 0.5:  # show every 1 cumulative sec
+                self.last_grpc_time = self.grpc_time
+                self.logger.debug(f"total time for grpc calls={self.grpc_time}")
 
-            num_txs = len(tx_offsets_partition)
+
             self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-            # self.logger.debug(f"putting to ack queue... blk_hash={blk_hash}, num_txs={num_txs}")
-            self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
 
+        for blk_height, blk_hash, partition_tx_hashes in acks:
+            num_txs = len(partition_tx_hashes)
+            self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
+            self.worker_ack_queue_mined_tx_hashes.put({blk_height: partition_tx_hashes})
+
+    def mined_blocks_thread(self):
+        batch = []
+        prev_time_check = time.time()
+
+        context: zmq.Context = zmq.Context()
+        mined_tx_socket: zmq.Socket = context.socket(zmq.PULL)
+        mined_tx_socket.connect("tcp://127.0.0.1:55555")
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             lmdb_grpc_client = ConduitRawAPIClient()
             while True:
-                if iterate(self) == "stop":
-                    break
-
+                try:
+                    if mined_tx_socket.poll(100, zmq.POLLIN):
+                        packed_msg = mined_tx_socket.recv(zmq.NOBLOCK)
+                        if not packed_msg:
+                            return  # poison pill stop command
+                        batch.append(bytes(packed_msg))
+                    else:
+                        time_diff = time.time() - prev_time_check
+                        if time_diff > self.BLOCK_BATCHING_RATE:
+                            prev_time_check = time.time()
+                            if batch:
+                                self.process_block_partitions(batch, lmdb_grpc_client, mysql_db)
+                            batch = []
+                except zmq.error.Again:
+                    self.logger.debug(f"zmq.error.Again")
+                    continue
         except KeyboardInterrupt:
             raise
         except Exception as e:
             self.logger.exception(e)
+        finally:
+            self.logger.info("Closing mined_blocks_thread")
+            mined_tx_socket.close()
+            context.term()
 
     def main_thread(self):
         try:
             threads = [
                 threading.Thread(target=self.mempool_thread, daemon=True),
-                threading.Thread(target=self.mined_blocks_thread, daemon=True)
+                threading.Thread(target=self.mined_blocks_thread, daemon=True),
             ]
             for t in threads:
                 t.start()

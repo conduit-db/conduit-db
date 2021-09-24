@@ -92,6 +92,7 @@ message BlockMetadataBatchedResponse {
 
 message BlockHeadersBatchedRequest {
 	uint32 startHeight = 1;
+	uint32 batchSize = 2;
 }
 
 message BlockHeadersBatchedResponse {

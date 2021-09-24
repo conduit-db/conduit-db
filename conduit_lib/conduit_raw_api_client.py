@@ -161,11 +161,12 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
-    def get_block_headers_batched(self, start_height: int=0, wait_for_ready=True, timeout=None):
-        """If end_height=0 it means give me the max batch size (2000 headers)"""
+    def get_block_headers_batched(self, start_height: int=0, batch_size: int=500,
+            wait_for_ready=True, timeout=None):
+        """If end_height=0 it means give me the max batch size (500 headers)"""
         try:
             response: BlockHeadersBatchedResponse = self.stub.GetHeadersBatched(
-                BlockHeadersBatchedRequest(startHeight=start_height),
+                BlockHeadersBatchedRequest(startHeight=start_height, batchSize=batch_size),
                 wait_for_ready=wait_for_ready, timeout=timeout)
 
             return response.headers
@@ -182,7 +183,7 @@ if __name__ == '__main__':
     block_hash = hex_str_to_hash("3b98a9b60e872b7328566ac1ea26608fc617d8805aabfc03ff075a7885cbe000")
 
     client = ConduitRawAPIClient()
-    print(client.get_block_headers_batched(0,0))
+    print(client.get_block_headers_batched(start_height=0, batch_size=500))
     # print(client.ping(0))
     # response = client.get_block_num(block_hash)
     # if response:

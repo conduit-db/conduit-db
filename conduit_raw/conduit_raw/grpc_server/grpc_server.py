@@ -110,12 +110,11 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetHeadersBatched(self, request: BlockHeadersBatchedRequest,
             context: grpc.aio.ServicerContext) -> BlockHeadersBatchedResponse:
-        MAX_BATCH_SIZE = 2000
         start_height = request.startHeight
+        batch_size = request.batchSize
         while True:
-
             headers_batch = []
-            for height in range(start_height, start_height + MAX_BATCH_SIZE):
+            for height in range(start_height, start_height + batch_size):
                 try:
                     header = self._get_header_for_height(height)
                 except bitcoinx.MissingHeader:

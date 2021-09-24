@@ -167,8 +167,8 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: array.array, height_or_timestamp: Union[int, str],
-        confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, Set, Set, Set]:
+    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str],
+        confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, List, List, List]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
@@ -287,7 +287,7 @@ def parse_txs(
             else:
                 tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
         assert len(tx_rows) == count_txs
-        return tx_rows, in_rows, out_rows, set_pd_rows
+        return tx_rows, list(in_rows), list(out_rows), list(set_pd_rows)
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "

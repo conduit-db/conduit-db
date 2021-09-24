@@ -332,6 +332,7 @@ class Controller:
                 raise
 
     def long_poll_conduit_raw_chain_tip(self):
+        MAX_BATCH_SIZE = 500
         conduit_raw_tip = self.sync_state.get_conduit_raw_header_tip()
         deserialized_tip = None
         while True:
@@ -342,7 +343,7 @@ class Controller:
 
                 # Long-polling
                 result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
-                    wait_for_ready=True)
+                    batch_size=MAX_BATCH_SIZE, wait_for_ready=True)
 
                 for new_tip in result:
                     self.connect_headers(new_tip)
@@ -416,9 +417,9 @@ class Controller:
                     self.headers_state_consumer_executor, self.long_poll_conduit_raw_chain_tip)
 
                 deficit = conduit_raw_tip.height - self.sync_state.get_local_block_tip_height()
-                self.logger.debug(f"Conduit tip height: {conduit_raw_tip.height}. "
+                self.logger.debug(f"Got new headers from ConduitRaw to height: {conduit_raw_tip.height}. "
                                   f"Local tip height: {self.sync_state.get_local_block_tip_height()} "
-                                  f"(deficit={deficit})")
+                                  f"(batch deficit={deficit})")
                 if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
