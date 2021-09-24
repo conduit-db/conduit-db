@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Conduit.MySQL\Conduit.MySQL.csproj" />
     <ProjectReference Include="..\ConduitRaw\ConduitRaw.csproj" />
   </ItemGroup>
    
