@@ -8,7 +8,9 @@ service ConduitRaw {
 	rpc Ping (PingRequest) returns (PingResponse);
 	rpc Stop (StopRequest) returns (StopResponse);
 	rpc GetBlockNumber (BlockNumberRequest) returns (BlockNumberResponse);
+	rpc GetBlockNumberBatched (BlockNumberBatchedRequest) returns (BlockNumberBatchedResponse);
 	rpc GetBlock (BlockRequest) returns (BlockResponse);
+	rpc GetBlockBatched (BlockBatchedRequest) returns (BlockBatchedResponse);
 	rpc GetMerkleTreeRow (MerkleTreeRowRequest) returns (MerkleTreeRowResponse);
 	rpc GetTransactionOffsets (TransactionOffsetsRequest) returns (TransactionOffsetsResponse);
 	rpc GetTransactionOffsetsBatched (TransactionOffsetsBatchedRequest) returns (TransactionOffsetsBatchedResponse);
@@ -41,12 +43,30 @@ message BlockNumberResponse {
 	uint64 blockNumber = 1;
 }
 
+message BlockNumberBatchedRequest {
+	repeated bytes blockHashes = 1;
+}
+
+message BlockNumberBatchedResponse {
+	repeated uint64 blockNumbers = 1;
+}
+
 message BlockRequest {
 	uint32 blockNumber = 1;
+	uint32 startOffset = 2;
+	uint32 endOffset = 3;
 }
 
 message BlockResponse {
 	bytes rawBlock = 1;
+}
+
+message BlockBatchedRequest {
+	repeated BlockRequest blockRequests = 1;
+}
+
+message BlockBatchedResponse {
+	bytes rawBlocksArray = 1;  // (block_num + slice_length + raw_block_slice) x num_blocks
 }
 
 message MerkleTreeRowRequest {

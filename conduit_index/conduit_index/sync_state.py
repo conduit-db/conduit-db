@@ -12,6 +12,7 @@ from bitcoinx import Headers, hash_to_hex_str
 
 # from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.constants import SMALL_BLOCK_TX_COUNT, MAX_BLOCK_BATCH_ALLOCATION
 from conduit_lib.store import Storage
 from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
@@ -155,7 +156,8 @@ class SyncState:
         - blocks_batch_set
         """
         # Todo - must check how large these blocks are to allocate a sensible number
-        #  of blocks
+        #  of blocks - should be possible to break a very large block into partitions so that
+        #  the workers can chip away at it without running out of memory!
         # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
         #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
         #   it is something to do with global socket state interfering with the child processes
@@ -163,13 +165,12 @@ class SyncState:
         #   see: https://github.com/googleapis/synthtool/issues/902
         if not self.lmdb_grpc_client:
             self.lmdb_grpc_client = ConduitRawAPIClient()
-        MAX_BYTES = 1024**3 * 1  # 1GB
-        PARALLEL_PROCESSING_LIMIT = 10 * 1024**2  # If less than this size send to one worker only
+
         total_batch_bytes = 0
         allocated_work = []
 
         def batch_is_over_limit() -> bool:
-            return total_batch_bytes > MAX_BYTES
+            return total_batch_bytes > MAX_BLOCK_BATCH_ALLOCATION
 
         blocks_batch_set = set()
         headers: Headers = self.storage.headers
@@ -189,30 +190,27 @@ class SyncState:
         block_size_results = self.lmdb_grpc_client.get_block_metadata_batched(header_hashes)
         tx_offsets_results = self.lmdb_grpc_client.get_tx_offsets_batched(header_hashes)
 
-        for block_size, tx_offsets, block_header in zip(block_size_results, tx_offsets_results, block_headers):
-            # self.logger.debug(f"lmdb block_bytes={block_size}")
-            # self.logger.debug(f"lmdb tx_offsets={tx_offsets}")
+        for block_size, tx_offsets, block_header in zip(block_size_results, tx_offsets_results,
+                block_headers):
 
             # Safety Checks and MAX LIMITS
             total_batch_bytes += block_size
             # self.logger.debug(f"total_batch_bytes={total_batch_bytes}")
             if batch_is_over_limit():
-                self.logger.warning(f"Batch is over the MAX_BYTES limit ({MAX_BYTES/1024**2}MB)!")
+                self.logger.warning(f"Batch is over the MAX_BLOCK_BATCH_ALLOCATION limit ({MAX_BLOCK_BATCH_ALLOCATION/1024**2}MB)!")
                 break
             else:
                 blocks_batch_set.add(block_header.hash)
                 self.add_pending_block(block_header.hash, len(tx_offsets))
 
-            first_tx_pos_batch = 0  # Todo - update this when work is partitioned
-            if block_size > PARALLEL_PROCESSING_LIMIT:
-                # Todo - split up workload
+            first_tx_pos_batch = 0
+            if block_size > SMALL_BLOCK_TX_COUNT:
                 tx_count = len(tx_offsets)
                 divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
                     block_size, tx_offsets)
                 for work_part in divided_work:
-                    # block_header.hash, block_header.height, first_tx_pos_batch, part_end_offset, \
-                    #     tx_offsets = work_part
                     allocated_work.append(work_part)
+                    # self.logger.debug(f"divided_work={divided_work}")
             else:
                 part_end_offset = block_size
                 allocated_work.append((block_header.hash, block_header.height,

@@ -24,6 +24,7 @@ HEADER_LENGTH = 24
 BLOCK_HEADER_LENGTH = 80
 ZERO_HASH = b"00" * 32
 GENESIS_BLOCK = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+NULL_HASH = '0000000000000000000000000000000000000000000000000000000000000000'
 
 BITCOIN_NETWORK_VARNAME = "network"
 DATABASE_NAME_VARNAME = "database_name"
@@ -44,6 +45,14 @@ WORKER_COUNT_TX_PARSERS = 4
 WORKER_COUNT_MTREE_CALCULATORS = 4
 WORKER_COUNT_BLK_WRITER = 1
 WORKER_COUNT_LOGGING_SERVERS = 1
+
+# For small blocks with less than this number of txs, do not divide into partitions
+# It's (probably) more efficient for a single worker process to consume it as a single batch
+# The only exception would be if these 1000 txs have an extreme amount of inputs, outputs and
+# pushdata matches and are very very large txs.
+SMALL_BLOCK_TX_COUNT = 1000
+MAX_BLOCK_BATCH_ALLOCATION = 1024 ** 3 * 1
+MAX_HEADERS_BATCH_REQUEST = 4000  # Number of headers to request (long poll) from conduit raw
 
 
 class MsgType(enum.IntEnum):

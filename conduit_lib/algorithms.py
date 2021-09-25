@@ -162,11 +162,18 @@ def parse_txs(
         out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
+
     tx_rows = []
     in_rows = set()
     out_rows = set()
     set_pd_rows = set()
     count_txs = len(tx_offsets)
+
+    # Partitions other than the first, the tx offsets need to be adjusted (to start at zero)
+    # to account for the preceding partitions that are excluded in this buffer.
+    adjustment = 0
+    if first_tx_pos_batch != 0:
+        adjustment = tx_offsets[0]
 
     try:
         for i in range(count_txs):
@@ -175,10 +182,10 @@ def parse_txs(
             pkhs = set()
 
             # tx_hash
-            offset = tx_offsets[i]
+            offset = tx_offsets[i] - adjustment
             tx_offset_start = offset
             if i < count_txs - 1:
-                next_tx_offset = tx_offsets[i + 1]
+                next_tx_offset = tx_offsets[i + 1] - adjustment
             else:
                 next_tx_offset = len(buffer)
 
@@ -191,7 +198,7 @@ def parse_txs(
             # inputs
             count_tx_in, offset = unpack_varint(buffer, offset)
             ref_type = 1
-            in_offset_start = offset
+            in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
                 in_prevout_hash = buffer[offset : offset + 32]
                 offset += 32
@@ -201,11 +208,10 @@ def parse_txs(
                 script_sig = buffer[offset : offset + script_sig_len]
                 offset += script_sig_len
                 offset += 4  # skip sequence
-                in_offset_end = offset
+                in_offset_end = offset + adjustment
 
                 in_rows.add(
-                    (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx, in_offset_start,
-                    in_offset_end,),
+                    (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx, in_offset_start, in_offset_end,),
                 )
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
@@ -227,7 +233,7 @@ def parse_txs(
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
             ref_type = 0
-            out_offset_start = offset
+            out_offset_start = offset + adjustment
             for out_idx in range(count_tx_out):
                 out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
@@ -246,7 +252,7 @@ def parse_txs(
                             )
                         )
                 offset += scriptpubkey_len
-                out_offset_end = offset
+                out_offset_end = offset + adjustment
                 out_rows.add((tx_hash.hex(), out_idx, out_value, out_offset_start, out_offset_end,))
 
             # nlocktime
@@ -259,8 +265,8 @@ def parse_txs(
                         tx_hash.hex(),
                         height_or_timestamp,
                         tx_pos,
-                        tx_offset_start,
-                        next_tx_offset,
+                        tx_offset_start + adjustment,
+                        next_tx_offset + adjustment,
                     )
                 )
             else:

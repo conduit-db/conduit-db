@@ -16,7 +16,8 @@ import zmq
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.store import setup_storage
-from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType
+from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
+    MAX_HEADERS_BATCH_REQUEST
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
@@ -315,7 +316,7 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-    def connect_headers(self, raw_header) -> bool:
+    def connect_conduit_headers(self, raw_header) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         try:
@@ -323,16 +324,14 @@ class Controller:
             self.storage.headers.flush()
             return True
         except MissingHeader as e:
-            if str(e).find(GENESIS_HASH_HEX) != -1 or \
-                str(e).find('0000000000000000000000000000000000000000000000000000000000000000') != -1:
-                self.logger.debug("skipping - prev_out == genesis block")
+            if str(e).find(GENESIS_HASH_HEX) != -1 or str(e).find(NULL_HASH) != -1:
+                # self.logger.debug("skipping - prev_out == genesis block")
                 return True
             else:
                 self.logger.exception(e)
                 raise
 
     def long_poll_conduit_raw_chain_tip(self):
-        MAX_BATCH_SIZE = 500
         conduit_raw_tip = self.sync_state.get_conduit_raw_header_tip()
         deserialized_tip = None
         while True:
@@ -343,10 +342,10 @@ class Controller:
 
                 # Long-polling
                 result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
-                    batch_size=MAX_BATCH_SIZE, wait_for_ready=True)
+                    batch_size=MAX_HEADERS_BATCH_REQUEST, wait_for_ready=True)
 
                 for new_tip in result:
-                    self.connect_headers(new_tip)
+                    self.connect_conduit_headers(new_tip)
 
                     # For debugging only
                     tip_hash = double_sha256(new_tip)
@@ -425,6 +424,15 @@ class Controller:
 
                 batch_id += 1
                 self.logger.debug(f"Controller Batch {batch_id} Start")
+
+                # Todo - Needs another nested while loop here so that if the allocated work is
+                #  less than the "deficit" to conduit_raw_tip it can "chip away" until all allocated
+                #  work completes.
+
+                #  This breaks up a batch of pending blocks into
+                #   a) fewer blocks (if exceeding the limit)
+                #   b) many partitions * for a single block * (if the blocksize exceeds some limit)
+                #  To optimally utilise system resources (without overshooting)
                 global_blocks_batch_set = allocate_work()
 
                 # Workers are loaded by Handlers.on_block handler as messages are received

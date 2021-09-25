@@ -99,9 +99,14 @@ class LMDB_Database:
         with self.env.begin(db=self.block_nums_db) as txn:
             return struct_be_I.unpack(txn.get(block_hash))[0]
 
-    def get_block(self, block_num: int) -> bytes:
-        with self.env.begin(db=self.blocks_db) as txn:
-            return txn.get(struct_be_I.pack(block_num))
+    def get_block(self, block_num: int, start_offset: int=0,
+            end_offset: int=0) -> bytes:
+        """If end_offset=0 then it goes to the end of the block"""
+        with self.env.begin(db=self.blocks_db, buffers=True) as txn:
+            buf: memoryview = txn.get(struct_be_I.pack(block_num))
+            if end_offset == 0:
+                return buf[start_offset:].tobytes()
+            return buf[start_offset: end_offset].tobytes()
 
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
