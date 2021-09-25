@@ -7,7 +7,7 @@ import os
 import queue
 import struct
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
@@ -17,7 +17,7 @@ from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
-    MAX_HEADERS_BATCH_REQUEST
+    MAIN_BATCH_HEADERS_COUNT_LIMIT
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
@@ -26,6 +26,7 @@ from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
 from .batch_completion import BatchCompletionTxParser
 from .sync_state import SyncState
+from .types import WorkUnit
 from .workers.transaction_parser import TxParser
 
 
@@ -93,7 +94,6 @@ class Controller:
 
         self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
 
-        self.total_time_allocating_work = 0
         self.total_time_connecting_headers = 0
 
         self.sync_state: Optional[SyncState] = None
@@ -342,7 +342,7 @@ class Controller:
 
                 # Long-polling
                 result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
-                    batch_size=MAX_HEADERS_BATCH_REQUEST, wait_for_ready=True)
+                    batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT, wait_for_ready=True)
 
                 for new_tip in result:
                     self.connect_conduit_headers(new_tip)
@@ -363,47 +363,36 @@ class Controller:
                 time.sleep(0.2)
 
 
+    def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
+        # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
+        for part_size, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
+                tx_offsets_array in work_units:
+            len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
+            packed_array = tx_offsets_array.tobytes()
+            packed_msg = struct.pack(f"<II32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr, block_hash,
+                block_height, first_tx_pos_batch, part_end_offset, packed_array)
+
+            self.mined_tx_socket.send(packed_msg)
+
+    async def chip_away(self, remaining_work_units: List[WorkUnit]):
+        """This breaks up blocks into smaller 'WorkUnits'. This allows tailoring workloads and
+        max memory allocations to be safe with available system resources)"""
+        remaining_work, work_for_this_batch = \
+            self.sync_state.get_work_units_chip_away(remaining_work_units)
+        self.push_chip_away_work(work_for_this_batch)
+        return remaining_work
+
     async def sync_all_blocks_job(self):
-        """supervises completion of syncing all blocks to target height
+        """Supervises synchronization to catch up to the block tip of ConduitRaw service"""
 
-        call hierarchy:
-        ---------------
-        initial allocate_work & wait_for_batched_blocks_completion
-        sync_all_blocks_job (loop)
-            -> block on headers queue (from ConduitRaw State)
-            -> allocate_work()
-            -> wait_for_batched_blocks_completion
-        """
-
-        async def wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set) -> None:
-            """global_blocks_batch_set is copied into these threads to prevent mutation"""
+        async def wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes) -> None:
+            """all_pending_block_hashes is copied into these threads to prevent mutation"""
             try:
-                self.tx_parser_completion_queue.put_nowait(global_blocks_batch_set.copy())
                 await self.sync_state.done_blocks_tx_parser_event.wait()
                 self.sync_state.done_blocks_tx_parser_event.clear()
-                self.connect_done_block_headers(global_blocks_batch_set.copy())
+                self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
                 self.logger.exception("unexpected exception in 'wait_for_batched_blocks_completion' ")
-
-        def allocate_work():
-            t0 = time.perf_counter()
-            next_batch = self.sync_state.get_next_batched_blocks()
-            self.logger.debug(f"next_batch={len(next_batch)}")
-            batch_count, global_blocks_batch_set, allocated_work = next_batch
-
-            # ---- PUSH WORK TO WORKERS ---- #
-            for block_hash, block_height, first_tx_pos_batch, part_end_offset, tx_offsets_array in \
-                    allocated_work:
-                len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
-                packed_array = tx_offsets_array.tobytes()
-                packed_msg = struct.pack(f"<II32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
-                    block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
-                # ? Should this be batched?
-                self.mined_tx_socket.send(packed_msg)
-            t1 = time.perf_counter() - t0
-            self.total_time_allocating_work += t1
-            self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
-            return global_blocks_batch_set
 
         async def maintain_chain_tip():
             # Now wait on the queue for notifications
@@ -425,18 +414,25 @@ class Controller:
                 batch_id += 1
                 self.logger.debug(f"Controller Batch {batch_id} Start")
 
-                # Todo - Needs another nested while loop here so that if the allocated work is
-                #  less than the "deficit" to conduit_raw_tip it can "chip away" until all allocated
-                #  work completes.
+                # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
+                all_pending_block_hashes, main_batch = self.sync_state.get_main_batch()
+                all_work_units = self.sync_state.get_work_units_all(all_pending_block_hashes,
+                    main_batch)
+                self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
-                #  This breaks up a batch of pending blocks into
-                #   a) fewer blocks (if exceeding the limit)
-                #   b) many partitions * for a single block * (if the blocksize exceeds some limit)
-                #  To optimally utilise system resources (without overshooting)
-                global_blocks_batch_set = allocate_work()
 
-                # Workers are loaded by Handlers.on_block handler as messages are received
-                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set)
+                # Chip away at the 'MainBatch' without exceeding configured resource constraints
+                remaining_work_units = all_work_units
+                while len(remaining_work_units) != 0:
+                    remaining_work_units = await self.chip_away(remaining_work_units)
+                    await self.sync_state.chip_away_batch_event.wait()
+                    self.sync_state.reset_pending_chip_away_work_items()
+                    self.sync_state.chip_away_batch_event.clear()
+
+
+
+                await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
+                self.sync_state.reset_pending_blocks()
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
                 self.logger.debug(f"maintain_chain_tip - new block tip height: {api_block_tip_height}")
                 # ------------------------- Batch complete ------------------------- #

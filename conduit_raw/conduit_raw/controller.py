@@ -454,15 +454,15 @@ class Controller:
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
 
-        async def wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set, stop_header_height) -> None:
-            """global_blocks_batch_set is copied into these threads to prevent mutation"""
+        async def wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes, stop_header_height) -> None:
+            """all_pending_block_hashes is copied into these threads to prevent mutation"""
             try:
-                await self.request_all_batch_block_data(batch_id, global_blocks_batch_set.copy(),
+                await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
                     stop_header_height)
 
-                self.blocks_batch_set_queue_raw.put_nowait(global_blocks_batch_set.copy())
-                self.blocks_batch_set_queue_mtree.put_nowait(global_blocks_batch_set.copy())
-                self.blocks_batch_set_queue_preproc.put_nowait(global_blocks_batch_set.copy())
+                self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
+                self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
+                self.blocks_batch_set_queue_preproc.put_nowait(all_pending_block_hashes.copy())
 
                 # Wait for batch completion for all worker types (via ACK messages)
                 await self.sync_state.done_blocks_raw_event.wait()
@@ -473,7 +473,7 @@ class Controller:
                 self.sync_state.done_blocks_preproc_event.clear()
 
                 await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
-                await self.connect_done_block_headers(global_blocks_batch_set.copy())
+                await self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
                 self.logger.exception("unexpected exception in 'wait_for_batched_blocks_completion' ")
 
@@ -499,14 +499,14 @@ class Controller:
 
                 # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
                 next_batch = self.sync_state.get_next_batched_blocks()
-                batch_count, global_blocks_batch_set, stop_header_height = next_batch
+                batch_count, all_pending_block_hashes, stop_header_height = next_batch
 
                 await self.send_request(
                     GETBLOCKS,
                     self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop),
                 )
                 # Workers are loaded by Handlers.on_block handler as messages are received
-                await wait_for_batched_blocks_completion(batch_id, global_blocks_batch_set,
+                await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes,
                     stop_header_height)
                 # ------------------------- Batch complete ------------------------- #
                 if batch_id == 0:

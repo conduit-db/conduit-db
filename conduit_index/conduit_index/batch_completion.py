@@ -38,15 +38,21 @@ class BatchCompletionTxParser(threading.Thread):
         while True:
             worker_id, block_hash, txs_done_count = self.worker_ack_queue_tx_parse_confirmed.get()
             try:
+                self.sync_state._pending_blocks_progress_counter_chip_away[block_hash] += txs_done_count
                 self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
             except KeyError:
                 raise
 
             try:
+                if self.sync_state.have_completed_chip_away_batch(block_hash):
+                    self.sync_state.all_pending_chip_away_block_hashes.remove(block_hash)
+                    if len(self.sync_state.all_pending_chip_away_block_hashes) == 0:
+                        self.loop.call_soon_threadsafe(self.sync_state.chip_away_batch_event.set)
+
                 if self.sync_state.block_is_fully_processed(block_hash):
                     header = self.get_header_for_hash(block_hash)
                     if not block_hash in blocks_batch_set:
-                        self.logger.error(f"also wrote unexpected block: "
+                        self.logger.exception(f"also wrote unexpected block: "
                             f"{hash_to_hex_str(header.hash)} {header.height} to disc")
                         continue
 
@@ -67,8 +73,8 @@ class BatchCompletionTxParser(threading.Thread):
         batch_id = 0
         while True:
             try:
-                blocks_batch_set = self.tx_parser_completion_queue.get()
-                self.wait_for_batch_completion(blocks_batch_set)
+                all_pending_block_hashes = self.tx_parser_completion_queue.get()
+                self.wait_for_batch_completion(all_pending_block_hashes)
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:

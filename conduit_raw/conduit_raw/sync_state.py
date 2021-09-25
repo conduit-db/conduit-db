@@ -45,7 +45,7 @@ class SyncState:
         self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
-        self.global_blocks_batch_set = set()  # usually a set of 500 hashes during IBD
+        self.all_pending_block_hashes = set()  # usually a set of 500 hashes during IBD
         self.received_blocks = set()  # received in network buffer - must process before buf reset
 
         # Done blocks Sets
@@ -95,9 +95,9 @@ class SyncState:
     def get_next_batched_blocks(self):
         """Key Variables
         - stop_header_height
-        - global_blocks_batch_set
+        - all_pending_block_hashes
         """
-        self.global_blocks_batch_set = set()
+        self.all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
 
@@ -110,9 +110,9 @@ class SyncState:
 
         for i in range(1, batch_count + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
-            self.global_blocks_batch_set.add(block_header.hash)
+            self.all_pending_block_hashes.add(block_header.hash)
 
-        return batch_count, self.global_blocks_batch_set, stop_header_height
+        return batch_count, self.all_pending_block_hashes, stop_header_height
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:

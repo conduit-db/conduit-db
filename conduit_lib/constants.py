@@ -50,9 +50,13 @@ WORKER_COUNT_LOGGING_SERVERS = 1
 # It's (probably) more efficient for a single worker process to consume it as a single batch
 # The only exception would be if these 1000 txs have an extreme amount of inputs, outputs and
 # pushdata matches and are very very large txs.
-SMALL_BLOCK_TX_COUNT = 1000
-MAX_BLOCK_BATCH_ALLOCATION = 1024 ** 3 * 1
-MAX_HEADERS_BATCH_REQUEST = 4000  # Number of headers to request (long poll) from conduit raw
+SMALL_BLOCK_SIZE = 10000
+
+
+# Set artificially low for now to prove that a large block can be fully processed
+# without allocating it all into memory at once
+CHIP_AWAY_BYTE_SIZE_LIMIT = 1024 ** 2 * 512
+MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll) from conduit raw
 
 
 class MsgType(enum.IntEnum):

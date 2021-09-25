@@ -99,7 +99,7 @@ class Handlers:
                     self.controller.sync_state.headers_event_new_tip.set()
 
                 if hex_str_to_hash(inv["inv_hash"]) in \
-                        self.controller.sync_state.global_blocks_batch_set:
+                        self.controller.sync_state.all_pending_block_hashes:
                     self.controller.sync_state.pending_blocks_inv_queue.put_nowait(inv)
                 # else:
                     # logger.debug(f"got new block notification: {inv['inv_hash']}")
@@ -137,7 +137,7 @@ class Handlers:
         blk_hash = double_sha256(raw_block_header)
         self.controller.sync_state.received_blocks.add(blk_hash)
         blk_height = self.storage.headers.lookup(blk_hash)[0].height
-        if not blk_hash in self.controller.sync_state.global_blocks_batch_set:
+        if not blk_hash in self.controller.sync_state.all_pending_block_hashes:
             logger.debug(f"got an unsolicited block: {hash_to_hex_str(blk_hash)}, "
                          f"height={blk_height}. Discarding...")
             return
