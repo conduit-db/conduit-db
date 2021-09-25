@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   syntax='proto3',
   serialized_options=b'\252\002\nConduitRaw',
   create_key=_descriptor._internal_create_key,
-  serialized_pb=b'\n\x11\x63onduit_raw.proto\x12\x0b\x63onduit_raw\"\x1b\n\x0bPingRequest\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\t\"\x1f\n\x0cPingResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"\x1e\n\x0bStopRequest\x12\x0f\n\x07message\x18\x01 \x01(\t\"\x1f\n\x0cStopResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"\'\n\x12\x42lockNumberRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"*\n\x13\x42lockNumberResponse\x12\x13\n\x0b\x62lockNumber\x18\x01 \x01(\x04\"#\n\x0c\x42lockRequest\x12\x13\n\x0b\x62lockNumber\x18\x01 \x01(\r\"!\n\rBlockResponse\x12\x10\n\x08rawBlock\x18\x01 \x01(\x0c\"8\n\x14MerkleTreeRowRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\x12\r\n\x05level\x18\x02 \x01(\r\")\n\x15MerkleTreeRowResponse\x12\x10\n\x08mtreeRow\x18\x01 \x01(\x0c\".\n\x19TransactionOffsetsRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"4\n\x1aTransactionOffsetsResponse\x12\x16\n\x0etxOffsetsArray\x18\x01 \x03(\x04\"7\n TransactionOffsetsBatchedRequest\x12\x13\n\x0b\x62lockHashes\x18\x01 \x03(\x0c\"[\n!TransactionOffsetsBatchedResponse\x12\x36\n\x05\x62\x61tch\x18\x01 \x03(\x0b\x32\'.conduit_raw.TransactionOffsetsResponse\")\n\x14\x42lockMetadataRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"/\n\x15\x42lockMetadataResponse\x12\x16\n\x0e\x62lockSizeBytes\x18\x01 \x01(\x04\"2\n\x1b\x42lockMetadataBatchedRequest\x12\x13\n\x0b\x62lockHashes\x18\x01 \x03(\x0c\"-\n\x1c\x42lockMetadataBatchedResponse\x12\r\n\x05\x62\x61tch\x18\x01 \x03(\x04\"D\n\x1a\x42lockHeadersBatchedRequest\x12\x13\n\x0bstartHeight\x18\x01 \x01(\r\x12\x11\n\tbatchSize\x18\x02 \x01(\r\".\n\x1b\x42lockHeadersBatchedResponse\x12\x0f\n\x07headers\x18\x01 \x03(\x0c\x32\x95\x07\n\nConduitRaw\x12;\n\x04Ping\x12\x18.conduit_raw.PingRequest\x1a\x19.conduit_raw.PingResponse\x12;\n\x04Stop\x12\x18.conduit_raw.StopRequest\x1a\x19.conduit_raw.StopResponse\x12S\n\x0eGetBlockNumber\x12\x1f.conduit_raw.BlockNumberRequest\x1a .conduit_raw.BlockNumberResponse\x12\x41\n\x08GetBlock\x12\x19.conduit_raw.BlockRequest\x1a\x1a.conduit_raw.BlockResponse\x12Y\n\x10GetMerkleTreeRow\x12!.conduit_raw.MerkleTreeRowRequest\x1a\".conduit_raw.MerkleTreeRowResponse\x12h\n\x15GetTransactionOffsets\x12&.conduit_raw.TransactionOffsetsRequest\x1a\'.conduit_raw.TransactionOffsetsResponse\x12}\n\x1cGetTransactionOffsetsBatched\x12-.conduit_raw.TransactionOffsetsBatchedRequest\x1a..conduit_raw.TransactionOffsetsBatchedResponse\x12Y\n\x10GetBlockMetadata\x12!.conduit_raw.BlockMetadataRequest\x1a\".conduit_raw.BlockMetadataResponse\x12n\n\x17GetBlockMetadataBatched\x12(.conduit_raw.BlockMetadataBatchedRequest\x1a).conduit_raw.BlockMetadataBatchedResponse\x12\x66\n\x11GetHeadersBatched\x12\'.conduit_raw.BlockHeadersBatchedRequest\x1a(.conduit_raw.BlockHeadersBatchedResponseB\r\xaa\x02\nConduitRawb\x06proto3'
+  serialized_pb=b'\n\x11\x63onduit_raw.proto\x12\x0b\x63onduit_raw\"\x1b\n\x0bPingRequest\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\t\"\x1f\n\x0cPingResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"\x1e\n\x0bStopRequest\x12\x0f\n\x07message\x18\x01 \x01(\t\"\x1f\n\x0cStopResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\"\'\n\x12\x42lockNumberRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"*\n\x13\x42lockNumberResponse\x12\x13\n\x0b\x62lockNumber\x18\x01 \x01(\x04\"0\n\x19\x42lockNumberBatchedRequest\x12\x13\n\x0b\x62lockHashes\x18\x01 \x03(\x0c\"2\n\x1a\x42lockNumberBatchedResponse\x12\x14\n\x0c\x62lockNumbers\x18\x01 \x03(\x04\"K\n\x0c\x42lockRequest\x12\x13\n\x0b\x62lockNumber\x18\x01 \x01(\r\x12\x13\n\x0bstartOffset\x18\x02 \x01(\r\x12\x11\n\tendOffset\x18\x03 \x01(\r\"!\n\rBlockResponse\x12\x10\n\x08rawBlock\x18\x01 \x01(\x0c\"G\n\x13\x42lockBatchedRequest\x12\x30\n\rblockRequests\x18\x01 \x03(\x0b\x32\x19.conduit_raw.BlockRequest\".\n\x14\x42lockBatchedResponse\x12\x16\n\x0erawBlocksArray\x18\x01 \x01(\x0c\"8\n\x14MerkleTreeRowRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\x12\r\n\x05level\x18\x02 \x01(\r\")\n\x15MerkleTreeRowResponse\x12\x10\n\x08mtreeRow\x18\x01 \x01(\x0c\".\n\x19TransactionOffsetsRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"4\n\x1aTransactionOffsetsResponse\x12\x16\n\x0etxOffsetsArray\x18\x01 \x03(\x04\"7\n TransactionOffsetsBatchedRequest\x12\x13\n\x0b\x62lockHashes\x18\x01 \x03(\x0c\"[\n!TransactionOffsetsBatchedResponse\x12\x36\n\x05\x62\x61tch\x18\x01 \x03(\x0b\x32\'.conduit_raw.TransactionOffsetsResponse\")\n\x14\x42lockMetadataRequest\x12\x11\n\tblockHash\x18\x01 \x01(\x0c\"/\n\x15\x42lockMetadataResponse\x12\x16\n\x0e\x62lockSizeBytes\x18\x01 \x01(\x04\"2\n\x1b\x42lockMetadataBatchedRequest\x12\x13\n\x0b\x62lockHashes\x18\x01 \x03(\x0c\"-\n\x1c\x42lockMetadataBatchedResponse\x12\r\n\x05\x62\x61tch\x18\x01 \x03(\x04\"D\n\x1a\x42lockHeadersBatchedRequest\x12\x13\n\x0bstartHeight\x18\x01 \x01(\r\x12\x11\n\tbatchSize\x18\x02 \x01(\r\".\n\x1b\x42lockHeadersBatchedResponse\x12\x0f\n\x07headers\x18\x01 \x03(\x0c\x32\xd7\x08\n\nConduitRaw\x12;\n\x04Ping\x12\x18.conduit_raw.PingRequest\x1a\x19.conduit_raw.PingResponse\x12;\n\x04Stop\x12\x18.conduit_raw.StopRequest\x1a\x19.conduit_raw.StopResponse\x12S\n\x0eGetBlockNumber\x12\x1f.conduit_raw.BlockNumberRequest\x1a .conduit_raw.BlockNumberResponse\x12h\n\x15GetBlockNumberBatched\x12&.conduit_raw.BlockNumberBatchedRequest\x1a\'.conduit_raw.BlockNumberBatchedResponse\x12\x41\n\x08GetBlock\x12\x19.conduit_raw.BlockRequest\x1a\x1a.conduit_raw.BlockResponse\x12V\n\x0fGetBlockBatched\x12 .conduit_raw.BlockBatchedRequest\x1a!.conduit_raw.BlockBatchedResponse\x12Y\n\x10GetMerkleTreeRow\x12!.conduit_raw.MerkleTreeRowRequest\x1a\".conduit_raw.MerkleTreeRowResponse\x12h\n\x15GetTransactionOffsets\x12&.conduit_raw.TransactionOffsetsRequest\x1a\'.conduit_raw.TransactionOffsetsResponse\x12}\n\x1cGetTransactionOffsetsBatched\x12-.conduit_raw.TransactionOffsetsBatchedRequest\x1a..conduit_raw.TransactionOffsetsBatchedResponse\x12Y\n\x10GetBlockMetadata\x12!.conduit_raw.BlockMetadataRequest\x1a\".conduit_raw.BlockMetadataResponse\x12n\n\x17GetBlockMetadataBatched\x12(.conduit_raw.BlockMetadataBatchedRequest\x1a).conduit_raw.BlockMetadataBatchedResponse\x12\x66\n\x11GetHeadersBatched\x12\'.conduit_raw.BlockHeadersBatchedRequest\x1a(.conduit_raw.BlockHeadersBatchedResponseB\r\xaa\x02\nConduitRawb\x06proto3'
 )
 
 
@@ -217,18 +217,18 @@ _BLOCKNUMBERRESPONSE = _descriptor.Descriptor(
 )
 
 
-_BLOCKREQUEST = _descriptor.Descriptor(
-  name='BlockRequest',
-  full_name='conduit_raw.BlockRequest',
+_BLOCKNUMBERBATCHEDREQUEST = _descriptor.Descriptor(
+  name='BlockNumberBatchedRequest',
+  full_name='conduit_raw.BlockNumberBatchedRequest',
   filename=None,
   file=DESCRIPTOR,
   containing_type=None,
   create_key=_descriptor._internal_create_key,
   fields=[
     _descriptor.FieldDescriptor(
-      name='blockNumber', full_name='conduit_raw.BlockRequest.blockNumber', index=0,
-      number=1, type=13, cpp_type=3, label=1,
-      has_default_value=False, default_value=0,
+      name='blockHashes', full_name='conduit_raw.BlockNumberBatchedRequest.blockHashes', index=0,
+      number=1, type=12, cpp_type=9, label=3,
+      has_default_value=False, default_value=[],
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
@@ -245,7 +245,85 @@ _BLOCKREQUEST = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=246,
-  serialized_end=281,
+  serialized_end=294,
+)
+
+
+_BLOCKNUMBERBATCHEDRESPONSE = _descriptor.Descriptor(
+  name='BlockNumberBatchedResponse',
+  full_name='conduit_raw.BlockNumberBatchedResponse',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='blockNumbers', full_name='conduit_raw.BlockNumberBatchedResponse.blockNumbers', index=0,
+      number=1, type=4, cpp_type=4, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=296,
+  serialized_end=346,
+)
+
+
+_BLOCKREQUEST = _descriptor.Descriptor(
+  name='BlockRequest',
+  full_name='conduit_raw.BlockRequest',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='blockNumber', full_name='conduit_raw.BlockRequest.blockNumber', index=0,
+      number=1, type=13, cpp_type=3, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='startOffset', full_name='conduit_raw.BlockRequest.startOffset', index=1,
+      number=2, type=13, cpp_type=3, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+    _descriptor.FieldDescriptor(
+      name='endOffset', full_name='conduit_raw.BlockRequest.endOffset', index=2,
+      number=3, type=13, cpp_type=3, label=1,
+      has_default_value=False, default_value=0,
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=348,
+  serialized_end=423,
 )
 
 
@@ -276,8 +354,72 @@ _BLOCKRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=283,
-  serialized_end=316,
+  serialized_start=425,
+  serialized_end=458,
+)
+
+
+_BLOCKBATCHEDREQUEST = _descriptor.Descriptor(
+  name='BlockBatchedRequest',
+  full_name='conduit_raw.BlockBatchedRequest',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='blockRequests', full_name='conduit_raw.BlockBatchedRequest.blockRequests', index=0,
+      number=1, type=11, cpp_type=10, label=3,
+      has_default_value=False, default_value=[],
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=460,
+  serialized_end=531,
+)
+
+
+_BLOCKBATCHEDRESPONSE = _descriptor.Descriptor(
+  name='BlockBatchedResponse',
+  full_name='conduit_raw.BlockBatchedResponse',
+  filename=None,
+  file=DESCRIPTOR,
+  containing_type=None,
+  create_key=_descriptor._internal_create_key,
+  fields=[
+    _descriptor.FieldDescriptor(
+      name='rawBlocksArray', full_name='conduit_raw.BlockBatchedResponse.rawBlocksArray', index=0,
+      number=1, type=12, cpp_type=9, label=1,
+      has_default_value=False, default_value=b"",
+      message_type=None, enum_type=None, containing_type=None,
+      is_extension=False, extension_scope=None,
+      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
+  ],
+  extensions=[
+  ],
+  nested_types=[],
+  enum_types=[
+  ],
+  serialized_options=None,
+  is_extendable=False,
+  syntax='proto3',
+  extension_ranges=[],
+  oneofs=[
+  ],
+  serialized_start=533,
+  serialized_end=579,
 )
 
 
@@ -315,8 +457,8 @@ _MERKLETREEROWREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=318,
-  serialized_end=374,
+  serialized_start=581,
+  serialized_end=637,
 )
 
 
@@ -347,8 +489,8 @@ _MERKLETREEROWRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=376,
-  serialized_end=417,
+  serialized_start=639,
+  serialized_end=680,
 )
 
 
@@ -379,8 +521,8 @@ _TRANSACTIONOFFSETSREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=419,
-  serialized_end=465,
+  serialized_start=682,
+  serialized_end=728,
 )
 
 
@@ -411,8 +553,8 @@ _TRANSACTIONOFFSETSRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=467,
-  serialized_end=519,
+  serialized_start=730,
+  serialized_end=782,
 )
 
 
@@ -443,8 +585,8 @@ _TRANSACTIONOFFSETSBATCHEDREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=521,
-  serialized_end=576,
+  serialized_start=784,
+  serialized_end=839,
 )
 
 
@@ -475,8 +617,8 @@ _TRANSACTIONOFFSETSBATCHEDRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=578,
-  serialized_end=669,
+  serialized_start=841,
+  serialized_end=932,
 )
 
 
@@ -507,8 +649,8 @@ _BLOCKMETADATAREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=671,
-  serialized_end=712,
+  serialized_start=934,
+  serialized_end=975,
 )
 
 
@@ -539,8 +681,8 @@ _BLOCKMETADATARESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=714,
-  serialized_end=761,
+  serialized_start=977,
+  serialized_end=1024,
 )
 
 
@@ -571,8 +713,8 @@ _BLOCKMETADATABATCHEDREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=763,
-  serialized_end=813,
+  serialized_start=1026,
+  serialized_end=1076,
 )
 
 
@@ -603,8 +745,8 @@ _BLOCKMETADATABATCHEDRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=815,
-  serialized_end=860,
+  serialized_start=1078,
+  serialized_end=1123,
 )
 
 
@@ -642,8 +784,8 @@ _BLOCKHEADERSBATCHEDREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=862,
-  serialized_end=930,
+  serialized_start=1125,
+  serialized_end=1193,
 )
 
 
@@ -674,10 +816,11 @@ _BLOCKHEADERSBATCHEDRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=932,
-  serialized_end=978,
+  serialized_start=1195,
+  serialized_end=1241,
 )
 
+_BLOCKBATCHEDREQUEST.fields_by_name['blockRequests'].message_type = _BLOCKREQUEST
 _TRANSACTIONOFFSETSBATCHEDRESPONSE.fields_by_name['batch'].message_type = _TRANSACTIONOFFSETSRESPONSE
 DESCRIPTOR.message_types_by_name['PingRequest'] = _PINGREQUEST
 DESCRIPTOR.message_types_by_name['PingResponse'] = _PINGRESPONSE
@@ -685,8 +828,12 @@ DESCRIPTOR.message_types_by_name['StopRequest'] = _STOPREQUEST
 DESCRIPTOR.message_types_by_name['StopResponse'] = _STOPRESPONSE
 DESCRIPTOR.message_types_by_name['BlockNumberRequest'] = _BLOCKNUMBERREQUEST
 DESCRIPTOR.message_types_by_name['BlockNumberResponse'] = _BLOCKNUMBERRESPONSE
+DESCRIPTOR.message_types_by_name['BlockNumberBatchedRequest'] = _BLOCKNUMBERBATCHEDREQUEST
+DESCRIPTOR.message_types_by_name['BlockNumberBatchedResponse'] = _BLOCKNUMBERBATCHEDRESPONSE
 DESCRIPTOR.message_types_by_name['BlockRequest'] = _BLOCKREQUEST
 DESCRIPTOR.message_types_by_name['BlockResponse'] = _BLOCKRESPONSE
+DESCRIPTOR.message_types_by_name['BlockBatchedRequest'] = _BLOCKBATCHEDREQUEST
+DESCRIPTOR.message_types_by_name['BlockBatchedResponse'] = _BLOCKBATCHEDRESPONSE
 DESCRIPTOR.message_types_by_name['MerkleTreeRowRequest'] = _MERKLETREEROWREQUEST
 DESCRIPTOR.message_types_by_name['MerkleTreeRowResponse'] = _MERKLETREEROWRESPONSE
 DESCRIPTOR.message_types_by_name['TransactionOffsetsRequest'] = _TRANSACTIONOFFSETSREQUEST
@@ -743,6 +890,20 @@ BlockNumberResponse = _reflection.GeneratedProtocolMessageType('BlockNumberRespo
   })
 _sym_db.RegisterMessage(BlockNumberResponse)
 
+BlockNumberBatchedRequest = _reflection.GeneratedProtocolMessageType('BlockNumberBatchedRequest', (_message.Message,), {
+  'DESCRIPTOR' : _BLOCKNUMBERBATCHEDREQUEST,
+  '__module__' : 'conduit_raw_pb2'
+  # @@protoc_insertion_point(class_scope:conduit_raw.BlockNumberBatchedRequest)
+  })
+_sym_db.RegisterMessage(BlockNumberBatchedRequest)
+
+BlockNumberBatchedResponse = _reflection.GeneratedProtocolMessageType('BlockNumberBatchedResponse', (_message.Message,), {
+  'DESCRIPTOR' : _BLOCKNUMBERBATCHEDRESPONSE,
+  '__module__' : 'conduit_raw_pb2'
+  # @@protoc_insertion_point(class_scope:conduit_raw.BlockNumberBatchedResponse)
+  })
+_sym_db.RegisterMessage(BlockNumberBatchedResponse)
+
 BlockRequest = _reflection.GeneratedProtocolMessageType('BlockRequest', (_message.Message,), {
   'DESCRIPTOR' : _BLOCKREQUEST,
   '__module__' : 'conduit_raw_pb2'
@@ -756,6 +917,20 @@ BlockResponse = _reflection.GeneratedProtocolMessageType('BlockResponse', (_mess
   # @@protoc_insertion_point(class_scope:conduit_raw.BlockResponse)
   })
 _sym_db.RegisterMessage(BlockResponse)
+
+BlockBatchedRequest = _reflection.GeneratedProtocolMessageType('BlockBatchedRequest', (_message.Message,), {
+  'DESCRIPTOR' : _BLOCKBATCHEDREQUEST,
+  '__module__' : 'conduit_raw_pb2'
+  # @@protoc_insertion_point(class_scope:conduit_raw.BlockBatchedRequest)
+  })
+_sym_db.RegisterMessage(BlockBatchedRequest)
+
+BlockBatchedResponse = _reflection.GeneratedProtocolMessageType('BlockBatchedResponse', (_message.Message,), {
+  'DESCRIPTOR' : _BLOCKBATCHEDRESPONSE,
+  '__module__' : 'conduit_raw_pb2'
+  # @@protoc_insertion_point(class_scope:conduit_raw.BlockBatchedResponse)
+  })
+_sym_db.RegisterMessage(BlockBatchedResponse)
 
 MerkleTreeRowRequest = _reflection.GeneratedProtocolMessageType('MerkleTreeRowRequest', (_message.Message,), {
   'DESCRIPTOR' : _MERKLETREEROWREQUEST,
@@ -851,8 +1026,8 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   index=0,
   serialized_options=None,
   create_key=_descriptor._internal_create_key,
-  serialized_start=981,
-  serialized_end=1898,
+  serialized_start=1244,
+  serialized_end=2355,
   methods=[
   _descriptor.MethodDescriptor(
     name='Ping',
@@ -885,9 +1060,19 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
     create_key=_descriptor._internal_create_key,
   ),
   _descriptor.MethodDescriptor(
+    name='GetBlockNumberBatched',
+    full_name='conduit_raw.ConduitRaw.GetBlockNumberBatched',
+    index=3,
+    containing_service=None,
+    input_type=_BLOCKNUMBERBATCHEDREQUEST,
+    output_type=_BLOCKNUMBERBATCHEDRESPONSE,
+    serialized_options=None,
+    create_key=_descriptor._internal_create_key,
+  ),
+  _descriptor.MethodDescriptor(
     name='GetBlock',
     full_name='conduit_raw.ConduitRaw.GetBlock',
-    index=3,
+    index=4,
     containing_service=None,
     input_type=_BLOCKREQUEST,
     output_type=_BLOCKRESPONSE,
@@ -895,9 +1080,19 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
     create_key=_descriptor._internal_create_key,
   ),
   _descriptor.MethodDescriptor(
+    name='GetBlockBatched',
+    full_name='conduit_raw.ConduitRaw.GetBlockBatched',
+    index=5,
+    containing_service=None,
+    input_type=_BLOCKBATCHEDREQUEST,
+    output_type=_BLOCKBATCHEDRESPONSE,
+    serialized_options=None,
+    create_key=_descriptor._internal_create_key,
+  ),
+  _descriptor.MethodDescriptor(
     name='GetMerkleTreeRow',
     full_name='conduit_raw.ConduitRaw.GetMerkleTreeRow',
-    index=4,
+    index=6,
     containing_service=None,
     input_type=_MERKLETREEROWREQUEST,
     output_type=_MERKLETREEROWRESPONSE,
@@ -907,7 +1102,7 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   _descriptor.MethodDescriptor(
     name='GetTransactionOffsets',
     full_name='conduit_raw.ConduitRaw.GetTransactionOffsets',
-    index=5,
+    index=7,
     containing_service=None,
     input_type=_TRANSACTIONOFFSETSREQUEST,
     output_type=_TRANSACTIONOFFSETSRESPONSE,
@@ -917,7 +1112,7 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   _descriptor.MethodDescriptor(
     name='GetTransactionOffsetsBatched',
     full_name='conduit_raw.ConduitRaw.GetTransactionOffsetsBatched',
-    index=6,
+    index=8,
     containing_service=None,
     input_type=_TRANSACTIONOFFSETSBATCHEDREQUEST,
     output_type=_TRANSACTIONOFFSETSBATCHEDRESPONSE,
@@ -927,7 +1122,7 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   _descriptor.MethodDescriptor(
     name='GetBlockMetadata',
     full_name='conduit_raw.ConduitRaw.GetBlockMetadata',
-    index=7,
+    index=9,
     containing_service=None,
     input_type=_BLOCKMETADATAREQUEST,
     output_type=_BLOCKMETADATARESPONSE,
@@ -937,7 +1132,7 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   _descriptor.MethodDescriptor(
     name='GetBlockMetadataBatched',
     full_name='conduit_raw.ConduitRaw.GetBlockMetadataBatched',
-    index=8,
+    index=10,
     containing_service=None,
     input_type=_BLOCKMETADATABATCHEDREQUEST,
     output_type=_BLOCKMETADATABATCHEDRESPONSE,
@@ -947,7 +1142,7 @@ _CONDUITRAW = _descriptor.ServiceDescriptor(
   _descriptor.MethodDescriptor(
     name='GetHeadersBatched',
     full_name='conduit_raw.ConduitRaw.GetHeadersBatched',
-    index=9,
+    index=11,
     containing_service=None,
     input_type=_BLOCKHEADERSBATCHEDREQUEST,
     output_type=_BLOCKHEADERSBATCHEDRESPONSE,

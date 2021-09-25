@@ -1,4 +1,5 @@
 import array
+import io
 import logging.handlers
 import logging
 import multiprocessing
@@ -12,6 +13,7 @@ from datetime import datetime
 
 from typing import Tuple, List, Sequence, Optional, Dict
 
+import bitcoinx
 import zmq
 from MySQLdb import _mysql
 from bitcoinx import hash_to_hex_str
@@ -253,7 +255,7 @@ class TxParser(multiprocessing.Process):
         finally:
             mysql_db.close()
 
-    def get_block_partition_tx_hashes(self, raw_block, tx_offsets) -> Tuple[List[bytes],
+    def get_block_part_tx_hashes(self, raw_block, tx_offsets) -> Tuple[List[bytes],
             List[Tuple]]:
         """Returns both a list of tx hashes and list of tuples containing tx hashes (the same
         data ready for database insertion)"""
@@ -264,9 +266,10 @@ class TxParser(multiprocessing.Process):
             tx_hash_rows.append((full_tx_hash.hex(),))
         return partition_tx_hashes, tx_hash_rows
 
-    def get_processed_vs_unprocessed_tx_offsets(self, merged_offsets_map: Dict[bytes, int],
+    def get_processed_vs_unprocessed_tx_offsets(self,
+            merged_offsets_map: Dict[bytes, int],
             merged_tx_to_block_num_map: Dict[bytes, int],
-            partition_tx_hash_rows, mysql_db: MySQLDatabase) \
+            merged_part_tx_hash_rows, mysql_db: MySQLDatabase) \
                 -> Tuple[Dict[int, List[int]], Dict[int, List[int]]]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
@@ -283,13 +286,15 @@ class TxParser(multiprocessing.Process):
             a) not_in_mempool_offsets
             b) in_mempool_offsets
         """
+        t0 = time.time()
+        t1 = 0
+
         not_in_mempool_offsets = {}
         in_mempool_offsets = {}
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
-            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(partition_tx_hash_rows)
-
+            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(merged_part_tx_hash_rows)
 
             for row in unprocessed_tx_hashes:
                 tx_hash = row[0]
@@ -318,10 +323,18 @@ class TxParser(multiprocessing.Process):
             for blk_num in in_mempool_offsets:
                 in_mempool_offsets[blk_num].sort()
 
+            t1 = time.time() - t0
+
             return not_in_mempool_offsets, in_mempool_offsets
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
             raise
+        finally:
+            self.total_unprocessed_tx_sorting_time += t1
+            if self.total_unprocessed_tx_sorting_time - self.last_time > 1:  # show every 1 cumulative sec
+                self.last_time = self.total_unprocessed_tx_sorting_time
+                self.logger.debug(f"total unprocessed tx sorting time: "
+                                  f"{self.total_unprocessed_tx_sorting_time} seconds")
 
     def mempool_thread(self):
         group = 'mempool'
@@ -364,57 +377,99 @@ class TxParser(multiprocessing.Process):
             if iterate() == "stop":
                 break
 
-    def process_block_partitions(self, batch: List[bytes], lmdb_grpc_client: ConduitRawAPIClient,
-            mysql_db: MySQLDatabase):
+    def get_block_slices(self, block_hashes: List[bytes],
+            block_slice_offsets: List[Tuple[int, int]], lmdb_grpc_client: ConduitRawAPIClient) \
+            -> bytes:
+        t0 = time.time()
+        try:
+            blk_nums = lmdb_grpc_client.get_block_num_batched(block_hashes)
+            block_requests = list(zip(blk_nums, block_slice_offsets))
+            raw_block_slice_array = lmdb_grpc_client.get_block_batched(block_requests)
+            # Ordering of both of these arrays must be guaranteed
+            return raw_block_slice_array
+        finally:
+            tdiff = time.time() - t0
+            self.grpc_time += tdiff
+            if self.grpc_time - self.last_grpc_time > 0.5:  # show every 1 cumulative sec
+                self.last_grpc_time = self.grpc_time
+                self.logger.debug(f"total time for grpc calls={self.grpc_time}")
 
-        acks = []
+    def unpack_batched_msgs(self, batch: List[bytes]) \
+            -> Tuple[
+                List[bytes],
+                List[Tuple[int, int]],
+                List[Tuple[bytes, int, int, int, array.array]]
+            ]:
+        """Batched messages from zmq PULL socket"""
+        block_slice_offsets: List[Tuple[int, int]] = []  # start_offset, end_offset
+        block_hashes: List[bytes] = []
+        unpacked_batch_msgs: List[Tuple[bytes, int, int, int, array.array[int]]] = []
 
-        # Merge into big data structures for batch-wise processing
-        merged_offsets_map: Dict[bytes: List[int]] = {}       # tx_hash: byte offsets in block
-        merged_tx_to_block_num_map: Dict[bytes, int] = {}     # tx_hash: block_num
-        merged_partition_tx_hash_rows = []
-        batched_raw_blocks = []
         for packed_msg in batch:
             msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
             msg_type, len_arr, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
                 packed_array = struct.unpack(f"<II32sIIQ{len_arr}s", packed_msg)
-            tx_offsets_partition = array.array("Q", packed_array)
+            tx_offsets_part = array.array("Q", packed_array)
 
-            t0 = time.time()
-            # Todo - This is wasteful in that it is pulling the * entire * raw block when it will
-            #  only need the relevant partition of the block
-            blk_num = lmdb_grpc_client.get_block_num(blk_hash)
-            raw_block = lmdb_grpc_client.get_block(blk_num)
-            tdiff = time.time() - t0
-            self.grpc_time += tdiff
-            # self.logger.debug(f"blk_num={blk_num}; blk_height={blk_height}")
-            partition_tx_hashes, partition_tx_hash_rows = self.get_block_partition_tx_hashes(
-                raw_block, tx_offsets_partition)
+            unpacked_batch_msgs.append((blk_hash, blk_height, first_tx_pos_batch, part_end_offset,
+                tx_offsets_part))
 
+            # The first partition should include the 80 byte block header + tx_count varint field
+            slice_start_offset = 0 if first_tx_pos_batch == 0 else tx_offsets_part[0]
+            slice_end_offset = part_end_offset
+            block_slice_offsets.append((slice_start_offset, slice_end_offset))
+            block_hashes.append(blk_hash)
+
+        return block_hashes, block_slice_offsets, unpacked_batch_msgs
+
+    def build_merged_data_structures(self, batch, lmdb_grpc_client) \
+            -> Tuple[Dict[bytes, int], Dict[bytes, int], List[Tuple], List[bytes], List]:
+        # Merge into big data structures for batch-wise processing
+        merged_offsets_map: Dict[bytes, int] = {}       # tx_hash: byte offsets in block
+        merged_tx_to_block_num_map: Dict[bytes, int] = {}     # tx_hash: block_num
+        merged_part_tx_hash_rows: List[Tuple] = []
+        batched_raw_blocks: List[bytes] = []
+        acks: List[int, int, List[bytes]] = []
+
+        block_hashes, block_slice_offsets, unpacked_batch_msgs = self.unpack_batched_msgs(batch)
+
+        raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
+            lmdb_grpc_client)
+
+        offset = 0
+        for blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+            tx_offsets_part in unpacked_batch_msgs:
+
+            # Todo - Maybe could make an iterator and call next() to read the next block slice
+            #   from a cached memory view? Then the same mem allocation could be reused by
+            #   parse_txs...
+            blk_num, len_slice = struct.unpack_from(f"<IQ", raw_block_slice_array, offset)
+            blk_num, len_slice, raw_block_slice = struct.unpack_from(f"<IQ{len_slice}s",
+                raw_block_slice_array, offset)
+            offset += 4 + 8 + len_slice  # move to next raw_block_slice in bytearray
+
+            part_tx_hashes, part_tx_hash_rows = self.get_block_part_tx_hashes(
+                raw_block_slice, tx_offsets_part)
 
             # Merge into big data structures
-            merged_partition_tx_hash_rows.extend(partition_tx_hash_rows)
-            merged_offsets_map.update(dict(zip(partition_tx_hashes, tx_offsets_partition)))
-            for tx_hash in partition_tx_hashes:
+            merged_part_tx_hash_rows.extend(part_tx_hash_rows)
+            merged_offsets_map.update(dict(zip(part_tx_hashes, tx_offsets_part)))
+            for tx_hash in part_tx_hashes:
                 merged_tx_to_block_num_map[tx_hash] = blk_num
 
-            batched_raw_blocks.append((raw_block, blk_num, blk_height, first_tx_pos_batch))
-            acks.append((blk_height, blk_hash, partition_tx_hashes))
+            # Todo - I don't like this re-allocation of raw_block_slice
+            batched_raw_blocks.append((raw_block_slice, blk_num, blk_height, first_tx_pos_batch))
+            acks.append((blk_height, blk_hash, part_tx_hashes))
 
-        t0 = time.time()
+        return merged_offsets_map, merged_tx_to_block_num_map, merged_part_tx_hash_rows, \
+            batched_raw_blocks, acks
 
-        non_mempool_tx_offsets, mempool_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(
-            merged_offsets_map, merged_tx_to_block_num_map, merged_partition_tx_hash_rows, mysql_db)
+    def parse_txs_and_push_to_queue(self, non_mempool_tx_offsets, mempool_tx_offsets,
+            batched_raw_blocks):
 
-        t1 = time.time() - t0
-
-        self.total_unprocessed_tx_sorting_time += t1
-        if self.total_unprocessed_tx_sorting_time - self.last_time > 1:  # show every 1 cumulative sec
-            self.last_time = self.total_unprocessed_tx_sorting_time
-            self.logger.debug(f"total unprocessed tx sorting time: "
-                              f"{self.total_unprocessed_tx_sorting_time} seconds")
-
+        # Todo - raw_block was re-allocated & can be avoided via memoryview over cached bytearray
         for raw_block, blk_num, blk_height, first_tx_pos_batch in batched_raw_blocks:
+
             # These txs have no entries yet for inputs, pushdata or output tables
             rows_not_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block,
                 non_mempool_tx_offsets[blk_num], blk_height, True, first_tx_pos_batch)
@@ -429,17 +484,28 @@ class TxParser(multiprocessing.Process):
                 tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
                 tx_rows.extend(tx_rows_now_confirmed)
 
-            if self.grpc_time - self.last_grpc_time > 0.5:  # show every 1 cumulative sec
-                self.last_grpc_time = self.grpc_time
-                self.logger.debug(f"total time for grpc calls={self.grpc_time}")
-
-
             self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
 
-        for blk_height, blk_hash, partition_tx_hashes in acks:
-            num_txs = len(partition_tx_hashes)
+
+    def process_block_partitions(self, batch: List[bytes], lmdb_grpc_client: ConduitRawAPIClient,
+            mysql_db: MySQLDatabase):
+        """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
+        latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
+        iteratively"""
+
+        merged_offsets_map, merged_tx_to_block_num_map, merged_part_tx_hash_rows, \
+            batched_raw_blocks, acks = self.build_merged_data_structures(batch, lmdb_grpc_client)
+
+        non_mempool_tx_offsets, mempool_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(
+            merged_offsets_map, merged_tx_to_block_num_map, merged_part_tx_hash_rows, mysql_db)
+
+        self.parse_txs_and_push_to_queue(non_mempool_tx_offsets, mempool_tx_offsets,
+            batched_raw_blocks)
+
+        for blk_height, blk_hash, part_tx_hashes in acks:
+            num_txs = len(part_tx_hashes)
             self.confirmed_tx_flush_ack_queue.put((blk_hash, num_txs))
-            self.worker_ack_queue_mined_tx_hashes.put({blk_height: partition_tx_hashes})
+            self.worker_ack_queue_mined_tx_hashes.put({blk_height: part_tx_hashes})
 
     def mined_blocks_thread(self):
         batch = []

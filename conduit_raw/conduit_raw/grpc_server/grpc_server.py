@@ -4,6 +4,7 @@ import logging
 import asyncio
 import os
 import shutil
+import struct
 import threading
 from pathlib import Path
 
@@ -19,7 +20,8 @@ try:
     TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
     BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
     TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest, BlockMetadataBatchedResponse,
-    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse)
+    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse, BlockBatchedRequest,
+    BlockBatchedResponse, BlockNumberBatchedRequest, BlockNumberBatchedResponse)
 
     from conduit_raw.conduit_raw.grpc_server import conduit_raw_pb2_grpc
 except ImportError:
@@ -28,7 +30,8 @@ except ImportError:
     TransactionOffsetsRequest, TransactionOffsetsResponse, BlockMetadataRequest,
     BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
     TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest, BlockMetadataBatchedResponse,
-    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse)
+    BlockHeadersBatchedRequest, BlockHeadersBatchedResponse, BlockBatchedRequest,
+    BlockBatchedResponse, BlockNumberBatchedRequest, BlockNumberBatchedResponse)
 
     import conduit_raw_pb2_grpc
 
@@ -42,6 +45,7 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
     def __init__(self, storage_path: Path, block_headers: bitcoinx.Headers):
         super().__init__()
         self.logger = logging.getLogger("conduit-raw-grpc")
+        self.logger.setLevel(logging.DEBUG)
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
 
@@ -59,11 +63,38 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
         block_number = self.lmdb.get_block_num(request.blockHash)
         return BlockNumberResponse(blockNumber=block_number)
 
+    async def GetBlockNumberBatched(self, request: BlockNumberBatchedRequest,
+            context: grpc.aio.ServicerContext) -> BlockNumberBatchedResponse:
+        # self.logger.debug(f"Got BlockNumberBatchedRequest.blockHashes={request.blockHashes}")
+        block_numbers = []
+        for block_hash in request.blockHashes:
+            block_number = self.lmdb.get_block_num(block_hash)
+            block_numbers.append(block_number)
+
+        return BlockNumberBatchedResponse(blockNumbers=block_numbers)
+
     async def GetBlock(self, request: BlockRequest,
-            context: grpc.aio.ServicerContext) -> BlockNumberResponse:
-        # self.logger.debug(f"Got BlockRequest.blockHash={request.blockNumber}")
-        raw_block = self.lmdb.get_block(request.blockNumber)
+            context: grpc.aio.ServicerContext) -> BlockResponse:
+        # self.logger.debug(f"Got BlockRequest.blockNumber={request.blockNumber}")
+        raw_block = self.lmdb.get_block(request.blockNumber,
+            request.startOffset, request.endOffset)
         return BlockResponse(rawBlock=raw_block)
+
+    async def GetBlockBatched(self, request: BlockBatchedRequest,
+            context: grpc.aio.ServicerContext) -> BlockBatchedResponse:
+        # self.logger.error(f"Got BlockBatchedRequest.blockHashes={request.blockRequests}")
+        raw_blocks_array = bytearray()
+        for block_request in request.blockRequests:
+            raw_block_slice = self.lmdb.get_block(block_request.blockNumber,
+                block_request.startOffset, block_request.endOffset)
+
+            len_slice = len(raw_block_slice)
+            raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
+                block_request.blockNumber,
+                len_slice,
+                raw_block_slice)
+
+        return BlockBatchedResponse(rawBlocksArray=bytes(raw_blocks_array))
 
     async def GetMerkleTreeRow(self, request: MerkleTreeRowRequest,
             context: grpc.aio.ServicerContext) -> MerkleTreeRowResponse:
