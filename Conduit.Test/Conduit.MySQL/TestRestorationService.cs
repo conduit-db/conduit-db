@@ -10,6 +10,34 @@ using Xunit.Abstractions;
 
 namespace Conduit.Test.Conduit.MySQL
 {
+    /// <summary>
+    /// You need to manually write your own comparer for byte arrays because.. I do not know.
+    /// </summary>
+    class ByteArrayEqualityComparer : IEqualityComparer<byte[]>
+    {
+        public bool Equals(byte[] x, byte[] y)
+        {
+            if (ReferenceEquals(x, y)) return true;
+            if (x == null || y == null) return false;
+            if (x.Length != y.Length) return false;
+            for (int i = 0; i < x.Length; i++)
+            {
+                if (x[i] != y[i]) return false;
+            }
+            return true;
+        }
+
+        public int GetHashCode(byte[] obj)
+        {
+            int result = 13 * obj.Length;
+            for (int i = 0; i < obj.Length; i++)
+            {
+                result = (17 * result) + obj[i];
+            }
+            return result;
+        }
+    }
+
     public class DatabaseHelper: IDisposable
     {
         private readonly string _connectionString = "server=127.0.0.1;user id=conduitadmin;password=conduitpass;port=52525;database=conduitdb;";
@@ -71,6 +99,51 @@ namespace Conduit.Test.Conduit.MySQL
                 }
             });
             Assert.Empty(results);
+        }
+
+        /// <summary>
+        /// Check the coinbase transactions going to the mining wallet. This checks the unspent and spent UTXOs are correct.
+        /// </summary>
+        [Fact]
+        public async void TestMiningTransactions()
+        {
+            Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
+
+
+            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            {
+                FilterKeys = new List<byte[]> {
+                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
+                    Convert.FromHexString("86c73b803ee5229044621b2fb6fb61b7001a92cbfdab1c7314da27a2fee72948"),
+                }
+            });
+            Assert.Equal(110, results.Count);
+
+            var unspentCoinbaseTransactionHashes = results.Where(w => w.SpendTransactionHash == null).Select(s => s.TransactionHash).Distinct().ToList();
+            Assert.Equal(100, unspentCoinbaseTransactionHashes.Count);
+
+            var spentResultsEnumerable = results.Where(w => w.SpendTransactionHash != null && w.SpendInputIndex != -1);
+            var spentCoinbaseTransactionHashes = spentResultsEnumerable.Select(s => s.TransactionHash).ToHashSet(new ByteArrayEqualityComparer());
+            Assert.Equal(10, spentCoinbaseTransactionHashes.Count);
+            // Verify all the spent coinbase UTXOs are spent in the same transaction. This was where ElectrumSV made change from the 10 (of 110) matured coinbase UTXOs.
+            Assert.Single(spentResultsEnumerable.Select(s => s.SpendTransactionHash).ToHashSet(new ByteArrayEqualityComparer()));
+            // Verify all the input indexes for the spent coinbases are different.
+            Assert.Equal(10, spentResultsEnumerable.Select(s => s.SpendInputIndex).Distinct().Count());
+
+            var expectedSpentCoinbaseTransactionHashes = new List<string>
+            {
+                "FCD363867BAB384A2CCB4349AEF3EE173D965561CA574B89E9FDB76642DD4D2B",
+                "59D06760245723B17BFFD9D587EC01ACDFCA1B7F1ACA9184112EB615D8D50A70",
+                "32EFB2AFDC5993AA3D63DBE031196B2AC08BFF196B3FF259DD50F5FB7A4F2CE0",
+                "F90E0A8B2667BFC9BB19D2EAC8CF48F78F00F8FA5CA168591E3C1B0346203004",
+                "3D052E3F9DF5073A04298AD87B01E6DC186665E4E4D7F965E210723DEE56E2E0",
+                "19F2B7FFA0D44E15E6568572590A2D4CBCC80B64859CFCBDCB1260DD5E4383F6",
+                "59E863F3BB2F1EC7192529513B95B4A782C80CDC930B028A9D53343866BF5641",
+                "1008FD90BB1055AF8AF5272BB60B0E11FE34B777983156714D7DFD2695393513",
+                "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
+                "9E724D5DE860799E909C2B94858741033C2E4201037F860BB583136CBEAB97D8",
+            }.Select(s => Convert.FromHexString(s).Reverse().ToArray()).ToHashSet(new ByteArrayEqualityComparer());
+            Assert.Equal(expectedSpentCoinbaseTransactionHashes, spentCoinbaseTransactionHashes, new ByteArrayEqualityComparer());
         }
 
         /// <summary>
