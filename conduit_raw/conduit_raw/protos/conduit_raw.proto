@@ -7,6 +7,7 @@ package conduit_raw;
 service ConduitRaw {
 	rpc Ping (PingRequest) returns (PingResponse);
 	rpc Stop (StopRequest) returns (StopResponse);
+	rpc GetChainTip (ChainTipRequest) returns (ChainTipResponse);
 	rpc GetBlockNumber (BlockNumberRequest) returns (BlockNumberResponse);
 	rpc GetBlockNumberBatched (BlockNumberBatchedRequest) returns (BlockNumberBatchedResponse);
 	rpc GetBlock (BlockRequest) returns (BlockResponse);
@@ -33,6 +34,13 @@ message StopRequest {
 
 message StopResponse {
 	string message = 1;
+}
+
+message ChainTipRequest {}
+
+message ChainTipResponse {
+	bytes header = 1;
+	int32 height = 2;
 }
 
 message BlockNumberRequest {

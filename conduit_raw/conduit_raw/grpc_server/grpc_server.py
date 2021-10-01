@@ -10,7 +10,9 @@ from pathlib import Path
 
 import bitcoinx
 import grpc
+from bitcoinx import hash_to_hex_str
 
+from conduit_lib.conduit_raw_pb2 import ChainTipResponse
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 
 
@@ -21,7 +23,7 @@ try:
     BlockMetadataResponse, StopRequest, StopResponse, TransactionOffsetsBatchedRequest,
     TransactionOffsetsBatchedResponse, BlockMetadataBatchedRequest, BlockMetadataBatchedResponse,
     BlockHeadersBatchedRequest, BlockHeadersBatchedResponse, BlockBatchedRequest,
-    BlockBatchedResponse, BlockNumberBatchedRequest, BlockNumberBatchedResponse)
+    BlockBatchedResponse, BlockNumberBatchedRequest, BlockNumberBatchedResponse, ChainTipRequest)
 
     from conduit_raw.conduit_raw.grpc_server import conduit_raw_pb2_grpc
 except ImportError:
@@ -56,6 +58,11 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
     async def Stop(self, request: StopRequest, context: grpc.aio.ServicerContext):
         _task = asyncio.create_task(self.server_graceful_shutdown())
         return StopResponse(message='stopping')
+
+    async def GetChainTip(self, request: ChainTipRequest,
+            context: grpc.aio.ServicerContext) -> ChainTipResponse:
+        tip: bitcoinx.Header = self.block_headers.longest_chain().tip
+        return ChainTipResponse(header=tip.raw, height=tip.height)
 
     async def GetBlockNumber(self, request: BlockNumberRequest,
             context: grpc.aio.ServicerContext) -> BlockNumberResponse:

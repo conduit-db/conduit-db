@@ -114,18 +114,6 @@ class SyncState:
     def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
 
-    # ConduitRaw Headers State
-    def get_conduit_raw_header_tip(self) -> Optional[bitcoinx.Header]:
-        """Needs to first have a connected headers_state_client"""
-        with self.conduit_raw_header_tip_lock:
-            return self.conduit_raw_header_tip
-
-    def set_conduit_raw_header_tip(self, conduit_raw_header_tip: bitcoinx.Header):
-        """Needs to first have a connected headers_state_client"""
-        with self.conduit_raw_header_tip_lock:
-            self.conduit_raw_header_tip = conduit_raw_header_tip
-            return self.conduit_raw_header_tip
-
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height
 
@@ -226,7 +214,7 @@ class SyncState:
 
         return remaining_work, work_for_this_batch
 
-    def get_main_batch(self) -> Tuple[Set[bytes], MainBatch]:
+    def get_main_batch(self, main_batch_tip: bitcoinx.Header) -> Tuple[Set[bytes], MainBatch]:
         # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
         #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
         #   it is something to do with global socket state interfering with the child processes
@@ -238,9 +226,8 @@ class SyncState:
         all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
-        conduit_raw_tip = self.get_conduit_raw_header_tip()
         local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = conduit_raw_tip.height - local_block_tip_height
+        block_height_deficit = main_batch_tip.height - local_block_tip_height
 
         # May need to use block_hash not height to be more correct
         block_headers: List[bitcoinx.Header] = []

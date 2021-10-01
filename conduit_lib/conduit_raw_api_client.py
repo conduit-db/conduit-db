@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 from typing import Optional, List, Tuple
-from bitcoinx import hex_str_to_hash
+from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib.utils import cast_to_valid_ipv4
 
@@ -19,7 +19,7 @@ try:
     TransactionOffsetsBatchedResponse, TransactionOffsetsBatchedRequest,
     BlockMetadataBatchedResponse, BlockMetadataBatchedRequest, BlockHeadersBatchedRequest,
     BlockHeadersBatchedResponse, BlockBatchedRequest, BlockBatchedResponse,
-    BlockNumberBatchedResponse, BlockNumberBatchedRequest)
+    BlockNumberBatchedResponse, BlockNumberBatchedRequest, ChainTipRequest, ChainTipResponse)
 except ImportError:
     import conduit_raw_pb2
     import conduit_raw_pb2_grpc
@@ -80,6 +80,20 @@ class ConduitRawAPIClient:
         except Exception:
             self.logger.exception("unexpected exception")
 
+    def get_chain_tip(self) -> Optional[Tuple[bytes, int]]:
+        try:
+            response: ChainTipResponse = self.stub.GetChainTip(
+                ChainTipRequest(), wait_for_ready=True)
+            return response.header, response.height
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                self.logger.error(f"Chain tip for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
+            else:
+                self.logger.exception(e)
+        except Exception as e:
+            raise e
+
     def get_block_num(self, block_hash: bytes) -> Optional[int]:
         try:
             response: BlockNumberResponse = self.stub.GetBlockNumber(
@@ -87,7 +101,8 @@ class ConduitRawAPIClient:
             return response.blockNumber
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block num for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Block num for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -100,7 +115,8 @@ class ConduitRawAPIClient:
             return response.blockNumbers
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -123,10 +139,11 @@ class ConduitRawAPIClient:
 
     def get_block_batched(self, block_requests: List[Tuple[int, Tuple[int, int]]]) \
             -> Optional[bytes]:
+        cur_block_num = 0  # for exception logging
         try:
             proto_block_requests = []
-
             for block_number, slice_begin_and_end in block_requests:
+                cur_block_num = block_number
                 start_offset, end_offset = slice_begin_and_end
                 proto_block_request = BlockRequest(blockNumber=block_number,
                     startOffset=start_offset, endOffset=end_offset)
@@ -137,7 +154,7 @@ class ConduitRawAPIClient:
             return response.rawBlocksArray
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block for block num: {block_number} not found")
+                self.logger.error(f"Block for block num: {cur_block_num} not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -151,7 +168,8 @@ class ConduitRawAPIClient:
             return response.mtreeRow
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Merkle tree row for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Merkle tree row for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -164,7 +182,8 @@ class ConduitRawAPIClient:
             return array.array("Q", response.txOffsetsArray)
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Tx offsets for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -187,7 +206,8 @@ class ConduitRawAPIClient:
             return response.blockSizeBytes
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -200,7 +220,8 @@ class ConduitRawAPIClient:
             return response.batch
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -217,7 +238,8 @@ class ConduitRawAPIClient:
             return response.headers
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
-                self.logger.error(f"Block metadata for block_hash: {block_hash.hex()} not found")
+                self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
+                    f"not found")
             else:
                 self.logger.exception(e)
         except Exception as e:
@@ -225,10 +247,16 @@ class ConduitRawAPIClient:
 
 
 if __name__ == '__main__':
-    block_hash = hex_str_to_hash("3b98a9b60e872b7328566ac1ea26608fc617d8805aabfc03ff075a7885cbe000")
+    block_hash = hex_str_to_hash("3063788ed0dbd70428d4f58c465e2acda71bbcf82cacb21375e1ce9f9bdb5437")
 
     client = ConduitRawAPIClient()
+
     # print(client.ping(0))
+    #
+    response = client.get_chain_tip()
+    if response:
+        print(response)
+    #
     # response = client.get_block_num(block_hash)
     # if response:
     #     print(response)

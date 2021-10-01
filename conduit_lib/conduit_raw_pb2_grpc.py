@@ -24,6 +24,11 @@ class ConduitRawStub(object):
                 request_serializer=conduit__raw__pb2.StopRequest.SerializeToString,
                 response_deserializer=conduit__raw__pb2.StopResponse.FromString,
                 )
+        self.GetChainTip = channel.unary_unary(
+                '/conduit_raw.ConduitRaw/GetChainTip',
+                request_serializer=conduit__raw__pb2.ChainTipRequest.SerializeToString,
+                response_deserializer=conduit__raw__pb2.ChainTipResponse.FromString,
+                )
         self.GetBlockNumber = channel.unary_unary(
                 '/conduit_raw.ConduitRaw/GetBlockNumber',
                 request_serializer=conduit__raw__pb2.BlockNumberRequest.SerializeToString,
@@ -86,6 +91,12 @@ class ConduitRawServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Stop(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetChainTip(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -163,6 +174,11 @@ def add_ConduitRawServicer_to_server(servicer, server):
                     servicer.Stop,
                     request_deserializer=conduit__raw__pb2.StopRequest.FromString,
                     response_serializer=conduit__raw__pb2.StopResponse.SerializeToString,
+            ),
+            'GetChainTip': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetChainTip,
+                    request_deserializer=conduit__raw__pb2.ChainTipRequest.FromString,
+                    response_serializer=conduit__raw__pb2.ChainTipResponse.SerializeToString,
             ),
             'GetBlockNumber': grpc.unary_unary_rpc_method_handler(
                     servicer.GetBlockNumber,
@@ -255,6 +271,23 @@ class ConduitRaw(object):
         return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/Stop',
             conduit__raw__pb2.StopRequest.SerializeToString,
             conduit__raw__pb2.StopResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetChainTip(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/conduit_raw.ConduitRaw/GetChainTip',
+            conduit__raw__pb2.ChainTipRequest.SerializeToString,
+            conduit__raw__pb2.ChainTipResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 

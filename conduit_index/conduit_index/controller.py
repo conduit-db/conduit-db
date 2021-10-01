@@ -7,7 +7,7 @@ import os
 import queue
 import struct
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
@@ -331,14 +331,12 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
-    def long_poll_conduit_raw_chain_tip(self):
-        conduit_raw_tip = self.sync_state.get_conduit_raw_header_tip()
-        deserialized_tip = None
+    def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
+        tip, tip_height = self.lmdb_grpc_client.get_chain_tip()
+        deserialized_header = None
         while True:
             try:
-                start_height = 0
-                if conduit_raw_tip:
-                    start_height = conduit_raw_tip.height + 1
+                start_height = self.sync_state.get_local_block_tip_height() + 1
 
                 # Long-polling
                 result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
@@ -349,13 +347,12 @@ class Controller:
 
                     # For debugging only
                     tip_hash = double_sha256(new_tip)
-                    deserialized_tip = self.storage.get_header_for_hash(tip_hash)
+                    deserialized_header = self.storage.get_header_for_hash(tip_hash)
 
-                if deserialized_tip:
-                    self.sync_state.set_conduit_raw_header_tip(deserialized_tip)
+                if deserialized_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
-                                      f"parsing at height: {deserialized_tip.height}")
-                    return deserialized_tip
+                                      f"parsing at height: {deserialized_header.height}")
+                    return deserialized_header, tip_height
                 else:
                     continue
             except Exception:
@@ -401,21 +398,26 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                conduit_raw_tip = await self.loop.run_in_executor(
+                main_batch_tip, conduit_raw_tip_height = await self.loop.run_in_executor(
                     self.headers_state_consumer_executor, self.long_poll_conduit_raw_chain_tip)
 
-                deficit = conduit_raw_tip.height - self.sync_state.get_local_block_tip_height()
-                self.logger.debug(f"Got new headers from ConduitRaw to height: {conduit_raw_tip.height}. "
-                                  f"Local tip height: {self.sync_state.get_local_block_tip_height()} "
-                                  f"(batch deficit={deficit})")
-                if conduit_raw_tip.height <= self.sync_state.get_local_block_tip_height():
+                deficit = main_batch_tip.height - self.sync_state.get_local_block_tip_height()
+                local_tip_height = self.sync_state.get_local_block_tip_height()
+                remaining = conduit_raw_tip_height - local_tip_height
+                self.logger.debug(f"Allocated {deficit} headers in main batch to height: "
+                    f"{main_batch_tip.height}")
+                self.logger.debug(f"ConduitRaw tip height: {conduit_raw_tip_height}. "
+                                  f"Local tip height: {local_tip_height} "
+                                  f"(remaining={remaining})")
+                if main_batch_tip.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
                 batch_id += 1
                 self.logger.debug(f"Controller Batch {batch_id} Start")
 
                 # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
-                all_pending_block_hashes, main_batch = self.sync_state.get_main_batch()
+                all_pending_block_hashes, main_batch = \
+                    self.sync_state.get_main_batch(main_batch_tip)
                 all_work_units = self.sync_state.get_work_units_all(all_pending_block_hashes,
                     main_batch)
                 self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
