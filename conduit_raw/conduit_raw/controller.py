@@ -118,9 +118,6 @@ class Controller:
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
         self.sync_state: Optional[SyncState] = None
-        self.headers_producer: Optional[Producer] = None
-        self.mempool_tx_producer: Optional[Producer] = None
-
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -158,11 +155,6 @@ class Controller:
         kafka_producer_config = {
             'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
         }
-        # Push initial tip (if this message gets pushed more than once on restarts the consumer
-        # should be able to handle it)
-        self.headers_producer = Producer(**kafka_producer_config)
-        self.headers_producer.produce(topic="conduit-raw-headers-state", value=tip.raw)
-        self.mempool_tx_producer = Producer(**kafka_producer_config)
 
     async def connect_session(self):
         peer = self.get_peer()
@@ -435,13 +427,6 @@ class Controller:
         self.storage.block_headers.flush()
         # ? Add reorg and other sanity checks later here...
 
-        for height, hash in sorted_headers:
-            # must push message AFTER the flush to local headers store and NOT before
-            header = self.get_header_for_hash(hash)
-            # TODO - this is actually blocking and should probably be run in a threadpool executor
-            #  in case kafka goes offline and this blocks the entire event loop
-            self.headers_producer.produce(topic="conduit-raw-headers-state", value=header.raw)
-
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header.hash, header.height) = "
                           f"{(tip.height, hash_to_hex_str(tip.hash))}")
@@ -489,7 +474,6 @@ class Controller:
                 if batch_id == 0:
                     self.logger.info(f"Starting Initial Block Download")
                 else:
-                    batch_id += 1
                     self.logger.debug(f"Controller Batch {batch_id} Start")
                 chain = self.storage.block_headers.longest_chain()
 
@@ -515,6 +499,7 @@ class Controller:
                 else:
                     self.logger.debug(f"Controller Batch {batch_id} Complete."
                         f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+                batch_id += 1
 
 
         except asyncio.CancelledError:
