@@ -130,7 +130,8 @@ class MySQLTables:
         # to do UPSERT which is slow...
         # dropped the tx_shash index and can instead do range scans (for a given
         # pushdata_hash / key history) at lookup time...
-        # Things like B:// maybe could be dealt with as special cases perhaps?
+        # Things like B:// or Tokens could be dealt with as special cases in their own dedicated
+        # table.
 
         self.mysql_conn.query("""
             CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
@@ -139,12 +140,21 @@ class MySQLTables:
         # ?? should this be an in-memory only table?
         # need to store the full tx_hash (albeit non-indexed) because the client
         # may not be providing the tx_hash in their query (e.g. for key history).
+
+        # Note: removed "mp_rawtx LONGBLOB," field because of an error:
+        #  MySQLdb._exceptions.OperationalError:
+        #  (1163, "Storage engine MEMORY doesn't support BLOB/TEXT columns")
+        #  But come to think of it, it may be for the best to fit more txs in memory and the
+        #  node (even if pruned) will have the full rawtx for requesting on-demand anyway.
+        #  LSM databases are not designed for millions of random deletes every 10 mins!
+        #  40,000 deletes takes 3mins 25 seconds with ENGINE=MyRocks but is instant with
+        #  ENGINE=MEMORY and USING HASH index.
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS mempool_transactions (
-                mp_tx_hash BINARY(32) PRIMARY KEY,
+                mp_tx_hash BINARY(32),
                 mp_tx_timestamp TIMESTAMP,
-                mp_rawtx LONGBLOB
-            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+                INDEX USING HASH (mp_tx_hash)
+            ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)
 
         self.mysql_conn.query("""

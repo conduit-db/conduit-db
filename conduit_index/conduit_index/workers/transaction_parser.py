@@ -307,7 +307,7 @@ class TxParser(multiprocessing.Process):
                 not_in_mempool_offsets[blk_num].append(tx_offset)
 
             # left-overs are mempool txs
-            for tx_hash, tx_offset in merged_offsets_map:
+            for tx_hash, tx_offset in merged_offsets_map.items():
                 blk_num = merged_tx_to_block_num_map[tx_hash]
 
                 has_block_num = in_mempool_offsets.get(blk_num)
