@@ -147,9 +147,11 @@ class BitcoinNetIO(BufferedProtocol):
         self._pos += nbytes
 
         while self.is_next_header_available():
+
             cur_header = self._unpack_msg_header()
             self._payload_size = cur_header.payload_size
             if self.is_next_payload_available():
+
                 cur_msg_end_pos = self._last_msg_end_pos + HEADER_LENGTH + self._payload_size
                 cur_msg_start_pos = self._last_msg_end_pos + HEADER_LENGTH
 

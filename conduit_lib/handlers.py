@@ -5,6 +5,7 @@ import struct
 from typing import Tuple
 
 import bitcoinx
+import zmq
 from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
 
 from .constants import MsgType
@@ -29,6 +30,7 @@ class Handlers:
         self.serializer = Serializer(self.net_config, storage)
         self.deserializer = Deserializer(self.net_config, storage)
         self.storage = storage
+        self.server_type = self.controller.config['server_type']
 
     async def on_version(self, message):
         # logger.debug("handling version...")
@@ -91,10 +93,13 @@ class Handlers:
 
         tx_inv_vect = []
         for inv in inv_vects:
-            if inv["inv_type"] == 1:  # TX
+            # TX
+            if inv["inv_type"] == 1 and self.server_type == "ConduitIndex":
                 # logger.debug(f"got inv: {inv}")
                 tx_inv_vect.append(inv)
-            elif inv["inv_type"] == 2:  # BLOCK
+
+            # BLOCK
+            elif inv["inv_type"] == 2 and self.server_type == "ConduitRaw":
                 if not have_header(inv):
                     self.controller.sync_state.headers_event_new_tip.set()
 
@@ -104,7 +109,8 @@ class Handlers:
                 # else:
                     # logger.debug(f"got new block notification: {inv['inv_hash']}")
 
-        if self.controller.sync_state.initial_block_download_event.is_set():
+        # if self.controller.sync_state.initial_block_download_event.is_set():
+        if self.server_type == "ConduitIndex":
             max_getdata_size = 50_000
             num_getdatas = (len(tx_inv_vect) // max_getdata_size) + 1
             # e.g. if 100001 invs -> 3X getdata
@@ -126,10 +132,9 @@ class Handlers:
     async def on_tx(self, rawtx: memoryview):
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
-        if hasattr(self.controller, 'mempool_tx_producer'):
-            # Todo - expensive debug logging here (remove when fixed):
-            logger.debug(f"Got mempool tx: {bitcoinx.Tx.from_bytes(rawtx.tobytes()).hash()}")
-            self.controller.mempool_tx_producer.produce(topic='mempool-txs', value=packed_message)
+        if hasattr(self.controller, 'mempool_tx_socket'):  # Only conduit_index has this
+            mempool_tx_socket: zmq.Socket = self.controller.mempool_tx_socket
+            mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):

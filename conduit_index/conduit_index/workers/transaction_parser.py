@@ -16,7 +16,7 @@ from typing import Tuple, List, Sequence, Optional, Dict
 import bitcoinx
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
+from bitcoinx import hash_to_hex_str, double_sha256
 from confluent_kafka import Consumer
 
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
@@ -336,46 +336,60 @@ class TxParser(multiprocessing.Process):
                 self.logger.debug(f"total unprocessed tx sorting time: "
                                   f"{self.total_unprocessed_tx_sorting_time} seconds")
 
+    def process_mempool_batch(self, batch, lmdb_grpc_client, mysql_db):
+        for msg in batch:
+            msg_type, size_tx = struct.unpack_from(f"<II", msg)
+            msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", msg)
+            self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
+
+            # Todo only does 1 mempool tx at a time at present
+            dt = datetime.utcnow()
+            tx_offsets = array.array("Q", [0])
+            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+            result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
+            tx_rows, in_rows, out_rows, set_pd_rows = result
+
+            # todo - batch up mempool txs before feeding them into the queue.
+            num_mempool_txs_processed = 1
+            self.mempool_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
+            self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
+
     def mempool_thread(self):
-        group = 'mempool'
-        mempool_tx_consumer: Consumer = Consumer({
-            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-            'group.id': group,
-            'auto.offset.reset': 'earliest'
-        })
-        mempool_tx_consumer.subscribe(['mempool-txs'])
+        batch = []
+        prev_time_check = time.time()
 
-        def iterate():
-            try:
-                # Todo: 1 msg/iteration is going to be very inefficient but leaving it for now
-                msgs = mempool_tx_consumer.consume(num_messages=1)
-                if not msgs:
-                    return  # poison pill stop command
+        context2 = zmq.Context()
+        mempool_tx_socket = context2.socket(zmq.PULL)
+        mempool_tx_socket.connect("tcp://127.0.0.1:55556")
 
-                for msg in msgs:
-                    message = msg.value()
-                    self.logger.debug(f"Got mempool tx: {message}")
-                    msg_type, size_tx = struct.unpack_from(f"<II", message)
-                    msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", message)
-
-                    # Todo only does 1 mempool tx at a time at present
-                    dt = datetime.utcnow()
-                    tx_offsets = array.array("Q", [0])
-                    timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
-                    result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
-                    tx_rows, in_rows, out_rows, set_pd_rows = result
-
-                    # todo - batch up mempool txs before feeding them into the queue.
-                    num_mempool_txs_processed = 1
-                    self.mempool_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-                    self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
-            except Exception as e:
-                self.logger.exception(e)
-                raise
-
-        while True:
-            if iterate() == "stop":
-                break
+        try:
+            mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+            lmdb_grpc_client = ConduitRawAPIClient()
+            while True:
+                try:
+                    if mempool_tx_socket.poll(100, zmq.POLLIN):
+                        packed_msg = mempool_tx_socket.recv(zmq.NOBLOCK)
+                        if not packed_msg:
+                            return  # poison pill stop command
+                        batch.append(bytes(packed_msg))
+                    else:
+                        time_diff = time.time() - prev_time_check
+                        if time_diff > self.BLOCK_BATCHING_RATE:
+                            prev_time_check = time.time()
+                            if batch:
+                                self.process_mempool_batch(batch, lmdb_grpc_client, mysql_db)
+                            batch = []
+                except zmq.error.Again:
+                    self.logger.debug(f"zmq.error.Again")
+                    continue
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            self.logger.exception(e)
+        finally:
+            self.logger.info("Closing mined_blocks_thread")
+            mempool_tx_socket.close()
+            mempool_tx_socket.term()
 
     def get_block_slices(self, block_hashes: List[bytes],
             block_slice_offsets: List[Tuple[int, int]], lmdb_grpc_client: ConduitRawAPIClient) \
@@ -514,6 +528,7 @@ class TxParser(multiprocessing.Process):
         context: zmq.Context = zmq.Context()
         mined_tx_socket: zmq.Socket = context.socket(zmq.PULL)
         mined_tx_socket.connect("tcp://127.0.0.1:55555")
+
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             lmdb_grpc_client = ConduitRawAPIClient()
