@@ -1,9 +1,12 @@
+import array
 import asyncio
 import logging
 import multiprocessing
 import os
 import threading
+import time
 import typing
+from typing import Set, List, Tuple
 from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
 
@@ -12,10 +15,11 @@ from bitcoinx import Headers, hash_to_hex_str
 
 # from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
-from conduit_lib.constants import SMALL_BLOCK_TX_COUNT, MAX_BLOCK_BATCH_ALLOCATION
+from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
 from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
+from .types import WorkUnit, MainBatch
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -74,11 +78,16 @@ class SyncState:
         # Accounting and ack'ing for block msgs
         self.blocks_batch_set = set()  # usually a set of 500 hashes
         self.expected_blocks_tx_counts = {}  # blk_hash: total_tx_count
-        self.pending_blocks_inv_queue = asyncio.Queue()
         self._pending_blocks_progress_counter = {}
 
+        # Accounting and ack'ing for chip away block msgs
+        self.all_pending_chip_away_block_hashes = set()  # usually a set of 500 hashes
+        self.expected_blocks_tx_counts_chip_away = {}  # blk_hash: total_tx_count
+        self._pending_blocks_progress_counter_chip_away = {}
+        self.chip_away_batch_event = asyncio.Event()
+
         # Accounting and ack'ing for block msgs
-        self.global_blocks_batch_set = set()  # usually a set of 500 hashes during IBD
+        self.all_pending_block_hashes = set()  # usually a set of 500 hashes during IBD
         self.received_blocks = set()  # received in network buffer - must process before buf reset
         self.done_blocks_tx_parser = set()
         self.done_blocks_tx_parser_lock = threading.Lock()
@@ -87,6 +96,8 @@ class SyncState:
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
         self._grpc_exec = ThreadPoolExecutor(10, 'grpc-exec')
         self.initial_block_download_event_mp = multiprocessing.Event()
+
+        self.total_time_allocating_work = 0
 
     @property
     def message_received_count(self):
@@ -150,14 +161,72 @@ class SyncState:
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_next_batched_blocks(self):
-        """Key Variables:
-        - stop_header_height
-        - blocks_batch_set
+    def get_work_units_all(self, all_pending_block_hashes: Set[bytes], all_work: MainBatch) \
+            -> List[WorkUnit]:
+
+        t0 = time.perf_counter()
+        try:
+            all_work_units = []
+            for i, work in enumerate(all_work):
+                block_size, tx_offsets, block_header = work
+                needs_breaking_up = \
+                    block_size > SMALL_BLOCK_SIZE or block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
+
+                first_tx_pos_batch = 0
+                if needs_breaking_up:
+                    tx_count = len(tx_offsets)
+                    divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
+                        block_size, tx_offsets)
+
+                    for work_part in divided_work:
+                        size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+                            tx_offsets = work_part
+                        all_work_units.append(work_part)
+                        # self.logger.debug(f"divided_work={divided_work}")
+                else:
+                    part_end_offset = block_size
+                    size_of_part = block_size
+                    all_work_units.append((size_of_part, block_header.hash, block_header.height,
+                        first_tx_pos_batch, part_end_offset, tx_offsets))
+
+                all_pending_block_hashes.add(block_header.hash)
+                self.add_pending_block(block_header.hash, len(tx_offsets))
+            return all_work_units
+        finally:
+            t1 = time.perf_counter() - t0
+            self.total_time_allocating_work += t1
+            self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
+
+    def get_work_units_chip_away(self, all_work_units: List[WorkUnit]) \
+            -> Tuple[List[WorkUnit], List[WorkUnit]]:
+        """When limits are reached this function can merely return back to caller and this
+        function will be called repeatedly until 'all_pending_block_hashes' have been fully
+        consumed.
+        Todo:   Test for 1 x 4GB transaction - what happens if it exceeds CHIP_AWAY_BYTE_SIZE_LIMIT?
+                Test for 1 x 4GB block with CHIP_AWAY_BYTE_SIZE_LIMIT == 40MB -> BATCH_COUNT = 100
         """
-        # Todo - must check how large these blocks are to allocate a sensible number
-        #  of blocks - should be possible to break a very large block into partitions so that
-        #  the workers can chip away at it without running out of memory!
+        total_allocation = 0
+        remaining_work = []
+        work_for_this_batch = []
+        for idx, work_unit in enumerate(all_work_units):
+            size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+                tx_offsets = work_unit
+
+            # self.logger.debug(f"work_unit={work_unit}")
+            reached_limit = \
+                total_allocation + size_of_part > CHIP_AWAY_BYTE_SIZE_LIMIT
+
+            if reached_limit:
+                remaining_work.append(work_unit)
+                continue
+
+            total_allocation += size_of_part
+            work_for_this_batch.append(work_unit)
+            self.add_pending_chip_away_work_item(blk_hash, len(tx_offsets))
+
+        return remaining_work, work_for_this_batch
+
+    def get_main_batch(self) -> Tuple[Set[bytes], MainBatch]:
         # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
         #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
         #   it is something to do with global socket state interfering with the child processes
@@ -166,13 +235,7 @@ class SyncState:
         if not self.lmdb_grpc_client:
             self.lmdb_grpc_client = ConduitRawAPIClient()
 
-        total_batch_bytes = 0
-        allocated_work = []
-
-        def batch_is_over_limit() -> bool:
-            return total_batch_bytes > MAX_BLOCK_BATCH_ALLOCATION
-
-        blocks_batch_set = set()
+        all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
         chain = self.storage.headers.longest_chain()
         conduit_raw_tip = self.get_conduit_raw_header_tip()
@@ -180,8 +243,7 @@ class SyncState:
         block_height_deficit = conduit_raw_tip.height - local_block_tip_height
 
         # May need to use block_hash not height to be more correct
-        block_headers = []
-        batch_count = 0
+        block_headers: List[bitcoinx.Header] = []
         for i in range(1, block_height_deficit + 1):
             block_header = headers.header_at_height(chain, local_block_tip_height + i)
             block_headers.append(block_header)
@@ -190,34 +252,8 @@ class SyncState:
         block_size_results = self.lmdb_grpc_client.get_block_metadata_batched(header_hashes)
         tx_offsets_results = self.lmdb_grpc_client.get_tx_offsets_batched(header_hashes)
 
-        for block_size, tx_offsets, block_header in zip(block_size_results, tx_offsets_results,
-                block_headers):
-
-            # Safety Checks and MAX LIMITS
-            total_batch_bytes += block_size
-            # self.logger.debug(f"total_batch_bytes={total_batch_bytes}")
-            if batch_is_over_limit():
-                self.logger.warning(f"Batch is over the MAX_BLOCK_BATCH_ALLOCATION limit ({MAX_BLOCK_BATCH_ALLOCATION/1024**2}MB)!")
-                break
-            else:
-                blocks_batch_set.add(block_header.hash)
-                self.add_pending_block(block_header.hash, len(tx_offsets))
-
-            first_tx_pos_batch = 0
-            if block_size > SMALL_BLOCK_TX_COUNT:
-                tx_count = len(tx_offsets)
-                divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
-                    block_size, tx_offsets)
-                for work_part in divided_work:
-                    allocated_work.append(work_part)
-                    # self.logger.debug(f"divided_work={divided_work}")
-            else:
-                part_end_offset = block_size
-                allocated_work.append((block_header.hash, block_header.height,
-                    first_tx_pos_batch, part_end_offset, tx_offsets))
-            batch_count = i
-
-        return batch_count, blocks_batch_set, allocated_work
+        all_work_units = list(zip(block_size_results, tx_offsets_results, block_headers))
+        return all_pending_block_hashes, all_work_units
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:
@@ -243,6 +279,9 @@ class SyncState:
         for blk_hash in self.done_blocks_tx_parser:
             self.logger.error(f"done_blocks blk_hash={hash_to_hex_str(blk_hash)}")
 
+    # ----- SUPERVISE BATCH COMPLETION ----- #
+    # Maximum number of blocks in this batch is 'MAIN_BATCH_HEADERS_COUNT_LIMIT'
+
     def block_is_fully_processed(self, block_hash: bytes) -> bool:
         return self._pending_blocks_progress_counter[block_hash] == \
             self.expected_blocks_tx_counts[block_hash]
@@ -254,6 +293,32 @@ class SyncState:
     def reset_pending_blocks(self):
         self._pending_blocks_received = {}
         self._pending_blocks_progress_counter = {}
+
+    # ----- SUPERVISE 'CHIP AWAY' BATCH COMPLETIONS ----- #
+    # This batch can be as small as system resources need it to be (even small parts of a block)
+
+    def have_completed_chip_away_batch(self, block_hash: bytes) -> bool:
+        return self._pending_blocks_progress_counter_chip_away[block_hash] == \
+               self.expected_blocks_tx_counts_chip_away[block_hash]
+
+
+    def add_pending_chip_away_work_item(self, blk_hash, work_item_tx_count):
+        def init_counters_if_needed():
+            if not self.expected_blocks_tx_counts_chip_away.get(blk_hash):
+                self.expected_blocks_tx_counts_chip_away[blk_hash] = 0
+            if not self._pending_blocks_progress_counter_chip_away.get(blk_hash):
+                self._pending_blocks_progress_counter_chip_away[blk_hash] = 0
+
+        init_counters_if_needed()
+        self.expected_blocks_tx_counts_chip_away[blk_hash] += work_item_tx_count
+        self.all_pending_chip_away_block_hashes.add(blk_hash)
+
+
+    def reset_pending_chip_away_work_items(self):
+        self._pending_blocks_received_chip_away = {}
+        self._pending_blocks_progress_counter_chip_away = {}
+
+    # ----- AVOID MEMPOOL-INDUCED THRASHING DURING IBD ----- #
 
     def is_post_IBD(self):
         """has initial block download been completed?

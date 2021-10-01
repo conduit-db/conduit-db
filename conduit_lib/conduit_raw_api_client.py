@@ -50,7 +50,10 @@ class ConduitRawAPIClient:
         CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1:50000')
         self.host = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
         self.port = int(CONDUIT_RAW_API_HOST.split(":")[1])
-        self.channel = grpc.insecure_channel(f"{self.host}:{self.port}")
+        self.channel = grpc.insecure_channel(f"{self.host}:{self.port}", options=[
+            ('grpc.max_send_message_length', 50 * 1024 * 1024),
+            ('grpc.max_receive_message_length', 50 * 1024 * 1024)
+        ])
         self.stub = conduit_raw_pb2_grpc.ConduitRawStub(self.channel)
 
     def close(self):

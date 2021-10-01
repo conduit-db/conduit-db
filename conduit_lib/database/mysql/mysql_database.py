@@ -3,7 +3,6 @@ import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
-from pathlib import Path
 
 import MySQLdb
 from MySQLdb import _mysql
