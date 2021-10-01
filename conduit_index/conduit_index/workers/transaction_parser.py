@@ -337,10 +337,11 @@ class TxParser(multiprocessing.Process):
                                   f"{self.total_unprocessed_tx_sorting_time} seconds")
 
     def process_mempool_batch(self, batch, lmdb_grpc_client, mysql_db):
+        tx_rows_batched, in_rows_batched, out_rows_batched, set_pd_rows_batched = [], [], [], []
         for msg in batch:
             msg_type, size_tx = struct.unpack_from(f"<II", msg)
             msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", msg)
-            self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
+            # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
 
             # Todo only does 1 mempool tx at a time at present
             dt = datetime.utcnow()
@@ -348,11 +349,16 @@ class TxParser(multiprocessing.Process):
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
             result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
             tx_rows, in_rows, out_rows, set_pd_rows = result
+            tx_rows_batched.extend(tx_rows)
+            in_rows_batched.extend(in_rows)
+            out_rows_batched.extend(out_rows)
+            set_pd_rows_batched.extend(set_pd_rows)
 
-            # todo - batch up mempool txs before feeding them into the queue.
-            num_mempool_txs_processed = 1
-            self.mempool_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
-            self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
+        num_mempool_txs_processed = len(tx_rows_batched)
+        self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
+        self.mempool_tx_flush_queue.put(
+            (tx_rows_batched, in_rows_batched, out_rows_batched, set_pd_rows_batched))
+        self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
 
     def mempool_thread(self):
         batch = []
