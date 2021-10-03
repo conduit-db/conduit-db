@@ -150,15 +150,9 @@ class Controller:
         self.batch_completion_mtree.start()
         self.batch_completion_preprocessor.start()
 
-        # Headers State is shared between ConduitRaw and ConduitIndex via this server
-        tip = self.storage.block_headers.longest_chain().tip
-        kafka_producer_config = {
-            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-        }
-
     async def connect_session(self):
         peer = self.get_peer()
-        self.logger.debug("connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
+        self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
         self.transport, self.session = await self.bitcoin_net_io.connect(peer.host, peer.port)
         return self.transport, self.session
 
@@ -177,7 +171,7 @@ class Controller:
             self.tasks.append(wait_until_conn_lost)
             await asyncio.wait([init_handshake, wait_until_conn_lost])
         except Exception:
-            self.logger.exception("unexpected exception")
+            self.logger.exception("Unexpected exception")
         finally:
             await self.stop()
 
@@ -214,7 +208,7 @@ class Controller:
                     pass
 
         except Exception:
-            self.logger.exception("suppressing raised exceptions on cleanup")
+            self.logger.exception("Suppressing raised exceptions on cleanup")
 
     def get_peer(self) -> 'Peer':
         return self.peers[0]
@@ -253,7 +247,7 @@ class Controller:
             self.sync_state.received_blocks = set()
             self.bitcoin_net_io.resume()
         except Exception:
-            self.logger.exception("unexpected problem in '_on_buffer_full'")
+            self.logger.exception("Unexpected problem in '_on_buffer_full'")
             raise
 
     def run_coro_threadsafe(self, coro, *args, **kwargs):
@@ -270,7 +264,7 @@ class Controller:
                 if command != BLOCK_BIN:
                     self.sync_state.incr_msg_handled_count()
             except Exception as e:
-                self.logger.exception("handle: ", e)
+                self.logger.exception("Handle: ", e)
                 raise
 
     async def send_request(self, command_name: str, message: bytes):
@@ -356,11 +350,11 @@ class Controller:
                 self.sync_state.headers_msg_processed_event.clear()
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
                 self.logger.debug(
-                    "new headers tip height: %s", self.sync_state.local_tip_height,
+                    "New headers tip height: %s", self.sync_state.local_tip_height,
                 )
                 self.sync_state.blocks_event_new_tip.set()
         except Exception as e:
-            self.logger.exception(f"unexpected exception in sync_headers_job")
+            self.logger.exception(f"Unexpected exception in sync_headers_job")
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
         header, chain = self.storage.headers.lookup(block_hash)
@@ -393,7 +387,7 @@ class Controller:
                     continue
 
             if not header.height <= stop_header_height:
-                self.logger.debug(f"ignoring block height={header.height} until sync'd")
+                self.logger.debug(f"Ignoring block height={header.height} until sync'd")
                 self.logger.debug(f"len(pending_getdata_requests)={count_pending}")
                 if count_pending == 0:
                     break
@@ -428,8 +422,8 @@ class Controller:
         # ? Add reorg and other sanity checks later here...
 
         tip = self.sync_state.get_local_block_tip()
-        self.logger.debug(f"Connected up to header.hash, header.height) = "
-                          f"{(tip.height, hash_to_hex_str(tip.hash))}")
+        self.logger.debug(f"Connected up to header height: {tip.height}, "
+                          f"hash: {hash_to_hex_str(tip.hash)}")
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
@@ -455,7 +449,7 @@ class Controller:
                 await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
                 await self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
-                self.logger.exception("unexpected exception in 'wait_for_batched_blocks_completion' ")
+                self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
         try:
             # up to 500 blocks per loop
@@ -465,7 +459,7 @@ class Controller:
                 if self.sync_state.is_synchronized() or \
                         self.sync_state.initial_block_download_event_mp.is_set():
                     api_block_tip_height = self.sync_state.get_local_block_tip_height()
-                    self.logger.debug(f"new block tip height: {api_block_tip_height}")
+                    self.logger.debug(f"New block tip height: {api_block_tip_height}")
                     await self.sync_state.wait_for_new_block_tip()
 
                 if batch_id == 0:
@@ -513,7 +507,7 @@ class Controller:
             )
             await self.send_request(VERSION, message)
         except Exception:
-            self.logger.exception("unexpected exception")
+            self.logger.exception("Unexpected exception")
             raise
 
     async def send_inv(self, inv_vects: List[Dict]):
@@ -524,4 +518,4 @@ class Controller:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(self.executor, self.lmdb.sync)
         t1 = time.perf_counter() - t0
-        self.logger.debug(f"mtree and tx_offsets flush for batch took {t1} seconds")
+        self.logger.debug(f"Flush for batch took {t1} seconds")

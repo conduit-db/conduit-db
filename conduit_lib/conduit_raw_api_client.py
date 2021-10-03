@@ -137,8 +137,9 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
-    def get_block_batched(self, block_requests: List[Tuple[int, Tuple[int, int]]]) \
-            -> Optional[bytes]:
+    def get_block_batched(self, block_requests: List[Tuple[int, Tuple[int, int]]], batch_id: int,
+            sock_host: str, sock_port: int) \
+            -> bool:
         cur_block_num = 0  # for exception logging
         try:
             proto_block_requests = []
@@ -150,8 +151,11 @@ class ConduitRawAPIClient:
                 proto_block_requests.append(proto_block_request)
 
             response: BlockBatchedResponse = self.stub.GetBlockBatched(
-                BlockBatchedRequest(blockRequests=proto_block_requests), wait_for_ready=True)
-            return response.rawBlocksArray
+                BlockBatchedRequest(blockRequests=proto_block_requests, batchId=batch_id,
+                    sockHost=sock_host, sockPort=sock_port),
+                wait_for_ready=True)
+
+            return response.allSent  # all sent over raw socket
         except grpc.RpcError as e:
             if e.code() == grpc.StatusCode.NOT_FOUND:
                 self.logger.error(f"Block for block num: {cur_block_num} not found")

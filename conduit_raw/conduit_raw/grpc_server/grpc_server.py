@@ -4,8 +4,10 @@ import logging
 import asyncio
 import os
 import shutil
+import socket
 import struct
 import threading
+from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 
 import bitcoinx
@@ -13,7 +15,9 @@ import grpc
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.conduit_raw_pb2 import ChainTipResponse
+from conduit_lib.constants import WORKER_COUNT_TX_PARSERS
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+from conduit_lib.basic_socket_io import send_msg
 
 
 try:
@@ -50,6 +54,9 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
         self.logger.setLevel(logging.DEBUG)
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
+        # Note - if TxParser process starts running additional threads the max_workers will
+        # need to be increased to WORKER_COUNT_TX_PARSERS x thread count
+        self.send_block_executor = ThreadPoolExecutor(max_workers=WORKER_COUNT_TX_PARSERS)
 
     async def Ping(self, request: PingRequest,
             context: grpc.aio.ServicerContext) -> PingResponse:
@@ -89,7 +96,7 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
 
     async def GetBlockBatched(self, request: BlockBatchedRequest,
             context: grpc.aio.ServicerContext) -> BlockBatchedResponse:
-        # self.logger.error(f"Got BlockBatchedRequest.blockHashes={request.blockRequests}")
+        # self.logger.debug(f"Got BlockBatchedRequest: {request}")
         raw_blocks_array = bytearray()
         for block_request in request.blockRequests:
             raw_block_slice = self.lmdb.get_block(block_request.blockNumber,
@@ -101,7 +108,19 @@ class ConduitRaw(conduit_raw_pb2_grpc.ConduitRawServicer):
                 len_slice,
                 raw_block_slice)
 
-        return BlockBatchedResponse(rawBlocksArray=bytes(raw_blocks_array))
+        batch_id = request.batchId
+        len_bytearray = len(raw_blocks_array)
+        payload = struct.pack(f"<IQ{len_bytearray}s", batch_id, len_bytearray, raw_blocks_array)
+
+        # Send the block to the designated callback socket (much faster than gRPC and there
+        # is no upper limit on how much data we can transfer this way)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((request.sockHost, request.sockPort))
+        self.logger.debug(f"sending batched raw blocks payload - size: {len(payload)}")
+        await asyncio.get_running_loop().run_in_executor(self.send_block_executor,
+            send_msg, sock, payload)
+
+        return BlockBatchedResponse(allSent=True)
 
     async def GetMerkleTreeRow(self, request: MerkleTreeRowRequest,
             context: grpc.aio.ServicerContext) -> MerkleTreeRowResponse:

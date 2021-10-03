@@ -1,10 +1,9 @@
 import array
-import io
 import logging.handlers
 import logging
 import multiprocessing
-import os
 import queue
+import socket
 import struct
 import sys
 import threading
@@ -13,15 +12,13 @@ from datetime import datetime
 
 from typing import Tuple, List, Sequence, Optional, Dict
 
-import bitcoinx
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str, double_sha256
-from confluent_kafka import Consumer
 
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
+from conduit_lib.basic_socket_io import recv_msg
 
 try:
     from conduit_lib._algorithms import calc_mtree_base_level, parse_txs
@@ -93,7 +90,25 @@ class TxParser(multiprocessing.Process):
         self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
-        self.flush_lock = threading.Lock()  # the connection to MySQL is not thread safe
+        # Todo - these should all be local to the thread's state only - not global to
+        #  avoid race... Need to refactor to class-based thread module. For now it will
+        #  be okay because of only having a single thread reading and/or writing these data structs.
+        #  locking would be unnecessary if the state was encapsulated in the thread.
+
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(('0.0.0.0', 0))
+        self.sock_port = self.sock.getsockname()[1]  # get randomly allocated port by OS
+        self.sock_callback_ip = '127.0.0.1'  # in docker might be conduit-index for example
+        self.sock.listen()
+
+        self.raw_blocks_array_cache: Dict[int, bytearray] = {}  # batch_id: array
+        self.raw_blocks_array_recv_events: Dict[int, threading.Event] = {}  # batch_id: event
+        self.batch_id = 0
+
+        # the connection to MySQL is not thread safe
+        # todo - write code in a way that a lock is not needed (more connections is preferable to
+        #  using locks at the application layer)
+        self.flush_lock = threading.Lock()
         if sys.platform == 'win32':
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
@@ -118,7 +133,8 @@ class TxParser(multiprocessing.Process):
     def start_flush_threads(self):
         threads = [
             threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread, daemon=True),
-            threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread, daemon=True)
+            threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread, daemon=True),
+            threading.Thread(target=self.recv_blocks_thread, daemon=True)
         ]
         for t in threads:
             t.setDaemon(True)
@@ -402,11 +418,20 @@ class TxParser(multiprocessing.Process):
             -> bytes:
         t0 = time.time()
         try:
+            self.batch_id += 1
+            self.raw_blocks_array_recv_events[self.batch_id] = threading.Event()
             blk_nums = lmdb_grpc_client.get_block_num_batched(block_hashes)
-            block_requests = list(zip(blk_nums, block_slice_offsets))
-            raw_block_slice_array = lmdb_grpc_client.get_block_batched(block_requests)
+
             # Ordering of both of these arrays must be guaranteed
-            return raw_block_slice_array
+            block_requests = list(zip(blk_nums, block_slice_offsets))
+
+            all_sent: bool = lmdb_grpc_client.get_block_batched(block_requests,
+                self.batch_id, self.sock_callback_ip, self.sock_port)
+            assert all_sent is True
+            self.raw_blocks_array_recv_events[self.batch_id].wait()
+
+            del self.raw_blocks_array_recv_events[self.batch_id]
+            return self.raw_blocks_array_cache.pop(self.batch_id)
         finally:
             tdiff = time.time() - t0
             self.grpc_time += tdiff
@@ -583,3 +608,25 @@ class TxParser(multiprocessing.Process):
         finally:
             self.logger.info(f"Process Stopped")
             sys.exit(0)
+
+
+    def recv_blocks_thread(self):
+        # VERY IMPORTANT TO DELETE ENTRIES AFTER USE FROM CACHE
+        self.logger.debug("Raw socket server listening on port: " + str(self.sock_port))
+        while True:
+            conn, sock_addr = self.sock.accept()
+            # self.logger.debug(f"accepted connection from: {sock_addr}")
+            while True:
+                payload = recv_msg(conn)
+                if not payload:
+                    break
+                if payload:
+                    self.logger.debug(f"received batched raw blocks payload "
+                                      f"with total size: {len(payload)}")
+                    batch_id, len_bytearray = struct.unpack_from("<IQ", payload)
+
+                    # self.logger.debug(f"batch_id={batch_id}, len_bytearray={len_bytearray}")
+                    batch_id, len_bytearray, raw_blocks_array = struct.unpack_from(f"<IQ{len_bytearray}s", payload)
+                    self.raw_blocks_array_cache[batch_id] = raw_blocks_array
+                    self.raw_blocks_array_recv_events[batch_id].set()
+            conn.close()
