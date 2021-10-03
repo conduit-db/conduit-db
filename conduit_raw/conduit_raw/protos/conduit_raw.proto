@@ -71,10 +71,13 @@ message BlockResponse {
 
 message BlockBatchedRequest {
 	repeated BlockRequest blockRequests = 1;
+	uint32 batchId = 2;
+	string sockHost = 3;
+	uint32 sockPort = 4;
 }
 
 message BlockBatchedResponse {
-	bytes rawBlocksArray = 1;  // (block_num + slice_length + raw_block_slice) x num_blocks
+	bool allSent = 1;
 }
 
 message MerkleTreeRowRequest {
