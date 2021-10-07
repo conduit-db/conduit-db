@@ -69,6 +69,8 @@ def parse_args() -> Dict:
 def set_env_vars(config: Dict):
     logger = logging.getLogger("set_env_vars")
     os.environ['GRPC_ENABLE_FORK_SUPPORT'] = '1'
+    if sys.platform == 'linux':
+        os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
     os.environ['KAFKA_HOST'] = config['kafka_host']
     host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
     port = config['mysql_host'].split(":")[1]
@@ -98,7 +100,8 @@ def loop_exception_handler(loop, context) -> None:
 async def main():
     loop = asyncio.get_running_loop()
     try:
-        logging_server_proc = TCPLoggingServer(port=65421, kill_port=63241)
+        logging_server_proc = TCPLoggingServer(port=65421, service_name="conduit_index",
+            kill_port=63241)
         logging_server_proc.start()
         config = setup()
         set_env_vars(config)

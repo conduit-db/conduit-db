@@ -1,5 +1,3 @@
-# Todo - change this logging server over to be a kafka-based consumer
-
 import os
 import pickle
 import logging
@@ -90,11 +88,12 @@ class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
     Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
 
-    def __init__(self, port, kill_port=46464):
+    def __init__(self, port: int, service_name: str, kill_port=46464):
         super(TCPLoggingServer, self).__init__()
         self.port = port
         self.kill_port = kill_port
         self.tcpserver = None
+        self.service_name = service_name
 
     def setup_local_logging_policy(self):
         rootLogger = logging.getLogger('')
@@ -103,9 +102,9 @@ class TCPLoggingServer(multiprocessing.Process):
         FORMAT = "%(asctime)-25s %(levelname)-10s %(name)-28s %(message)s"
         logging.basicConfig(format=FORMAT, level=PROFILING)
 
-        log_dir = Path(MODULE_DIR).parent.parent.parent.parent.joinpath(f"logs")
+        log_dir = Path(MODULE_DIR).parent.joinpath(f"logs")
         os.makedirs(log_dir, exist_ok=True)
-        logfile_path = os.path.join(log_dir, time.strftime("%Y%m%d-%H%M%S") + ".log")
+        logfile_path = os.path.join(log_dir, self.service_name + ".log")
         file_handler = logging.FileHandler(logfile_path)
         formatter = logging.Formatter(FORMAT)
         file_handler.setFormatter(formatter)

@@ -102,7 +102,8 @@ def loop_exception_handler(loop, context) -> None:
 async def main():
     loop = asyncio.get_running_loop()
     try:
-        logging_server_proc = TCPLoggingServer(port=54545, kill_port=46464)
+        logging_server_proc = TCPLoggingServer(port=54545, service_name="conduit_raw",
+            kill_port=46464)
         logging_server_proc.start()
         config = setup()
         set_env_vars(config)

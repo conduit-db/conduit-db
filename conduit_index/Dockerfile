@@ -9,6 +9,8 @@ ENV PYTHONPATH "${PYTHONPATH}:/opt/"
 
 RUN apt update
 RUN apt install gdb -y
+RUN pip install grpcio --no-binary grpcio
+RUN sed '/grpcio/d' ./conduit_index/requirements.txt
 RUN pip install --no-cache-dir -r ./conduit_index/requirements.txt
 RUN touch ./conduit_index/headers.mmap && rm ./conduit_index/headers.mmap
 RUN touch ./conduit_index/block_headers.mmap && rm ./conduit_index/block_headers.mmap

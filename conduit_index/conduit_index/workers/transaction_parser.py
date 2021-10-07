@@ -2,6 +2,7 @@ import array
 import logging.handlers
 import logging
 import multiprocessing
+import os
 import queue
 import socket
 import struct
@@ -98,7 +99,7 @@ class TxParser(multiprocessing.Process):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind(('0.0.0.0', 0))
         self.sock_port = self.sock.getsockname()[1]  # get randomly allocated port by OS
-        self.sock_callback_ip = '127.0.0.1'  # in docker might be conduit-index for example
+        self.sock_callback_ip = os.getenv('CONDUIT_INDEX_HOST', '127.0.0.1')
         self.sock.listen()
 
         self.raw_blocks_array_cache: Dict[int, bytearray] = {}  # batch_id: array
@@ -134,7 +135,6 @@ class TxParser(multiprocessing.Process):
         threads = [
             threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread, daemon=True),
             threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread, daemon=True),
-            threading.Thread(target=self.recv_blocks_thread, daemon=True)
         ]
         for t in threads:
             t.setDaemon(True)
@@ -553,6 +553,9 @@ class TxParser(multiprocessing.Process):
             self.worker_ack_queue_mined_tx_hashes.put({blk_height: part_tx_hashes})
 
     def mined_blocks_thread(self):
+        t = threading.Thread(target=self.recv_blocks_thread, daemon=True)
+        t.start()
+
         batch = []
         prev_time_check = time.time()
 

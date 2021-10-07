@@ -62,10 +62,12 @@ Windows cmd.exe:
     py .\conduit_index\conduit_server.py        (optional flag: --reset)
 
 Unix:
-
+    
+    sudo apt-get install python3-dev default-libmysqlclient-dev build-essential
+    
     git clone https://github.com/AustEcon/conduit.git
     cd conduit
-    set PYTHONPATH=.
+    export PYTHONPATH=.
     python3 -m pip install -r ./conduit_index/requirements.txt
     python3 ./conduit_index/conduit_server.py   (optional flag: --reset)
 
