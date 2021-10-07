@@ -245,7 +245,7 @@ class ConduitRawAPIClient:
                 self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
                     f"not found")
             else:
-                self.logger.exception(e)
+                raise e
         except Exception as e:
             raise e
 

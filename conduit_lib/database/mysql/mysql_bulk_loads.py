@@ -57,7 +57,7 @@ class MySQLBulkLoads:
         t0 = time.time()
 
         MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
-        outfile = Path(MODULE_DIR).parent.parent.parent.parent.parent / "temp_files" / \
+        outfile = Path(MODULE_DIR).parent.parent.parent / "temp_files" / \
                   (str(uuid.uuid4()) + ".csv")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:

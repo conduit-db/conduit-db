@@ -3,6 +3,7 @@ import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
+import grpc
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
 from confluent_kafka.cimpl import Consumer
 import logging
@@ -129,7 +130,7 @@ class Controller:
         self.total_time_connecting_headers = 0
 
         self.sync_state: Optional[SyncState] = None
-        self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
+        self.headers_state_executor = ThreadPoolExecutor(max_workers=1)
         self.batch_completion_raw: Optional[BatchCompletionTxParser]
 
     async def setup(self):
@@ -462,10 +463,24 @@ class Controller:
                     return deserialized_header, tip_height
                 else:
                     continue
+            except grpc._channel._InactiveRpcError:
+                self.logger.debug(f"Lost connection to conduit_raw")
+                return
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
 
+    async def long_poll_conduit_raw_chain_tip_with_retry(self):
+        result = await self.loop.run_in_executor(self.headers_state_executor,
+            self.long_poll_conduit_raw_chain_tip)
+
+        if not result:
+            await wait_for_conduit_raw_api(CONDUIT_RAW_API_HOST)
+            result = await self.loop.run_in_executor(self.headers_state_executor,
+                self.long_poll_conduit_raw_chain_tip)
+
+        main_batch_tip, conduit_raw_tip_height = result
+        return main_batch_tip, conduit_raw_tip_height
 
     def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
@@ -506,8 +521,8 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                main_batch_tip, conduit_raw_tip_height = await self.loop.run_in_executor(
-                    self.headers_state_consumer_executor, self.long_poll_conduit_raw_chain_tip)
+                main_batch_tip, conduit_raw_tip_height = \
+                    await self.long_poll_conduit_raw_chain_tip_with_retry()
 
                 deficit = main_batch_tip.height - self.sync_state.get_local_block_tip_height()
                 local_tip_height = self.sync_state.get_local_block_tip_height()

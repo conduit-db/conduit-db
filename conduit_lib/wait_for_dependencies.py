@@ -144,3 +144,4 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
     if was_waiting:
         logger.info(f"Allowing ConduitRaw service to complete initial configuration")
         await asyncio.sleep(3)
+        logger.info(f"ConduitRaw service online")
