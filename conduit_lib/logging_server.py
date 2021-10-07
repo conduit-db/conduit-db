@@ -105,6 +105,8 @@ class TCPLoggingServer(multiprocessing.Process):
         log_dir = Path(MODULE_DIR).parent.joinpath(f"logs")
         os.makedirs(log_dir, exist_ok=True)
         logfile_path = os.path.join(log_dir, self.service_name + ".log")
+        if Path(logfile_path).exists():
+            os.remove(logfile_path)
         file_handler = logging.FileHandler(logfile_path)
         formatter = logging.Formatter(FORMAT)
         file_handler.setFormatter(formatter)

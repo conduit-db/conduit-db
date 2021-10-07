@@ -129,21 +129,8 @@ class Controller:
         self.total_time_connecting_headers = 0
 
         self.sync_state: Optional[SyncState] = None
-        self.headers_state_consumer: Optional[Consumer] = None
         self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
         self.batch_completion_raw: Optional[BatchCompletionTxParser]
-
-    def setup_kafka_consumer(self):
-        # Todo: the group id should actually only change on --reset to refill the local headers
-        #  store. Otherwise it should not have to re-pull old headers again (and filter them)
-        #  Probably should store this group id number in MySQL somewhere
-        group = os.urandom(8)
-        self.headers_state_consumer: Consumer = Consumer({
-            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-            'group.id': group,
-            'auto.offset.reset': 'earliest'
-        })
-        self.headers_state_consumer.subscribe(['conduit-raw-headers-state'])
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -171,10 +158,9 @@ class Controller:
         self.running = True
         try:
             await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            await wait_for_kafka(kafka_host=self.config['kafka_host'])
+            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
             # Must setup kafka consumer after conduit_raw_api is ready in case conduit_raw
             # does a full kafka reset
-            self.setup_kafka_consumer()
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
 

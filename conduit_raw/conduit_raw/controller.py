@@ -159,7 +159,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
-            await wait_for_kafka(kafka_host=self.config['kafka_host'])
+            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
