@@ -12,7 +12,7 @@ from .mysql_queries import MySQLQueries
 from .mysql_tables import MySQLTables
 
 from ...constants import PROFILING
-from ...utils import is_docker
+from ...utils import is_docker, get_log_level
 
 
 class MySQLDatabase:
@@ -31,8 +31,7 @@ class MySQLDatabase:
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logging.getLogger("mysql-database")
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.setLevel(PROFILING)
+        self.logger.setLevel(get_log_level('conduit_index'))
 
     def set_myrocks_settings(self):
         # SET global rocksdb_max_subcompactions=8

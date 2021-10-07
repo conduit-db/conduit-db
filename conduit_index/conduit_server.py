@@ -11,14 +11,15 @@ from typing import Dict
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.constants import (DATABASE_NAME_VARNAME, BITCOIN_NETWORK_VARNAME,
     DATABASE_USER_VARNAME, DATABASE_HOST_VARNAME, DATABASE_PORT_VARNAME, DATABASE_PASSWORD_VARNAME,
-    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, PROFILING, )
+    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, PROFILING,
+    CONDUIT_INDEX_SERVICE_NAME, )
 from conduit_lib.logging_client import setup_tcp_logging, set_logging_level
 from conduit_lib.networks import NetworkConfig
 
 from conduit_index.controller import Controller
 from conduit_lib.argparsing import get_parser
 # from conduit_index.conduit_index.workers.logging_server import TCPLoggingServer
-from conduit_lib.utils import cast_to_valid_ipv4
+from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
 
 if sys.platform == 'win32':
     loop = asyncio.ProactorEventLoop()
@@ -86,7 +87,7 @@ def setup():
     env_vars.update(get_env_vars())
     env_vars.update(parse_args())  # overrides
     get_and_set_network_type(env_vars)
-    set_logging_level(PROFILING)
+    set_logging_level(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
     setup_tcp_logging(port=65421)
     return env_vars
 
@@ -100,7 +101,7 @@ def loop_exception_handler(loop, context) -> None:
 async def main():
     loop = asyncio.get_running_loop()
     try:
-        logging_server_proc = TCPLoggingServer(port=65421, service_name="conduit_index",
+        logging_server_proc = TCPLoggingServer(port=65421, service_name=CONDUIT_INDEX_SERVICE_NAME,
             kill_port=63241)
         logging_server_proc.start()
         config = setup()

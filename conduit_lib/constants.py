@@ -69,3 +69,6 @@ class MsgType(enum.IntEnum):
 
 # Log Level
 PROFILING = 9
+
+CONDUIT_RAW_SERVICE_NAME = 'conduit_raw'
+CONDUIT_INDEX_SERVICE_NAME = 'conduit_index'
