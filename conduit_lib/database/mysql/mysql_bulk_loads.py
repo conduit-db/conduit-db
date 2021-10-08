@@ -155,10 +155,10 @@ class MySQLBulkLoads:
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
-            column_names = ['mp_tx_hash', 'mp_tx_timestamp', 'mp_rawtx']
+            string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
+            column_names = ['mp_tx_hash', 'mp_tx_timestamp']
             self._load_data_infile("mempool_transactions", string_rows, column_names,
-                binary_column_indices=[0, 2])
+                binary_column_indices=[0])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
