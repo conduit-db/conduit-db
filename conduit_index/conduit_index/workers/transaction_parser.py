@@ -15,8 +15,6 @@ from typing import Tuple, List, Sequence, Optional, Dict, cast
 
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
-from electrumsv_node import electrumsv_node
 
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
@@ -24,7 +22,7 @@ from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.basic_socket_io import recv_msg
 
 from ..types import BatchedRawBlockSlices, ProcessedBlockAcks, TxHashRows, TxHashes, \
-    TxHashToWorkIdMap, TxHashToOffsetMap, BlockSliceOffsets, WorkUnit, WorkPart
+    TxHashToWorkIdMap, TxHashToOffsetMap, BlockSliceOffsets, WorkPart
 
 try:
     from conduit_lib._algorithms import calc_mtree_base_level, parse_txs

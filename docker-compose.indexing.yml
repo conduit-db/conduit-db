@@ -9,8 +9,6 @@ services:
     ports:
       - "50000:50000"
     depends_on:
-      - zookeeper
-      - kafka
       - node
     environment:
       - LMDB_READONLY=0
@@ -28,8 +26,6 @@ services:
     depends_on:
       - node
       - mysql
-      - zookeeper
-      - kafka
       - conduit-raw
     environment:
       - CONDUIT_RAW_API_HOST=conduit-raw:50000
