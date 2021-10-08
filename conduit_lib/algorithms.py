@@ -44,7 +44,7 @@ def unpack_varint(buf, offset):
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view: bytes, tx_offsets_array: array.array, block_offset: int=0):
+def preprocessor(block_view: bytes, tx_offsets_array: array.ArrayType, block_offset: int=0):
     block_offset += HEADER_OFFSET
     count, block_offset = unpack_varint(block_view, block_offset)
     cur_idx = 0
@@ -146,7 +146,7 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: List[int], height_or_timestamp: Union[int, str],
+    buffer: bytes, tx_offsets: array.ArrayType, height_or_timestamp: Union[int, str],
         confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, List, List, List]:
     """
     This function is dual-purpose - it can:
@@ -162,7 +162,6 @@ def parse_txs(
         out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
-
     tx_rows = []
     in_rows = set()
     out_rows = set()
@@ -324,7 +323,7 @@ def build_mtree_from_base(base_level, mtree):
         mtree[current_level - 1] = hashes
 
 
-def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.array) -> Dict:
+def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType) -> Dict:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree = {}

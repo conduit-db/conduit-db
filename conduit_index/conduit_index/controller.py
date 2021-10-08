@@ -26,7 +26,7 @@ from conduit_lib.handlers import Handlers
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
-    MAIN_BATCH_HEADERS_COUNT_LIMIT
+    MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
     wait_for_conduit_raw_api, wait_for_node
@@ -58,6 +58,7 @@ class Controller:
 
     def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
             logging_server_proc: TCPLoggingServer=None):
+        self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.logging_server_proc = logging_server_proc
         self.processes = [self.logging_server_proc]
@@ -484,12 +485,12 @@ class Controller:
 
     def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
-        for part_size, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
+        for part_size, work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
                 tx_offsets_array in work_units:
             len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
             packed_array = tx_offsets_array.tobytes()
-            packed_msg = struct.pack(f"<II32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr, block_hash,
-                block_height, first_tx_pos_batch, part_end_offset, packed_array)
+            packed_msg = struct.pack(f"<III32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
+                work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
 
             self.mined_tx_socket.send(packed_msg)
 
@@ -553,7 +554,6 @@ class Controller:
                     await self.sync_state.chip_away_batch_event.wait()
                     self.sync_state.reset_pending_chip_away_work_items()
                     self.sync_state.chip_away_batch_event.clear()
-
 
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)

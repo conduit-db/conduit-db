@@ -41,7 +41,7 @@ SCALINGTESTNET = "scaling-testnet"
 REGTEST = "regtest"
 
 WORKER_COUNT_PREPROCESSORS = 1
-WORKER_COUNT_TX_PARSERS = 4
+WORKER_COUNT_TX_PARSERS = 6
 WORKER_COUNT_MTREE_CALCULATORS = 4
 WORKER_COUNT_BLK_WRITER = 1
 WORKER_COUNT_LOGGING_SERVERS = 1
@@ -50,11 +50,12 @@ WORKER_COUNT_LOGGING_SERVERS = 1
 # It's (probably) more efficient for a single worker process to consume it as a single batch
 # The only exception would be if these 1000 txs have an extreme amount of inputs, outputs and
 # pushdata matches and are very very large txs.
-SMALL_BLOCK_SIZE = 10000
+SMALL_BLOCK_SIZE = 10_000
 
 
-# Set artificially low for now to prove that a large block can be fully processed
-# without allocating it all into memory at once
+# CHIP_AWAY_BYTE_SIZE_LIMIT must be larger than the largest transaction we expect otherwise
+# the server would likely crash. It is set artificially low for now to prove that a large block
+# can be fully processed without allocating it all into memory at once
 CHIP_AWAY_BYTE_SIZE_LIMIT = 1024 ** 2 * 512
 MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll) from conduit raw
 

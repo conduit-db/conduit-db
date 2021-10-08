@@ -17,7 +17,7 @@ from bitcoinx import Headers, hash_to_hex_str
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
-from conduit_lib.utils import cast_to_valid_ipv4
+from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch
 
@@ -81,9 +81,9 @@ class SyncState:
         self._pending_blocks_progress_counter = {}
 
         # Accounting and ack'ing for chip away block msgs
-        self.all_pending_chip_away_block_hashes = set()  # usually a set of 500 hashes
-        self.expected_blocks_tx_counts_chip_away = {}  # blk_hash: total_tx_count
-        self._pending_blocks_progress_counter_chip_away = {}
+        self.all_pending_chip_away_work_item_ids = set()  # usually a set of 500 hashes
+        self.expected_work_item_tx_counts = {}  # blk_hash: total_tx_count
+        self._pending_work_item_progress_counter = {}
         self.chip_away_batch_event = asyncio.Event()
 
         # Accounting and ack'ing for block msgs
@@ -139,10 +139,6 @@ class SyncState:
     def have_processed_all_msgs_in_buffer(self):
         return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()
 
-    def is_synchronized(self):
-        """Synchronize against ConduitRaw"""
-        return self.get_local_block_tip_height() >= self.get_conduit_raw_header_tip().height
-
     def reset_msg_counts(self):
         with self._msg_handled_count_lock:
             self._msg_handled_count = 0
@@ -155,6 +151,7 @@ class SyncState:
         t0 = time.perf_counter()
         try:
             all_work_units = []
+            work_item_id = 0
             for i, work in enumerate(all_work):
                 block_size, tx_offsets, block_header = work
                 needs_breaking_up = \
@@ -168,14 +165,20 @@ class SyncState:
 
                     for work_part in divided_work:
                         size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
-                            tx_offsets = work_part
-                        all_work_units.append(work_part)
+                            work_part_tx_offsets = work_part
+
+                        # Adding work_item_id to WorkPart -> WorkUnit
+                        work_item: WorkUnit = size_of_part, work_item_id, blk_hash, blk_height, \
+                            first_tx_pos_batch, part_end_offset, work_part_tx_offsets
+                        all_work_units.append(work_item)
+                        work_item_id += 1
                         # self.logger.debug(f"divided_work={divided_work}")
                 else:
                     part_end_offset = block_size
                     size_of_part = block_size
-                    all_work_units.append((size_of_part, block_header.hash, block_header.height,
-                        first_tx_pos_batch, part_end_offset, tx_offsets))
+                    all_work_units.append((size_of_part, work_item_id, block_header.hash,
+                        block_header.height, first_tx_pos_batch, part_end_offset, tx_offsets))
+                    work_item_id += 1
 
                 all_pending_block_hashes.add(block_header.hash)
                 self.add_pending_block(block_header.hash, len(tx_offsets))
@@ -185,7 +188,7 @@ class SyncState:
             self.total_time_allocating_work += t1
             self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
 
-    def get_work_units_chip_away(self, all_work_units: List[WorkUnit]) \
+    def get_work_units_chip_away(self, remaining_work_units: List[WorkUnit]) \
             -> Tuple[List[WorkUnit], List[WorkUnit]]:
         """When limits are reached this function can merely return back to caller and this
         function will be called repeatedly until 'all_pending_block_hashes' have been fully
@@ -193,11 +196,12 @@ class SyncState:
         Todo:   Test for 1 x 4GB transaction - what happens if it exceeds CHIP_AWAY_BYTE_SIZE_LIMIT?
                 Test for 1 x 4GB block with CHIP_AWAY_BYTE_SIZE_LIMIT == 40MB -> BATCH_COUNT = 100
         """
+
         total_allocation = 0
         remaining_work = []
         work_for_this_batch = []
-        for idx, work_unit in enumerate(all_work_units):
-            size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+        for idx, work_unit in enumerate(remaining_work_units):
+            size_of_part, work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
                 tx_offsets = work_unit
 
             # self.logger.debug(f"work_unit={work_unit}")
@@ -210,7 +214,7 @@ class SyncState:
 
             total_allocation += size_of_part
             work_for_this_batch.append(work_unit)
-            self.add_pending_chip_away_work_item(blk_hash, len(tx_offsets))
+            self.add_pending_chip_away_work_item(work_item_id, len(tx_offsets))
 
         return remaining_work, work_for_this_batch
 
@@ -278,32 +282,31 @@ class SyncState:
         self._pending_blocks_progress_counter[blk_hash] = 0
 
     def reset_pending_blocks(self):
-        self._pending_blocks_received = {}
         self._pending_blocks_progress_counter = {}
+        self.expected_work_item_tx_counts = {}
 
     # ----- SUPERVISE 'CHIP AWAY' BATCH COMPLETIONS ----- #
     # This batch can be as small as system resources need it to be (even small parts of a block)
 
-    def have_completed_chip_away_batch(self, block_hash: bytes) -> bool:
-        return self._pending_blocks_progress_counter_chip_away[block_hash] == \
-               self.expected_blocks_tx_counts_chip_away[block_hash]
+    def have_completed_work_item(self, work_item_id: bytes, block_hash: bytes) -> bool:
+        return self._pending_work_item_progress_counter[work_item_id] == \
+               self.expected_work_item_tx_counts[work_item_id]
 
 
-    def add_pending_chip_away_work_item(self, blk_hash, work_item_tx_count):
+    def add_pending_chip_away_work_item(self, work_item_id: int, work_item_tx_count: int):
         def init_counters_if_needed():
-            if not self.expected_blocks_tx_counts_chip_away.get(blk_hash):
-                self.expected_blocks_tx_counts_chip_away[blk_hash] = 0
-            if not self._pending_blocks_progress_counter_chip_away.get(blk_hash):
-                self._pending_blocks_progress_counter_chip_away[blk_hash] = 0
+            if not self.expected_work_item_tx_counts.get(work_item_id):
+                self.expected_work_item_tx_counts[work_item_id] = 0
+            if not self._pending_work_item_progress_counter.get(work_item_id):
+                self._pending_work_item_progress_counter[work_item_id] = 0
 
         init_counters_if_needed()
-        self.expected_blocks_tx_counts_chip_away[blk_hash] += work_item_tx_count
-        self.all_pending_chip_away_block_hashes.add(blk_hash)
+        self.expected_work_item_tx_counts[work_item_id] += work_item_tx_count
+        self.all_pending_chip_away_work_item_ids.add(work_item_id)
 
 
     def reset_pending_chip_away_work_items(self):
-        self._pending_blocks_received_chip_away = {}
-        self._pending_blocks_progress_counter_chip_away = {}
+        self._pending_work_item_progress_counter = {}
 
     # ----- AVOID MEMPOOL-INDUCED THRASHING DURING IBD ----- #
 
