@@ -5,25 +5,31 @@ import time
 from os import urandom
 from typing import List
 
-from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, CHIP_AWAY_BYTE_SIZE_LIMIT
+from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, CHIP_AWAY_BYTE_SIZE_LIMIT, \
+    SMALL_BLOCK_SIZE
 
-from .types import WorkUnit
+
+from .types import WorkPart
 
 logger = logging.getLogger("distribute_load")
 
 
 def distribute_load(blk_hash, blk_height, count_added, block_size, tx_offsets_array) \
-        -> List[WorkUnit]:
+        -> List[WorkPart]:
     """tx_offsets_array must be all the tx_offsets in a full raw block
-
-    Todo - add testing for this
+    Todo - This very badly needs unittest coverage!
     """
-    MAX_WORK_ITEM_SIZE = CHIP_AWAY_BYTE_SIZE_LIMIT / WORKER_COUNT_TX_PARSERS
-    BATCH_COUNT = math.ceil(block_size / MAX_WORK_ITEM_SIZE)
+    # logger.debug(f"Length of tx_offsets_array={len(tx_offsets_array)}")
+
+    # If MAX_WORK_ITEM_SIZE is very small (smaller than the average tx size then it will lead
+    # to most of the txs 'piling up' in the last work item...
+    # Also - if MAX_WORK_ITEM_SIZE is smaller than even a single tx then it would error!
+    WORK_ITEM_SIZE = CHIP_AWAY_BYTE_SIZE_LIMIT / WORKER_COUNT_TX_PARSERS
+    BATCH_COUNT = math.ceil(block_size / WORK_ITEM_SIZE)
     BATCH_SIZE = math.floor(count_added / BATCH_COUNT)
 
     first_tx_pos_batch = 0
-    if BATCH_COUNT == 1 or count_added < BATCH_COUNT:
+    if BATCH_COUNT == 1 or count_added < SMALL_BLOCK_SIZE:
         start_idx_batch = 0
 
         # This might look unnecessary (why not just return tx_offsets?)
@@ -36,15 +42,14 @@ def distribute_load(blk_hash, blk_height, count_added, block_size, tx_offsets_ar
         return [(size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, tx_offsets)]
 
     divided_tx_positions = []
-    # if there is only 1 tx in the block the other batches are empty
     for i in range(BATCH_COUNT):
 
-        if i == BATCH_COUNT - 1:  # last batch
+        if i == BATCH_COUNT - 1:  # last batch - can be a bit bigger to include the remainder
             start_idx_batch = i * BATCH_SIZE
             end_idx_batch = count_added
             tx_offsets = tx_offsets_array[start_idx_batch:end_idx_batch]
             part_end_offset = block_size
-            size_of_part = part_end_offset - tx_offsets[first_tx_pos_batch]
+            size_of_part = tx_offsets_array[end_idx_batch-1] - tx_offsets_array[start_idx_batch]
             divided_tx_positions.extend([(size_of_part, blk_hash, blk_height, first_tx_pos_batch,
                 part_end_offset, tx_offsets)])
 
@@ -53,14 +58,15 @@ def distribute_load(blk_hash, blk_height, count_added, block_size, tx_offsets_ar
             end_idx_batch = (i + 1) * BATCH_SIZE
             num_txs = end_idx_batch - start_idx_batch
             tx_offsets = tx_offsets_array[start_idx_batch:end_idx_batch]
+            size_of_part = tx_offsets_array[end_idx_batch] - tx_offsets_array[start_idx_batch]
             part_end_offset = tx_offsets_array[end_idx_batch]
-            size_of_part = part_end_offset - tx_offsets[first_tx_pos_batch]
             divided_tx_positions.extend([(size_of_part, blk_hash, blk_height, first_tx_pos_batch,
                 part_end_offset, tx_offsets)])
             first_tx_pos_batch += num_txs
 
     # for index, batch in enumerate(divided_tx_positions):
-    #     logger.debug(f"worker={index+1} batch={batch}")
+    #     logger.debug(f"work part index={index} batched tx_offsets length={len(batch[5])};
+    #     first_tx_pos_batch={batch[3]}; part_end_offset={batch[4]}")
 
     return divided_tx_positions
 

@@ -179,7 +179,7 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
-    def get_tx_offsets(self, block_hash: bytes) -> array.array:
+    def get_tx_offsets(self, block_hash: bytes) -> array.ArrayType:
         try:
             response: TransactionOffsetsResponse = self.stub.GetTransactionOffsets(
                 TransactionOffsetsRequest(blockHash=block_hash), wait_for_ready=True)
@@ -193,7 +193,7 @@ class ConduitRawAPIClient:
         except Exception as e:
             raise e
 
-    def get_tx_offsets_batched(self, block_hashes: List[bytes]) -> List[array.array]:
+    def get_tx_offsets_batched(self, block_hashes: List[bytes]) -> List[array.ArrayType]:
         try:
             response: TransactionOffsetsBatchedResponse = self.stub.GetTransactionOffsetsBatched(
                 TransactionOffsetsBatchedRequest(blockHashes=block_hashes), wait_for_ready=True)
@@ -245,7 +245,7 @@ class ConduitRawAPIClient:
                 self.logger.error(f"Block metadata for block_hash: {hash_to_hex_str(block_hash)} "
                     f"not found")
             else:
-                self.logger.exception(e)
+                raise e
         except Exception as e:
             raise e
 

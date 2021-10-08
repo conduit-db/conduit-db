@@ -21,6 +21,7 @@ logger = logging.getLogger("handlers")
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
 
+
 class Handlers:
     def __init__(
         self, controller: 'Controller', net_config: NetworkConfig, storage: Storage

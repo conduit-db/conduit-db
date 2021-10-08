@@ -76,8 +76,10 @@ class BitcoinNetIO(BufferedProtocol):
         self.on_connection_made_callback()
 
     def connection_lost(self, exc):
+        if exc:
+            self.logger.exception(exc)
         self.on_connection_lost_callback()
-        self.logger.warning("The server closed the connection")
+        self.logger.warning("The bitcoin daemon closed the connection")
 
     # def _resize_buffer(self):
     #     try:

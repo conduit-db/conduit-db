@@ -51,3 +51,4 @@ data/**
 **/.env
 LICENSE
 Conduit.sln.DotSettings.user
+temp_files/*

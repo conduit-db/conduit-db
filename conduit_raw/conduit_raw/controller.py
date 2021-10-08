@@ -30,9 +30,8 @@ from .workers.raw_blocks import BlockWriter
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL
 from conduit_lib.handlers import Handlers
-from conduit_lib.constants import (
-    ZERO_HASH, WORKER_COUNT_MTREE_CALCULATORS, WORKER_COUNT_BLK_WRITER
-)
+from conduit_lib.constants import (ZERO_HASH, WORKER_COUNT_MTREE_CALCULATORS,
+    WORKER_COUNT_BLK_WRITER, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME)
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
@@ -57,7 +56,7 @@ class Controller:
 
     def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
             logging_server_proc=None):
-
+        self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.logging_server_proc: BaseProcess = logging_server_proc
         self.processes: List[BaseProcess] = [self.logging_server_proc]
@@ -159,7 +158,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
-            await wait_for_kafka(kafka_host=self.config['kafka_host'])
+            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)

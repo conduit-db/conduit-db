@@ -1,5 +1,6 @@
 import hashlib
 import ipaddress
+import logging
 import math
 import os
 import socket
@@ -16,6 +17,7 @@ from bitcoinx import (
 )
 
 from .commands import BLOCK_BIN
+from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME
 
 
 def cast_to_valid_ipv4(ipv4: str) -> str:
@@ -119,3 +121,25 @@ def unpack_varint_from_mv(buffer) -> Tuple[int, int]:
     if n == 254:
         return struct.unpack_from("<I", buffer, offset=1)[0], 5
     return struct.unpack_from("<Q", buffer, offset=1)[0], 9
+
+
+def get_log_level(service_name):
+    if service_name == CONDUIT_INDEX_SERVICE_NAME:
+        level = os.getenv(f'CONDUIT_INDEX_LOG_LEVEL', 'DEBUG')
+    elif service_name == CONDUIT_RAW_SERVICE_NAME:
+        level = os.getenv(f'CONDUIT_RAW_LOG_LEVEL', 'DEBUG')
+    else:
+        level = 'DEBUG'
+
+    if level == 'CRITICAL':
+        return logging.CRITICAL
+    if level == 'ERROR':
+        return logging.ERROR
+    if level == 'WARNING':
+        return logging.WARNING
+    if level == 'INFO':
+        return logging.INFO
+    if level == 'DEBUG':
+        return logging.DEBUG
+    if level == 'PROFILING':
+        return PROFILING

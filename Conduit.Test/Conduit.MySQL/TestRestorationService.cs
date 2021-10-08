@@ -143,7 +143,7 @@ namespace Conduit.Test.Conduit.MySQL
                 "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
                 "9E724D5DE860799E909C2B94858741033C2E4201037F860BB583136CBEAB97D8",
             }.Select(s => Convert.FromHexString(s).Reverse().ToArray()).ToHashSet(new ByteArrayEqualityComparer());
-            Assert.Equal(expectedSpentCoinbaseTransactionHashes, spentCoinbaseTransactionHashes, new ByteArrayEqualityComparer());
+            Assert.True(expectedSpentCoinbaseTransactionHashes.SetEquals(spentCoinbaseTransactionHashes));
         }
 
         /// <summary>

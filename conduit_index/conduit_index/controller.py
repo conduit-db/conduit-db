@@ -3,6 +3,7 @@ import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
+import grpc
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
 from confluent_kafka.cimpl import Consumer
 import logging
@@ -25,7 +26,7 @@ from conduit_lib.handlers import Handlers
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
-    MAIN_BATCH_HEADERS_COUNT_LIMIT
+    MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
     wait_for_conduit_raw_api, wait_for_node
@@ -57,6 +58,7 @@ class Controller:
 
     def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
             logging_server_proc: TCPLoggingServer=None):
+        self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.logging_server_proc = logging_server_proc
         self.processes = [self.logging_server_proc]
@@ -129,21 +131,8 @@ class Controller:
         self.total_time_connecting_headers = 0
 
         self.sync_state: Optional[SyncState] = None
-        self.headers_state_consumer: Optional[Consumer] = None
-        self.headers_state_consumer_executor = ThreadPoolExecutor(max_workers=1)
+        self.headers_state_executor = ThreadPoolExecutor(max_workers=1)
         self.batch_completion_raw: Optional[BatchCompletionTxParser]
-
-    def setup_kafka_consumer(self):
-        # Todo: the group id should actually only change on --reset to refill the local headers
-        #  store. Otherwise it should not have to re-pull old headers again (and filter them)
-        #  Probably should store this group id number in MySQL somewhere
-        group = os.urandom(8)
-        self.headers_state_consumer: Consumer = Consumer({
-            'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-            'group.id': group,
-            'auto.offset.reset': 'earliest'
-        })
-        self.headers_state_consumer.subscribe(['conduit-raw-headers-state'])
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -171,10 +160,9 @@ class Controller:
         self.running = True
         try:
             await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            await wait_for_kafka(kafka_host=self.config['kafka_host'])
+            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
             # Must setup kafka consumer after conduit_raw_api is ready in case conduit_raw
             # does a full kafka reset
-            self.setup_kafka_consumer()
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
 
@@ -476,19 +464,33 @@ class Controller:
                     return deserialized_header, tip_height
                 else:
                     continue
+            except grpc._channel._InactiveRpcError:
+                self.logger.debug(f"Lost connection to conduit_raw")
+                return
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
 
+    async def long_poll_conduit_raw_chain_tip_with_retry(self):
+        result = await self.loop.run_in_executor(self.headers_state_executor,
+            self.long_poll_conduit_raw_chain_tip)
+
+        if not result:
+            await wait_for_conduit_raw_api(CONDUIT_RAW_API_HOST)
+            result = await self.loop.run_in_executor(self.headers_state_executor,
+                self.long_poll_conduit_raw_chain_tip)
+
+        main_batch_tip, conduit_raw_tip_height = result
+        return main_batch_tip, conduit_raw_tip_height
 
     def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
-        for part_size, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
+        for part_size, work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
                 tx_offsets_array in work_units:
             len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
             packed_array = tx_offsets_array.tobytes()
-            packed_msg = struct.pack(f"<II32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr, block_hash,
-                block_height, first_tx_pos_batch, part_end_offset, packed_array)
+            packed_msg = struct.pack(f"<III32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
+                work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
 
             self.mined_tx_socket.send(packed_msg)
 
@@ -520,8 +522,8 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                main_batch_tip, conduit_raw_tip_height = await self.loop.run_in_executor(
-                    self.headers_state_consumer_executor, self.long_poll_conduit_raw_chain_tip)
+                main_batch_tip, conduit_raw_tip_height = \
+                    await self.long_poll_conduit_raw_chain_tip_with_retry()
 
                 deficit = main_batch_tip.height - self.sync_state.get_local_block_tip_height()
                 local_tip_height = self.sync_state.get_local_block_tip_height()
@@ -552,7 +554,6 @@ class Controller:
                     await self.sync_state.chip_away_batch_event.wait()
                     self.sync_state.reset_pending_chip_away_work_items()
                     self.sync_state.chip_away_batch_event.clear()
-
 
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
