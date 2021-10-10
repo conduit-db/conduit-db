@@ -69,6 +69,8 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_unsafe_txs failed unexpectedly")
 
+    # Todo - make all offsets BINARY(5) and tx_position BINARY(5) because this gives enough capacity
+    #  for 1 TB block sizes.
     def mysql_create_permanent_tables(self):
         # tx_offset_start is relative to start of the raw block
         self.mysql_conn.query("""

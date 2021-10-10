@@ -20,7 +20,7 @@ from .networks import HeadersRegTestMod
 from .utils import is_docker
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-MMAP_SIZE = 2_000_000
+MMAP_SIZE = 2_000_000  # count of headers
 
 logger = logging.getLogger("storage")
 

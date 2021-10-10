@@ -472,6 +472,7 @@ class Controller:
                 time.sleep(0.2)
 
     async def long_poll_conduit_raw_chain_tip_with_retry(self):
+        # Todo - this seems to be slow - profile it and fix.
         result = await self.loop.run_in_executor(self.headers_state_executor,
             self.long_poll_conduit_raw_chain_tip)
 
