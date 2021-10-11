@@ -48,7 +48,7 @@ data.
 Windows cmd.exe:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     set PYTHONPATH=.
     py -m pip install -r .\conduit_raw\requirements.txt
     py .\conduit_raw\conduit_server.py          (optional flag: --reset)
@@ -56,7 +56,7 @@ Windows cmd.exe:
 Unix:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     export PYTHONPATH=.
     python3 -m pip install -r ./conduit_raw/requirements.txt
     python3 -m pip install -r ./conduit_index/requirements-linux-extras.txt
@@ -67,7 +67,7 @@ Unix:
 Windows cmd.exe:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     set PYTHONPATH=.
     py -m pip install -r .\conduit_index\requirements.txt
     py .\conduit_index\conduit_server.py        (optional flag: --reset)
@@ -77,7 +77,7 @@ Unix:
     sudo apt-get install python3-dev default-libmysqlclient-dev build-essential
     
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     export PYTHONPATH=.
     python3 -m pip install -r ./conduit_index/requirements.txt
     python3 -m pip install -r ./conduit_index/requirements-linux-extras.txt
@@ -108,8 +108,8 @@ As of 11/10/2021 (on i5-8600k CPU):
 
     tx parser (see bench/cy_txparser)
     ---------------------------------
-    pure python:        25 MB/sec 
-    cythonized:         44 MB/sec
+    pure python:        24 MB/sec 
+    cythonized:         39 MB/sec
 
 
 ## Warning about new changes

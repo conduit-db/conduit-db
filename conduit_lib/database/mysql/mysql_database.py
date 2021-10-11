@@ -127,13 +127,6 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
         # user = "conduitadmin"
         user = "root"
 
-    # conn = _mysql.connect(
-    #     host=host,
-    #     port=port,
-    #     user=user,
-    #     passwd="conduitpass",
-    #     db="conduitdb",
-    # )
     conn = MySQLdb.connect(
         host=host,
         port=port,
@@ -148,11 +141,12 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
 def mysql_test_connect() -> MySQLDatabase:
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
     port = int(os.environ.get('MYSQL_PORT', 52525))
+    user = "root"
 
     conn = _mysql.connect(
         host=host,
         port=port,
-        user="conduitadmin",
+        user=user,
         passwd="conduitpass",
         db="conduittestdb"
     )

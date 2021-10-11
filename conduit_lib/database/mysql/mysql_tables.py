@@ -75,12 +75,16 @@ class MySQLTables:
         # tx_offset_start is relative to start of the raw block
         self.mysql_conn.query("""
             CREATE TABLE IF NOT EXISTS confirmed_transactions (
-                tx_hash BINARY(32) PRIMARY KEY,
+                tx_hash BINARY(32),
                 tx_height INT UNSIGNED,
                 tx_position BIGINT UNSIGNED,
                 tx_offset_start BIGINT UNSIGNED,
                 tx_offset_end BIGINT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+            """)
+
+        self.mysql_conn.query("""
+            CREATE INDEX IF NOT EXISTS block_num ON confirmed_transactions (tx_hash, tx_height);
             """)
 
         # block_offset is relative to start of rawtx
@@ -95,7 +99,7 @@ class MySQLTables:
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS io_idx ON txo_table (out_tx_hash, out_idx);
+            CREATE INDEX IF NOT EXISTS io_idx ON txo_table (out_tx_hash, out_idx, out_offset_start);
             """)
 
         # block_offset is relative to start of rawtx
@@ -128,15 +132,8 @@ class MySQLTables:
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
-        # NOTE - parsing stage ensures there are no duplicates otherwise would need
-        # to do UPSERT which is slow...
-        # dropped the tx_shash index and can instead do range scans (for a given
-        # pushdata_hash / key history) at lookup time...
-        # Things like B:// or Tokens could be dealt with as special cases in their own dedicated
-        # table.
-
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
+            CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, idx, ref_type);
         """)
 
         # ?? should this be an in-memory only table?
