@@ -353,6 +353,7 @@ class TxParser(multiprocessing.Process):
             # Todo only does 1 mempool tx at a time at present
             dt = datetime.utcnow()
             tx_offsets = array.array("Q", [0])
+            rawtx = array.array('B', rawtx)
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
             result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
             tx_rows, in_rows, out_rows, set_pd_rows = result
@@ -502,6 +503,7 @@ class TxParser(multiprocessing.Process):
                 merged_tx_to_work_item_id_map[tx_hash] = work_item_id
 
             # Todo - I don't like this re-allocation of raw_block_slice
+            raw_block_slice = array.array('B', raw_block_slice)
             batched_raw_block_slices.append(
                 (raw_block_slice, work_item_id, blk_num, blk_height, first_tx_pos_batch))
             acks.append((blk_height, work_item_id, blk_hash, part_tx_hashes))

@@ -1,12 +1,13 @@
 """
 Copyright (c) 2020-2021 AustEcon i.e. Hayden J. Donnelly <austecon0922@gmail.com>
+
+This setup.py is only for compiling the Cython extensions.
+To run ConduitIndex and ConduitRaw see the README.md
 """
-import os
 
 from setuptools import find_packages, setup
 from Cython.Build import cythonize
 from Cython.Compiler import Options
-import pathlib
 
 version = "0.0.1"
 
@@ -22,9 +23,9 @@ Options.docstrings = True
 Options.fast_fail = True
 
 setup(
-    name='conduit_raw',
+    name='conduitdb',
     version=version,
-    description='Very fast preprocessor for raw block data in the ConduitDB pipeline',
+    description='A faster multi-core chain indexer using the bitcoin p2p protocol (Bitcoin SV)',
     author='AustEcon',
     author_email='AustEcon0922@gmail.com',
     maintainer='AustEcon',
@@ -55,7 +56,7 @@ setup(
     install_requires=[],
     extras_require={},
     tests_require=['pytest'],
-    ext_modules=cythonize("_algorithms.pyx"),
+    ext_modules=cythonize("conduit_lib/_algorithms.pyx"),
     zip_safe=False,
     packages=find_packages(),
 )

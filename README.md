@@ -81,6 +81,25 @@ Unix:
 
 Currently the peers are hardcoded.
 
+
+## Cython extensions
+To compile cython extension modules:
+
+    py -3.9-64 setup.py build_ext --inplace
+
+As of 11/10/2021 (on i5-8600k CPU):
+
+    preprocessor (see bench/cy_preprocessor)
+    ----------------------------------------
+    pure python:        362 MB/sec
+    cythonized:         6000 MB/sec
+
+    tx parser (see bench/cy_txparser)
+    ---------------------------------
+    pure python:        25 MB/sec 
+    cythonized:         44 MB/sec
+
+
 ## Warning about new changes
 
 All configuration will soon be moved to exclusively be via environment variables in
