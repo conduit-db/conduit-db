@@ -5,7 +5,6 @@ from asyncio import BufferedProtocol
 import bitcoinx
 import grpc
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
-from confluent_kafka.cimpl import Consumer
 import logging
 import os
 import queue
@@ -112,6 +111,14 @@ class Controller:
         context3 = zmq.Context()
         self.kill_worker_socket = context3.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:63241")
+
+        # PUB-SUB from Controller to worker to signal when initial block download is in effect
+        # Defined as when the local chain tip is within 24 hours of the best known chain tip
+        # This is the same definition that the reference bitcoin-sv node uses.
+        context3 = zmq.Context()
+        self.is_ibd_socket = context3.socket(zmq.PUB)
+        self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
+        self.ibd_signal_sent = False
 
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
@@ -425,6 +432,13 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
+        if self.sync_state.is_ibd(tip) and not self.ibd_signal_sent:
+            self.logger.debug(f"Initial block download mode completed. "
+                f"Activating mempool tx processing...")
+            with self.is_ibd_socket as sock:
+                sock.send(b"is_ibd_signal")
+                self.ibd_signal_sent = True
+
     def connect_conduit_headers(self, raw_header) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
@@ -555,7 +569,6 @@ class Controller:
                     await self.sync_state.chip_away_batch_event.wait()
                     self.sync_state.reset_pending_chip_away_work_items()
                     self.sync_state.chip_away_batch_event.clear()
-
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
                 self.sync_state.reset_pending_blocks()

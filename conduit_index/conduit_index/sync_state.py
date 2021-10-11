@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import typing
+from datetime import datetime, timedelta
 from typing import Set, List, Tuple
 from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
@@ -98,6 +99,7 @@ class SyncState:
         self.initial_block_download_event_mp = multiprocessing.Event()
 
         self.total_time_allocating_work = 0
+        self.is_post_ibd = False
 
     @property
     def message_received_count(self):
@@ -113,6 +115,18 @@ class SyncState:
 
     def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
+
+    def is_ibd(self, tip: bitcoinx.Header):
+        if self.is_post_ibd:  # cache result
+            return self.is_post_ibd
+        current_time = time.time()
+        dt_obj_current = datetime.utcfromtimestamp(current_time)
+        dt_obj_tip = datetime.utcfromtimestamp(tip.timestamp)
+        dt_obj_minus_24_hrs = dt_obj_tip - timedelta(hours=24)
+        if dt_obj_current > dt_obj_minus_24_hrs:
+            self.is_post_ibd = True
+            return True
+        return False
 
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height
