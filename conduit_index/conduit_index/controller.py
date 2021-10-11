@@ -1,10 +1,11 @@
 import asyncio
+import concurrent
 import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
 import grpc
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, unpack_header
 import logging
 import os
 import queue
@@ -366,6 +367,7 @@ class Controller:
             new_mined_tx_hashes = await self.loop.run_in_executor(
                 self.mined_tx_hashes_queue_waiter_executor,
                 self.worker_ack_queue_mined_tx_hashes.get)
+
         # 2) Update dict
         for blk_height, new_hashes in new_mined_tx_hashes.items():
             if not self.global_tx_hashes_dict.get(blk_height):
@@ -432,7 +434,8 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-        if self.sync_state.is_ibd(tip) and not self.ibd_signal_sent:
+        conduit_best_tip = self.sync_state.get_conduit_best_tip()
+        if self.sync_state.is_ibd(tip, conduit_best_tip) and not self.ibd_signal_sent:
             self.logger.debug(f"Initial block download mode completed. "
                 f"Activating mempool tx processing...")
             with self.is_ibd_socket as sock:
@@ -454,6 +457,8 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
+    # Todo - long_poll_conduit_raw_chain_tip keeps hanging!
+    #  Need a new system that does not require loop.run_in_executor
     def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
         tip, tip_height = self.lmdb_grpc_client.get_chain_tip()
         deserialized_header = None
@@ -475,6 +480,8 @@ class Controller:
                 if deserialized_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {deserialized_header.height}")
+                    self.sync_state.set_conduit_best_tip(bitcoinx.Header(*unpack_header(tip),
+                        double_sha256(tip), tip, tip_height))
                     return deserialized_header, tip_height
                 else:
                     continue
@@ -487,13 +494,22 @@ class Controller:
 
     async def long_poll_conduit_raw_chain_tip_with_retry(self):
         # Todo - this seems to be slow - profile it and fix.
-        result = await self.loop.run_in_executor(self.headers_state_executor,
+        fut: concurrent.futures.Future = self.headers_state_executor.submit(
             self.long_poll_conduit_raw_chain_tip)
 
-        if not result:
+        while True:
+            if fut.done():
+                result = fut.result()
+                break
+            # this is regrettable but loop.run_in_executor is buggy imo and hangs indefinitely
+            # this may be related: https://bugs.python.org/issue29309
+            # it doesn't have to be super fast anyways because it fetches 500 headers in each batch
+            # if it responded within 0.1 seconds, I would be very pleased.
+            await asyncio.sleep(0.1)
+
+        if not result:  # gRPC disconnect
             await wait_for_conduit_raw_api(CONDUIT_RAW_API_HOST)
-            result = await self.loop.run_in_executor(self.headers_state_executor,
-                self.long_poll_conduit_raw_chain_tip)
+            return await self.long_poll_conduit_raw_chain_tip_with_retry()  # recurse
 
         main_batch_tip, conduit_raw_tip_height = result
         return main_batch_tip, conduit_raw_tip_height

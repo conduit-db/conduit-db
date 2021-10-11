@@ -6,6 +6,7 @@ import sys
 from typing import Optional, List, Tuple
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
+from conduit_lib.constants import MAIN_BATCH_HEADERS_COUNT_LIMIT
 from conduit_lib.utils import cast_to_valid_ipv4
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -257,9 +258,14 @@ if __name__ == '__main__':
 
     # print(client.ping(0))
     #
-    response = client.get_chain_tip()
-    if response:
-        print(response)
+    #
+    # response = client.get_block_headers_batched(0, batch_size=10000, wait_for_ready=True)
+    # if response:
+    #     print(f"Got: {len(response)} headers")
+    # 
+    # response = client.get_chain_tip()
+    # if response:
+    #     print(response)
     #
     # response = client.get_block_num(block_hash)
     # if response:
