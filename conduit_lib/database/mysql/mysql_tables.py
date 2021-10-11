@@ -171,13 +171,15 @@ class MySQLTables:
         self.mysql_conn.query("""
             CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_hashes (
                 mined_tx_hash BINARY(32),
-                blk_height BIGINT
-            );
+                blk_height BIGINT,
+                INDEX USING HASH (mined_tx_hash)
+            ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)
 
     def mysql_create_temp_inbound_tx_hashes_table(self):
         self.mysql_conn.query("""
             CREATE TEMPORARY TABLE IF NOT EXISTS temp_inbound_tx_hashes (
-                inbound_tx_hashes BINARY(32)
-            );
+                inbound_tx_hashes BINARY(32),
+                INDEX USING HASH (inbound_tx_hashes)
+            ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)

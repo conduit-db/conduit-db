@@ -14,11 +14,10 @@ from typing import Optional, List, Dict
 import bitcoinx
 from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import zmq
-from confluent_kafka import Producer
 
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.wait_for_dependencies import wait_for_node, wait_for_kafka
+from conduit_lib.wait_for_dependencies import wait_for_node
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .grpc_server.grpc_server import ConduitRaw
@@ -158,7 +157,6 @@ class Controller:
     async def run(self):
         self.running = True
         try:
-            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)

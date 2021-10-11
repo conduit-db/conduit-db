@@ -28,8 +28,8 @@ from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
-    wait_for_conduit_raw_api, wait_for_node
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
+    wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
 from .batch_completion import BatchCompletionTxParser
@@ -168,9 +168,6 @@ class Controller:
         self.running = True
         try:
             await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
-            # Must setup kafka consumer after conduit_raw_api is ready in case conduit_raw
-            # does a full kafka reset
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
 
@@ -341,7 +338,6 @@ class Controller:
             await self.handshake_complete_event.wait()
             self.maybe_rollback()
             self.start_workers()
-            await self.request_mempool()
             await self.spawn_sync_all_blocks_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
@@ -400,10 +396,16 @@ class Controller:
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
-        await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
+        conduit_best_tip = self.sync_state.get_conduit_best_tip()
+        if await self.sync_state.is_ibd(api_block_tip, conduit_best_tip):
+            await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
+        else:
+            # No txs in mempool until is_ibd == True
+            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+                api_block_tip_hash)
         return api_block_tip_height
 
-    def connect_done_block_headers(self, blocks_batch_set):
+    async def connect_done_block_headers(self, blocks_batch_set):
         t0 = time.perf_counter()
         sorted_headers = sorted([(self.storage.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
@@ -435,7 +437,7 @@ class Controller:
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
         conduit_best_tip = self.sync_state.get_conduit_best_tip()
-        if self.sync_state.is_ibd(tip, conduit_best_tip) and not self.ibd_signal_sent:
+        if await self.sync_state.is_ibd(tip, conduit_best_tip) and not self.ibd_signal_sent:
             self.logger.debug(f"Initial block download mode completed. "
                 f"Activating mempool tx processing...")
             with self.is_ibd_socket as sock:
@@ -541,7 +543,7 @@ class Controller:
             try:
                 await self.sync_state.done_blocks_tx_parser_event.wait()
                 self.sync_state.done_blocks_tx_parser_event.clear()
-                self.connect_done_block_headers(all_pending_block_hashes.copy())
+                await self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
                 self.logger.exception("unexpected exception in "
                     "'wait_for_batched_blocks_completion' ")

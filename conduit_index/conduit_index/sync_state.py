@@ -123,7 +123,7 @@ class SyncState:
     def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
 
-    def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header):
+    async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header):
         # Todo - really instead of conduit_best_tip it should come from the node...
         #  because it affects compact block protocol down the road...Other than that
         #  the logic seems correct... to fix this would need to add back headers synchronization
@@ -135,6 +135,7 @@ class SyncState:
         conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
         if our_tip > conduit_best_minus_24_hrs:
             self.is_post_ibd = True
+            await self.controller.request_mempool()
             return True
         return False
 
