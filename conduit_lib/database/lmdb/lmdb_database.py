@@ -1,6 +1,7 @@
 import array
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from struct import Struct
@@ -63,9 +64,13 @@ class LMDB_Database:
         self.block_metadata_db = None
         self._opened = False
 
-        # on windows there is a bug where this requires the disc space to be free
-        # on linux can set this to a very large number (e.g. 10 terabytes)
-        self._map_size = pow(1024, 3) * 50
+        if sys.platform == 'linux':
+            self._map_size = pow(1024, 4) * 64  # 64 terabytes
+        else:
+            # on windows there is a bug where this requires the disc space to be free
+            # on linux can set this to a very large number (e.g. 10 terabytes)
+            # windows is for development use only...
+            self._map_size = pow(1024, 3) * 20
         self._storage_path = storage_path
         self.open()
         self.logger.debug(f"opened LMDB database at {storage_path}")
