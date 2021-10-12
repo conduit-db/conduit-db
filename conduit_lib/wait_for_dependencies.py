@@ -5,8 +5,6 @@ import os
 import socket
 
 import MySQLdb
-from confluent_kafka.admin import AdminClient
-from confluent_kafka.cimpl import KafkaException
 
 from .conduit_raw_api_client import ConduitRawAPIClient, ServiceUnavailableError
 from .utils import is_docker, cast_to_valid_ipv4
@@ -88,32 +86,6 @@ async def wait_for_mysql(mysql_host: str):
                     client.close()
             else:
                 logger.debug(f"MySQL server on: {mysql_host} currently unavailable - waiting...")
-                await asyncio.sleep(5)
-
-
-async def wait_for_kafka(kafka_host: str = "127.0.0.1:26638"):
-    """There are currently two components to this:
-    1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
-    2) The LMDB database (which should have an API wrapping it)"""
-    logger = logging.getLogger("wait-for-dependencies")
-
-    while True:
-        is_available = False
-        try:
-            kafka_broker = {
-                'bootstrap.servers': os.environ.get('KAFKA_HOST', "127.0.0.1:26638"),
-            }
-            admin_client = AdminClient(kafka_broker)
-            _topics = admin_client.list_topics(timeout=2).topics
-            is_available = True
-            break
-        except KafkaException:
-            pass
-        finally:
-            if is_available:
-                logger.debug(f"KafkaBroker on: {kafka_host} is available")
-            else:
-                logger.debug(f"KafkaBroker on: {kafka_host} currently unavailable - waiting...")
                 await asyncio.sleep(5)
 
 

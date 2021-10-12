@@ -35,9 +35,9 @@ def unpack_varint(buf: array.ArrayType, offset: int):
     if n < 253:
         return n, offset + 1
     if n == 253:
-        return struct_le_H.unpack(buf[offset+1:offset+3].tobytes())[0], offset + 3
+        return struct_le_H.unpack_from(buf, offset + 1)[0], offset + 3
     if n == 254:
-        return struct_le_I.unpack_from(buf[offset+1:offset+3].tobytes(), offset + 1)[0], offset + 5
+        return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
     return struct_le_Q.unpack_from(buf[offset+1:offset+3].tobytes(), offset + 1)[0], offset + 9
 
 # -------------------- PREPROCESSOR -------------------- #
@@ -95,15 +95,15 @@ def get_pk_and_pkh_from_script(script: array.array):
             try:
                 if script[i] == 20:
                     i += 1
-                    pkhs.add(script[i:i+20].tobytes())
+                    pkhs.add(struct_OP_20.unpack_from(script, i)[0])
                     i += 20
                 elif script[i] == 33:
                     i += 1
-                    pks.add(script[i:i+33].tobytes())
+                    pks.add(struct_OP_33.unpack_from(script, i)[0])
                     i += 33
                 elif script[i] == 65:
                     i += 1
-                    pks.add(script[i:i+65].tobytes())
+                    pks.add(struct_OP_65.unpack_from(script, i)[0])
                     i += 65
                 elif script[i] in SET_OTHER_PUSH_OPS:  # signature -> skip
                     i += script[i] + 1

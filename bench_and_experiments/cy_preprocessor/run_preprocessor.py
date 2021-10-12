@@ -8,7 +8,7 @@ try:
     from conduit_lib._algorithms import preprocessor  # cython
 except ModuleNotFoundError:
     from conduit_lib.algorithms import preprocessor  # pure python
-from bench.utils import print_results
+from bench_and_experiments.utils import print_results
 
 if __name__ == "__main__":
 
@@ -27,11 +27,24 @@ if __name__ == "__main__":
     # check validity
     t0 = time.time()
     stream = io.BytesIO(raw_block)
-    txs = []
+    txs_via_bitcoinx_only = []
+    stream.read(80)
+    tx_count = bitcoinx.read_varint(stream.read)
+    assert tx_count == 1557
+    for i in range(tx_count):
+        tx = bitcoinx.Tx.read(stream.read)
+        txs_via_bitcoinx_only.append(tx)
+
+
+    stream = io.BytesIO(raw_block)
+    txs_via_proprocessor_offsets = []
     for i in range(count):
         stream.seek(tx_offsets_array[i])
-        txs.append(bitcoinx.Tx.read(stream.read))
+        tx = bitcoinx.Tx.read(stream.read)
+        if i != count-1:
+            assert tx.size() == tx_offsets_array[i+1] - tx_offsets_array[i], f"count={count}; tx.size()={tx.size()}; tx_offsets_array[i+1] - tx_offsets_array[i]={tx_offsets_array[i+1] - tx_offsets_array[i]}"
+        txs_via_proprocessor_offsets.append(tx)
 
     t1 = time.time() - t0
-    assert len(txs) == count
+    assert len(txs_via_proprocessor_offsets) == count
     # print_results(count, t1, raw_block)

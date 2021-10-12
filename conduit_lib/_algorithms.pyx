@@ -7,19 +7,18 @@ import array
 import logging
 import struct
 from struct import Struct
-from hashlib import sha256
-
-from bitcoinx import double_sha256, hash_to_hex_str
+import hashlib
+from bitcoinx import hash_to_hex_str
 
 # Cython cimports
 # from libcpp.vector cimport vector as cppvector
 from libcpp.set cimport set as cppset
 
-
 cdef unsigned int HEADER_OFFSET = 80
 cdef unsigned char OP_PUSH_20 = 20
 cdef unsigned char OP_PUSH_33 = 33
 cdef unsigned char OP_PUSH_65 = 65
+
 cdef cppset[int] SET_OTHER_PUSH_OPS
 cdef unsigned char i
 for i in range(1,76):
@@ -40,6 +39,14 @@ cdef char OP_PUSHDATA4 = 0x4e
 logger = logging.getLogger("_algorithms")
 
 
+cdef (bytes) sha256(bytes x):
+    '''Simple wrapper of hashlib sha256.'''
+    return hashlib.sha256(x).digest()
+
+cdef (bytes) double_sha256(bytes x):
+    return sha256(sha256(x))
+
+
 cpdef (unsigned long long, unsigned long long) unpack_varint_cy(array.array buf,
         int offset) \
         except *:
@@ -47,14 +54,14 @@ cpdef (unsigned long long, unsigned long long) unpack_varint_cy(array.array buf,
     cdef unsigned char n
     cdef unsigned short count
 
-    n = buf.data.as_chars[offset]
+    n = buf.data.as_uchars[offset]
     if n < 253:
         return n, offset + 1
     if n == 253:
-        return struct_le_H.unpack(buf.data.as_chars[offset+1:offset+3])[0], offset + 3
+        return struct_le_H.unpack(buf.data.as_uchars[offset+1:offset+3])[0], offset + 3
     if n == 254:
-        return struct_le_I.unpack(buf.data.as_chars[offset+1:offset+5])[0], offset + 5
-    return struct_le_Q.unpack(buf.data.as_chars[offset+1:offset+9])[0], offset + 9
+        return struct_le_I.unpack(buf.data.as_uchars[offset+1:offset+5])[0], offset + 5
+    return struct_le_Q.unpack(buf.data.as_uchars[offset+1:offset+9])[0], offset + 9
 
 
 cpdef preprocessor(
@@ -100,42 +107,45 @@ cpdef preprocessor(
 
 # -------------------- PARSE BLOCK TXS -------------------- #
 
-
-cdef set get_pk_and_pkh_from_script(array.array script):
+@cython.boundscheck(False)
+cpdef (list) get_pk_and_pkh_from_script(array.array[unsigned char] script):
     cdef int i, len_script, length
     cdef set pks = set()
     cdef set pkhs = set()
-    cdef set pd_hashes = set()
+    cdef list pd_hashes = []
     len_script = len(script)
     i = 0
+    # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
+    #  as we do not want to track pubkeys or pkhs etc. from inside of unspendable outputs at this
+    #  stage...
     try:
         while i < len_script:
             try:
-                if script.data.as_chars[i] == 20:
+                if script.data.as_uchars[i] == 20:
                     i += 1
-                    pkhs.add(script.data.as_chars[i:i+20])
+                    pks.add(script.data.as_uchars[i:i+20])
                     i += 20
-                elif script.data.as_chars[i] == 33:
+                elif script.data.as_uchars[i] == 33:
                     i += 1
-                    pks.add(script.data.as_chars[i:i+33])
+                    pks.add(script.data.as_uchars[i:i+33])
                     i += 33
-                elif script.data.as_chars[i] == 65:
+                elif script.data.as_uchars[i] == 65:
                     i += 1
-                    pks.add(script.data.as_chars[i:i+65])
+                    pks.add(script.data.as_uchars[i:i+65])
                     i += 65
-                elif SET_OTHER_PUSH_OPS.find(script.data.as_chars[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
-                    i += script.data.as_chars[i] + 1
-                elif script.data.as_chars[i] == 0x4C:
+                elif SET_OTHER_PUSH_OPS.find(script[i]) != SET_OTHER_PUSH_OPS.end():  # signature -> skip
+                    i += script[i] + 1
+                elif script.data.as_uchars[i] == 0x4C:
                     i += 1
-                    length = script.data.as_chars[i]
+                    length = script[i]
                     i += 1 + length
-                elif script.data.as_chars[i] == OP_PUSHDATA2:
+                elif script.data.as_uchars[i] == OP_PUSHDATA2:
                     i += 1
-                    length = int.from_bytes(script.data.as_chars[i : i + 2], byteorder="little", signed=False)
+                    length = int.from_bytes(script.data.as_uchars[i : i + 2], byteorder="little", signed=False)
                     i += 2 + length
-                elif script.data.as_chars[i] == OP_PUSHDATA4:
+                elif script.data.as_uchars[i] == OP_PUSHDATA4:
                     i += 1
-                    length = int.from_bytes(script.data.as_chars[i : i + 4], byteorder="little", signed=False)
+                    length = int.from_bytes(script.data.as_uchars[i : i + 4], byteorder="little", signed=False)
                     i += 4 + length
                 else:  # slow search byte by byte...
                     i += 1
@@ -144,16 +154,12 @@ cdef set get_pk_and_pkh_from_script(array.array script):
                 # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
                 # especially on testnet - lots of bad output scripts...
                 logger.error(f"script={script}, len(script)={len(script)}, i={i}")
-
         # hash pushdata
-        for pk in pkhs:
-            pd_hashes.add(sha256(pk).digest()[0:32])
-            # pd_hashes.append(sha256(pk).digest()[0:32])
+        for pk in pks:
+            pd_hashes.append(sha256(pk)[0:32])
 
         for pkh in pkhs:
-            pd_hashes.add(sha256(pkh).digest()[0:32])
-            # pd_hashes.append(sha256(pkh).digest()[0:32])
-
+            pd_hashes.append(sha256(pkh)[0:32])
         return pd_hashes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
@@ -161,7 +167,7 @@ cdef set get_pk_and_pkh_from_script(array.array script):
         raise
 
 
-# Todo - This Cythonized version is not tested at all whilst refactoring - AustEcon 25/09/2021
+@cython.boundscheck(False)
 cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, unsigned int height_or_timestamp,
         unsigned int confirmed, unsigned int first_tx_pos_batch):
     """
@@ -179,11 +185,13 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
     cdef bytes rawtx, tx_hash, out_pushdata_hash, in_prevout_hash, in_pushdata_hash
+    cdef array.array[unsigned char] scriptpubkey, script_sig
     cdef set in_rows, out_rows, set_pd_rows
     cdef unsigned long count_txs, tx_pos, i, in_prevout_idx, out_idx, in_idx, ref_type
     cdef unsigned long long adjustment, offset, script_sig_len, scriptpubkey_len, out_value, \
         tx_offset_start, next_tx_offset, out_offset_start, out_offset_end, in_offset_start, in_offset_end
     cdef list tx_rows = []
+    cdef list pushdata_hashes
     in_rows = set()
     out_rows = set()
     set_pd_rows = set()
@@ -207,7 +215,7 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
             else:
                 next_tx_offset = len(buffer)
 
-            rawtx = buffer.data.as_chars[tx_offset_start:next_tx_offset]
+            rawtx = buffer.data.as_uchars[tx_offset_start:next_tx_offset]
             tx_hash = double_sha256(rawtx)
 
             # version
@@ -218,9 +226,9 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
             ref_type = 1
             in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hash = buffer.data.as_chars[offset : offset + 32]
+                in_prevout_hash = buffer.data.as_uchars[offset : offset + 32]
                 offset += 32
-                in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
+                in_prevout_idx = struct_le_I.unpack_from(buffer.data.as_uchars[offset : offset + 4])[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint_cy(buffer, offset)
                 script_sig = buffer[offset : offset + script_sig_len]  # keep as array.array
@@ -228,14 +236,14 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
                 offset += 4  # skip sequence
                 in_offset_end = offset + adjustment
 
+                in_rows.add(
+                    (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx,
+                        in_offset_start, in_offset_end, ),
+                )
+
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the inputs table at all
                 if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
-
-                    in_rows.add(
-                        (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx,
-                            in_offset_start, in_offset_end, ),
-                    )
 
                     pushdata_hashes = get_pk_and_pkh_from_script(script_sig)
                     if len(pushdata_hashes):
@@ -255,7 +263,7 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
             ref_type = 0
             out_offset_start = offset + adjustment
             for out_idx in range(count_tx_out):
-                out_value = struct_le_Q.unpack_from(buffer.data.as_chars[offset : offset + 8])[0]
+                out_value = struct_le_Q.unpack_from(buffer.data.as_uchars[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint_cy(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array

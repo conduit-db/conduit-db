@@ -115,6 +115,11 @@ class MySQLQueries:
         self.mysql_conn.query(query)
         self.mysql_db.commit_transaction()
 
+    # Todo - lol - this is a full table scan...
+    #  instead should use LMDB index to get the lists of tx_hashes from the highest conceivable
+    #  height of the highest txn (which would be calculated by local_block_tip_height + current
+    #  max main batch size...
+    #  Then would need to ensure all of those txs are purged from the database
     def mysql_get_max_tx_height(self) -> Optional[int]:
         query = f"""
             SELECT MAX(tx_height) FROM confirmed_transactions;

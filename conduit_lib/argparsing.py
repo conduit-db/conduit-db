@@ -55,15 +55,6 @@ def get_parser():
              "(for convenience when testing on RegTest)",
     )
     parser.add_argument(
-        "--kafka-host",
-        action="store",
-        dest="kafka_host",
-        default="127.0.0.1:26638",
-        type=str,
-        help="e.g. localhost:26638 for use outside of docker or "
-             "kafka:9092 for use within docker",
-    )
-    parser.add_argument(
         "--mysql-host",
         action="store",
         dest="mysql_host",

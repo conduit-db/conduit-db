@@ -12,7 +12,7 @@ transaction throughput.
 
 ## Running different combinations of services in Docker
 
-The core services of mysql, kafka, zookeeper and the  Bitcoin SV node can be run using:
+The core services of mysql and the  Bitcoin SV node can be run using:
 
     docker-compose -f docker-compose.yml up
 
@@ -33,12 +33,22 @@ they should take everything down and then prune (Docker speak for delete) all vo
 
     docker volume prune
 
+## Production recommendations
+It is recommended to run all services including MySQL and the Node bare metal 
+via systemd for the best performance on a linux server with ideally 8-16 CPU 
+cores and >=32GB RAM.  
+
+NVMe for the MySQL database is advised. The node and LMDB database can be split
+across SATA SSD for their relatively small indexing footprint and HDD for 
+raw block storage given the predominantly sequential access patterns for this 
+data. 
+
 ## Running ConduitRaw
 
 Windows cmd.exe:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     set PYTHONPATH=.
     py -m pip install -r .\conduit_raw\requirements.txt
     py .\conduit_raw\conduit_server.py          (optional flag: --reset)
@@ -46,17 +56,18 @@ Windows cmd.exe:
 Unix:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     export PYTHONPATH=.
-    python -m pip install -r ./conduit_raw/requirements.txt
-    python ./conduit_raw/conduit_server.py      (optional flag: --reset)
+    python3 -m pip install -r ./conduit_raw/requirements.txt
+    python3 -m pip install -r ./conduit_index/requirements-linux-extras.txt
+    python3 ./conduit_raw/conduit_server.py      (optional flag: --reset)
 
 ## Running ConduitIndex - (depends on ConduitRaw)
 
 Windows cmd.exe:
 
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     set PYTHONPATH=.
     py -m pip install -r .\conduit_index\requirements.txt
     py .\conduit_index\conduit_server.py        (optional flag: --reset)
@@ -66,9 +77,10 @@ Unix:
     sudo apt-get install python3-dev default-libmysqlclient-dev build-essential
     
     git clone https://github.com/AustEcon/conduit.git
-    cd conduit
+    cd conduit-db
     export PYTHONPATH=.
     python3 -m pip install -r ./conduit_index/requirements.txt
+    python3 -m pip install -r ./conduit_index/requirements-linux-extras.txt
     python3 ./conduit_index/conduit_server.py   (optional flag: --reset)
 
 
@@ -96,8 +108,8 @@ As of 11/10/2021 (on i5-8600k CPU):
 
     tx parser (see bench/cy_txparser)
     ---------------------------------
-    pure python:        25 MB/sec 
-    cythonized:         44 MB/sec
+    pure python:        24 MB/sec 
+    cythonized:         39 MB/sec
 
 
 ## Warning about new changes
