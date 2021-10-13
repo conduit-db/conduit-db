@@ -65,7 +65,7 @@ class LMDB_Database:
         self._opened = False
 
         if sys.platform == 'linux':
-            self._map_size = pow(1024, 4) * 64  # 64 terabytes
+            self._map_size = pow(1024, 4) * 32  # 64 terabytes
         else:
             # on windows there is a bug where this requires the disc space to be free
             # on linux can set this to a very large number (e.g. 10 terabytes)
