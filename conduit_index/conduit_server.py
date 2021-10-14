@@ -26,6 +26,15 @@ if sys.platform == 'win32':
     asyncio.set_event_loop(loop)
 
 
+# If uvloop is installed - make use of it
+elif sys.platform == 'linux':
+    try:
+        import uvloop
+        uvloop.install()
+    except ImportError:
+        pass
+
+
 DEFAULT_ENV_VARS = [
     (DATABASE_NAME_VARNAME, "conduitdb", DATABASE_NAME_VARNAME),
     (BITCOIN_NETWORK_VARNAME, REGTEST, BITCOIN_NETWORK_VARNAME),
@@ -72,12 +81,10 @@ def set_env_vars(config: Dict):
     os.environ['GRPC_ENABLE_FORK_SUPPORT'] = '1'
     if sys.platform == 'linux':
         os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
-    os.environ['KAFKA_HOST'] = config['kafka_host']
     host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
     port = config['mysql_host'].split(":")[1]
     os.environ['MYSQL_HOST'] = host
     os.environ['MYSQL_PORT'] = port
-    logger.debug(f"KAFKA_HOST: {os.environ['KAFKA_HOST']}")
     logger.debug(f"MYSQL_HOST: {host}")
     logger.debug(f"MYSQL_PORT: {port}")
 

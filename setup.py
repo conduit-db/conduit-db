@@ -1,14 +1,19 @@
 """
 Copyright (c) 2020-2021 AustEcon i.e. Hayden J. Donnelly <austecon0922@gmail.com>
+
+This setup.py is only for compiling the Cython extensions.
+To run ConduitIndex and ConduitRaw see the README.md
 """
+
 from setuptools import find_packages, setup
 from Cython.Build import cythonize
 from Cython.Compiler import Options
-import pathlib
+
+version = "0.0.1"
 
 """
 To compile cython module:
-> py -3.9-64 setup.py build_ext --inplace --build-lib .\conduit\workers
+> py -3.9-64 setup.py build_ext --inplace
 
 Ensure you use the corresponding version of python otherwise it won't work
 """
@@ -17,20 +22,10 @@ Options.annotate = True
 Options.docstrings = True
 Options.fast_fail = True
 
-path = pathlib.Path('conduit_index/__init__.py')
-
-with path.open() as f:
-    for line in f.readlines():
-        if line.startswith('__version__'):
-            version = line.strip().split('= ')[1].strip("'")
-            break
-
 setup(
-    name='conduit_index',
+    name='conduitdb',
     version=version,
-    description='Horizontally scalable and shardable transaction parser (depends on ConduitRaw)',
-    long_description=open('../README.md', 'r').read(),
-    long_description_content_type='text/markdown',
+    description='A faster multi-core chain indexer using the bitcoin p2p protocol (Bitcoin SV)',
     author='AustEcon',
     author_email='AustEcon0922@gmail.com',
     maintainer='AustEcon',
@@ -56,13 +51,12 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: Implementation :: CPython',
-        'Programming Language :: Python :: Implementation :: PyPy'
     ],
 
     install_requires=[],
     extras_require={},
     tests_require=['pytest'],
-    ext_modules=cythonize("conduit_index/workers/_algorithms.pyx"),
+    ext_modules=cythonize("conduit_lib/_algorithms.pyx"),
     zip_safe=False,
     packages=find_packages(),
 )

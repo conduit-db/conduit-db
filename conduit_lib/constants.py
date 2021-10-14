@@ -40,8 +40,10 @@ TESTNET = "testnet"
 SCALINGTESTNET = "scaling-testnet"
 REGTEST = "regtest"
 
+# Todo - add these as environment variables
 WORKER_COUNT_PREPROCESSORS = 1
-WORKER_COUNT_TX_PARSERS = 6
+# WORKER_COUNT_TX_PARSERS = 8  # This is set for an AMD 5850X with 16 cores / 32 threads
+WORKER_COUNT_TX_PARSERS = 2  # This is better for testing/developmnent
 WORKER_COUNT_MTREE_CALCULATORS = 4
 WORKER_COUNT_BLK_WRITER = 1
 WORKER_COUNT_LOGGING_SERVERS = 1
@@ -56,8 +58,8 @@ SMALL_BLOCK_SIZE = 10_000
 # CHIP_AWAY_BYTE_SIZE_LIMIT must be larger than the largest transaction we expect otherwise
 # the server would likely crash. It is set artificially low for now to prove that a large block
 # can be fully processed without allocating it all into memory at once
-CHIP_AWAY_BYTE_SIZE_LIMIT = 1024 ** 2 * 512
-MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll) from conduit raw
+CHIP_AWAY_BYTE_SIZE_LIMIT = 1024 ** 3 * 4096
+MAIN_BATCH_HEADERS_COUNT_LIMIT = 250  # Number of headers to request (long poll) from conduit raw
 
 
 class MsgType(enum.IntEnum):

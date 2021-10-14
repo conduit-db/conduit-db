@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import typing
+from datetime import datetime, timedelta
 from typing import Set, List, Tuple
 from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
@@ -13,7 +14,6 @@ from typing import Optional
 import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
-# from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
@@ -98,6 +98,8 @@ class SyncState:
         self.initial_block_download_event_mp = multiprocessing.Event()
 
         self.total_time_allocating_work = 0
+        self.is_post_ibd = False
+        self.conduit_best_tip: Optional[bitcoinx.Header] = None
 
     @property
     def message_received_count(self):
@@ -107,12 +109,35 @@ class SyncState:
     def message_handled_count(self):
         return self._msg_handled_count
 
+    # Conduit Best Tip
+    def get_conduit_best_tip(self) -> bitcoinx.Header:
+        return self.conduit_best_tip
+
+    def set_conduit_best_tip(self, tip: bitcoinx.Header):
+        self.conduit_best_tip = tip
+
     # Block Headers
     def get_local_block_tip_height(self) -> int:
         return self.storage.block_headers.longest_chain().tip.height
 
     def get_local_block_tip(self) -> bitcoinx.Header:
         return self.storage.block_headers.longest_chain().tip
+
+    async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header):
+        # Todo - really instead of conduit_best_tip it should come from the node...
+        #  because it affects compact block protocol down the road...Other than that
+        #  the logic seems correct... to fix this would need to add back headers synchronization
+        #  like ConduitRaw does...
+        if self.is_post_ibd:  # cache result
+            return self.is_post_ibd
+        conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
+        our_tip = datetime.utcfromtimestamp(tip.timestamp)
+        conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
+        if our_tip > conduit_best_minus_24_hrs:
+            self.is_post_ibd = True
+            await self.controller.request_mempool()
+            return True
+        return False
 
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height

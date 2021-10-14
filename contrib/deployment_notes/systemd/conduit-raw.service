@@ -1,0 +1,14 @@
+[Unit]
+Description=Conduit Raw
+After=network.target
+
+[Service]
+User=conduitdb
+Group=conduitdb
+EnvironmentFile=-/etc/conduit-raw.conf
+Type=simple
+ExecStart=python3 /home/conduitdb/conduit-db/conduit_raw/conduit_server.py --mainnet --node-host=127.0.0.1:8333
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

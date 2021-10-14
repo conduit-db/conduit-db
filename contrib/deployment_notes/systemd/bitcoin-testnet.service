@@ -1,0 +1,13 @@
+Unit]
+Description=Bitcoin SV distributed currency daemon
+After=network.target
+
+[Service]
+User=conduitdb
+Group=conduitdb
+Type=forking
+ExecStart=/home/conduitdb/bitcoin-sv-1.0.8/bin/bitcoind -conf=/mnt/data/bitcoin_data/testnet3/bitcoin.conf --datadir=/mnt/data/bitcoin_data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

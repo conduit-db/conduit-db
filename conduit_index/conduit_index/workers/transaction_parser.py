@@ -90,6 +90,11 @@ class TxParser(multiprocessing.Process):
         self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
+        context4 = zmq.Context()
+        self.is_ibd_socket = context4.socket(zmq.SUB)
+        self.is_ibd_socket.connect("tcp://127.0.0.1:52841")
+        self.is_ibd_socket.setsockopt(zmq.SUBSCRIBE, b"is_ibd_signal")
+
         # Todo - these should all be local to the thread's state only - not global to
         #  avoid race... Need to refactor to class-based thread module. For now it will
         #  be okay because of only having a single thread reading and/or writing these data structs.
@@ -353,6 +358,7 @@ class TxParser(multiprocessing.Process):
             # Todo only does 1 mempool tx at a time at present
             dt = datetime.utcnow()
             tx_offsets = array.array("Q", [0])
+            rawtx = array.array('B', rawtx)
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
             result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
             tx_rows, in_rows, out_rows, set_pd_rows = result
@@ -368,6 +374,15 @@ class TxParser(multiprocessing.Process):
         self.mempool_tx_flush_ack_queue.put(num_mempool_txs_processed)
 
     def mempool_thread(self):
+        while True:
+            # For some reason I am unable to catch a KeyboardInterrupt or SIGINT here so
+            # need to rely on an overt "stop_signal" from the Controller for graceful shutdown
+            message = self.is_ibd_socket.recv()
+            if message == b"is_ibd_signal":
+                self.logger.debug(f"Got initial block download signal. "
+                    f"Starting mempool tx parsing thread.")
+                break
+
         batch = []
         prev_time_check = time.time()
 
@@ -380,7 +395,7 @@ class TxParser(multiprocessing.Process):
             lmdb_grpc_client = ConduitRawAPIClient()
             while True:
                 try:
-                    if mempool_tx_socket.poll(100, zmq.POLLIN):
+                    if mempool_tx_socket.poll(1000, zmq.POLLIN):
                         packed_msg = mempool_tx_socket.recv(zmq.NOBLOCK)
                         if not packed_msg:
                             return  # poison pill stop command
@@ -502,6 +517,7 @@ class TxParser(multiprocessing.Process):
                 merged_tx_to_work_item_id_map[tx_hash] = work_item_id
 
             # Todo - I don't like this re-allocation of raw_block_slice
+            raw_block_slice = array.array('B', raw_block_slice)
             batched_raw_block_slices.append(
                 (raw_block_slice, work_item_id, blk_num, blk_height, first_tx_pos_batch))
             acks.append((blk_height, work_item_id, blk_hash, part_tx_hashes))

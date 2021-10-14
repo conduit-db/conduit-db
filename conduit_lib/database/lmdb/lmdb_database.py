@@ -1,11 +1,13 @@
 import array
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from struct import Struct
 from typing import List, Tuple, Dict, Optional
 
+import bitcoinx
 import lmdb
 from bitcoinx.packing import struct_le_Q
 
@@ -17,6 +19,10 @@ except ImportError:
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
 struct_le_I = Struct("<I")
+
+
+class EntryNotFound(Exception):
+    pass
 
 
 class LMDB_Database:
@@ -58,9 +64,13 @@ class LMDB_Database:
         self.block_metadata_db = None
         self._opened = False
 
-        # on windows there is a bug where this requires the disc space to be free
-        # on linux can set this to a very large number (e.g. 10 terabytes)
-        self._map_size = pow(1024, 3) * 50
+        if sys.platform == 'linux':
+            self._map_size = pow(1024, 4) * 32  # 64 terabytes
+        else:
+            # on windows there is a bug where this requires the disc space to be free
+            # on linux can set this to a very large number (e.g. 10 terabytes)
+            # windows is for development use only...
+            self._map_size = pow(1024, 3) * 20
         self._storage_path = storage_path
         self.open()
         self.logger.debug(f"opened LMDB database at {storage_path}")
@@ -95,18 +105,32 @@ class LMDB_Database:
         self._db2 = None
         self._opened = False
 
-    def get_block_num(self, block_hash: bytes) -> int:
+    def get_block_num(self, block_hash: bytes) -> Optional[int]:
         with self.env.begin(db=self.block_nums_db) as txn:
-            return struct_be_I.unpack(txn.get(block_hash))[0]
+            result = txn.get(block_hash)
+            if result:
+                return struct_be_I.unpack(txn.get(block_hash))[0]
+            raise EntryNotFound(f"Block num for block_hash: "
+                                f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
 
+    # Todo - raw blocks need to be stored in files (identified by block_num in filename) t
+    #  to seek to offset
     def get_block(self, block_num: int, start_offset: int=0,
-            end_offset: int=0) -> bytes:
+            end_offset: int=0, buffers=False) -> bytes:
         """If end_offset=0 then it goes to the end of the block"""
-        with self.env.begin(db=self.blocks_db, buffers=True) as txn:
+        with self.env.begin(db=self.blocks_db, buffers=buffers) as txn:
             buf: memoryview = txn.get(struct_be_I.pack(block_num))
+            if not buf:
+                raise EntryNotFound(f"Block for block_num: {block_num} not found")
+
             if end_offset == 0:
-                return buf[start_offset:].tobytes()
-            return buf[start_offset: end_offset].tobytes()
+                result = buf[start_offset:]
+            else:
+                result = buf[start_offset: end_offset]
+
+            if buffers:
+                return result.tobytes()
+            return result
 
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:

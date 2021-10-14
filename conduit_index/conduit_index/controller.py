@@ -1,11 +1,11 @@
 import asyncio
+import concurrent
 import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
 import grpc
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
-from confluent_kafka.cimpl import Consumer
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, unpack_header
 import logging
 import os
 import queue
@@ -28,8 +28,8 @@ from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_kafka, \
-    wait_for_conduit_raw_api, wait_for_node
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
+    wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
 from .batch_completion import BatchCompletionTxParser
@@ -113,6 +113,14 @@ class Controller:
         self.kill_worker_socket = context3.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:63241")
 
+        # PUB-SUB from Controller to worker to signal when initial block download is in effect
+        # Defined as when the local chain tip is within 24 hours of the best known chain tip
+        # This is the same definition that the reference bitcoin-sv node uses.
+        context3 = zmq.Context()
+        self.is_ibd_socket = context3.socket(zmq.PUB)
+        self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
+        self.ibd_signal_sent = False
+
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
 
@@ -160,9 +168,6 @@ class Controller:
         self.running = True
         try:
             await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            # await wait_for_kafka(kafka_host=self.config['kafka_host'])
-            # Must setup kafka consumer after conduit_raw_api is ready in case conduit_raw
-            # does a full kafka reset
             await wait_for_mysql(mysql_host=self.config['mysql_host'])
             await self.setup()
 
@@ -333,7 +338,6 @@ class Controller:
             await self.handshake_complete_event.wait()
             self.maybe_rollback()
             self.start_workers()
-            await self.request_mempool()
             await self.spawn_sync_all_blocks_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
@@ -359,6 +363,7 @@ class Controller:
             new_mined_tx_hashes = await self.loop.run_in_executor(
                 self.mined_tx_hashes_queue_waiter_executor,
                 self.worker_ack_queue_mined_tx_hashes.get)
+
         # 2) Update dict
         for blk_height, new_hashes in new_mined_tx_hashes.items():
             if not self.global_tx_hashes_dict.get(blk_height):
@@ -391,10 +396,16 @@ class Controller:
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
-        await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
+        conduit_best_tip = self.sync_state.get_conduit_best_tip()
+        if await self.sync_state.is_ibd(api_block_tip, conduit_best_tip):
+            await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
+        else:
+            # No txs in mempool until is_ibd == True
+            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+                api_block_tip_hash)
         return api_block_tip_height
 
-    def connect_done_block_headers(self, blocks_batch_set):
+    async def connect_done_block_headers(self, blocks_batch_set):
         t0 = time.perf_counter()
         sorted_headers = sorted([(self.storage.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
@@ -425,6 +436,14 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
+        conduit_best_tip = self.sync_state.get_conduit_best_tip()
+        if await self.sync_state.is_ibd(tip, conduit_best_tip) and not self.ibd_signal_sent:
+            self.logger.debug(f"Initial block download mode completed. "
+                f"Activating mempool tx processing...")
+            with self.is_ibd_socket as sock:
+                sock.send(b"is_ibd_signal")
+                self.ibd_signal_sent = True
+
     def connect_conduit_headers(self, raw_header) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
@@ -440,6 +459,8 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
+    # Todo - long_poll_conduit_raw_chain_tip keeps hanging!
+    #  Need a new system that does not require loop.run_in_executor
     def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
         tip, tip_height = self.lmdb_grpc_client.get_chain_tip()
         deserialized_header = None
@@ -461,6 +482,8 @@ class Controller:
                 if deserialized_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {deserialized_header.height}")
+                    self.sync_state.set_conduit_best_tip(bitcoinx.Header(*unpack_header(tip),
+                        double_sha256(tip), tip, tip_height))
                     return deserialized_header, tip_height
                 else:
                     continue
@@ -472,13 +495,23 @@ class Controller:
                 time.sleep(0.2)
 
     async def long_poll_conduit_raw_chain_tip_with_retry(self):
-        result = await self.loop.run_in_executor(self.headers_state_executor,
+        # Todo - this seems to be slow - profile it and fix.
+        fut: concurrent.futures.Future = self.headers_state_executor.submit(
             self.long_poll_conduit_raw_chain_tip)
 
-        if not result:
+        while True:
+            if fut.done():
+                result = fut.result()
+                break
+            # this is regrettable but loop.run_in_executor is buggy imo and hangs indefinitely
+            # this may be related: https://bugs.python.org/issue29309
+            # it doesn't have to be super fast anyways because it fetches 500 headers in each batch
+            # if it responded within 0.1 seconds, I would be very pleased.
+            await asyncio.sleep(0.1)
+
+        if not result:  # gRPC disconnect
             await wait_for_conduit_raw_api(CONDUIT_RAW_API_HOST)
-            result = await self.loop.run_in_executor(self.headers_state_executor,
-                self.long_poll_conduit_raw_chain_tip)
+            return await self.long_poll_conduit_raw_chain_tip_with_retry()  # recurse
 
         main_batch_tip, conduit_raw_tip_height = result
         return main_batch_tip, conduit_raw_tip_height
@@ -510,7 +543,7 @@ class Controller:
             try:
                 await self.sync_state.done_blocks_tx_parser_event.wait()
                 self.sync_state.done_blocks_tx_parser_event.clear()
-                self.connect_done_block_headers(all_pending_block_hashes.copy())
+                await self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
                 self.logger.exception("unexpected exception in "
                     "'wait_for_batched_blocks_completion' ")
@@ -554,7 +587,6 @@ class Controller:
                     await self.sync_state.chip_away_batch_event.wait()
                     self.sync_state.reset_pending_chip_away_work_items()
                     self.sync_state.chip_away_batch_event.clear()
-
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
                 self.sync_state.reset_pending_blocks()

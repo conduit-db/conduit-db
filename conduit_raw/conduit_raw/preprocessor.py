@@ -44,7 +44,7 @@ class BlockPreProcessor(threading.Thread):
 
                 # tx_offsets_array is a preallocated array.array for better cffi with Cython
                 count_added, _tx_offsets_array = preprocessor(
-                    bytearray(self.shm.buf[blk_start_pos:blk_end_pos]),
+                    array.array('B', self.shm.buf[blk_start_pos:blk_end_pos]),
                     self.tx_offsets_array,
                     block_offset=0
                 )

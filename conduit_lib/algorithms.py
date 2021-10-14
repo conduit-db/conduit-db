@@ -30,7 +30,7 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-def unpack_varint(buf, offset):
+def unpack_varint(buf: array.ArrayType, offset: int):
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -38,13 +38,12 @@ def unpack_varint(buf, offset):
         return struct_le_H.unpack_from(buf, offset + 1)[0], offset + 3
     if n == 254:
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
-    return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
-
+    return struct_le_Q.unpack_from(buf[offset+1:offset+3].tobytes(), offset + 1)[0], offset + 9
 
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view: bytes, tx_offsets_array: array.ArrayType, block_offset: int=0):
+def preprocessor(block_view: array.ArrayType, tx_offsets_array: array.ArrayType, block_offset: int=0):
     block_offset += HEADER_OFFSET
     count, block_offset = unpack_varint(block_view, block_offset)
     cur_idx = 0
@@ -83,8 +82,9 @@ def preprocessor(block_view: bytes, tx_offsets_array: array.ArrayType, block_off
 # -------------------- PARSE BLOCK TXS -------------------- #
 
 
-def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
+def get_pk_and_pkh_from_script(script: array.array):
     i = 0
+    pks, pkhs = set(), set()
     pd_hashes = []
     len_script = len(script)
     # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
@@ -127,17 +127,11 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
                 # especially on testnet - lots of bad output scripts...
                 logger.error(f"script={script}, len(script)={len(script)}, i={i}")
         # hash pushdata
-        if len(pks) == 1:
-            pd_hashes.append(sha256(pks.pop()).digest()[0:32])  # skip for loop if possible
-        else:
-            for pk in pks:
-                pd_hashes.append(sha256(pk).digest()[0:32])
+        for pk in pks:
+            pd_hashes.append(sha256(pk).digest()[0:32])
 
-        if len(pkhs) == 1:
-            pd_hashes.append(sha256(pkhs.pop()).digest()[0:32])  # skip for loop if possible
-        else:
-            for pkh in pkhs:
-                pd_hashes.append(sha256(pkh).digest()[0:32])
+        for pkh in pkhs:
+            pd_hashes.append(sha256(pkh).digest()[0:32])
         return pd_hashes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
@@ -146,7 +140,7 @@ def get_pk_and_pkh_from_script(script: bytearray, pks, pkhs):
 
 
 def parse_txs(
-    buffer: bytes, tx_offsets: array.ArrayType, height_or_timestamp: Union[int, str],
+    buffer: array.ArrayType, tx_offsets: array.ArrayType, height_or_timestamp: Union[int, str],
         confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, List, List, List]:
     """
     This function is dual-purpose - it can:
@@ -177,8 +171,6 @@ def parse_txs(
     try:
         for i in range(count_txs):
             tx_pos = i + first_tx_pos_batch  # for multiprocessing need to track position in block
-            pks = set()
-            pkhs = set()
 
             # tx_hash
             offset = tx_offsets[i] - adjustment
@@ -188,7 +180,7 @@ def parse_txs(
             else:
                 next_tx_offset = len(buffer)
 
-            rawtx = buffer[tx_offset_start:next_tx_offset]
+            rawtx = buffer[tx_offset_start:next_tx_offset].tobytes()
             tx_hash = double_sha256(rawtx)
 
             # version
@@ -199,12 +191,12 @@ def parse_txs(
             ref_type = 1
             in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hash = buffer[offset : offset + 32]
+                in_prevout_hash = buffer[offset : offset + 32].tobytes()
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint(buffer, offset)
-                script_sig = buffer[offset : offset + script_sig_len]
+                script_sig = buffer[offset : offset + script_sig_len]  # keep as array.array
                 offset += script_sig_len
                 offset += 4  # skip sequence
                 in_offset_end = offset + adjustment
@@ -217,7 +209,7 @@ def parse_txs(
                 # included in the pushdata table at all
                 if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
 
-                    pushdata_hashes = get_pk_and_pkh_from_script(script_sig, pks, pkhs)
+                    pushdata_hashes = get_pk_and_pkh_from_script(script_sig)
                     if len(pushdata_hashes):
                         for in_pushdata_hash in pushdata_hashes:
                             set_pd_rows.add(
@@ -237,9 +229,9 @@ def parse_txs(
                 out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
-                scriptpubkey = buffer[offset : offset + scriptpubkey_len]
+                scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey, pks, pkhs)
+                pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey)
                 if len(pushdata_hashes):
                     for out_pushdata_hash in pushdata_hashes:
                         set_pd_rows.add(

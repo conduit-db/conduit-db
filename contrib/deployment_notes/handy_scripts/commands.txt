@@ -1,0 +1,35 @@
+sudo docker-compose -f docker-compose.yml -f docker-compose.indexing.yml logs
+sudo docker-compose -f docker-compose.yml -f docker-compose.indexing.yml logs -f conduit-index conduit-raw
+sudo docker-compose -f docker-compose.yml -f docker-compose.indexing.yml exec node bash
+sudo docker-compose -f docker-compose.yml exec mysql bash
+
+# Open MySQL console
+mysql -p
+
+# Default location of docker volumes
+/var/snap/docker/common/var-lib-docker
+
+# Follow conduit raw logs
+tail -f -n 1000 ~/conduit-db/logs/conduit_raw.log | grep "New tip height"
+
+# Follow conduit index logs
+tail -f -n 1000 ~/conduit-db/logs/conduit_index.log | grep "New tip height"
+
+# Find evidence of OOM
+cat /var/log/syslog | grep "oom"
+
+# Check which program is consuming most CPU & RAM
+ps aux | awk '{print $2, $4, $11}' | sort -k2rn | head -n 20
+
+# Check MySQL db size
+du -h -d 1 /var/lib/mysql/
+
+# Start conduit raw in terminal
+export PYTHONPATH=/home/conduitdb/conduit-db
+export LMDB_DATABASE_PATH=/mnt/data/lmdb_data
+python3 /home/conduitdb/conduit-db/conduit_raw/conduit_server.py --mainnet --node-host=127.0.0.1:8333
+
+# Start conduit index in terminal
+export PYTHONPATH=/home/conduitdb/conduit-db
+export CONDUIT_RAW_API_HOST=127.0.0.1:50000
+python3 /home/conduitdb/conduit-db/conduit_index/conduit_server.py --mainnet --node-host=127.0.0.1:8333 --mysql-host=127.0.0.1:3306
