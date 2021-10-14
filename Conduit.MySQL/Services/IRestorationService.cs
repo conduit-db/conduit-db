@@ -11,6 +11,6 @@ namespace Conduit.MySQL.Services
     {
         Task<uint> GetTransactionHeight(byte[] transactionHash);
         uint GetTransactionHeightSync(byte[] transactionHash);
-        Task<List<PushDataFilterMatch>> GetPushDataFilterMatches(PushDataFilter pushDataFilter);
+        IAsyncEnumerable<PushDataFilterMatch> GetPushDataFilterMatches(PushDataFilter pushDataFilter);
     }
 }

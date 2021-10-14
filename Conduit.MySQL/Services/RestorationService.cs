@@ -56,10 +56,8 @@ namespace Conduit.MySQL.Services
             }
         }
 
-        public async Task<List<PushDataFilterMatch>> GetPushDataFilterMatches(PushDataFilter pushDataFilter)
+        public async IAsyncEnumerable<PushDataFilterMatch> GetPushDataFilterMatches(PushDataFilter pushDataFilter)
         {
-            List<PushDataFilterMatch> results = new();
-
             await database.Connection.OpenAsync();
 
             using (var command = new MySqlCommand())
@@ -113,11 +111,9 @@ namespace Conduit.MySQL.Services
                             }
                         }
 
-                        results.Add(match);
+                        yield return match;
                     }
             }
-
-            return results;
         }
     }
 }
