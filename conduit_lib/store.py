@@ -51,10 +51,10 @@ def setup_headers_store(net_config, mmap_filename):
     HeadersRegTestMod.max_cache_size = MMAP_SIZE
 
     if net_config.NET == REGTEST:
-        headers = HeadersRegTestMod.from_file(net_config.BITCOINX_COIN, mmap_filename,
+        headers = HeadersRegTestMod(net_config.BITCOINX_COIN, mmap_filename,
             net_config.CHECKPOINT)
     else:
-        headers = Headers.from_file(net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT)
+        headers = Headers(net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT)
     return headers
 
 

@@ -207,9 +207,11 @@ class LMDB_Database:
         with self.env.begin(db=self.tx_offsets_db, write=True, buffers=False) as txn:
             txn.put(block_hash, tx_offsets)
 
-    def get_tx_offsets(self, block_hash: bytes) -> array.ArrayType:
+    def get_tx_offsets(self, block_hash: bytes) -> bytes:
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
-            return array.array("Q", bytes(txn.get(block_hash)))
+            result = txn.get(block_hash)
+            if result:
+                return bytes(result)
 
     def get_block_metadata(self, block_hash: bytes) -> int:
         """Namely size in bytes but could later include things like compression dictionary id and

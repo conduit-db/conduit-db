@@ -1,6 +1,4 @@
 import socket
-import struct
-
 import threading
 
 from conduit_lib.basic_socket_io import send_msg

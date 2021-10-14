@@ -4,7 +4,6 @@ import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
-import grpc
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, unpack_header
 import logging
 import os
@@ -19,7 +18,7 @@ import zmq
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION
-from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.handlers import Handlers
@@ -134,7 +133,7 @@ class Controller:
         # Database Interfaces
         self.mysql_db: Optional[MySQLDatabase] = None
 
-        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
+        self.ipc_sock_client: Optional[IPCSocketClient] = None
 
         self.total_time_connecting_headers = 0
 
@@ -150,7 +149,7 @@ class Controller:
         self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
         self.mysql_db = load_mysql_database()
-        self.lmdb_grpc_client = ConduitRawAPIClient()
+        self.ipc_sock_client = IPCSocketClient()
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.mysql_db.tables.mysql_drop_mempool_table()
@@ -444,7 +443,7 @@ class Controller:
                 sock.send(b"is_ibd_signal")
                 self.ibd_signal_sent = True
 
-    def connect_conduit_headers(self, raw_header) -> bool:
+    def connect_conduit_headers(self, raw_header: bytes) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         try:
@@ -462,17 +461,18 @@ class Controller:
     # Todo - long_poll_conduit_raw_chain_tip keeps hanging!
     #  Need a new system that does not require loop.run_in_executor
     def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
-        tip, tip_height = self.lmdb_grpc_client.get_chain_tip()
+        ipc_sock_client = IPCSocketClient()
+        tip, tip_height = ipc_sock_client.chain_tip()
         deserialized_header = None
         while True:
             try:
                 start_height = self.sync_state.get_local_block_tip_height() + 1
 
                 # Long-polling
-                result = self.lmdb_grpc_client.get_block_headers_batched(start_height,
-                    batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT, wait_for_ready=True)
+                result = self.ipc_sock_client.headers_batched(start_height,
+                    batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT)
 
-                for new_tip in result:
+                for new_tip in result.headers_batch:
                     self.connect_conduit_headers(new_tip)
 
                     # For debugging only
@@ -487,12 +487,13 @@ class Controller:
                     return deserialized_header, tip_height
                 else:
                     continue
-            except grpc._channel._InactiveRpcError:
-                self.logger.debug(f"Lost connection to conduit_raw")
-                return
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
+                try:
+                    ipc_sock_client.close()
+                except Exception:
+                    self.logger.exception("exception closing socket")
 
     async def long_poll_conduit_raw_chain_tip_with_retry(self):
         # Todo - this seems to be slow - profile it and fix.

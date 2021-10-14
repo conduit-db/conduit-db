@@ -14,10 +14,10 @@ from typing import Optional
 import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
-from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
-from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
+from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch
 
@@ -57,7 +57,7 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
+        self.ipc_sock_client: Optional[IPCSocketClient] = None
 
         self.conduit_raw_header_tip: bitcoinx.Header = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
@@ -249,8 +249,8 @@ class SyncState:
         #   it is something to do with global socket state interfering with the child processes
         #   when they create their own ConduitRawAPIClient
         #   see: https://github.com/googleapis/synthtool/issues/902
-        if not self.lmdb_grpc_client:
-            self.lmdb_grpc_client = ConduitRawAPIClient()
+        if not self.ipc_sock_client:
+            self.ipc_sock_client = IPCSocketClient()
 
         all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
@@ -265,10 +265,10 @@ class SyncState:
             block_headers.append(block_header)
 
         header_hashes = [block_header.hash for block_header in block_headers]
-        block_size_results = self.lmdb_grpc_client.get_block_metadata_batched(header_hashes)
-        tx_offsets_results = self.lmdb_grpc_client.get_tx_offsets_batched(header_hashes)
+        block_sizes_batch = self.ipc_sock_client.block_metadata_batched(header_hashes)
+        tx_offsets_results = self.ipc_sock_client.transaction_offsets_batched(header_hashes)
 
-        all_work_units = list(zip(block_size_results, tx_offsets_results, block_headers))
+        all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers))
         return all_pending_block_hashes, all_work_units
 
     def incr_msg_received_count(self):

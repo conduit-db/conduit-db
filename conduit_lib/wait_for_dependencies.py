@@ -1,13 +1,12 @@
 import asyncio
 import io
 import logging
-import os
 import socket
 
 import MySQLdb
 
-from .conduit_raw_api_client import ConduitRawAPIClient, ServiceUnavailableError
-from .utils import is_docker, cast_to_valid_ipv4
+from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
+from .utils import cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
@@ -98,10 +97,10 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
     was_waiting = False
     while True:
         try:
-            client = ConduitRawAPIClient()
+            client = IPCSocketClient()
             # This will fail but establishes connectivity & checks to see if the gRPC API
             # can access LMDB without errors
-            result = client.ping(1, wait_for_ready=False)
+            result = client.ping()
             if result:
                 break
         except ServiceUnavailableError:

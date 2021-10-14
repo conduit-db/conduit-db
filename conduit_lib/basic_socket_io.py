@@ -5,10 +5,12 @@ from socket import socket
 logger = logging.getLogger(f"basic-socket-io")
 logger.setLevel(logging.DEBUG)
 
+struct_be_Q = struct.Struct(">Q")
 
-def send_msg(sock: socket, msg: bytearray):
+
+def send_msg(sock: socket, msg: bytes):
     # Prefix each message with a 8-byte length (network byte order)
-    msg = struct.pack('>Q', len(msg)) + msg
+    msg = struct_be_Q.pack(len(msg)) + msg
     sock.sendall(msg)
     return True
 
@@ -18,7 +20,7 @@ def recv_msg(sock: socket):
     raw_msglen = recvall(sock, 8)
     if not raw_msglen:
         return None
-    msglen = struct.unpack('>Q', raw_msglen)[0]
+    msglen = struct_be_Q.unpack(raw_msglen)[0]
     # Read the message data
     return recvall(sock, msglen)
 

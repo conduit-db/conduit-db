@@ -3,8 +3,9 @@ from ipaddress import IPv4Address
 import logging
 import socket
 
+import bitcoinx
+from bitcoinx.coin import Coin
 from bitcoinx import (
-    Coin,
     CheckPoint,
     Bitcoin,
     BitcoinTestnet,
@@ -14,6 +15,7 @@ from bitcoinx import (
     MissingHeader,
 )
 from typing import Optional, List
+
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .peers import Peer
@@ -25,7 +27,7 @@ logger = logging.getLogger("networks")
 class HeadersRegTestMod(Headers):
     def connect(self, raw_header):
         """overwrite Headers method to skip checking of difficulty target"""
-        header = self.coin.deserialized_header(raw_header, -1)
+        header = BitcoinRegtest.deserialized_header(raw_header, -1)
         prev_header, chain = self.lookup(header.prev_hash)
         header.height = prev_header.height + 1
         # If the chain tip is the prior header then this header is new.  Otherwise we must check.
@@ -93,8 +95,8 @@ class TestNet(AbstractNetwork):
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
             "010000000000000000000000000000000000000000000000000000000000000000000000"
-            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494"
-            "dffff001d1aa4ae18"
+            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494d"
+            "ffff001d1aa4ae18"
         ),
         height=0,
         prev_work=0,
@@ -141,8 +143,8 @@ class RegTestNet(AbstractNetwork):
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
             "010000000000000000000000000000000000000000000000000000000000000000000000"
-            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494"
-            "dffff7f2002000000"
+            "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4adae5494d"
+            "ffff7f2002000000"
         ),
         height=0,
         prev_work=0,

@@ -16,7 +16,7 @@ from typing import Tuple, List, Sequence, Optional, Dict, cast
 import zmq
 from MySQLdb import _mysql
 
-from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.basic_socket_io import recv_msg
@@ -392,7 +392,7 @@ class TxParser(multiprocessing.Process):
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-            lmdb_grpc_client = ConduitRawAPIClient()
+            ipc_sock_client = IPCSocketClient()
             while True:
                 try:
                     if mempool_tx_socket.poll(1000, zmq.POLLIN):
@@ -405,7 +405,7 @@ class TxParser(multiprocessing.Process):
                         if time_diff > self.BLOCK_BATCHING_RATE:
                             prev_time_check = time.time()
                             if batch:
-                                self.process_mempool_batch(batch, lmdb_grpc_client, mysql_db)
+                                self.process_mempool_batch(batch, ipc_sock_client, mysql_db)
                             batch = []
                 except zmq.error.Again:
                     self.logger.debug(f"zmq.error.Again")
@@ -421,23 +421,21 @@ class TxParser(multiprocessing.Process):
 
     def get_block_slices(self, block_hashes: List[bytes],
             block_slice_offsets: List[Tuple[int, int]],
-            lmdb_grpc_client: ConduitRawAPIClient) -> bytes:
+            ipc_sock_client: IPCSocketClient) -> bytes:
         t0 = time.time()
         try:
-            self.batch_id += 1
-            self.raw_blocks_array_recv_events[self.batch_id] = threading.Event()
-            blk_nums = lmdb_grpc_client.get_block_num_batched(block_hashes)
+            response = ipc_sock_client.block_number_batched(block_hashes)
 
             # Ordering of both of these arrays must be guaranteed
-            block_requests = list(zip(blk_nums, block_slice_offsets))
+            block_requests = list(zip(response.block_numbers, block_slice_offsets))
 
-            all_sent: bool = lmdb_grpc_client.get_block_batched(block_requests, self.batch_id,
-                self.sock_callback_ip, self.sock_port)
-            assert all_sent is True
-            self.raw_blocks_array_recv_events[self.batch_id].wait()
+            raw_blocks_array = ipc_sock_client.block_batched(block_requests)
+            # len_bytearray = struct.unpack_from("<Q", response)
+            # self.logger.debug(f"len_bytearray={len_bytearray}")
+            self.logger.debug(f"received batched raw blocks payload "
+                              f"with total size: {len(raw_blocks_array)}")
 
-            del self.raw_blocks_array_recv_events[self.batch_id]
-            return self.raw_blocks_array_cache.pop(self.batch_id)
+            return raw_blocks_array
         finally:
             tdiff = time.time() - t0
             self.grpc_time += tdiff
@@ -471,7 +469,7 @@ class TxParser(multiprocessing.Process):
         return block_hashes, block_slice_offsets, unpacked_work_items
 
     def build_merged_data_structures(self, work_items: List[bytes],
-            lmdb_grpc_client: ConduitRawAPIClient) -> \
+            ipc_socket_client: IPCSocketClient) -> \
             Tuple[
                 TxHashToOffsetMap,
                 TxHashToWorkIdMap,
@@ -494,7 +492,7 @@ class TxParser(multiprocessing.Process):
             work_items)
 
         raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
-            lmdb_grpc_client)
+            ipc_socket_client)
 
         offset = 0
         for work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, tx_offsets_part in unpacked_batch_msgs:
@@ -548,7 +546,7 @@ class TxParser(multiprocessing.Process):
 
             self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
 
-    def process_work_items(self, work_items: List[bytes], lmdb_grpc_client: ConduitRawAPIClient,
+    def process_work_items(self, work_items: List[bytes], ipc_socket_client: IPCSocketClient,
             mysql_db: MySQLDatabase):
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
@@ -559,7 +557,7 @@ class TxParser(multiprocessing.Process):
         """
 
         merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
-            batched_raw_block_slices, acks = self.build_merged_data_structures(work_items, lmdb_grpc_client)
+            batched_raw_block_slices, acks = self.build_merged_data_structures(work_items, ipc_socket_client)
 
         non_mempool_tx_offsets, mempool_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(
             merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, mysql_db)
@@ -585,7 +583,7 @@ class TxParser(multiprocessing.Process):
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-            lmdb_grpc_client = ConduitRawAPIClient()
+            ipc_socket_client = IPCSocketClient()
             while True:
                 try:
                     if mined_tx_socket.poll(100, zmq.POLLIN):
@@ -598,7 +596,7 @@ class TxParser(multiprocessing.Process):
                         if time_diff > self.BLOCK_BATCHING_RATE:
                             prev_time_check = time.time()
                             if work_items:
-                                self.process_work_items(work_items, lmdb_grpc_client, mysql_db)
+                                self.process_work_items(work_items, ipc_socket_client, mysql_db)
                             work_items = []
                 except zmq.error.Again:
                     self.logger.debug(f"zmq.error.Again")
@@ -648,8 +646,8 @@ class TxParser(multiprocessing.Process):
                     batch_id, len_bytearray = struct.unpack_from("<IQ", payload)
 
                     # self.logger.debug(f"batch_id={batch_id}, len_bytearray={len_bytearray}")
-                    batch_id, len_bytearray, raw_blocks_array = struct.unpack_from(
-                        f"<IQ{len_bytearray}s", payload)
+                    len_bytearray, raw_blocks_array = struct.unpack_from(
+                        f"<Q{len_bytearray}s", payload)
                     self.raw_blocks_array_cache[batch_id] = raw_blocks_array
                     self.raw_blocks_array_recv_events[batch_id].set()
             conn.close()

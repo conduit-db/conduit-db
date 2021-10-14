@@ -84,7 +84,7 @@ class MySQLTables:
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS block_num ON confirmed_transactions (tx_hash, tx_height);
+            CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash, tx_height);
             """)
 
         # block_offset is relative to start of rawtx
@@ -99,7 +99,7 @@ class MySQLTables:
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS io_idx ON txo_table (out_tx_hash, out_idx, out_offset_start);
+            CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx, out_offset_start);
             """)
 
         # block_offset is relative to start of rawtx
@@ -118,7 +118,7 @@ class MySQLTables:
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS io_idx ON inputs_table (out_tx_hash, out_idx);
+            CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
             """)
 
         # I think I can get away with not storing full pushdata hashes
@@ -133,7 +133,7 @@ class MySQLTables:
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, idx, ref_type);
+            CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, tx_hash, idx, ref_type);
         """)
 
         # ?? should this be an in-memory only table?

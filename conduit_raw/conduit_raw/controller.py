@@ -1,6 +1,7 @@
 import asyncio
 import os
 import queue
+import threading
 import time
 import typing
 from asyncio import BaseTransport, BaseProtocol
@@ -15,22 +16,23 @@ import bitcoinx
 from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import zmq
 
-from conduit_lib.conduit_raw_api_client import ConduitRawAPIClient
+from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+from conduit_lib.utils import cast_to_valid_ipv4
 from conduit_lib.wait_for_dependencies import wait_for_node
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
-from .grpc_server.grpc_server import ConduitRaw
+from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
 from .sync_state import SyncState
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from .preprocessor import BlockPreProcessor
 from .workers.merkle_tree import MTreeCalculator
 from .workers.raw_blocks import BlockWriter
 from conduit_lib.store import setup_storage, Storage
-from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN, MEMPOOL
+from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
 from conduit_lib.handlers import Handlers
 from conduit_lib.constants import (ZERO_HASH, WORKER_COUNT_MTREE_CALCULATORS,
-    WORKER_COUNT_BLK_WRITER, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME)
+    WORKER_COUNT_BLK_WRITER, CONDUIT_RAW_SERVICE_NAME)
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
@@ -40,6 +42,15 @@ if typing.TYPE_CHECKING:
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    # Todo - this is messy
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
+    CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
+    CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
+except Exception:
+    logger = logging.getLogger('sync-state-env-vars')
+    logger.exception("unexpected exception")
 
 
 class Controller:
@@ -71,7 +82,7 @@ class Controller:
         self.serializer: Optional[Serializer] = None
         self.deserializer: Optional[Deserializer] = None
         self.lmdb: Optional[LMDB_Database] = None
-        self.lmdb_grpc_client: Optional[ConduitRawAPIClient] = None
+        self.ipc_sock_client: Optional[IPCSocketClient] = None
         self.executor = ThreadPoolExecutor(max_workers=1)
 
         # Bitcoin network/peer net_config
@@ -191,9 +202,9 @@ class Controller:
             self.shm_buffer.close()
             self.shm_buffer.unlink()
 
-            self.lmdb_grpc_client.stop()  # stops server
+            self.ipc_sock_client.stop()  # stops server
             time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
-            self.lmdb_grpc_client.close()  # closes client channel
+            self.ipc_sock_client.close()  # closes client channel
             self.lmdb.close()
 
 
@@ -286,10 +297,6 @@ class Controller:
             p.start()
             self.processes.append(p)
 
-    # Asyncio-based Tasks that run on the __main__ thread
-    async def spawn_lmdb_grpc_server(self):
-        self.tasks.append(asyncio.create_task(self.lmdb_grpc_server.serve()))
-
     async def spawn_handler_tasks(self):
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
@@ -304,10 +311,16 @@ class Controller:
         """runs once at startup and is re-spawned for new unsolicited block tips"""
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
+    def ipc_sock_server_thread(self):
+        self.ipc_sock_server = ThreadedTCPServer(addr=(CONDUIT_RAW_HOST, CONDUIT_RAW_PORT),
+            handler=ThreadedTCPRequestHandler, storage_path=Path(self.lmdb._storage_path),
+            block_headers=self.storage.block_headers)
+        self.ipc_sock_server.serve_forever()
+
     async def start_jobs(self):
         try:
-            self.lmdb_grpc_server = ConduitRaw(Path(self.lmdb._storage_path), self.storage.block_headers)
-            await self.spawn_lmdb_grpc_server()
+            thread = threading.Thread(target=self.ipc_sock_server_thread)
+            thread.start()
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 

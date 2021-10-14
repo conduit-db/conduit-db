@@ -23,9 +23,10 @@ def recv_blocks_thread():
 
 
 if __name__ == '__main__':
+    sock_port = 7777
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock_callback_ip = '127.0.0.1'  # in docker might be conduit-index for example
-    sock.bind((sock_callback_ip, 7777))
+    sock.bind((sock_callback_ip, sock_port))
     sock.listen()
     t = threading.Thread(target=recv_blocks_thread, daemon=True)
     t.start()
