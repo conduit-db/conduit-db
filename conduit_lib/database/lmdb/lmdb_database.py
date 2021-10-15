@@ -34,24 +34,18 @@ class LMDB_Database:
     TX_OFFSETS_DB = b"tx_offsets_db"
     BLOCK_METADATA_DB = b"block_metadata_db"
 
+    LMDB_DATABASE_PATH_DEFAULT = Path(MODULE_DIR).parent.parent.parent.parent / 'lmdb_data'
+    LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH", str(LMDB_DATABASE_PATH_DEFAULT))
+
+    RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'raw_blocks'
+    RAW_BLOCKS_DIR = os.environ.get("LMDB_DATABASE_PATH", str(RAW_BLOCKS_DIR_DEFAULT))
+
     def __init__(self, storage_path: Optional[str]=None):
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
-        self.DEFAULT_DIR = Path(MODULE_DIR).parent.parent.parent.parent.joinpath('lmdb_data').__str__()
-        self.LMDB_READONLY: int = int(os.environ.get("LMDB_READONLY", '0'))  # defaults to writable mode
-        self.LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH",
-            None)  # defaults to writable mode
-
-        # self.logger.debug(f"self.DEFAULT_DIR={self.DEFAULT_DIR}")
-        # self.logger.debug(f"self.LMDB_READONLY={self.LMDB_READONLY}")
-        # self.logger.debug(f"self.LMDB_DATABASE_PATH={self.LMDB_DATABASE_PATH}")
-
-        if self.LMDB_DATABASE_PATH:
-            self.DEFAULT_DIR = self.LMDB_DATABASE_PATH
-
         if not storage_path:
-            storage_path = self.DEFAULT_DIR
+            storage_path = self.LMDB_DATABASE_PATH
 
         if not Path(storage_path).exists():
             os.makedirs(Path(storage_path), exist_ok=True)
@@ -76,16 +70,8 @@ class LMDB_Database:
         self.logger.debug(f"opened LMDB database at {storage_path}")
 
     def open(self):
-        # try:
-        if self.LMDB_READONLY == 1:
-            self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=self.LMDB_READONLY,
-                readahead=False, sync=False)
-        else:
-            self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
-                readahead=False, sync=False, map_size=self._map_size)
-        # except lmdb.LockError:
-        #     self.logger.error("LMDB temporarily unavailable - retrying...")
-
+        self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
+            readahead=False, sync=False, map_size=self._map_size)
         self.blocks_db = self.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)
         self.mtree_db = self.env.open_db(self.MTREE_DB)
