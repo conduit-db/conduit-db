@@ -119,20 +119,17 @@ class MySQLDatabase:
 
 def mysql_connect(worker_id=None) -> MySQLDatabase:
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 52525))
-
-    if is_docker():
-        user = "root"
-    else:
-        # user = "conduitadmin"
-        user = "root"
+    port = int(os.environ.get('MYSQL_PORT', 52525))  # not 3306 because of docker issues
+    user = os.getenv('MYSQL_USER', 'root')
+    password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
+    database = os.getenv('MYSQL_DATABASE', 'conduitdb')
 
     conn = MySQLdb.connect(
         host=host,
         port=port,
         user=user,
-        password='conduitpass',
-        database='conduitdb',
+        password=password,
+        database=database,
         local_infile=1
     )
     return MySQLDatabase(conn, worker_id=worker_id)
@@ -140,15 +137,18 @@ def mysql_connect(worker_id=None) -> MySQLDatabase:
 
 def mysql_test_connect() -> MySQLDatabase:
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 52525))
-    user = "root"
+    port = int(os.environ.get('MYSQL_PORT', 52525))  # not 3306 because of docker issues
+    user = os.getenv('MYSQL_USER', 'root')
+    password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
+    database = os.getenv('MYSQL_DATABASE', 'conduitdbtesting')
 
-    conn = _mysql.connect(
+    conn = MySQLdb.connect(
         host=host,
         port=port,
         user=user,
-        passwd="conduitpass",
-        db="conduittestdb"
+        password=password,
+        database=database,
+        local_infile=1
     )
     return MySQLDatabase(conn)
 
