@@ -106,6 +106,17 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
         if os.path.exists(lmdb_path):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
+        LMDB_DATABASE_PATH_DEFAULT = Path(MODULE_DIR).parent.parent / 'lmdb_data'
+        LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH",
+            str(LMDB_DATABASE_PATH_DEFAULT))
+        if os.path.exists(LMDB_DATABASE_PATH):
+            shutil.rmtree(LMDB_DATABASE_PATH, onerror=remove_readonly)
+
+        RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent / 'raw_blocks'
+        RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
+        if os.path.exists(RAW_BLOCKS_DIR):
+            shutil.rmtree(RAW_BLOCKS_DIR, onerror=remove_readonly)
+
 
 def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
     if not headers_dir:

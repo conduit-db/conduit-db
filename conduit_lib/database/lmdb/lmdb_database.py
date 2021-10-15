@@ -38,7 +38,7 @@ class LMDB_Database:
     LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH", str(LMDB_DATABASE_PATH_DEFAULT))
 
     RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'raw_blocks'
-    RAW_BLOCKS_DIR = os.environ.get("LMDB_DATABASE_PATH", str(RAW_BLOCKS_DIR_DEFAULT))
+    RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
 
     def __init__(self, storage_path: Optional[str]=None):
         self.logger = logging.getLogger("lmdb-database")
@@ -46,6 +46,9 @@ class LMDB_Database:
 
         if not storage_path:
             storage_path = self.LMDB_DATABASE_PATH
+
+        if not Path(self.RAW_BLOCKS_DIR).exists():
+            os.makedirs(Path(self.RAW_BLOCKS_DIR), exist_ok=True)
 
         if not Path(storage_path).exists():
             os.makedirs(Path(storage_path), exist_ok=True)
@@ -99,24 +102,10 @@ class LMDB_Database:
             raise EntryNotFound(f"Block num for block_hash: "
                                 f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
 
-    # Todo - raw blocks need to be stored in files (identified by block_num in filename) t
-    #  to seek to offset
     def get_block(self, block_num: int, start_offset: int=0,
             end_offset: int=0, buffers=False) -> bytes:
         """If end_offset=0 then it goes to the end of the block"""
-        with self.env.begin(db=self.blocks_db, buffers=buffers) as txn:
-            buf: memoryview = txn.get(struct_be_I.pack(block_num))
-            if not buf:
-                raise EntryNotFound(f"Block for block_num: {block_num} not found")
-
-            if end_offset == 0:
-                result = buf[start_offset:]
-            else:
-                result = buf[start_offset: end_offset]
-
-            if buffers:
-                return result.tobytes()
-            return result
+        return self.read_block_slice_from_file(block_num, start_offset, end_offset)
 
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
@@ -134,11 +123,31 @@ class LMDB_Database:
             else:
                 return 0  # so that first entry is key==1
 
+    def _block_filename_from_block_num(self, block_num: int) -> str:
+        padded_str_num = str(block_num).zfill(8)
+        return f"blk_{padded_str_num}.dat"
+
+    def read_block_slice_from_file(self, block_num: int, start_offset: int, end_offset: int):
+        filename = self._block_filename_from_block_num(block_num)
+        read_path = Path(self.RAW_BLOCKS_DIR) / filename
+        with open(read_path, 'rb') as f:
+            f.seek(start_offset)
+            if end_offset == 0:
+                return f.read()
+
+            n_to_read = end_offset - start_offset
+            return f.read(n_to_read)
+
+    def write_block_to_file(self, block_num: int, raw_block: bytes):
+        filename = self._block_filename_from_block_num(block_num)
+        write_path = Path(self.RAW_BLOCKS_DIR) / filename
+        with open(write_path, 'wb') as f:
+            f.write(raw_block)
+
     def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]], shared_mem_buffer: memoryview):
         """write blocks in append-only mode to disc"""
         try:
             t0 = time.time()
-            block_nums_map = {}  # block_hash: block_num
             last_block_num = self.get_last_block_num()
             next_block_num = last_block_num + 1
 
@@ -151,7 +160,8 @@ class LMDB_Database:
                 raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
                 # self.logger.debug(f"put_blocks: (block_num={block_num}, blk_hash={blk_hash}")
 
-                tx.put(struct_be_I.pack(block_num), raw_block, db=self.blocks_db, append=True, overwrite=False)
+                self.write_block_to_file(block_num, raw_block)
+
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
                 tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
 
