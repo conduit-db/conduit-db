@@ -244,11 +244,6 @@ class SyncState:
         return remaining_work, work_for_this_batch
 
     def get_main_batch(self, main_batch_tip: bitcoinx.Header) -> Tuple[Set[bytes], MainBatch]:
-        # NOTE: This ConduitRawAPIClient is lazy loaded after the multiprocessing child processes
-        #   are forked. This is ESSENTIAL - otherwise Segmentation Faults are the result!
-        #   it is something to do with global socket state interfering with the child processes
-        #   when they create their own ConduitRawAPIClient
-        #   see: https://github.com/googleapis/synthtool/issues/902
         if not self.ipc_sock_client:
             self.ipc_sock_client = IPCSocketClient()
 

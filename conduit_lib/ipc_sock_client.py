@@ -29,6 +29,15 @@ class IPCSocketClient:
 
     def __init__(self):
         self.logger = logging.getLogger('raw-socket-client')
+        self.wait_for_connection()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.sock.close()
+
+    def wait_for_connection(self):
         while True:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -39,12 +48,6 @@ class IPCSocketClient:
                 self.logger.debug(f"ConduitRaw is currently unavailable. Retrying to connect...")
                 time.sleep(5)
                 self.sock.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.sock.close()
 
     def close(self):
         self.sock.shutdown(socket.SHUT_RDWR)
@@ -84,101 +87,127 @@ class IPCSocketClient:
         return msg_resp
 
     def chain_tip(self) -> tuple[bytes, int]:
-        # Send
-        msg_req = ipc_sock_msg_types.ChainTipRequest()
-        # self.logger.debug(f"Sending {ipc_sock_commands.CHAIN_TIP} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Send
+            msg_req = ipc_sock_msg_types.ChainTipRequest()
+            # self.logger.debug(f"Sending {ipc_sock_commands.CHAIN_TIP} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.ChainTipResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.CHAIN_TIP} response: {msg_resp}")
-        return msg_resp.header, msg_resp.height
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.ChainTipResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.CHAIN_TIP} response: {msg_resp}")
+            return msg_resp.header, msg_resp.height
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.chain_tip()  # recurse
 
     def block_number_batched(self, block_hashes: list[bytes]) \
             -> ipc_sock_msg_types.BlockNumberBatchedResponse:
-        # Request
-        msg_req = ipc_sock_msg_types.BlockNumberBatchedRequest(block_hashes=block_hashes)
-        # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_NUMBER_BATCHED} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockNumberBatchedRequest(block_hashes=block_hashes)
+            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_NUMBER_BATCHED} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_NUMBER_BATCHED} response: {msg_resp}")
-        return msg_resp
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_NUMBER_BATCHED} response: {msg_resp}")
+            return msg_resp
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.block_number_batched(block_hashes)  # recurse
 
     def block_batched(self, block_requests: list[BlockBatchedRequestType]) \
             -> bytearray:
-        # Request
-        msg_req = ipc_sock_msg_types.BlockBatchedRequest(block_requests)
-        # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockBatchedRequest(block_requests)
+            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        # NOTE: No cbor deserialization - this is a hot-path - needs to be fast!
-        return data
+            # Recv
+            data = self.receive_data()
+            # NOTE: No cbor deserialization - this is a hot-path - needs to be fast!
+            return data
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.block_batched(block_requests)  # recurse
 
     def merkle_tree_row(self, block_hash: bytes, level: int) \
             -> ipc_sock_msg_types.MerkleTreeRowResponse:
-        # Request
-        msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(block_hash, level)
-        # self.logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(block_hash, level)
+            # self.logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
-        return msg_resp
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            return msg_resp
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.merkle_tree_row(block_hashes)  # recurse
 
     def transaction_offsets_batched(self, block_hashes: list[bytes]) -> Generator:
-        # Request
-        msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
-        # self.logger.debug(f"Sending {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
+            # self.logger.debug(f"Sending {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} response: {msg_resp}")
-        for tx_offsets_array in msg_resp.tx_offsets_batch:
-            yield array.array("Q", tx_offsets_array)
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} response: {msg_resp}")
+            for tx_offsets_array in msg_resp.tx_offsets_batch:
+                yield array.array("Q", tx_offsets_array)
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.transaction_offsets_batched(block_hashes)  # recurse
 
     def block_metadata_batched(self, block_hashes: list[bytes]) \
             -> list[int]:
-        # Request
-        msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(block_hashes)
-        # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(block_hashes)
+            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
-        return msg_resp.block_sizes_batch
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
+            return msg_resp.block_sizes_batch
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.block_metadata_batched(block_hashes)  # recurse
 
     def headers_batched(self, start_height: int, batch_size: int) \
             -> ipc_sock_msg_types.HeadersBatchedResponse:
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.HeadersBatchedRequest(start_height, batch_size)
+            # self.logger.debug(f"Sending {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
 
-        # Request
-        msg_req = ipc_sock_msg_types.HeadersBatchedRequest(start_height, batch_size)
-        # self.logger.debug(f"Sending {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
-        send_msg(self.sock, msg_req.to_cbor())
-
-        # Recv
-        data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
-        msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(**cbor_obj)
-        # self.logger.debug(f"Received {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
-        return msg_resp
-
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(**cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
+            return msg_resp
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.headers_batched(start_height, batch_size)  # recurse
 
 
 if __name__ == "__main__":

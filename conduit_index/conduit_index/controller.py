@@ -461,16 +461,17 @@ class Controller:
     # Todo - long_poll_conduit_raw_chain_tip keeps hanging!
     #  Need a new system that does not require loop.run_in_executor
     def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
-        ipc_sock_client = IPCSocketClient()
-        tip, tip_height = ipc_sock_client.chain_tip()
+        with IPCSocketClient() as ipc_sock_client:
+            tip, tip_height = ipc_sock_client.chain_tip()
         deserialized_header = None
         while True:
             try:
                 start_height = self.sync_state.get_local_block_tip_height() + 1
 
                 # Long-polling
-                result = self.ipc_sock_client.headers_batched(start_height,
-                    batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT)
+                with IPCSocketClient() as ipc_sock_client:
+                    result = ipc_sock_client.headers_batched(start_height,
+                        batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT)
 
                 for new_tip in result.headers_batch:
                     self.connect_conduit_headers(new_tip)
@@ -490,13 +491,8 @@ class Controller:
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
-                try:
-                    ipc_sock_client.close()
-                except Exception:
-                    self.logger.exception("exception closing socket")
 
     async def long_poll_conduit_raw_chain_tip_with_retry(self):
-        # Todo - this seems to be slow - profile it and fix.
         fut: concurrent.futures.Future = self.headers_state_executor.submit(
             self.long_poll_conduit_raw_chain_tip)
 
