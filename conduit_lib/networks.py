@@ -1,19 +1,8 @@
-import ipaddress
-from ipaddress import IPv4Address
 import logging
-import socket
 
-import bitcoinx
-from bitcoinx.coin import Coin
-from bitcoinx import (
-    CheckPoint,
-    Bitcoin,
-    BitcoinTestnet,
-    BitcoinScalingTestnet,
-    BitcoinRegtest,
-    Headers,
-    MissingHeader,
-)
+
+from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet, BitcoinRegtest,
+    Headers, MissingHeader, Network, )
 from typing import Optional, List
 
 
@@ -51,7 +40,7 @@ class AbstractNetwork:
     MAGIC = 0x00000000
     PORT = 0000
     DNS_SEEDS = [""]
-    BITCOINX_COIN: Optional[Coin] = None
+    BITCOINX_COIN: Optional[Network] = None
     CHECKPOINT: Optional[CheckPoint] = None
 
 
