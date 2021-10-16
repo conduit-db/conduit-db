@@ -77,7 +77,7 @@ def reset_headers(headers_path: Path, block_headers_path: Path):
             if os.path.exists(headers_path):
                 os.remove(headers_path)
             if os.path.exists(block_headers_path):
-                os.remove(headers_path)
+                os.remove(block_headers_path)
         except FileNotFoundError:
             pass
 
