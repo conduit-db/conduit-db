@@ -138,9 +138,13 @@ class LMDB_Database:
             n_to_read = end_offset - start_offset
             return f.read(n_to_read)
 
-    def write_block_to_file(self, block_num: int, raw_block: bytes):
+    def _get_write_path_for_block(self, block_num: int) -> str:
         filename = self._block_filename_from_block_num(block_num)
         write_path = Path(self.RAW_BLOCKS_DIR) / filename
+        return write_path
+
+    def write_block_to_file(self, block_num: int, raw_block: bytes):
+        write_path = self._get_write_path_for_block(block_num)
         with open(write_path, 'wb') as f:
             f.write(raw_block)
 
@@ -161,6 +165,10 @@ class LMDB_Database:
                 # self.logger.debug(f"put_blocks: (block_num={block_num}, blk_hash={blk_hash}")
 
                 self.write_block_to_file(block_num, raw_block)
+                write_path = self._get_write_path_for_block(block_num)
+                utf_8_encoded_write_path = Path(write_path).as_posix().encode('utf-8')
+                tx.put(struct_be_I.pack(block_num), utf_8_encoded_write_path,
+                    db=self.blocks_db, append=True, overwrite=False)
 
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
                 tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
