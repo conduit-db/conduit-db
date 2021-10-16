@@ -56,10 +56,12 @@ SMALL_BLOCK_SIZE = 10_000
 
 
 # CHIP_AWAY_BYTE_SIZE_LIMIT must be larger than the largest transaction we expect otherwise
-# the server would likely crash. It is set artificially low for now to prove that a large block
-# can be fully processed without allocating it all into memory at once
-CHIP_AWAY_BYTE_SIZE_LIMIT = 1024 ** 3 * 4096
+# the server would likely crash.
+CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
 MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll) from conduit raw
+
+RECV_BUFFER_HIGH_WATER = (1024 ** 3) * 2
+MAX_RAW_BLOCK_BATCH_REQUEST_SIZE = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
 
 
 class MsgType(enum.IntEnum):

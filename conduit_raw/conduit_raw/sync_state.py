@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import multiprocessing
 import threading
 import typing
@@ -8,6 +9,7 @@ from typing import Optional
 import bitcoinx
 from bitcoinx import Headers, hash_to_hex_str
 
+from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
 from conduit_lib.store import Storage
 
 if typing.TYPE_CHECKING:
@@ -105,7 +107,17 @@ class SyncState:
         local_block_tip_height = self.get_local_block_tip_height()
         block_height_deficit = local_headers_tip_height - local_block_tip_height
 
-        batch_count = min(block_height_deficit, 500)
+        # This is intended so that as block sizes increase we are not requesting 500 x 4GB blocks!
+        # As the average block size increases we should gradually reduce the number of raw blocks
+        # we request at a time
+        max_batch_size = MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
+        estimated_ideal_block_count = math.ceil(max_batch_size / self.controller.estimated_moving_av_block_size)
+
+        # 500 headers is the max allowed over p2p protocol
+        estimated_ideal_block_count = min(estimated_ideal_block_count, 500)
+
+        self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count} (max_batch_size={max_batch_size / (1024**2)} MB)")
+        batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = local_block_tip_height + batch_count
 
         for i in range(1, batch_count + 1):

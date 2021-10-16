@@ -131,6 +131,7 @@ class Controller:
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
         self.sync_state: Optional[SyncState] = None
+        self.estimated_moving_av_block_size = 181  # bytes
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -439,6 +440,31 @@ class Controller:
         self.logger.debug(f"Connected up to header height: {tip.height}, "
                           f"hash: {hash_to_hex_str(tip.hash)}")
 
+    def update_moving_average(self, current_tip_height: int):
+        # sample every 72nd block for its size over the last 2 weeks (two samples per day)
+        block_hashes = []
+        for height in range(current_tip_height-2016, current_tip_height, 72):
+            header = self.get_header_for_height(height)
+            block_hashes.append(header.hash)
+
+        with IPCSocketClient() as ipc_sock_client:
+            block_sizes_batch = ipc_sock_client.block_metadata_batched(block_hashes)
+        self.estimated_moving_av_block_size = sum(block_sizes_batch) / len(block_sizes_batch)
+        self.logger.debug(f"Updated estimated_moving_av_block_size: {self.estimated_moving_av_block_size}")
+
+    def get_hash_stop(self, stop_header_height: int):
+        # We should only really request enough blocks at at time to keep our
+        # recv buffer filling at the max rate. No point requesting 500 x 4GB blocks!!!
+        node_longest_chain = self.storage.headers.longest_chain()
+        if stop_header_height >= node_longest_chain.tip.height:
+            hash_stop = ZERO_HASH
+        else:
+            stop_height = stop_header_height + 1
+            header: bitcoinx.Header = self.storage.headers.header_at_height(node_longest_chain,
+                stop_height)
+            hash_stop = header.hash
+        return hash_stop
+
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
 
@@ -487,8 +513,14 @@ class Controller:
                 hash_stop = ZERO_HASH  # get max
 
                 # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
+                if chain.tip.height > 2016:
+                    self.update_moving_average(chain.tip.height)
+
                 next_batch = self.sync_state.get_next_batched_blocks()
                 batch_count, all_pending_block_hashes, stop_header_height = next_batch
+
+                if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
+                    self.get_hash_stop(stop_header_height)
 
                 await self.send_request(
                     GETBLOCKS,
