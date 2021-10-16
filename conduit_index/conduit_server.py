@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 from typing import Dict
+import selectors
 
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.constants import (DATABASE_NAME_VARNAME, BITCOIN_NETWORK_VARNAME,
@@ -21,16 +22,18 @@ from conduit_lib.argparsing import get_parser
 # from conduit_index.conduit_index.workers.logging_server import TCPLoggingServer
 from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
 
-if sys.platform == 'win32':
-    loop = asyncio.ProactorEventLoop()
-    asyncio.set_event_loop(loop)
 
+loop_type = None
+if sys.platform == 'win32':
+    selector = selectors.SelectSelector()
+    loop = asyncio.SelectorEventLoop(selector)
 
 # If uvloop is installed - make use of it
 elif sys.platform == 'linux':
     try:
         import uvloop
         uvloop.install()
+        loop_type = 'uvloop'
     except ImportError:
         pass
 
@@ -119,7 +122,8 @@ async def main():
         controller = Controller(
             config=config,
             net_config=net_config, host="127.0.0.1", port=8000,
-            logging_server_proc=logging_server_proc
+            logging_server_proc=logging_server_proc,
+            loop_type=loop_type,
         )
         await controller.run()
     except KeyboardInterrupt:

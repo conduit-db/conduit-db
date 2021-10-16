@@ -10,6 +10,7 @@ from multiprocessing import shared_memory
 from typing import List, Tuple
 
 import zmq
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
@@ -103,16 +104,17 @@ class BlockWriter(multiprocessing.Process):
                 #     f" {blk_end_pos} block_bytes={block_bytes}")
 
                 if len(self.batched_blocks) >= self.MIN_BLOCK_BATCH_SIZE:
-                    # logger.debug("block batching hit max batch size - loading batched blocks...")
+                    self.logger.debug("block batching hit max batch size - loading batched blocks...")
                     self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
                     self.ack_for_loaded_blocks(self.batched_blocks)
                     self.batched_blocks = []
 
             except asyncio.TimeoutError:
-                # logger.debug("block batching timed out - loading batched blocks...")
-                self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
-                self.ack_for_loaded_blocks(self.batched_blocks)
-                self.batched_blocks = []
+                # self.logger.debug("block batching timed out - loading batched blocks...")
+                if self.batched_blocks:
+                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
+                    self.ack_for_loaded_blocks(self.batched_blocks)
+                    self.batched_blocks = []
                 continue
 
             except KeyboardInterrupt:
@@ -162,7 +164,7 @@ class BlockWriter(multiprocessing.Process):
         total_batch_size = 0
         for blk_hash, start_position, stop_position in self.batched_blocks:
             total_batch_size += stop_position - start_position
-            # logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
+            # self.logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
             #       f"size={stop_position-start_position} bytes")
             self.worker_ack_queue_blk_writer.put(blk_hash)
         if total_batch_size > 0:

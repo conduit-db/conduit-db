@@ -8,6 +8,7 @@ from struct import Struct
 from typing import List, Tuple, Dict, Optional
 
 import bitcoinx
+import cbor2
 import lmdb
 from bitcoinx.packing import struct_le_Q
 
@@ -72,6 +73,12 @@ class LMDB_Database:
         self.open()
         self.logger.debug(f"opened LMDB database at {storage_path}")
 
+        self._last_dat_file_num = 0
+        self.logger.debug(f"Getting next write path for raw blocks...")
+        # This will do the initial scan and cache the correct self._last_dat_file_num
+        self.next_write_path = self._get_next_write_path_for_blocks()
+        self.logger.debug(f"Next write path: {self.next_write_path}")
+
     def open(self):
         self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
             readahead=False, sync=False, map_size=self._map_size)
@@ -105,7 +112,23 @@ class LMDB_Database:
     def get_block(self, block_num: int, start_offset: int=0,
             end_offset: int=0, buffers=False) -> bytes:
         """If end_offset=0 then it goes to the end of the block"""
-        return self.read_block_slice_from_file(block_num, start_offset, end_offset)
+        with self.env.begin(db=self.blocks_db, buffers=False) as txn:
+            val: bytes = txn.get(struct_be_I.pack(block_num))
+            if not val:
+                raise EntryNotFound(f"Block for block_num: {block_num} not found")
+            read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
+
+        with open(read_path, 'rb') as f:
+            len_block = end_offset_in_dat_file - start_offset_in_dat_file
+            if end_offset == 0:
+                assert start_offset == 0, "Start offset must be zero when end offset is zero"
+                # Read the block in full
+                f.seek(start_offset_in_dat_file)
+                return f.read(len_block)
+            else:
+                f.seek(start_offset_in_dat_file + start_offset)
+                len_of_slice = end_offset - start_offset
+                return f.read(len_of_slice)
 
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
@@ -123,35 +146,31 @@ class LMDB_Database:
             else:
                 return 0  # so that first entry is key==1
 
-    def _block_filename_from_block_num(self, block_num: int) -> str:
-        padded_str_num = str(block_num).zfill(8)
-        return f"blk_{padded_str_num}.dat"
-
-    def read_block_slice_from_file(self, block_num: int, start_offset: int, end_offset: int):
-        filename = self._block_filename_from_block_num(block_num)
-        read_path = Path(self.RAW_BLOCKS_DIR) / filename
-        with open(read_path, 'rb') as f:
-            f.seek(start_offset)
-            if end_offset == 0:
-                return f.read()
-
-            n_to_read = end_offset - start_offset
-            return f.read(n_to_read)
-
-    def _get_write_path_for_block(self, block_num: int) -> str:
-        filename = self._block_filename_from_block_num(block_num)
+    def _get_next_write_path_for_blocks(self) -> str:
+        padded_str_num = str(self._last_dat_file_num).zfill(8)
+        filename = f"blk_{padded_str_num}.dat"
         write_path = Path(self.RAW_BLOCKS_DIR) / filename
+
+        while os.path.exists(write_path):
+            self.logger.debug(f"write_path: {write_path}")
+            self._last_dat_file_num += 1
+            padded_str_num = str(self._last_dat_file_num).zfill(8)
+            filename = f"blk_{padded_str_num}.dat"
+            write_path = Path(self.RAW_BLOCKS_DIR) / filename
+
         return write_path
 
-    def write_block_to_file(self, block_num: int, raw_block: bytes):
-        write_path = self._get_write_path_for_block(block_num)
+    def write_blocks_to_file(self, buffer: bytes, write_path: str):
         with open(write_path, 'wb') as f:
-            f.write(raw_block)
+            f.write(buffer)
 
     def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]], shared_mem_buffer: memoryview):
-        """write blocks in append-only mode to disc"""
+        """write blocks in append-only mode to disc. The whole batch is written to a single
+        file."""
         try:
+            # self.logger.debug(f"Got batched_blocks: {len(batched_blocks)}")
             t0 = time.time()
+
             last_block_num = self.get_last_block_num()
             next_block_num = last_block_num + 1
 
@@ -159,19 +178,32 @@ class LMDB_Database:
 
             block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
             # print(f"block_nums={block_nums}")
+            start_offset = 0
+            raw_blocks_arr = bytearray()
+            write_path = self._get_next_write_path_for_blocks()
             for block_num, block_row in zip(block_nums, batched_blocks):
                 blk_hash, blk_start_pos, blk_end_pos = block_row
                 raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
-                # self.logger.debug(f"put_blocks: (block_num={block_num}, blk_hash={blk_hash}")
+                len_block = blk_end_pos - blk_start_pos
 
-                self.write_block_to_file(block_num, raw_block)
-                write_path = self._get_write_path_for_block(block_num)
-                utf_8_encoded_write_path = Path(write_path).as_posix().encode('utf-8')
-                tx.put(struct_be_I.pack(block_num), utf_8_encoded_write_path,
-                    db=self.blocks_db, append=True, overwrite=False)
+                raw_blocks_arr += raw_block
+                write_path = Path(write_path).as_posix()
+                end_offset = start_offset + len_block
 
+                key = struct_be_I.pack(block_num)
+                val = cbor2.dumps((write_path, start_offset, end_offset))
+                # self.logger.debug(f"Writing block num: {block_num} to "
+                #                   f"write_path: {write_path}; "
+                #                   f"start_offset: {start_offset}; "
+                #                   f"end_offset: {end_offset}")
+
+                tx.put(key, val, db=self.blocks_db, append=True, overwrite=False)
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
                 tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
+
+                start_offset += len_block
+
+            self.write_blocks_to_file(raw_blocks_arr, write_path)
 
             tx.commit()
 

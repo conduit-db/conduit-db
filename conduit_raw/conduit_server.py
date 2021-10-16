@@ -21,6 +21,7 @@ from conduit_raw.controller import Controller
 from conduit_lib.argparsing import get_parser
 from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
 
+loop_type = None
 if sys.platform == 'win32':
     selector = selectors.SelectSelector()
     loop = asyncio.SelectorEventLoop(selector)
@@ -30,6 +31,7 @@ elif sys.platform == 'linux':
     try:
         import uvloop
         uvloop.install()
+        loop_type = 'uvloop'
     except ImportError:
         pass
 
@@ -118,7 +120,8 @@ async def main():
         controller = Controller(
             config=config,
             net_config=net_config, host="127.0.0.1", port=8000,
-            logging_server_proc=logging_server_proc
+            logging_server_proc=logging_server_proc,
+            loop_type=loop_type,
         )
         await controller.run()
     except KeyboardInterrupt:

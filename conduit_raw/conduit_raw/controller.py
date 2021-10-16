@@ -65,7 +65,7 @@ class Controller:
     """
 
     def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
-            logging_server_proc=None):
+            logging_server_proc=None, loop_type=None):
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.logging_server_proc: BaseProcess = logging_server_proc
@@ -73,6 +73,10 @@ class Controller:
         self.tasks = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
+        if loop_type == 'uvloop':
+            self.logger.debug(f"Using uvloop")
+        elif not loop_type:
+            self.logger.debug(f"Using default asyncio event loop")
 
         self.config = config  # cli args & env_vars
 

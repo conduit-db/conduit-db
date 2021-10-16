@@ -1,5 +1,6 @@
 # Object types
 import enum
+import os
 
 ERROR = 0
 MSG_TX = 1
@@ -41,12 +42,11 @@ SCALINGTESTNET = "scaling-testnet"
 REGTEST = "regtest"
 
 # Todo - add these as environment variables
-WORKER_COUNT_PREPROCESSORS = 1
-# WORKER_COUNT_TX_PARSERS = 8  # This is set for an AMD 5850X with 16 cores / 32 threads
-WORKER_COUNT_TX_PARSERS = 2  # This is better for testing/developmnent
-WORKER_COUNT_MTREE_CALCULATORS = 4
-WORKER_COUNT_BLK_WRITER = 1
-WORKER_COUNT_LOGGING_SERVERS = 1
+WORKER_COUNT_PREPROCESSORS = int(os.getenv('WORKER_COUNT_PREPROCESSORS', '1'))
+WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '2'))  # Recommend around 8 in prod.
+WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
+WORKER_COUNT_BLK_WRITER = int(os.getenv('WORKER_COUNT_BLK_WRITER', '1'))
+WORKER_COUNT_LOGGING_SERVERS = int(os.getenv('WORKER_COUNT_LOGGING_SERVERS', '1'))
 
 # For small blocks with less than this number of txs, do not divide into partitions
 # It's (probably) more efficient for a single worker process to consume it as a single batch
