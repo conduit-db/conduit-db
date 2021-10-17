@@ -402,6 +402,8 @@ class TxParser(multiprocessing.Process):
                         batch.append(bytes(packed_msg))
                     else:
                         time_diff = time.time() - prev_time_check
+                        # Todo: This might be redundant with poll(1000)
+                        #  1 second is longer than self.BLOCK_BATCHING_RATE
                         if time_diff > self.BLOCK_BATCHING_RATE:
                             prev_time_check = time.time()
                             if batch:

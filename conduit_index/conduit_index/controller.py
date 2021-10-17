@@ -429,7 +429,7 @@ class Controller:
             header = self.storage.get_header_for_hash(hash)
             block_headers.connect(header.raw)
 
-        self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
+        # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
         self.storage.block_headers.flush()
         # ? Add reorg and other sanity checks later here...
 

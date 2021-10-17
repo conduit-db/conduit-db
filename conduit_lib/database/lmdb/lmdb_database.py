@@ -196,6 +196,7 @@ class LMDB_Database:
                 #                   f"write_path: {write_path}; "
                 #                   f"start_offset: {start_offset}; "
                 #                   f"end_offset: {end_offset}")
+                # self.logger.debug(f"Putting key: {key}; val: {val}")
 
                 tx.put(key, val, db=self.blocks_db, append=True, overwrite=False)
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)

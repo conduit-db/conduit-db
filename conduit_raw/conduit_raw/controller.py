@@ -450,7 +450,8 @@ class Controller:
         with IPCSocketClient() as ipc_sock_client:
             block_sizes_batch = ipc_sock_client.block_metadata_batched(block_hashes)
         self.estimated_moving_av_block_size = sum(block_sizes_batch) / len(block_sizes_batch)
-        self.logger.debug(f"Updated estimated_moving_av_block_size: {self.estimated_moving_av_block_size}")
+        self.logger.debug(f"Updated estimated_moving_av_block_size: "
+                          f"{int(self.estimated_moving_av_block_size / (1024**2))} MB")
 
     def get_hash_stop(self, stop_header_height: int):
         # We should only really request enough blocks at at time to keep our

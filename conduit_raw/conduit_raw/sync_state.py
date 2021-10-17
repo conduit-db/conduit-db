@@ -111,6 +111,8 @@ class SyncState:
         # As the average block size increases we should gradually reduce the number of raw blocks
         # we request at a time
         max_batch_size = MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
+        # This is rounded up so a block that far exceeds the MAX_RAW_BLOCK_BATCH_REQUEST_SIZE will
+        # still result in a requested count == 1
         estimated_ideal_block_count = math.ceil(max_batch_size / self.controller.estimated_moving_av_block_size)
 
         # 500 headers is the max allowed over p2p protocol

@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import queue
 import threading
+import time
 from multiprocessing import shared_memory
 
 from conduit_lib.algorithms import preprocessor
@@ -43,11 +44,14 @@ class BlockPreProcessor(threading.Thread):
                 blk_hash, blk_height, blk_start_pos, blk_end_pos = item
 
                 # tx_offsets_array is a preallocated array.array for better cffi with Cython
+                t0 = time.perf_counter()
                 count_added, _tx_offsets_array = preprocessor(
-                    array.array('B', self.shm.buf[blk_start_pos:blk_end_pos]),
+                    self.shm.buf[blk_start_pos:blk_end_pos],
                     self.tx_offsets_array,
                     block_offset=0
                 )
+                t1 = time.perf_counter() - t0
+                # self.logger.debug(f"Preprocessing block of size: {blk_end_pos-blk_start_pos} took: {t1} seconds")
                 tx_offsets = self.tx_offsets_array[0:count_added]
                 self.worker_in_queue_mtree.put((blk_hash, blk_start_pos, blk_end_pos, tx_offsets))
                 self.worker_ack_queue_preproc.put(blk_hash)

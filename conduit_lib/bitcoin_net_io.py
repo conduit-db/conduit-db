@@ -54,9 +54,6 @@ class BitcoinNetIO(BufferedProtocol):
     async def connect(self, host: str, port: int):
         loop = asyncio.get_event_loop()
         protocol_factory = lambda: self
-        # sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # sock.connect((host, port))
         self.transport, self.session = await loop.create_connection(protocol_factory, host, port)
         return self.transport, self.session
 

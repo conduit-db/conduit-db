@@ -25,7 +25,7 @@ class MySQLDatabase:
         self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
 
         self.start_transaction()
-        self.bulk_loads.set_rocks_db_bulk_load_off()
+        # self.bulk_loads.set_rocks_db_bulk_load_off()
         self.set_myrocks_settings()
         self.commit_transaction()
 
@@ -38,8 +38,8 @@ class MySQLDatabase:
         settings = f"""SET session rocksdb_max_row_locks={100_000_000};
             SET global rocksdb_write_disable_wal=0;
             SET global rocksdb_wal_recovery_mode=0;
-            SET global rocksdb_max_background_jobs=8;
-            SET global rocksdb_block_cache_size={1024 ** 3 * 12};"""
+            SET global rocksdb_max_background_jobs=16;
+            SET global rocksdb_block_cache_size={1024 ** 3 * 8};"""
         for sql in settings.splitlines(keepends=False):
             self.mysql_conn.query(sql)
 

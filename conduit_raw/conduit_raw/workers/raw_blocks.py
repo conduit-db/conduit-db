@@ -1,13 +1,11 @@
 import asyncio
 import logging
 import multiprocessing
-import os
 import sys
 import threading
 import time
-from functools import partial
 from multiprocessing import shared_memory
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 import zmq
 from bitcoinx import hash_to_hex_str
@@ -38,15 +36,10 @@ class BlockWriter(multiprocessing.Process):
         self.logger = logging.getLogger("raw-block-writer")
 
         self.batched_blocks = None
+        self.batched_blocks_lock: Optional[threading.Lock] = None
         self.lmdb = None
 
-        # accumulate x seconds worth of blocks or MAX_BLOCK_BATCH_SIZE (whichever comes first)
-        # Todo - when batch sizes are smaller than 500 could cause lost data if not flushed
-        #  may need controller to send a boolean value to indicate it is the last block in
-        #  the batch and to therefore flush immediately
-        self.MIN_BLOCK_BATCH_SIZE = 500
-        self.MAX_QUEUE_WAIT_TIME = 0.3
-        self.time_prev = time.time()
+        self.BLOCK_BATCHING_RATE = 0.3
 
     def run(self):
         if sys.platform == "win32":
@@ -55,7 +48,8 @@ class BlockWriter(multiprocessing.Process):
         self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
-        self.lmdb = LMDB_Database()
+        self.batched_blocks = []
+        self.batched_blocks_lock = threading.Lock()
 
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -68,61 +62,37 @@ class BlockWriter(multiprocessing.Process):
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         try:
-            t1 = threading.Thread(target=self.main_thread, daemon=True)
-            t1.start()
-            t2 = threading.Thread(target=self.kill_thread, daemon=True)
-            t2.start()
-            self.loop.run_until_complete(self.lmdb_inserts_task())
-            self.logger.debug("Coro done...")
+            threads = [
+                threading.Thread(target=self.main_thread, daemon=True),
+                threading.Thread(target=self.flush_thread, daemon=True),
+                threading.Thread(target=self.kill_thread, daemon=True)
+            ]
+            for thread in threads:
+                thread.start()
+
+            for thread in threads:
+                thread.join()
         except Exception as e:
             self.logger.exception(e)
             raise
         except KeyboardInterrupt:
             self.logger.debug("BlockWriter stopping...")
         finally:
-            self.lmdb.close()
             self.logger.info(f"Process Stopped")
 
-    async def lmdb_inserts_task(self):
-        self.lmdb: LMDB_Database
-        self.batched_blocks = []
-        while True:
-            try:
-                # no timeout functionality on asyncio queues...
-                # todo - perhaps a special message from controller.py is better to signal
-                #  a full buffer and just flush a full buffer each time. Would stop the
-                #  wasteful polling.
-                item = await asyncio.wait_for(
-                    self.worker_asyncio_block_writer_in_queue.get(),
-                    timeout=self.MAX_QUEUE_WAIT_TIME,
-                )
-                blk_hash, blk_start_pos, blk_end_pos = item
-                self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
-                block_bytes = blk_end_pos - blk_start_pos
-
-                # self.logger.debug(f"got block from queue unpacked: {blk_hash} {blk_start_pos}"
-                #     f" {blk_end_pos} block_bytes={block_bytes}")
-
-                if len(self.batched_blocks) >= self.MIN_BLOCK_BATCH_SIZE:
-                    self.logger.debug("block batching hit max batch size - loading batched blocks...")
-                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
-                    self.ack_for_loaded_blocks(self.batched_blocks)
-                    self.batched_blocks = []
-
-            except asyncio.TimeoutError:
-                # self.logger.debug("block batching timed out - loading batched blocks...")
+    def flush_thread(self):
+        try:
+            lmdb = LMDB_Database()
+            while True:
                 if self.batched_blocks:
-                    self.lmdb.put_blocks(self.batched_blocks, self.shm.buf)
-                    self.ack_for_loaded_blocks(self.batched_blocks)
-                    self.batched_blocks = []
-                continue
-
-            except KeyboardInterrupt:
-                self.logger.debug("lmdb_inserts_task stopping...")
-
-            except Exception as e:
-                self.logger.exception(e)
-                raise
+                    with self.batched_blocks_lock:
+                        lmdb.put_blocks(self.batched_blocks, self.shm.buf)
+                        self.ack_for_loaded_blocks(self.batched_blocks)
+                        self.batched_blocks = []
+                time.sleep(0.3)
+        except Exception as e:
+            self.logger.exception(e)
+            raise
 
     def main_thread(self):
         try:
@@ -132,13 +102,11 @@ class BlockWriter(multiprocessing.Process):
                     return  # poison pill stop command
                 assert isinstance(item, tuple)
 
-                blk_hash, blk_start_pos, blk_end_pos = item
-                # self.logger.debug(f"got item blk_hash={hash_to_hex_str(blk_hash)}")
-                coro = partial(
-                    self.worker_asyncio_block_writer_in_queue.put,
-                    (blk_hash, blk_start_pos, blk_end_pos),
-                )
-                asyncio.run_coroutine_threadsafe(coro(), self.loop)
+                with self.batched_blocks_lock:
+                    blk_hash, blk_start_pos, blk_end_pos = item
+                    self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
+                    block_bytes = blk_end_pos - blk_start_pos
+
         except Exception as e:
             self.logger.exception(e)
 

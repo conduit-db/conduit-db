@@ -30,7 +30,7 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-def unpack_varint(buf: array.ArrayType, offset: int):
+def unpack_varint(buf: memoryview, offset: int):
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -43,7 +43,7 @@ def unpack_varint(buf: array.ArrayType, offset: int):
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view: array.ArrayType, tx_offsets_array: array.ArrayType, block_offset: int=0):
+def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType, block_offset: int=0):
     block_offset += HEADER_OFFSET
     count, block_offset = unpack_varint(block_view, block_offset)
     cur_idx = 0
