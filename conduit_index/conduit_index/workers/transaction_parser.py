@@ -17,6 +17,7 @@ import zmq
 from MySQLdb import _mysql
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib.constants import HashXLength
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
@@ -283,10 +284,12 @@ class TxParser(multiprocessing.Process):
         partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block_slice, tx_offsets)[
             0]
         tx_hash_rows = []
-        for full_tx_hash in partition_tx_hashes:
+
+        partition_tx_hashXes = [x[0:HashXLength] for x in partition_tx_hashes]
+        for tx_hashX in partition_tx_hashXes:
             # .hex() not hash_to_hex_str() because it's for csv bulk loading
-            tx_hash_rows.append((full_tx_hash.hex(),))
-        return partition_tx_hashes, tx_hash_rows
+            tx_hash_rows.append((tx_hashX.hex(),))
+        return partition_tx_hashXes, tx_hash_rows
 
     def get_processed_vs_unprocessed_tx_offsets(self, merged_offsets_map: Dict[bytes, int],
             merged_tx_to_work_item_id_map: Dict[bytes, int], merged_part_tx_hash_rows,

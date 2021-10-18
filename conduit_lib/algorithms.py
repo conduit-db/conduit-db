@@ -7,6 +7,8 @@ from typing import Dict, Union, Tuple, List
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 
+from conduit_lib.constants import HashXLength
+
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_33 = 33
@@ -85,7 +87,7 @@ def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType, bloc
 def get_pk_and_pkh_from_script(script: array.array):
     i = 0
     pks, pkhs = set(), set()
-    pd_hashes = []
+    pd_hashXes = []
     len_script = len(script)
     # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
     #  as we do not want to track pubkeys or pkhs etc. from inside of unspendable outputs at this
@@ -128,11 +130,11 @@ def get_pk_and_pkh_from_script(script: array.array):
                 logger.error(f"script={script}, len(script)={len(script)}, i={i}")
         # hash pushdata
         for pk in pks:
-            pd_hashes.append(sha256(pk).digest()[0:32])
+            pd_hashXes.append(sha256(pk).digest()[0:HashXLength])
 
         for pkh in pkhs:
-            pd_hashes.append(sha256(pkh).digest()[0:32])
-        return pd_hashes
+            pd_hashXes.append(sha256(pkh).digest()[0:HashXLength])
+        return pd_hashXes
     except Exception as e:
         logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
         logger.exception(e)
@@ -181,7 +183,7 @@ def parse_txs(
                 next_tx_offset = len(buffer)
 
             rawtx = buffer[tx_offset_start:next_tx_offset].tobytes()
-            tx_hash = double_sha256(rawtx)
+            tx_hashX = double_sha256(rawtx)[0:HashXLength]
 
             # version
             offset += 4
@@ -191,7 +193,7 @@ def parse_txs(
             ref_type = 1
             in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hash = buffer[offset : offset + 32].tobytes()
+                in_prevout_hashX = buffer[offset : offset + 32].tobytes()[0:HashXLength]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
@@ -202,20 +204,20 @@ def parse_txs(
                 in_offset_end = offset + adjustment
 
                 in_rows.add(
-                    (in_prevout_hash.hex(), in_prevout_idx, tx_hash.hex(), in_idx, in_offset_start, in_offset_end,),
+                    (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx, in_offset_start, in_offset_end,),
                 )
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
                 if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
 
-                    pushdata_hashes = get_pk_and_pkh_from_script(script_sig)
-                    if len(pushdata_hashes):
-                        for in_pushdata_hash in pushdata_hashes:
+                    pushdata_hashXes = get_pk_and_pkh_from_script(script_sig)
+                    if len(pushdata_hashXes):
+                        for in_pushdata_hashX in pushdata_hashXes:
                             set_pd_rows.add(
                                 (
-                                    in_pushdata_hash.hex(),
-                                    tx_hash.hex(),
+                                    in_pushdata_hashX.hex(),
+                                    tx_hashX.hex(),
                                     in_idx,
                                     ref_type,
                                 )
@@ -231,20 +233,20 @@ def parse_txs(
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_hashes = get_pk_and_pkh_from_script(scriptpubkey)
-                if len(pushdata_hashes):
-                    for out_pushdata_hash in pushdata_hashes:
+                pushdata_hashXes = get_pk_and_pkh_from_script(scriptpubkey)
+                if len(pushdata_hashXes):
+                    for out_pushdata_hashX in pushdata_hashXes:
                         set_pd_rows.add(
                             (
-                                out_pushdata_hash.hex(),
-                                tx_hash.hex(),
+                                out_pushdata_hashX.hex(),
+                                tx_hashX.hex(),
                                 out_idx,
                                 ref_type,
                             )
                         )
                 offset += scriptpubkey_len
                 out_offset_end = offset + adjustment
-                out_rows.add((tx_hash.hex(), out_idx, out_value, out_offset_start, out_offset_end,))
+                out_rows.add((tx_hashX.hex(), out_idx, out_value, out_offset_start, out_offset_end,))
 
             # nlocktime
             offset += 4
@@ -253,7 +255,7 @@ def parse_txs(
             if confirmed:
                 tx_rows.append(
                     (
-                        tx_hash.hex(),
+                        tx_hashX.hex(),
                         height_or_timestamp,
                         tx_pos,
                         tx_offset_start + adjustment,
@@ -261,13 +263,13 @@ def parse_txs(
                     )
                 )
             else:
-                tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
+                tx_rows.append((tx_hashX.hex(), height_or_timestamp, rawtx.hex()))
         assert len(tx_rows) == count_txs
         return tx_rows, list(in_rows), list(out_rows), list(set_pd_rows)
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
-            f"txid={hash_to_hex_str(tx_hash)}"
+            f"txid={hash_to_hex_str(tx_hashX)}"
         )
         logger.exception(e)
         raise

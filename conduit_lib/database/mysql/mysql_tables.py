@@ -2,6 +2,8 @@ import logging
 
 from MySQLdb import _mysql
 
+from conduit_lib.constants import HashXLength
+
 
 class MySQLTables:
 
@@ -85,9 +87,9 @@ class MySQLTables:
     #  for 1 TB block sizes.
     def mysql_create_permanent_tables(self):
         # tx_offset_start is relative to start of the raw block
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS confirmed_transactions (
-                tx_hash BINARY(32),
+                tx_hash BINARY({HashXLength}),
                 tx_height INT UNSIGNED,
                 tx_position BIGINT UNSIGNED,
                 tx_offset_start BIGINT UNSIGNED,
@@ -100,9 +102,9 @@ class MySQLTables:
             """)
 
         # block_offset is relative to start of rawtx
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS txo_table (
-                out_tx_hash BINARY(32),
+                out_tx_hash BINARY({HashXLength}),
                 out_idx INT UNSIGNED,
                 out_value BIGINT UNSIGNED,
                 out_offset_start INT UNSIGNED,
@@ -118,11 +120,11 @@ class MySQLTables:
         # this table may look wasteful (due to repetition of the out_tx_hash but the
         # write throughput advantage is considerable (as it avoids the random io burden of
         # updating each row of the combined inputs and outputs table one at a time...)
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS inputs_table (
-                out_tx_hash BINARY(32),
+                out_tx_hash BINARY({HashXLength}),
                 out_idx INT UNSIGNED,
-                in_tx_hash BINARY(32),
+                in_tx_hash BINARY({HashXLength}),
                 in_idx INT UNSIGNED,
                 in_offset_start INT UNSIGNED,
                 in_offset_end INT UNSIGNED
@@ -135,10 +137,10 @@ class MySQLTables:
 
         # I think I can get away with not storing full pushdata hashes
         # unless they collide because the client provides the full pushdata_hash
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS pushdata (
-                pushdata_hash BINARY(32),
-                tx_hash BINARY (32),
+                pushdata_hash BINARY({HashXLength}),
+                tx_hash BINARY ({HashXLength}),
                 idx INT,
                 ref_type SMALLINT
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
@@ -160,9 +162,9 @@ class MySQLTables:
         #  LSM databases are not designed for millions of random deletes every 10 mins!
         #  40,000 deletes takes 3mins 25 seconds with ENGINE=MyRocks but is instant with
         #  ENGINE=MEMORY and USING HASH index.
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS mempool_transactions (
-                mp_tx_hash BINARY(32),
+                mp_tx_hash BINARY({HashXLength}),
                 mp_tx_timestamp TIMESTAMP,
                 INDEX USING HASH (mp_tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
@@ -177,9 +179,9 @@ class MySQLTables:
             """)
 
     def mysql_create_temp_mined_tx_hashes_table(self):
-        self.mysql_conn.query("""
+        self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
-                mined_tx_hash BINARY(32),
+                mined_tx_hash BINARY({HashXLength}),
                 blk_height BIGINT,
                 INDEX USING HASH (mined_tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
@@ -188,7 +190,7 @@ class MySQLTables:
     def mysql_create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str):
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                inbound_tx_hashes BINARY(32),
+                inbound_tx_hashes BINARY({HashXLength}),
                 INDEX USING HASH (inbound_tx_hashes)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)

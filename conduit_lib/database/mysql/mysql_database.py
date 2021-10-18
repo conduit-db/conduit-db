@@ -88,8 +88,8 @@ class MySQLDatabase:
     def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes):
         self.queries.mysql_load_temp_mined_tx_hashes(mined_tx_hashes)
 
-    def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes):
-        self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes)
+    def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes, inbound_tx_table_name):
+        self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes, inbound_tx_table_name)
 
     def mysql_get_unprocessed_txs(self, new_tx_hashes, inbound_tx_table_name):
         return self.queries.mysql_get_unprocessed_txs(new_tx_hashes, inbound_tx_table_name)
