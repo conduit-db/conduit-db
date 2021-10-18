@@ -53,6 +53,17 @@ class MySQLBulkLoads:
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int], have_retried=False):
+        """Todo: If the total query exceeds 1GB I wonder if I may need to cut it up into
+            smaller sizes. Have been running into the occasional MySQL error with:
+            MySQLdb._exceptions.OperationalError: (2006, '') and logs for mariadb showing:
+            Got an error reading communication packets.
+
+            I think the solution is to raise these MySQL settings:
+            max_allowed_packet      = 1024M
+            net_buffer_length       = 1048576
+
+            But I am not 100% sure and so batching into smaller chunks may be required.
+        """
 
         t0 = time.time()
 
@@ -86,8 +97,10 @@ class MySQLBulkLoads:
             self.mysql_db.start_transaction()
             self.mysql_conn.query(query)
             self.mysql_db.commit_transaction()
-        except MySQLdb.OperationalError:
+        except MySQLdb.OperationalError as e:
             if not have_retried:
+                self.logger.error(f"MySQLdb.OperationalError: {e}; "
+                    f"Retrying bulk insert for column_names: {column_names}")
                 self._load_data_infile(table_name, string_rows, column_names,
                     binary_column_indices, True)
         except Exception:

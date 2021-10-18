@@ -75,14 +75,14 @@ class MySQLDatabase:
     def mysql_drop_temp_mined_tx_hashes(self):
         self.tables.mysql_drop_temp_mined_tx_hashes()
 
-    def mysql_drop_temp_inbound_tx_hashes(self):
-        self.tables.mysql_drop_temp_inbound_tx_hashes()
+    def mysql_drop_temp_inbound_tx_hashes(self, inbound_tx_table_name):
+        self.tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
     def mysql_create_temp_mined_tx_hashes_table(self):
         self.tables.mysql_create_temp_mined_tx_hashes_table()
 
-    def mysql_create_temp_inbound_tx_hashes_table(self):
-        self.tables.mysql_create_temp_inbound_tx_hashes_table()
+    def mysql_create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name):
+        self.tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
 
     # QUERIES
     def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes):
@@ -91,8 +91,8 @@ class MySQLDatabase:
     def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes):
         self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes)
 
-    def mysql_get_unprocessed_txs(self, new_tx_hashes):
-        return self.queries.mysql_get_unprocessed_txs(new_tx_hashes)
+    def mysql_get_unprocessed_txs(self, new_tx_hashes, inbound_tx_table_name):
+        return self.queries.mysql_get_unprocessed_txs(new_tx_hashes, inbound_tx_table_name)
 
     def mysql_invalidate_mempool_rows(self, api_block_tip_height: int):
         self.queries.mysql_invalidate_mempool_rows(api_block_tip_height)

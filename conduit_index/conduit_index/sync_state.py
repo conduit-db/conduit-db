@@ -1,4 +1,3 @@
-import array
 import asyncio
 import logging
 import multiprocessing
@@ -12,7 +11,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
 
 import bitcoinx
-from bitcoinx import Headers, hash_to_hex_str
+from bitcoinx import Headers, hash_to_hex_str, unpack_header, double_sha256
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
@@ -94,7 +93,6 @@ class SyncState:
         self.done_blocks_tx_parser_event = asyncio.Event()
 
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
-        self._grpc_exec = ThreadPoolExecutor(10, 'grpc-exec')
         self.initial_block_download_event_mp = multiprocessing.Event()
 
         self.total_time_allocating_work = 0
@@ -110,11 +108,18 @@ class SyncState:
         return self._msg_handled_count
 
     # Conduit Best Tip
-    def get_conduit_best_tip(self) -> bitcoinx.Header:
-        return self.conduit_best_tip
-
-    def set_conduit_best_tip(self, tip: bitcoinx.Header):
-        self.conduit_best_tip = tip
+    async def get_conduit_best_tip(self) -> bitcoinx.Header:
+        ipc_sock_client = None
+        try:
+            ipc_sock_client = await self.controller.loop.run_in_executor(
+                self.controller.general_executor, IPCSocketClient)
+            tip, tip_height = await self.controller.loop.run_in_executor(
+                self.controller.general_executor, ipc_sock_client.chain_tip)
+            conduit_best_tip = bitcoinx.Header(*unpack_header(tip), double_sha256(tip), tip, tip_height)
+            return conduit_best_tip
+        finally:
+            if ipc_sock_client:
+                ipc_sock_client.close()
 
     # Block Headers
     def get_local_block_tip_height(self) -> int:
@@ -135,7 +140,6 @@ class SyncState:
         conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
         if our_tip > conduit_best_minus_24_hrs:
             self.is_post_ibd = True
-            await self.controller.request_mempool()
             return True
         return False
 
@@ -244,8 +248,8 @@ class SyncState:
         return remaining_work, work_for_this_batch
 
     def get_main_batch(self, main_batch_tip: bitcoinx.Header) -> Tuple[Set[bytes], MainBatch]:
-        if not self.ipc_sock_client:
-            self.ipc_sock_client = IPCSocketClient()
+        """Must run in thread due to ipc_sock_client not being async"""
+        ipc_sock_client = IPCSocketClient()
 
         all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
@@ -260,8 +264,8 @@ class SyncState:
             block_headers.append(block_header)
 
         header_hashes = [block_header.hash for block_header in block_headers]
-        block_sizes_batch = self.ipc_sock_client.block_metadata_batched(header_hashes)
-        tx_offsets_results = self.ipc_sock_client.transaction_offsets_batched(header_hashes)
+        block_sizes_batch = ipc_sock_client.block_metadata_batched(header_hashes)
+        tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
 
         all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers))
         return all_pending_block_hashes, all_work_units
@@ -278,8 +282,8 @@ class SyncState:
         self.logger.error(f"A blockage in the pipeline is suspected and needs diagnosing.")
         self.logger.error(f"Controller State:")
         self.logger.error(f"-----------------")
-        self.logger.error(f"msg_received_count={self._msg_handled_count_lock}")
-        self.logger.error(f"msg_handled_count={self._msg_received_count}")
+        self.logger.error(f"msg_received_count={self._msg_handled_count}")
+        self.logger.error(f"msg_handled_count={self._msg_handled_count}")
 
         self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
         self.logger.debug(f"len(self.done_blocks_tx_parser)={len(self.done_blocks_tx_parser)}")

@@ -43,7 +43,7 @@ REGTEST = "regtest"
 
 # Todo - add these as environment variables
 WORKER_COUNT_PREPROCESSORS = int(os.getenv('WORKER_COUNT_PREPROCESSORS', '1'))
-WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '2'))  # Recommend around 8 in prod.
+WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '8'))
 WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
 WORKER_COUNT_BLK_WRITER = int(os.getenv('WORKER_COUNT_BLK_WRITER', '1'))
 WORKER_COUNT_LOGGING_SERVERS = int(os.getenv('WORKER_COUNT_LOGGING_SERVERS', '1'))
@@ -60,7 +60,7 @@ SMALL_BLOCK_SIZE = 10_000
 CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
 MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll) from conduit raw
 
-RECV_BUFFER_HIGH_WATER = (1024 ** 3) * 4  # At the moment this constrains the largest block size
+RECV_BUFFER_HIGH_WATER = int((1024 ** 3) * 2)  # At the moment this constrains the largest block size
 MAX_RAW_BLOCK_BATCH_REQUEST_SIZE = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
 
 

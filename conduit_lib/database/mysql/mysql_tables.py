@@ -9,6 +9,16 @@ class MySQLTables:
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 
+    def start_transaction(self):
+        self.mysql_conn.query(
+            """START TRANSACTION;"""
+        )
+
+    def commit_transaction(self):
+        self.mysql_conn.query(
+            """COMMIT;"""
+        )
+
     def get_tables(self):
         try:
             self.mysql_conn.query("""SHOW TABLES""")
@@ -53,11 +63,13 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_mined_tx_hashes failed unexpectedly")
 
-    def mysql_drop_temp_inbound_tx_hashes(self):
+    def mysql_drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str):
         try:
-            self.mysql_conn.query("""
-                DROP TABLE IF EXISTS temp_inbound_tx_hashes;
+            self.start_transaction()
+            self.mysql_conn.query(f"""
+                DROP TABLE IF EXISTS {inbound_tx_table_name};
             """)
+            self.commit_transaction()
         except Exception:
             self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
 
@@ -166,16 +178,16 @@ class MySQLTables:
 
     def mysql_create_temp_mined_tx_hashes_table(self):
         self.mysql_conn.query("""
-            CREATE TEMPORARY TABLE IF NOT EXISTS temp_mined_tx_hashes (
+            CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
                 mined_tx_hash BINARY(32),
                 blk_height BIGINT,
                 INDEX USING HASH (mined_tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)
 
-    def mysql_create_temp_inbound_tx_hashes_table(self):
-        self.mysql_conn.query("""
-            CREATE TEMPORARY TABLE IF NOT EXISTS temp_inbound_tx_hashes (
+    def mysql_create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str):
+        self.mysql_conn.query(f"""
+            CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
                 inbound_tx_hashes BINARY(32),
                 INDEX USING HASH (inbound_tx_hashes)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;

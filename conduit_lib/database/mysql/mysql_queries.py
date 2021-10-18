@@ -44,37 +44,39 @@ class MySQLQueries:
         #     "temp_mined_tx_hashes", columns=["mined_tx_hash"], records=mined_tx_hashes,
         # )
 
-    def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes):
+    def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes: list[tuple[str]],
+            inbound_tx_table_name: str):
         """columns: tx_hashes, blk_height"""
-        self.mysql_tables.mysql_create_temp_inbound_tx_hashes_table()
+        self.mysql_tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
             column_names = ['inbound_tx_hashes']
-            self.bulk_loads._load_data_infile('temp_inbound_tx_hashes', string_rows, column_names,
+            self.bulk_loads._load_data_infile(f'{inbound_tx_table_name}', string_rows, column_names,
                 binary_column_indices=[0])
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_get_unprocessed_txs(self, new_tx_hashes) -> Optional[Tuple[bytes, bytes, int, bytes]]:
+    def mysql_get_unprocessed_txs(self, new_tx_hashes: list[tuple[str]],
+            inbound_tx_table_name: str) -> Optional[Tuple[bytes, bytes, int, bytes]]:
         """
         NOTE: usually (if all mempool txs have been processed, this function will only return
         the coinbase tx)
         """
-        self.mysql_load_temp_inbound_tx_hashes(new_tx_hashes)
+        self.mysql_load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
         self.mysql_conn.query(
-            """
+            f"""
             -- tx_hash ISNULL implies no match therefore not previously processed yet
             SELECT *
-            FROM temp_inbound_tx_hashes
+            FROM {inbound_tx_table_name}
             LEFT OUTER JOIN mempool_transactions
-            ON (mempool_transactions.mp_tx_hash = temp_inbound_tx_hashes.inbound_tx_hashes)
+            ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
             WHERE mempool_transactions.mp_tx_hash IS NULL
             ;"""
         )
         result = self.mysql_conn.store_result()
-        self.mysql_tables.mysql_drop_temp_inbound_tx_hashes()
+        self.mysql_tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
         return result.fetch_row(0)
 
     # # Debugging

@@ -1,5 +1,3 @@
-import asyncio
-import concurrent
 import typing
 from asyncio import BufferedProtocol
 
@@ -7,7 +5,6 @@ import bitcoinx
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, unpack_header
 import logging
 import os
-import queue
 import struct
 import time
 from typing import Optional, Dict, List, Tuple
@@ -15,6 +12,9 @@ from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
 import zmq
+from zmq.asyncio import Context as AsyncZMQContext
+from zmq.asyncio import Poller as AsyncZMQPoller
+import asyncio
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
 from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION
@@ -31,7 +31,6 @@ from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_r
     wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
-from .batch_completion import BatchCompletionTxParser
 from .sync_state import SyncState
 from .types import WorkUnit
 from .workers.transaction_parser import TxParser
@@ -103,33 +102,35 @@ class Controller:
         self.con_lost_event = asyncio.Event()
 
         # IPC from Controller to TxParser
-        context1 = zmq.Context()
+        context1 = AsyncZMQContext.instance()
         self.mined_tx_socket = context1.socket(zmq.PUSH)
         self.mined_tx_socket.bind("tcp://127.0.0.1:55555")
 
         # IPC from Controller to TxParser
-        context2 = zmq.Context()
+        context2 = AsyncZMQContext.instance()
         self.mempool_tx_socket: zmq.Socket = context2.socket(zmq.PUSH)
         self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()
+        context3 = AsyncZMQContext.instance()
         self.kill_worker_socket = context3.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:63241")
 
         # PUB-SUB from Controller to worker to signal when initial block download is in effect
         # Defined as when the local chain tip is within 24 hours of the best known chain tip
         # This is the same definition that the reference bitcoin-sv node uses.
-        context3 = zmq.Context()
+        context3 = AsyncZMQContext.instance()
         self.is_ibd_socket = context3.socket(zmq.PUB)
         self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
         self.ibd_signal_sent = False
+
+        zmq_tx_parse_ack_ctx = AsyncZMQContext.instance()
 
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
         self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
 
         # Batch Completion
-        self.tx_parser_completion_queue = queue.Queue()
+        self.tx_parser_completion_queue = asyncio.Queue()
 
         self.global_tx_hashes_dict = {}  # blk_height:tx_hashes
         self.mined_tx_hashes_queue_waiter_executor = ThreadPoolExecutor(max_workers=1)
@@ -143,8 +144,7 @@ class Controller:
         self.total_time_connecting_headers = 0
 
         self.sync_state: Optional[SyncState] = None
-        self.headers_state_executor = ThreadPoolExecutor(max_workers=1)
-        self.batch_completion_raw: Optional[BatchCompletionTxParser]
+        self.general_executor = ThreadPoolExecutor(max_workers=1)
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -159,14 +159,6 @@ class Controller:
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.mysql_db.tables.mysql_drop_mempool_table()
         self.mysql_db.tables.mysql_create_permanent_tables()
-
-        self.batch_completion_raw = BatchCompletionTxParser(
-            self.storage,
-            self.sync_state,
-            self.worker_ack_queue_tx_parse_confirmed,
-            self.tx_parser_completion_queue
-        )
-        self.batch_completion_raw.start()
 
     async def run(self):
         self.running = True
@@ -198,7 +190,7 @@ class Controller:
                 await self.storage.close()
 
             with self.kill_worker_socket as sock:
-                sock.send(b"stop_signal")
+                await sock.send(b"stop_signal")
 
             await asyncio.sleep(1)
 
@@ -211,6 +203,7 @@ class Controller:
             self.shm_buffer.close()
             self.shm_buffer.unlink()
             self.mempool_tx_socket.close()
+            self.is_ibd_socket.close()
 
             for task in self.tasks:
                 task.cancel()
@@ -343,9 +336,13 @@ class Controller:
             self.maybe_rollback()
             self.start_workers()
             await self.spawn_sync_all_blocks_job()
+            await self.spawn_batch_completion_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
             raise
+
+    async def spawn_batch_completion_job(self):
+        asyncio.create_task(self.batch_completion_job())
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
         headers = self.storage.headers
@@ -400,7 +397,7 @@ class Controller:
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
-        conduit_best_tip = self.sync_state.get_conduit_best_tip()
+        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
         if await self.sync_state.is_ibd(api_block_tip, conduit_best_tip):
             await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
         else:
@@ -440,14 +437,6 @@ class Controller:
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-        conduit_best_tip = self.sync_state.get_conduit_best_tip()
-        if await self.sync_state.is_ibd(tip, conduit_best_tip) and not self.ibd_signal_sent:
-            self.logger.debug(f"Initial block download mode completed. "
-                f"Activating mempool tx processing...")
-            with self.is_ibd_socket as sock:
-                sock.send(b"is_ibd_signal")
-                self.ibd_signal_sent = True
-
     def connect_conduit_headers(self, raw_header: bytes) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
@@ -457,26 +446,33 @@ class Controller:
             return True
         except MissingHeader as e:
             if str(e).find(GENESIS_HASH_HEX) != -1 or str(e).find(NULL_HASH) != -1:
-                # self.logger.debug("skipping - prev_out == genesis block")
+                self.logger.debug("skipping - prev_out == genesis block")
                 return True
             else:
                 self.logger.exception(e)
                 raise
 
-    # Todo - long_poll_conduit_raw_chain_tip keeps hanging!
-    #  Need a new system that does not require loop.run_in_executor
-    def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
-        with IPCSocketClient() as ipc_sock_client:
-            tip, tip_height = ipc_sock_client.chain_tip()
+    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
+        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+        local_tip = self.storage.headers.longest_chain().tip
+        if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
+                and not self.ibd_signal_sent:
+            self.logger.debug(f"Initial block download mode completed. "
+                f"Activating mempool tx processing...")
+            await self.is_ibd_socket.send(b"is_ibd_signal")
+            self.ibd_signal_sent = True
+            await self.request_mempool()
+
         deserialized_header = None
+        ipc_sock_client = None
         while True:
             try:
                 start_height = self.sync_state.get_local_block_tip_height() + 1
 
                 # Long-polling
-                with IPCSocketClient() as ipc_sock_client:
-                    result = ipc_sock_client.headers_batched(start_height,
-                        batch_size=MAIN_BATCH_HEADERS_COUNT_LIMIT)
+                ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
+                result = await self.loop.run_in_executor(self.general_executor,
+                    ipc_sock_client.headers_batched, start_height, MAIN_BATCH_HEADERS_COUNT_LIMIT)
 
                 for new_tip in result.headers_batch:
                     self.connect_conduit_headers(new_tip)
@@ -488,37 +484,17 @@ class Controller:
                 if deserialized_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {deserialized_header.height}")
-                    self.sync_state.set_conduit_best_tip(bitcoinx.Header(*unpack_header(tip),
-                        double_sha256(tip), tip, tip_height))
-                    return deserialized_header, tip_height
+                    return deserialized_header, conduit_best_tip.height
                 else:
                     continue
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)
+            finally:
+                if ipc_sock_client:
+                    ipc_sock_client.close()
 
-    async def long_poll_conduit_raw_chain_tip_with_retry(self):
-        fut: concurrent.futures.Future = self.headers_state_executor.submit(
-            self.long_poll_conduit_raw_chain_tip)
-
-        while True:
-            if fut.done():
-                result = fut.result()
-                break
-            # this is regrettable but loop.run_in_executor is buggy imo and hangs indefinitely
-            # this may be related: https://bugs.python.org/issue29309
-            # it doesn't have to be super fast anyways because it fetches 500 headers in each batch
-            # if it responded within 0.1 seconds, I would be very pleased.
-            await asyncio.sleep(0.1)
-
-        if not result:  # gRPC disconnect
-            await wait_for_conduit_raw_api(CONDUIT_RAW_API_HOST)
-            return await self.long_poll_conduit_raw_chain_tip_with_retry()  # recurse
-
-        main_batch_tip, conduit_raw_tip_height = result
-        return main_batch_tip, conduit_raw_tip_height
-
-    def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
+    async def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
         for part_size, work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
                 tx_offsets_array in work_units:
@@ -526,15 +502,14 @@ class Controller:
             packed_array = tx_offsets_array.tobytes()
             packed_msg = struct.pack(f"<III32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
                 work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
-
-            self.mined_tx_socket.send(packed_msg)
+            await self.mined_tx_socket.send(packed_msg)
 
     async def chip_away(self, remaining_work_units: List[WorkUnit]):
         """This breaks up blocks into smaller 'WorkUnits'. This allows tailoring workloads and
         max memory allocations to be safe with available system resources)"""
         remaining_work, work_for_this_batch = \
             self.sync_state.get_work_units_chip_away(remaining_work_units)
-        self.push_chip_away_work(work_for_this_batch)
+        await self.push_chip_away_work(work_for_this_batch)
         return remaining_work
 
     async def sync_all_blocks_job(self):
@@ -543,7 +518,10 @@ class Controller:
         async def wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes) -> None:
             """all_pending_block_hashes is copied into these threads to prevent mutation"""
             try:
+                self.logger.debug(f"Waiting for main batch to complete")
                 await self.sync_state.done_blocks_tx_parser_event.wait()
+                self.logger.debug(f"Main batch complete. "
+                                  f"Connecting headers to lock in indexing progress...")
                 self.sync_state.done_blocks_tx_parser_event.clear()
                 await self.connect_done_block_headers(all_pending_block_hashes.copy())
             except Exception:
@@ -557,8 +535,7 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                main_batch_tip, conduit_raw_tip_height = \
-                    await self.long_poll_conduit_raw_chain_tip_with_retry()
+                main_batch_tip, conduit_raw_tip_height = await self.long_poll_conduit_raw_chain_tip()
 
                 deficit = main_batch_tip.height - self.sync_state.get_local_block_tip_height()
                 local_tip_height = self.sync_state.get_local_block_tip_height()
@@ -575,8 +552,8 @@ class Controller:
                 self.logger.debug(f"Controller Batch {batch_id} Start")
 
                 # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
-                all_pending_block_hashes, main_batch = \
-                    self.sync_state.get_main_batch(main_batch_tip)
+                all_pending_block_hashes, main_batch = await self.loop.run_in_executor(
+                        self.general_executor, self.sync_state.get_main_batch, main_batch_tip)
                 all_work_units = self.sync_state.get_work_units_all(all_pending_block_hashes,
                     main_batch)
                 self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
@@ -586,9 +563,11 @@ class Controller:
                 remaining_work_units = all_work_units
                 while len(remaining_work_units) != 0:
                     remaining_work_units = await self.chip_away(remaining_work_units)
+                    self.logger.debug(f"Waiting for chip away batch to complete")
                     await self.sync_state.chip_away_batch_event.wait()
-                    self.sync_state.reset_pending_chip_away_work_items()
+                    self.logger.debug(f"Chip away batch completed. Remaining work units: {remaining_work_units}")
                     self.sync_state.chip_away_batch_event.clear()
+                    self.sync_state.reset_pending_chip_away_work_items()
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
                 self.sync_state.reset_pending_blocks()
@@ -604,6 +583,7 @@ class Controller:
             await maintain_chain_tip()
 
         except asyncio.CancelledError:
+            self.logger.exception("asyncio event cancelled")
             raise
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception")
@@ -615,3 +595,56 @@ class Controller:
             recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
         )
         await self.send_request(VERSION, message)
+
+    async def wait_for_batch_completion(self, blocks_batch_set):
+        while True:
+            # Todo change this to a zmq socket with asyncio context so I can await in event loop
+            item = await self.loop.run_in_executor(self.general_executor,
+                self.worker_ack_queue_tx_parse_confirmed.get)
+            worker_id, work_item_id, block_hash, txs_done_count = item
+            try:
+                self.sync_state._pending_work_item_progress_counter[work_item_id] += txs_done_count
+                self.sync_state._pending_blocks_progress_counter[block_hash] += txs_done_count
+            except KeyError:
+                raise
+
+            try:
+                if self.sync_state.have_completed_work_item(work_item_id, block_hash):
+                    self.sync_state.all_pending_chip_away_work_item_ids.remove(work_item_id)
+                    if len(self.sync_state.all_pending_chip_away_work_item_ids) == 0:
+                        self.sync_state.chip_away_batch_event.set()
+
+                if self.sync_state.block_is_fully_processed(block_hash):
+                    header = self.storage.get_header_for_hash(block_hash)
+                    if not block_hash in blocks_batch_set:
+                        self.logger.exception(f"also wrote unexpected block: "
+                                              f"{hash_to_hex_str(header.hash)} {header.height} to disc")
+                        continue
+
+                    # self.logger.debug(f"block height={header.height} done!")
+                    blocks_batch_set.remove(block_hash)
+                    with self.sync_state.done_blocks_tx_parser_lock:
+                        self.sync_state.done_blocks_tx_parser.add(block_hash)
+            except KeyError:
+                header = self.storage.get_header_for_hash(block_hash)
+                self.logger.debug(f"also parsed block: {header.height}")
+
+            # all blocks in batch processed
+            if len(blocks_batch_set) == 0:
+                self.sync_state.done_blocks_tx_parser_event.set()
+                break
+
+    async def batch_completion_job(self):
+        """
+        In a crash, the batch will be re-done on start-up because the block_headers.mmap
+        file is not updated until all work in the batch is ack'd and flushed.
+        """
+        batch_id = 0
+        while True:
+            try:
+                all_pending_block_hashes = await self.tx_parser_completion_queue.get()
+                await self.wait_for_batch_completion(all_pending_block_hashes)
+                self.logger.debug(f"ACKs for batch {batch_id} received")
+                batch_id += 1
+            except Exception as e:
+                self.logger.exception(e)

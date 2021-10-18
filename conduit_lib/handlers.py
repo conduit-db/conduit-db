@@ -134,8 +134,7 @@ class Handlers:
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
         if hasattr(self.controller, 'mempool_tx_socket'):  # Only conduit_index has this
-            mempool_tx_socket: zmq.Socket = self.controller.mempool_tx_socket
-            mempool_tx_socket.send(packed_message)
+            await self.controller.mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):

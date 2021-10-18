@@ -2,7 +2,6 @@ import logging
 import os
 import threading
 import time
-from os import urandom
 from pathlib import Path
 
 import bitcoinx
@@ -34,7 +33,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
-        self.block_headers_lock = threading.Lock()
+        self.block_headers_lock = threading.RLock()
 
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
@@ -46,38 +45,47 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     the request and response. The naming convention is:
         - handler_name -> HandlerNameRequest / HandlerNameResponse
 
-    This provides type safety (and validation if we wanted to) in lieu of something akin to
-    protobufs.
+    This provides type safety in lieu of something akin to protobufs.
     """
 
     server: ThreadedTCPServer
 
     def recvall(self, n: int) -> bytearray:
-        # Helper function to recv n bytes or return None if EOF is hit
-        data = bytearray()
-        while len(data) < n:
-            packet = self.request.recv(n - len(data))
-            if not packet:
-                return None
-            data.extend(packet)
-        return data
+        try:
+            # Helper function to recv n bytes or return None if EOF is hit
+            data = bytearray()
+            while len(data) < n:
+                packet = self.request.recv(n - len(data))
+                if not packet:
+                    return None
+                data.extend(packet)
+            return data
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
 
     def recv_msg(self) -> Optional[bytearray]:
-        # Read message length and unpack it into an integer
-        raw_msglen = self.recvall(8)
-        if not raw_msglen:
-            return None
-        msglen = struct_be_Q.unpack(raw_msglen)[0]
-        # Read the message data
-        return self.recvall(msglen)
+        try:
+            # Read message length and unpack it into an integer
+            raw_msglen = self.recvall(8)
+            if not raw_msglen:
+                return None
+            msglen = struct_be_Q.unpack(raw_msglen)[0]
+            # Read the message data
+            return self.recvall(msglen)
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.recv_msg")
 
     def send_msg(self, msg: bytes) -> bool:
-        # Prefix each message with a 8-byte length (network byte order)
-        msg = struct_be_Q.pack(len(msg)) + msg
-        self.request.sendall(msg)
-        return True
+        try:
+            # Prefix each message with a 8-byte length (network byte order)
+            msg = struct_be_Q.pack(len(msg)) + msg
+            self.request.sendall(msg)
+            return True
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.send_msg")
 
     def handle(self):
+        command = None
         try:
             # This handles a long-lived connection
             while True:
@@ -94,6 +102,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 handler(msg)
         except ConnectionResetError as e:
             logger.error(f"Connection was forcibly closed by the remote host ({self.request.getpeername()})")
+        except Exception:
+            if command:
+                logger.exception(f"Exception in ThreadedTCPRequestHandler.handle (command={command})")
+            else:
+                logger.exception(
+                    f"Exception in ThreadedTCPRequestHandler.handle")
 
     def ping(self, msg: Dict):
         # Request
@@ -116,100 +130,122 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         return self.send_msg(msg_resp.to_cbor())
 
     def chain_tip(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.ChainTipRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.CHAIN_TIP} request: {msg_req}")
-
-        with self.server.block_headers_lock:
-            tip: bitcoinx.Header = self.server.block_headers.longest_chain().tip
-            # Response
-            msg_resp = ipc_sock_msg_types.ChainTipResponse(header=tip.raw, height=tip.height)
-            # logger.debug(f"Sending {ipc_sock_commands.CHAIN_TIP} response: {msg_resp}")
-            return self.send_msg(msg_resp.to_cbor())
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.ChainTipRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.CHAIN_TIP} request: {msg_req}")
+            with self.server.block_headers_lock:
+                tip: bitcoinx.Header = self.server.block_headers.longest_chain().tip
+                # Response
+                msg_resp = ipc_sock_msg_types.ChainTipResponse(header=tip.raw, height=tip.height)
+                # logger.debug(f"Sending {ipc_sock_commands.CHAIN_TIP} response: {msg_resp}")
+                self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.chain_tip")
 
     def block_number_batched(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.BlockNumberBatchedRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.BLOCK_NUMBER_BATCHED} request: {msg_req}")
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockNumberBatchedRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.BLOCK_NUMBER_BATCHED} request: {msg_req}")
 
-        # Response
-        block_numbers = []
-        for block_hash in msg_req.block_hashes:
-            block_number = self.server.lmdb.get_block_num(block_hash)
-            block_numbers.append(block_number)
+            # Response
+            block_numbers = []
+            for block_hash in msg_req.block_hashes:
+                block_number = self.server.lmdb.get_block_num(block_hash)
+                block_numbers.append(block_number)
 
-        msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(block_numbers=block_numbers)
-        # logger.debug(f"Sending {ipc_sock_commands.BLOCK_NUMBER_BATCHED} response: {msg_resp}")
-        return self.send_msg(msg_resp.to_cbor())
+            msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(block_numbers=block_numbers)
+            # logger.debug(f"Sending {ipc_sock_commands.BLOCK_NUMBER_BATCHED} response: {msg_resp}")
+            self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.block_number_batched")
 
     def block_batched(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.BlockBatchedRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockBatchedRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
 
-        # Response
-        raw_blocks_array = bytearray()
-        for block_request in msg_req.block_requests:
-            block_number, (start_offset, end_offset) = block_request
-            raw_block_slice = self.server.lmdb.get_block(block_number,
-                start_offset, end_offset)
+            # Response
+            raw_blocks_array = bytearray()
+            for block_request in msg_req.block_requests:
+                block_number, (start_offset, end_offset) = block_request
+                raw_block_slice = self.server.lmdb.get_block(block_number,
+                    start_offset, end_offset)
 
-            len_slice = len(raw_block_slice)
-            raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
-                block_number, len_slice, raw_block_slice)
+                len_slice = len(raw_block_slice)
+                raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
+                    block_number, len_slice, raw_block_slice)
 
-        # len_bytearray = len(raw_blocks_array)
-        # payload = struct.pack(f"<{len_bytearray}s", len_bytearray, raw_blocks_array)
-        # logger.debug(f"Sending block_batched response: len_bytearray: {len_bytearray}")
-        # logger.debug(f"Sending block_batched response: len(payload): {len(payload)}")
+            # len_bytearray = len(raw_blocks_array)
+            # payload = struct.pack(f"<{len_bytearray}s", raw_blocks_array)
+            # logger.debug(f"Sending block_batched response: len_bytearray: {len_bytearray}")
+            # logger.debug(f"Sending block_batched response: len(payload): {len(payload)}")
 
-        # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
-        return self.send_msg(raw_blocks_array)
+            # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
+            if raw_blocks_array:
+                self.send_msg(raw_blocks_array)
+            else:
+                self.send_msg(b"")
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.block_batched")
 
     def merkle_tree_row(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.MERKLE_TREE_ROW} request: {msg_req}")
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.MERKLE_TREE_ROW} request: {msg_req}")
 
-        # Response
-        mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
-        # msg_resp = rs_msg_types.MerkleTreeRowResponse(mtree_row=mtree_row)
-        # logger.debug(f"Sending {rs_server_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            # Response
+            mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
+            # msg_resp = rs_msg_types.MerkleTreeRowResponse(mtree_row=mtree_row)
+            # logger.debug(f"Sending {rs_server_commands.MERKLE_TREE_ROW} response: {msg_resp}")
 
-        # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
-        if mtree_row:
-            return self.send_msg(mtree_row)
-        logger.debug(f"Transaction offsets not found for block_hash: {hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}")
-        self.send_msg(b"")
+            # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
+            if mtree_row:
+                self.send_msg(mtree_row)
+            else:
+                logger.debug(
+                    f"Transaction offsets not found for block_hash: {hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}")
+                self.send_msg(b"")
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.merkle_tree_row")
 
     def transaction_offsets_batched(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} request: {msg_req}")
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} request: {msg_req}")
 
-        # Response
-        tx_offsets_batch = []
-        for block_hash in msg_req.block_hashes:
-            tx_offsets_binary = self.server.lmdb.get_tx_offsets(block_hash)
-            tx_offsets_batch.append(tx_offsets_binary)
+            # Response
+            tx_offsets_batch = []
+            for block_hash in msg_req.block_hashes:
+                tx_offsets_binary = self.server.lmdb.get_tx_offsets(block_hash)
+                tx_offsets_batch.append(tx_offsets_binary)
 
-        msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(tx_offsets_batch=tx_offsets_batch)
-        # logger.debug(f"Sending {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} response: {msg_resp}")
-        return self.send_msg(msg_resp.to_cbor())
+            msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(tx_offsets_batch=tx_offsets_batch)
+            # logger.debug(f"Sending {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} response: {msg_resp}")
+            self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.transaction_offsets_batched")
 
     def block_metadata_batched(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(**msg)
+            # logger.debug(f"Got {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
 
-        # Response
-        block_sizes_batch = []
-        for block_hash in msg_req.block_hashes:
-            block_size = self.server.lmdb.get_block_metadata(block_hash)
-            block_sizes_batch.append(block_size)
-        msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(block_sizes_batch=block_sizes_batch)
-        # logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
-        return self.send_msg(msg_resp.to_cbor())
+            # Response
+            block_sizes_batch = []
+            for block_hash in msg_req.block_hashes:
+                block_size = self.server.lmdb.get_block_metadata(block_hash)
+                block_sizes_batch.append(block_size)
+            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(block_sizes_batch=block_sizes_batch)
+            # logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
+            self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.block_metadata_batched")
 
     def _get_header_for_height(self, height: int) -> bitcoinx.Header:
         with self.server.block_headers_lock:
@@ -219,31 +255,37 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return header
 
     def headers_batched(self, msg: Dict):
-        # Request
-        msg_req = ipc_sock_msg_types.HeadersBatchedRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
+        # Todo - this should not be doing a while True / sleep. It should be waiting on
+        #  a queue for new tip notifications
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.HeadersBatchedRequest(**msg)
+            logger.debug(f"Got {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
 
-        # Response
-        start_height = msg_req.start_height
-        batch_size = msg_req.batch_size
-        while True:
-            headers_batch = []
-            for height in range(start_height, start_height + batch_size):
-                try:
-                    header = self._get_header_for_height(height)
-                except bitcoinx.MissingHeader:
+            # Response
+            start_height = msg_req.start_height
+            batch_size = msg_req.batch_size
+            while True:
+                headers_batch = []
+                for height in range(start_height, start_height + batch_size):
+                    try:
+                        header = self._get_header_for_height(height)
+                    except bitcoinx.MissingHeader:
+                        # logger.error(f"Missing header at height: {height}")
+                        break
+                    headers_batch.append(header.raw)
+
+                if headers_batch:
                     break
-                headers_batch.append(header.raw)
+                else:
+                    time.sleep(0.2)  # Allows client to long-poll for latest tip
+                    continue
 
-            if headers_batch:
-                break
-            else:
-                time.sleep(0.1)  # Allows client to long-poll for latest tip
-                continue
-
-        msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(headers_batch=headers_batch)
-        # logger.debug(f"Sending {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
-        return self.send_msg(msg_resp.to_cbor())
+            msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(headers_batch=headers_batch)
+            # logger.debug(f"Sending {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
+            return self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.headers_batched")
 
     def headers_batched2(self, msg: Dict) -> bool:
         # Request

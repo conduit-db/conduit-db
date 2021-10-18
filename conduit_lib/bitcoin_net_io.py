@@ -11,7 +11,7 @@ import logging
 import struct
 
 from .commands import BLOCK_BIN, TX_BIN
-from .constants import HEADER_LENGTH
+from .constants import HEADER_LENGTH, RECV_BUFFER_HIGH_WATER
 
 Header = namedtuple("Header", "magic command payload_size checksum")
 
@@ -35,8 +35,8 @@ class BitcoinNetIO(BufferedProtocol):
     """
 
     logger = logging.getLogger("bitcoin-framer")
-    HIGH_WATER = int(1024 * 1024 * 1024 * 2)
     BUFFER_OVERFLOW_SIZE = 1024 * 1024 * 4
+    HIGH_WATER = RECV_BUFFER_HIGH_WATER
     BUFFER_SIZE = HIGH_WATER + BUFFER_OVERFLOW_SIZE
     shm_buffer = shared_memory.SharedMemory(create=True, size=BUFFER_SIZE)
     shm_buffer_view = shm_buffer.buf

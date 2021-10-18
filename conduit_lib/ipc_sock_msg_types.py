@@ -1,6 +1,7 @@
 """This is kind of a replacement for protobufs where we can still get type safety but
-without introducing heavy new technologies to the tech stack the message types need to
-be included in the standard cbor serialization types for simplicity sake."""
+without introducing heavy new technologies to the tech stack. We should constrain ourselves
+to primitive types supported by cbor by default for simplicity sake (although I am sure we
+could extend it if we wanted)."""
 import json
 from typing import Optional
 

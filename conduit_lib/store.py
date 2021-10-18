@@ -4,6 +4,7 @@ import shutil
 import stat
 import mmap
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Dict
@@ -29,6 +30,7 @@ class Storage:
             mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database], ):
         self.mysql_database = mysql_database
         self.headers = headers
+        self.headers_lock = threading.RLock()
         self.block_headers = block_headers
         self.lmdb = lmdb
 
@@ -39,8 +41,9 @@ class Storage:
     # External API
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        header, chain = self.headers.lookup(block_hash)
-        return header
+        with self.headers_lock:
+            header, chain = self.headers.lookup(block_hash)
+            return header
 
 
 def setup_headers_store(net_config, mmap_filename):

@@ -15,6 +15,7 @@ from typing import Tuple, List, Sequence, Optional, Dict, cast
 
 import zmq
 from MySQLdb import _mysql
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
@@ -57,6 +58,11 @@ class TxParser(multiprocessing.Process):
             worker_ack_queue_mined_tx_hashes, ):
         super(TxParser, self).__init__()
         self.worker_id = worker_id
+
+        # A dedicated in-memory only table exclusive to this worker
+        # it is frequently dropped and recreated for each chip-away batch
+        self.inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
+
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
         self.worker_ack_queue_mined_tx_hashes = worker_ack_queue_mined_tx_hashes
@@ -278,6 +284,7 @@ class TxParser(multiprocessing.Process):
             0]
         tx_hash_rows = []
         for full_tx_hash in partition_tx_hashes:
+            # .hex() not hash_to_hex_str() because it's for csv bulk loading
             tx_hash_rows.append((full_tx_hash.hex(),))
         return partition_tx_hashes, tx_hash_rows
 
@@ -307,11 +314,13 @@ class TxParser(multiprocessing.Process):
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
-            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(merged_part_tx_hash_rows)
+            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(merged_part_tx_hash_rows,
+                self.inbound_tx_table_name)
 
             for row in unprocessed_tx_hashes:
                 tx_hash = row[0]
-                tx_offset = merged_offsets_map.pop(tx_hash)  # pop the non-mempool txs out
+                tx_offset = merged_offsets_map[tx_hash]  # pop the non-mempool txs out
+                del merged_offsets_map[tx_hash]
                 work_item_id = merged_tx_to_work_item_id_map[tx_hash]
 
                 has_block_num = not_in_mempool_offsets.get(work_item_id)
@@ -336,8 +345,11 @@ class TxParser(multiprocessing.Process):
                 in_mempool_offsets[work_item_id].sort()
 
             t1 = time.time() - t0
-
             return not_in_mempool_offsets, in_mempool_offsets
+        except KeyError as e:
+            self.logger.exception("KeyError in get_processed_vs_unprocessed_tx_offsets")
+            self.logger.debug(f"{str(e).split(':')[0].strip()[::-1]}")
+            raise
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
             raise
@@ -389,7 +401,7 @@ class TxParser(multiprocessing.Process):
         context2 = zmq.Context()
         mempool_tx_socket = context2.socket(zmq.PULL)
         mempool_tx_socket.connect("tcp://127.0.0.1:55556")
-
+        ipc_sock_client = None
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             ipc_sock_client = IPCSocketClient()
@@ -420,6 +432,8 @@ class TxParser(multiprocessing.Process):
             self.logger.info("Closing mined_blocks_thread")
             mempool_tx_socket.close()
             mempool_tx_socket.term()
+            if ipc_sock_client:
+                ipc_sock_client.close()
 
     def get_block_slices(self, block_hashes: List[bytes],
             block_slice_offsets: List[Tuple[int, int]],
@@ -527,7 +541,6 @@ class TxParser(multiprocessing.Process):
 
     def parse_txs_and_push_to_queue(self, non_mempool_tx_offsets, mempool_tx_offsets,
             batched_raw_block_slices):
-
         # Todo - raw_block was re-allocated & can be avoided via memoryview over cached bytearray
         for raw_block_slice, work_item, blk_num, blk_height, first_tx_pos_batch in batched_raw_block_slices:
 
@@ -573,9 +586,6 @@ class TxParser(multiprocessing.Process):
             self.worker_ack_queue_mined_tx_hashes.put({blk_height: part_tx_hashes})
 
     def mined_blocks_thread(self):
-        t = threading.Thread(target=self.recv_blocks_thread, daemon=True)
-        t.start()
-
         work_items = []
         prev_time_check = time.time()
 
@@ -631,25 +641,3 @@ class TxParser(multiprocessing.Process):
         finally:
             self.logger.info(f"Process Stopped")
             sys.exit(0)
-
-    def recv_blocks_thread(self):
-        # VERY IMPORTANT TO DELETE ENTRIES AFTER USE FROM CACHE
-        self.logger.debug("Raw socket server listening on port: " + str(self.sock_port))
-        while True:
-            conn, sock_addr = self.sock.accept()
-            # self.logger.debug(f"accepted connection from: {sock_addr}")
-            while True:
-                payload = recv_msg(conn)
-                if not payload:
-                    break
-                if payload:
-                    self.logger.debug(f"received batched raw blocks payload "
-                                      f"with total size: {len(payload)}")
-                    batch_id, len_bytearray = struct.unpack_from("<IQ", payload)
-
-                    # self.logger.debug(f"batch_id={batch_id}, len_bytearray={len_bytearray}")
-                    len_bytearray, raw_blocks_array = struct.unpack_from(
-                        f"<Q{len_bytearray}s", payload)
-                    self.raw_blocks_array_cache[batch_id] = raw_blocks_array
-                    self.raw_blocks_array_recv_events[batch_id].set()
-            conn.close()

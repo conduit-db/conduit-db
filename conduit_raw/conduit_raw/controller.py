@@ -489,6 +489,7 @@ class Controller:
 
                 await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
                 await self.connect_done_block_headers(all_pending_block_hashes.copy())
+
             except Exception:
                 self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
