@@ -91,9 +91,7 @@ class MySQLTables:
             CREATE TABLE IF NOT EXISTS confirmed_transactions (
                 tx_hash BINARY({HashXLength}),
                 tx_height INT UNSIGNED,
-                tx_position BIGINT UNSIGNED,
-                tx_offset_start BIGINT UNSIGNED,
-                tx_offset_end BIGINT UNSIGNED
+                tx_position BIGINT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
@@ -106,14 +104,12 @@ class MySQLTables:
             CREATE TABLE IF NOT EXISTS txo_table (
                 out_tx_hash BINARY({HashXLength}),
                 out_idx INT UNSIGNED,
-                out_value BIGINT UNSIGNED,
-                out_offset_start INT UNSIGNED,
-                out_offset_end INT UNSIGNED
+                out_value BIGINT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx, out_offset_start);
+            CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx);
             """)
 
         # block_offset is relative to start of rawtx
@@ -125,9 +121,7 @@ class MySQLTables:
                 out_tx_hash BINARY({HashXLength}),
                 out_idx INT UNSIGNED,
                 in_tx_hash BINARY({HashXLength}),
-                in_idx INT UNSIGNED,
-                in_offset_start INT UNSIGNED,
-                in_offset_end INT UNSIGNED
+                in_idx INT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 

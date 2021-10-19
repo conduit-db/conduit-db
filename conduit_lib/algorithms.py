@@ -191,7 +191,7 @@ def parse_txs(
             # inputs
             count_tx_in, offset = unpack_varint(buffer, offset)
             ref_type = 1
-            in_offset_start = offset + adjustment
+            # in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
                 in_prevout_hashX = buffer[offset : offset + 32].tobytes()[0:HashXLength]
                 offset += 32
@@ -201,10 +201,10 @@ def parse_txs(
                 script_sig = buffer[offset : offset + script_sig_len]  # keep as array.array
                 offset += script_sig_len
                 offset += 4  # skip sequence
-                in_offset_end = offset + adjustment
+                # in_offset_end = offset + adjustment
 
                 in_rows.add(
-                    (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx, in_offset_start, in_offset_end,),
+                    (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx,),
                 )
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
@@ -226,7 +226,7 @@ def parse_txs(
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
             ref_type = 0
-            out_offset_start = offset + adjustment
+            # out_offset_start = offset + adjustment
             for out_idx in range(count_tx_out):
                 out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
@@ -245,8 +245,8 @@ def parse_txs(
                             )
                         )
                 offset += scriptpubkey_len
-                out_offset_end = offset + adjustment
-                out_rows.add((tx_hashX.hex(), out_idx, out_value, out_offset_start, out_offset_end,))
+                # out_offset_end = offset + adjustment
+                out_rows.add((tx_hashX.hex(), out_idx, out_value,))
 
             # nlocktime
             offset += 4
@@ -258,8 +258,6 @@ def parse_txs(
                         tx_hashX.hex(),
                         height_or_timestamp,
                         tx_pos,
-                        tx_offset_start + adjustment,
-                        next_tx_offset + adjustment,
                     )
                 )
             else:

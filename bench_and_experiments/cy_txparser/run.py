@@ -7,6 +7,8 @@ from pathlib import Path
 import bitcoinx
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
+from conduit_lib.constants import HashXLength
+
 is_cython = False
 try:
     from conduit_lib._algorithms import parse_txs, unpack_varint_cy, get_pk_and_pkh_from_script  # cython
@@ -73,8 +75,8 @@ if __name__ == "__main__":
     output_total_count = 0
     for i in range(1557):
         tx = bitcoinx.Tx.read(stream.read)
-        tx_hash, tx_height, tx_position, tx_offset_start, tx_offset_end = tx_rows[i]
-        assert tx.hash() == bytes.fromhex(tx_hash)
+        tx_hash, tx_height, tx_position = tx_rows[i]
+        assert tx.hash()[0:HashXLength] == bytes.fromhex(tx_hash)[0:HashXLength]
         inputs.extend(tx.inputs)
         output_total_count += len(tx.outputs)
         txs.append(tx)
@@ -100,8 +102,8 @@ if __name__ == "__main__":
     def scan_inputs_for_hash_and_idx_match(prev_out_hash, prev_idx, in_rows):
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in in_rows:
-            out_tx_hash, out_idx, in_tx_hash, in_idx, in_offset_start, in_offset_end = row
-            if prev_out_hash == hex_str_to_hash(out_tx_hash)[::-1] and prev_idx == out_idx:
+            out_tx_hash, out_idx, in_tx_hash, in_idx = row
+            if prev_out_hash[0:HashXLength] == hex_str_to_hash(out_tx_hash)[::-1] and prev_idx == out_idx:
                 # print(f"Match found for {hash_to_hex_str(prev_out_hash)} == {out_tx_hash}")
                 return True
             else:
@@ -112,8 +114,8 @@ if __name__ == "__main__":
     def scan_outputs_for_hash_and_idx_match(tx_hash, idx, value, out_rows):
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in out_rows:
-            out_tx_hash, out_idx, out_value, out_offset_start, out_offset_end = row
-            if tx_hash == hex_str_to_hash(out_tx_hash)[::-1] and idx == out_idx and value == out_value:
+            out_tx_hash, out_idx, out_value = row
+            if tx_hash[0:HashXLength] == hex_str_to_hash(out_tx_hash)[::-1] and idx == out_idx and value == out_value:
                 # print(f"Match found for {hash_to_hex_str(prev_out_hash)} == {out_tx_hash}")
                 return True
             else:
@@ -126,7 +128,7 @@ if __name__ == "__main__":
     for i in range(len(inputs)):
         bitcoinx_trusted_input = inputs[i]
         match_found = scan_inputs_for_hash_and_idx_match(
-            bitcoinx_trusted_input.prev_hash,
+            bitcoinx_trusted_input.prev_hash[0:HashXLength],
             bitcoinx_trusted_input.prev_idx,
             in_rows)
         assert match_found
@@ -138,6 +140,6 @@ if __name__ == "__main__":
         trusted_bitcoinx_outputs = tx.outputs
         for idx, output in enumerate(trusted_bitcoinx_outputs):
             match_found = scan_outputs_for_hash_and_idx_match(
-                tx.hash(), idx, output.value, out_rows)
+                tx.hash()[0:HashXLength], idx, output.value, out_rows)
         assert match_found
     print(f"Check for all outputs matching bitcoinx parsing: PASSED")

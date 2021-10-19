@@ -148,9 +148,8 @@ class MySQLBulkLoads:
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in tx_rows]
-            column_names = ['tx_hash', 'tx_height', 'tx_position', 'tx_offset_start',
-                'tx_offset_end']
+            string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
+            column_names = ['tx_hash', 'tx_height', 'tx_position']
             self._load_data_infile("confirmed_transactions", string_rows, column_names,
                 binary_column_indices=[0])
         except MySQLdb._exceptions.IntegrityError as e:
@@ -185,9 +184,8 @@ class MySQLBulkLoads:
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in out_rows]
-            column_names = ['out_tx_hash', 'out_idx', 'out_value', 'out_offset_start',
-                'out_offset_end']
+            string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
+            column_names = ['out_tx_hash', 'out_idx', 'out_value']
             self._load_data_infile("txo_table", string_rows, column_names,
                 binary_column_indices=[0])
         finally:
@@ -203,9 +201,8 @@ class MySQLBulkLoads:
         t0 = time.time()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s,%s,%s,%s,%s\n" % (row) for row in in_rows]
-            column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx',
-                'in_offset_start', 'in_offset_end']
+            string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
+            column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
             self._load_data_infile("inputs_table", string_rows, column_names,
                 binary_column_indices=[0, 2])
         finally:
