@@ -15,13 +15,11 @@ from typing import Tuple, List, Sequence, Optional, Dict, cast
 
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
-from conduit_lib.basic_socket_io import recv_msg
 
 from ..types import BatchedRawBlockSlices, ProcessedBlockAcks, TxHashRows, TxHashes, \
     TxHashToWorkIdMap, TxHashToOffsetMap, BlockSliceOffsets, WorkPart

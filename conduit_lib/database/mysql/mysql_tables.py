@@ -116,6 +116,8 @@ class MySQLTables:
         # this table may look wasteful (due to repetition of the out_tx_hash but the
         # write throughput advantage is considerable (as it avoids the random io burden of
         # updating each row of the combined inputs and outputs table one at a time...)
+        # Todo: Maybe I need an autoincrement PK for uniqueness (append-only) + the secondary index on
+        #  out_tx_hash... maybe this is why the db size is so huge?
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS inputs_table (
                 out_tx_hash BINARY({HashXLength}),
@@ -131,6 +133,8 @@ class MySQLTables:
 
         # I think I can get away with not storing full pushdata hashes
         # unless they collide because the client provides the full pushdata_hash
+        # Todo: Maybe I need an autoincrement PK for uniqueness (append-only) + the secondary index on
+        #  Pushdata_hash... maybe this is why the db size is so huge?
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS pushdata (
                 pushdata_hash BINARY({HashXLength}),

@@ -15,6 +15,10 @@ from ...utils import get_log_level
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+class FailedMySQLOperation(Exception):
+    pass
+
+
 class MySQLBulkLoads:
 
     def __init__(self, mysql_conn: _mysql.connection, mysql_db):
@@ -103,6 +107,10 @@ class MySQLBulkLoads:
                     f"Retrying bulk insert for column_names: {column_names}")
                 self._load_data_infile(table_name, string_rows, column_names,
                     binary_column_indices, True)
+            if have_retried:
+                # If this happens may need to look at limiting the maximum batch size for
+                # bulk inserts to see if that helps. Auto-reconnect does not seem to be viable.
+                raise FailedMySQLOperation("Failed second re-attempt at bulk load to MySQL")
         except Exception:
             self.logger.exception("unexpected exception in _load_data_infile")
             self.mysql_db.rollback_transaction()

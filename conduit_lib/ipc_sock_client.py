@@ -10,7 +10,7 @@ import cbor2
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types
-from conduit_lib.ipc_sock_msg_types import BlockBatchedRequestType
+from conduit_lib.ipc_sock_msg_types import BlockSliceRequestType
 from conduit_lib.utils import cast_to_valid_ipv4
 
 
@@ -124,7 +124,7 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.block_number_batched(block_hashes)  # recurse
 
-    def block_batched(self, block_requests: list[BlockBatchedRequestType]) \
+    def block_batched(self, block_requests: list[BlockSliceRequestType]) \
             -> bytearray:
         try:
             # Request

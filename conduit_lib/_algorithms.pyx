@@ -63,47 +63,49 @@ cpdef (unsigned long long, unsigned long long) unpack_varint_cy(array.array buf,
         return struct_le_I.unpack(buf.data.as_uchars[offset+1:offset+5])[0], offset + 5
     return struct_le_Q.unpack(buf.data.as_uchars[offset+1:offset+9])[0], offset + 9
 
-
-cpdef preprocessor(
-        array.array block_view,
-        array.array[unsigned long long] tx_offsets_array,
-        unsigned long long block_offset=0):
-    cdef unsigned long long count, i, script_sig_len, script_pubkey_len, cur_shm_idx
-    cdef unsigned long long cur_idx = 0
-
-    block_offset += HEADER_OFFSET
-    count, block_offset = unpack_varint_cy(block_view, block_offset)
-
-    # cdef vector[unsigned long long] tx_positions  # start byte pos of each tx in the block
-    tx_offsets_array[cur_idx], cur_shm_idx = block_offset, cur_idx + 1
-    try:
-        for i in range(count - 1):
-            # version
-            block_offset += 4
-
-            # tx_in block
-            count_tx_in, block_offset = unpack_varint_cy(block_view, block_offset)
-            for i in range(count_tx_in):
-                block_offset += 36  # prev_hash + prev_idx
-                script_sig_len, block_offset = unpack_varint_cy(block_view, block_offset)
-                block_offset += script_sig_len
-                block_offset += 4 # sequence
-
-            # tx_out block
-            count_tx_out, block_offset = unpack_varint_cy(block_view, block_offset)
-            for i in range(count_tx_out):
-                block_offset += 8  # value
-                script_pubkey_len, block_offset = unpack_varint_cy(block_view, block_offset)  # script_pubkey
-                block_offset += script_pubkey_len  # script_sig
-
-            # lock_time
-            block_offset += 4
-            tx_offsets_array[cur_shm_idx], cur_shm_idx = block_offset, cur_shm_idx + 1
-        return count, tx_offsets_array
-    except IndexError:
-        logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
-                     f"count of txs in block={count}")
-        logger.exception(f"cur_idx={cur_idx}; block_offset={block_offset}")
+## COMMENTED THIS OUT BECAUSE CURRENTLY CONDUITRAW IS BOTTLE-NECKED ON MAX HDD READ/WRITE
+## SO MAINTAINING THIS CODE SERVES NO PURPOSE AT LEAST FOR NOW. MAYBE RAID OF 3+ HDDs MIGHT
+## START TO MAKE THIS WORTHWHILE AGAIN. THEN AGAIN. PROBABLY NOT.
+# cpdef preprocessor(
+#         array.array block_view,
+#         array.array[unsigned long long] tx_offsets_array,
+#         unsigned long long block_offset=0):
+#     cdef unsigned long long count, i, script_sig_len, script_pubkey_len, cur_shm_idx
+#     cdef unsigned long long cur_idx = 0
+#
+#     block_offset += HEADER_OFFSET
+#     count, block_offset = unpack_varint_cy(block_view, block_offset)
+#
+#     # cdef vector[unsigned long long] tx_positions  # start byte pos of each tx in the block
+#     tx_offsets_array[cur_idx], cur_shm_idx = block_offset, cur_idx + 1
+#     try:
+#         for i in range(count - 1):
+#             # version
+#             block_offset += 4
+#
+#             # tx_in block
+#             count_tx_in, block_offset = unpack_varint_cy(block_view, block_offset)
+#             for i in range(count_tx_in):
+#                 block_offset += 36  # prev_hash + prev_idx
+#                 script_sig_len, block_offset = unpack_varint_cy(block_view, block_offset)
+#                 block_offset += script_sig_len
+#                 block_offset += 4 # sequence
+#
+#             # tx_out block
+#             count_tx_out, block_offset = unpack_varint_cy(block_view, block_offset)
+#             for i in range(count_tx_out):
+#                 block_offset += 8  # value
+#                 script_pubkey_len, block_offset = unpack_varint_cy(block_view, block_offset)  # script_pubkey
+#                 block_offset += script_pubkey_len  # script_sig
+#
+#             # lock_time
+#             block_offset += 4
+#             tx_offsets_array[cur_shm_idx], cur_shm_idx = block_offset, cur_shm_idx + 1
+#         return count, tx_offsets_array
+#     except IndexError:
+#         logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
+#                      f"count of txs in block={count}")
+#         logger.exception(f"cur_idx={cur_idx}; block_offset={block_offset}")
 
 # -------------------- PARSE BLOCK TXS -------------------- #
 

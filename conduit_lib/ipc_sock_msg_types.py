@@ -13,7 +13,8 @@ try:
 except ImportError:
     import rs_server_commands
 
-BlockBatchedRequestType = tuple[int, tuple[int, int]]
+
+BlockSliceRequestType = tuple[int, tuple[int, int]]  # (block_num, (start_offset, end_offset))
 BlockHashes = list[bytes]
 
 
@@ -134,7 +135,7 @@ class BlockNumberBatchedResponse(BaseMsg):
 class BlockBatchedRequest(BaseMsg):
     command = ipc_sock_commands.BLOCK_BATCHED
 
-    def __init__(self, block_requests: list[BlockBatchedRequestType], command: Optional[str]=None):
+    def __init__(self, block_requests: list[BlockSliceRequestType], command: Optional[str]=None):
         super().__init__()
         self.block_requests = block_requests
 
@@ -150,7 +151,8 @@ class BlockBatchedRequest(BaseMsg):
             'block_requests': self.block_requests,
         })
 
-
+## Commented out because response for raw block slices is performance critical
+## do not use cbor serialization - directly pack the bytearray for sending over the socket.
 # class BlockBatchedResponse(BaseMsg):
 #     command = rs_server_commands.BLOCK_BATCHED
 #

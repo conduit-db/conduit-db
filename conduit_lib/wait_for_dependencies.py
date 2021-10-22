@@ -54,7 +54,7 @@ async def wait_for_node(node_host: str, deserializer: Deserializer,
                 await asyncio.sleep(5)
 
 
-async def wait_for_mysql(mysql_host: str):
+async def wait_for_mysql():
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -62,11 +62,6 @@ async def wait_for_mysql(mysql_host: str):
     while True:
         is_available = False
         try:
-            host = cast_to_valid_ipv4(mysql_host.split(":")[0])
-            port = int(mysql_host.split(":")[1])
-            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((host, port))
-
             # Attempt to connect
             mysql_db: 'MySQLDatabase' = load_mysql_database()
             _result = mysql_db.tables.get_tables()
@@ -80,11 +75,11 @@ async def wait_for_mysql(mysql_host: str):
             pass
         finally:
             if is_available:
-                logger.debug(f"MySQL server on: {mysql_host} is available")
+                logger.debug(f"MySQL server on is available")
                 if client:
                     client.close()
             else:
-                logger.debug(f"MySQL server on: {mysql_host} currently unavailable - waiting...")
+                logger.debug(f"MySQL server currently unavailable - waiting...")
                 await asyncio.sleep(5)
 
 

@@ -2,7 +2,7 @@ import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, unpack_header
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
 import logging
 import os
 import struct
@@ -13,11 +13,10 @@ import multiprocessing
 from pathlib import Path
 import zmq
 from zmq.asyncio import Context as AsyncZMQContext
-from zmq.asyncio import Poller as AsyncZMQPoller
 import asyncio
 
 from conduit_lib.bitcoin_net_io import BitcoinNetIO
-from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION
+from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION, PING
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
@@ -164,22 +163,31 @@ class Controller:
         self.running = True
         try:
             await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
-            await wait_for_mysql(mysql_host=self.config['mysql_host'])
+            await wait_for_mysql()
             await self.setup()
+            self.tasks.append(asyncio.create_task(self.start_jobs()))
+            while True:
+                await asyncio.sleep(5)
 
+        except Exception:
+            self.logger.exception("unexpected exception in Controller.run")
+        finally:
+            await self.stop()
+
+    async def maintain_node_connection(self):
+        while True:
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
 
             await self.connect_session()  # on_connection_made callback -> starts jobs
             await self.send_version(self.peer.host, self.peer.port, self.host, self.port)
             await self.handshake_complete_event.wait()
-            wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
-            self.tasks.append(wait_until_conn_lost)
-            await asyncio.wait([wait_until_conn_lost])
-        except Exception:
-            self.logger.exception("unexpected exception in Controller.run")
-        finally:
-            await self.stop()
+            await self.con_lost_event.wait()
+            self.con_lost_event.clear()
+            self.logger.debug(f"Bitcoin daemon disconnected. "
+                              f"Reconnecting & Re-requesting mempool (as appropriate)...")
+            if self.ibd_signal_sent:
+                await self.request_mempool()
 
     async def stop(self):
         self.running = False
@@ -240,7 +248,7 @@ class Controller:
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self):
-        self.tasks.append(asyncio.create_task(self.start_jobs()))
+        pass
 
     def on_connection_lost(self):
         self.con_lost_event.set()
@@ -332,7 +340,6 @@ class Controller:
         try:
             self.mysql_db: MySQLDatabase = self.storage.mysql_database
             await self.spawn_handler_tasks()
-            await self.handshake_complete_event.wait()
             self.maybe_rollback()
             self.start_workers()
             await self.spawn_sync_all_blocks_job()
@@ -461,6 +468,8 @@ class Controller:
                 f"Activating mempool tx processing...")
             await self.is_ibd_socket.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
+            asyncio.create_task(self.maintain_node_connection())
+            await self.handshake_complete_event.wait()
             await self.request_mempool()
 
         deserialized_header = None
@@ -565,7 +574,7 @@ class Controller:
                     remaining_work_units = await self.chip_away(remaining_work_units)
                     self.logger.debug(f"Waiting for chip away batch to complete")
                     await self.sync_state.chip_away_batch_event.wait()
-                    self.logger.debug(f"Chip away batch completed. Remaining work units: {remaining_work_units}")
+                    self.logger.debug(f"Chip away batch completed. Remaining work units: {len(remaining_work_units)}")
                     self.sync_state.chip_away_batch_event.clear()
                     self.sync_state.reset_pending_chip_away_work_items()
 

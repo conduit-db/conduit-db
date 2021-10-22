@@ -13,8 +13,8 @@ import bitcoinx
 from bitcoinx import Headers
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.mysql_database import load_mysql_database, MySQLDatabase, mysql_connect
-from .constants import REGTEST, WORKER_COUNT_TX_PARSERS
+from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database, mysql_connect
+from .constants import REGTEST
 from .networks import HeadersRegTestMod
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))

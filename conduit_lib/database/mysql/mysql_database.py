@@ -117,47 +117,21 @@ class MySQLDatabase:
         self.bulk_loads.mysql_bulk_load_pushdata_rows(pd_rows)
 
 
-def mysql_connect(worker_id=None) -> MySQLDatabase:
+def get_connection():
     host = os.environ.get('MYSQL_HOST', '127.0.0.1')
     port = int(os.environ.get('MYSQL_PORT', 52525))  # not 3306 because of docker issues
     user = os.getenv('MYSQL_USER', 'root')
     password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
     database = os.getenv('MYSQL_DATABASE', 'conduitdb')
 
-    conn = MySQLdb.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        local_infile=1
-    )
+    conn = MySQLdb.connect(host=host, port=port, user=user, password=password, database=database,
+        local_infile=1)
+    return conn
+
+
+def mysql_connect(worker_id=None) -> MySQLDatabase:
+    conn = get_connection()
     return MySQLDatabase(conn, worker_id=worker_id)
 
 
-def mysql_test_connect() -> MySQLDatabase:
-    host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 52525))  # not 3306 because of docker issues
-    user = os.getenv('MYSQL_USER', 'root')
-    password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
-    database = os.getenv('MYSQL_DATABASE', 'conduitdbtesting')
-
-    conn = MySQLdb.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        local_infile=1
-    )
-    return MySQLDatabase(conn)
-
-
-def load_mysql_database() -> MySQLDatabase:
-    mysql_database = mysql_connect()
-    return mysql_database
-
-
-def load_test_mysql_database() -> MySQLDatabase:
-    mysql_database = mysql_test_connect()
-    return mysql_database
+load_mysql_database = mysql_connect
