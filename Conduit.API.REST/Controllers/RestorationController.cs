@@ -8,8 +8,10 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Net.Http.Headers;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Mime;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -43,16 +45,15 @@ namespace Conduit.API.REST.Controllers
         public async Task GetMatches([FromBody] PushDataFilterModel filterModel)
         {
             var requestType = RestorationFilterRequestType.JSON;
-            Request.Headers.TryGetValue("Accept", out var acceptType);
-            var z = acceptType.ToString();
-            if (acceptType == "application/octet-stream")
+            Request.Headers.TryGetValue(HeaderNames.Accept, out var acceptType);
+            if (acceptType == MediaTypeNames.Application.Octet)
             {
                 requestType = RestorationFilterRequestType.Binary;
-                Response.Headers.Add(HeaderNames.ContentType, "application/octet-stream");
+                Response.Headers.Add(HeaderNames.ContentType, MediaTypeNames.Application.Octet);
             }
             else
             {
-                Response.Headers.Add(HeaderNames.ContentType, "application/json");
+                Response.Headers.Add(HeaderNames.ContentType, MediaTypeNames.Application.Json);
             }
 
             var outputStream = Response.Body;
@@ -60,20 +61,21 @@ namespace Conduit.API.REST.Controllers
             {
                 if (requestType == RestorationFilterRequestType.Binary)
                 {
-                    var memoryStream = new MemoryStream();
+                    var memoryStream = new MemoryStream(105);
                     var binaryWriter = new BinaryWriter(memoryStream);
-                    binaryWriter.Write(match.PushDataHash);
-                    binaryWriter.Write(match.TransactionHash);
+                    binaryWriter.Write(match.PushDataHash);         // 32
+                    binaryWriter.Write(match.TransactionHash);      // 32
                     if (match.SpendTransactionHash == null)
-                        binaryWriter.Write(emptyHash);
+                        binaryWriter.Write(emptyHash);              // 32
                     else
                         binaryWriter.Write(match.SpendTransactionHash);
-                    binaryWriter.Write(match.Index);
-                    binaryWriter.Write(match.SpendInputIndex);
+                    binaryWriter.Write(match.Index);                // 4
+                    binaryWriter.Write(match.SpendInputIndex);      // 4
                     // The spare byte is packed last so that the other data can be 32 bit aligned.
-                    binaryWriter.Write((byte)match.ReferenceType);
+                    binaryWriter.Write((byte)match.ReferenceType);  // 1
 
                     var packedBytes = memoryStream.ToArray();
+                    Debug.Assert(packedBytes.Length == 105);        // 105 = 32 + 32 + 32 + 4 + 4 + 1
                     await outputStream.WriteAsync(packedBytes.AsMemory(0, packedBytes.Length));
                 }
                 else
