@@ -5,11 +5,34 @@ using Conduit.MySQL.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Logging;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace Conduit.Test.Conduit.MySQL
 {
+    /// <summary>
+    /// Conversion utility functions
+    /// </summary>>
+    class HashConversions
+    {
+        public static byte[] HashToHashX(byte[] fullHash)
+        {
+            return fullHash.Take(14).ToArray();
+        }
+        public static byte[] HexStringToHashX(string hexString)
+        {
+            // Use for tx hashes which need to be reversed
+            return HashToHashX(Convert.FromHexString(hexString).ToArray().Reverse().ToArray());
+        }
+        
+        public static byte[] PushdataHexStringToHashX(string hexString)
+        {
+            // Use for pushdata hashes which are NOT reversed
+            return HashToHashX(Convert.FromHexString(hexString));
+        }
+    }
+
     /// <summary>
     /// You need to manually write your own comparer for byte arrays because.. I do not know.
     /// </summary>
@@ -48,7 +71,7 @@ namespace Conduit.Test.Conduit.MySQL
             using (var database = new ApplicationDatabase(_connectionString))
             {
                 var service = new RestorationService(database);
-                var transactionHash = Convert.FromHexString("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6").Reverse().ToArray();
+                var transactionHash = HashConversions.HexStringToHashX("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6");
                 var transactionHeight = service.GetTransactionHeightSync(transactionHash);
                 _isTipPresent = transactionHeight == 115;
             }
@@ -74,6 +97,7 @@ namespace Conduit.Test.Conduit.MySQL
         private IRestorationService _service;
         private DatabaseHelper _dbHelper;
 
+
         public TestRestorationService(ITestOutputHelper output, DatabaseHelper dbHelper)
         {
             _logger = new XunitLogger<RestorationService>(output);
@@ -96,7 +120,7 @@ namespace Conduit.Test.Conduit.MySQL
                 FilterKeys = new List<byte[]>
                 {
                     // This is a garbage value.
-                    Convert.FromHexString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                    HashConversions.PushdataHexStringToHashX("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
                 }
             };
             await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
@@ -121,6 +145,7 @@ namespace Conduit.Test.Conduit.MySQL
                     Convert.FromHexString("86c73b803ee5229044621b2fb6fb61b7001a92cbfdab1c7314da27a2fee72948"),
                 }
             };
+            _logger.LogDebug($"pd_filter: {Convert.ToHexString(pd_filter.FilterKeys[0])}");
             await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
                 results.Add(pushdata_match);
             }
@@ -149,7 +174,7 @@ namespace Conduit.Test.Conduit.MySQL
                 "1008FD90BB1055AF8AF5272BB60B0E11FE34B777983156714D7DFD2695393513",
                 "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
                 "9E724D5DE860799E909C2B94858741033C2E4201037F860BB583136CBEAB97D8",
-            }.Select(s => Convert.FromHexString(s).Reverse().ToArray()).ToHashSet(new ByteArrayEqualityComparer());
+            }.Select(s => Convert.FromHexString(s)).ToHashSet(new ByteArrayEqualityComparer());
             Assert.True(expectedSpentCoinbaseTransactionHashes.SetEquals(spentCoinbaseTransactionHashes));
         }
 
@@ -175,10 +200,10 @@ namespace Conduit.Test.Conduit.MySQL
 
             Assert.Single(results);
             var match = results[0];
-            Assert.Equal("88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210"), match.TransactionHash.ToArray());
             Assert.StrictEqual<uint>(0, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
-            Assert.Equal("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"), match.SpendTransactionHash.ToArray());
             Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
@@ -195,7 +220,7 @@ namespace Conduit.Test.Conduit.MySQL
                 FilterKeys = new List<byte[]>
                 {
                     // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
-                    Convert.FromHexString("e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db"),
+                    HashConversions.PushdataHexStringToHashX("e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db"),
                 }
             };
             await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
@@ -203,10 +228,10 @@ namespace Conduit.Test.Conduit.MySQL
             }
             Assert.Single(results);
             var match = results[0];
-            Assert.Equal("d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842"), match.TransactionHash.ToArray());
             Assert.StrictEqual<uint>(0, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
-            Assert.Equal("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"), match.SpendTransactionHash.ToArray());
             Assert.StrictEqual<uint>(1, match.SpendInputIndex);
         }
 
@@ -234,10 +259,10 @@ namespace Conduit.Test.Conduit.MySQL
 
             Assert.Single(results);
             var match = results[0];
-            Assert.Equal("49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609"), match.TransactionHash.ToArray());
             Assert.StrictEqual<uint>(1, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
-            Assert.Equal("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6"), match.SpendTransactionHash.ToArray());
             Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
@@ -265,10 +290,13 @@ namespace Conduit.Test.Conduit.MySQL
             
             Assert.Single(results);
             var match = results[0];
-            Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
+            
+            _logger.LogDebug($"Actual TxHash: {Convert.ToHexString(match.TransactionHash.Take(14).Reverse().ToArray()).ToLower()}");
+            
+            Assert.Equal(HashConversions.HexStringToHashX("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"), match.TransactionHash.ToArray());
             Assert.StrictEqual<uint>(2, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
-            Assert.Equal("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"), match.SpendTransactionHash.ToArray());
             Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
@@ -295,10 +323,10 @@ namespace Conduit.Test.Conduit.MySQL
             
             Assert.Single(results);
             var match = results[0];
-            Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"), match.TransactionHash);
             Assert.StrictEqual<uint>(2, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
-            Assert.Equal("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
+            Assert.Equal(HashConversions.HexStringToHashX("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"), match.SpendTransactionHash);
             Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
