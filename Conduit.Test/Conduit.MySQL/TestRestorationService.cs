@@ -90,14 +90,18 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestNonMatch()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
+                FilterKeys = new List<byte[]>
+                {
                     // This is a garbage value.
                     Convert.FromHexString("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
             Assert.Empty(results);
         }
 
@@ -108,15 +112,18 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestMiningTransactions()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
+                FilterKeys = new List<byte[]>
+                {
                     // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
                     Convert.FromHexString("86c73b803ee5229044621b2fb6fb61b7001a92cbfdab1c7314da27a2fee72948"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
             Assert.Equal(110, results.Count);
 
             var unspentCoinbaseTransactionHashes = results.Where(w => w.SpendTransactionHash == null).Select(s => s.TransactionHash).Distinct().ToList();
@@ -153,14 +160,19 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestP2PK()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
-                    // This is the SHA256 checksum of the public key bytes from '032fcb2fa3280cfdc0ffd527b40f592f5ae80556f2c9f98a649f1b1af13f332fdb'.
+                FilterKeys = new List<byte[]>
+                {
+                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
                     Convert.FromHexString("04bca2ae277997940152716854a95347819c2e07d370d22c093b39708fb9d5eb"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
+
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
@@ -177,14 +189,18 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestP2PKH()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
-                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'mhg6ENXhPL6LsEUG6oxdqi8LjE2bsW6NMW'.
+                FilterKeys = new List<byte[]>
+                {
+                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
                     Convert.FromHexString("e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
@@ -201,13 +217,21 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestP2SH()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter {
-                FilterKeys = new List<byte[]> {
+            
+            
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
+            {
+                FilterKeys = new List<byte[]>
+                {
                     // This is the SHA256 checksum of the hash160 of the P2SH address '2N5338aAPYmKM59AKpvxDB6FRAnGNXRsfBp'.
                     Convert.FromHexString("5e7583878789b03276d2d60a1cf3772a999084e3b12d0d3c1a33a30bd15609db"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
+
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
@@ -224,14 +248,21 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestP2MS1()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            
+            
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
-                    // This is the SHA256 checksum of the cosigner 1 0/0' child public key.
+                FilterKeys = new List<byte[]>
+                {
+                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
                     Convert.FromHexString("9ed50dfe0d3a28950ee9a2ee41dce7193dd8666c4ff42c974de1bde60332a701"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
+            
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
@@ -248,14 +279,20 @@ namespace Conduit.Test.Conduit.MySQL
         public async void TestP2MS2()
         {
             Assert.True(_dbHelper.FoundValidChain, "Unable to find blockchain_115_3677f4 data");
-
-            var results = await _service.GetPushDataFilterMatches(new PushDataFilter
+            
+            var results = new List<PushDataFilterMatch>();
+            var pd_filter = new PushDataFilter
             {
-                FilterKeys = new List<byte[]> {
-                    // This is the SHA256 checksum of the cosigner 2 0/0' child public key.
+                FilterKeys = new List<byte[]>
+                {
+                    // This is the SHA256 checksum of the hash160 of the P2PKH address 'n2ekqiw96ceQWFrKSziKTEi5fsRuZKQdun'.
                     Convert.FromHexString("e6221c70e0f3c686255b548789c63d0e2c6aa795ad87324dfd71d0b53d90d59d"),
                 }
-            });
+            };
+            await foreach (var pushdata_match in _service.GetPushDataFilterMatches(pd_filter)){
+                results.Add(pushdata_match);
+            }
+            
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
