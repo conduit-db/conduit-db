@@ -3,11 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace Conduit.API.REST.Enums
+namespace Conduit.BlockScanner.Services
 {
-    public enum RestorationFilterRequestType
+    public class ScanService: IScanService
     {
-        JSON = 0,
-        Binary = 1,
     }
 }

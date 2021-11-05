@@ -44,11 +44,11 @@ namespace Conduit.API.REST.Controllers
         [HttpPost("search")]
         public async Task GetMatches([FromBody] PushDataFilterModel filterModel)
         {
-            var requestType = RestorationFilterRequestType.JSON;
+            var requestType = RequestAcceptType.JSON;
             Request.Headers.TryGetValue(HeaderNames.Accept, out var acceptType);
             if (acceptType == MediaTypeNames.Application.Octet)
             {
-                requestType = RestorationFilterRequestType.Binary;
+                requestType = RequestAcceptType.Binary;
                 Response.Headers.Add(HeaderNames.ContentType, MediaTypeNames.Application.Octet);
             }
             else
@@ -56,10 +56,11 @@ namespace Conduit.API.REST.Controllers
                 Response.Headers.Add(HeaderNames.ContentType, MediaTypeNames.Application.Json);
             }
 
+            Response.StatusCode = StatusCodes.Status200OK;
             var outputStream = Response.Body;
             await foreach (var match in restorationService.GetPushDataFilterMatches(filterModel.PushDataFilter))
             {
-                if (requestType == RestorationFilterRequestType.Binary)
+                if (requestType == RequestAcceptType.Binary)
                 {
                     var memoryStream = new MemoryStream(105);
                     var binaryWriter = new BinaryWriter(memoryStream);

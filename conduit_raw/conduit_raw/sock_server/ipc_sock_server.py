@@ -88,6 +88,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
                 msg = cbor2.loads(data)
                 command = msg['command']
+                # logger.debug(f"Client: command {command} received")
 
                 handler = getattr(self, command)
                 handler(msg)
@@ -243,6 +244,30 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(headers_batch=headers_batch)
         # logger.debug(f"Sending {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
         return self.send_msg(msg_resp.to_cbor())
+
+    def headers_batched2(self, msg: Dict) -> bool:
+        # Request
+        msg_req = ipc_sock_msg_types.HeadersBatchedRequest(**msg)
+        # logger.debug(f"Got {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
+
+        # Response
+        start_height = msg_req.start_height
+        desired_end_height = msg_req.start_height + (msg_req.batch_size - 1)
+
+        with self.server.block_headers_lock:
+            headers = self.server.block_headers
+            chain = self.server.block_headers.longest_chain()
+            end_height = min(chain.tip.height, desired_end_height)
+            header_count = max(0, end_height - start_height + 1)
+
+            # Send the number of headers that will follow.
+            header_count_bytes = struct_be_Q.pack(header_count)
+            self.request.sendall(header_count_bytes)
+
+            for height in range(start_height, end_height+1):
+                header = headers.header_at_height(chain, height)
+                self.request.sendall(header.raw)
+        return True
 
 
 if __name__ == "__main__":

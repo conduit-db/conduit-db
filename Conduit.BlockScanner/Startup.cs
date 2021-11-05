@@ -1,9 +1,5 @@
-using Conduit.API.REST.Services;
-using Conduit.MySQL;
-using Conduit.MySQL.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,7 +11,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace Conduit.API.REST
+namespace Conduit.BlockScanner
 {
     public class Startup
     {
@@ -29,16 +25,11 @@ namespace Conduit.API.REST
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.AddTransient(_ => new ApplicationDatabase(Configuration["ConnectionStrings:DefaultConnection"]));
-            services.AddTransient<IHeaderService, HeaderService>();
-            services.AddTransient<INetworkService, NetworkService>();
-            services.AddTransient<IRestorationService, RestorationService>();
-            services.AddTransient<IScanService, ScanService>();
-            services.AddTransient<ITransactionService, TransactionService>();
+
             services.AddControllers();
             services.AddSwaggerGen(c =>
             {
-                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Conduit.API.REST", Version = "v1" });
+                c.SwaggerDoc("v1", new OpenApiInfo { Title = "Conduit.BlockScanner", Version = "v1" });
             });
         }
 
@@ -49,18 +40,13 @@ namespace Conduit.API.REST
             {
                 app.UseDeveloperExceptionPage();
                 app.UseSwagger();
-                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Conduit.API.REST v1"));
-            }
-            else
-            {
-                // NOTE(rt) For now only require HTTPS for production.
-                app.UseHttpsRedirection();
+                app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Conduit.BlockScanner v1"));
             }
 
             app.UseRouting();
 
             app.UseAuthorization();
-            app.UseWebSockets();
+
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
