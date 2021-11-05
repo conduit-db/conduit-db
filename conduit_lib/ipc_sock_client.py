@@ -9,8 +9,9 @@ from typing import Generator
 import cbor2
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
-from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
+from conduit_lib import ipc_sock_msg_types
 from conduit_lib.ipc_sock_msg_types import BlockBatchedRequestType
+from conduit_lib.utils import cast_to_valid_ipv4
 
 
 class SocketServerError(Exception):
@@ -25,7 +26,9 @@ class ServiceUnavailableError(Exception):
 
 class IPCSocketClient:
 
-    HOST, PORT = "localhost", 50000
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
+    HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
+    PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
 
     def __init__(self):
         self.logger = logging.getLogger('raw-socket-client')
