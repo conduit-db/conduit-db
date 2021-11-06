@@ -1,3 +1,4 @@
+using Conduit.API.REST.Classes;
 using Conduit.API.REST.Services;
 using Conduit.MySQL;
 using Conduit.MySQL.Services;
@@ -35,6 +36,7 @@ namespace Conduit.API.REST
             services.AddTransient<IRestorationService, RestorationService>();
             services.AddTransient<IScanService, ScanService>();
             services.AddTransient<ITransactionService, TransactionService>();
+            services.AddHostedService<HeaderHostedService>();
             services.AddControllers();
             services.AddSwaggerGen(c =>
             {

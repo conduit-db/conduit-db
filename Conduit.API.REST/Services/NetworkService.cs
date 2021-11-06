@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Conduit.API.REST.Services
@@ -28,12 +29,12 @@ namespace Conduit.API.REST.Services
             rawPort = int.Parse(rawURL[(index + 1)..]);
         }
 
-        public async Task<Socket> ConnectToConduitRaw()
+        public async Task<Socket> ConnectToConduitRaw(CancellationToken externalToken = default)
         {
-            return await Connect(rawHost, rawPort);
+            return await Connect(rawHost, rawPort, externalToken);
         }
 
-        private static async Task<Socket> Connect(string host, int port)
+        private static async Task<Socket> Connect(string host, int port, CancellationToken externalToken=default)
         {
             var hostEntry = Dns.GetHostEntry(host);
 
@@ -42,8 +43,7 @@ namespace Conduit.API.REST.Services
                 IPEndPoint endpoint = new(address, port);
                 Socket tempSocket = new(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
-                await tempSocket.ConnectAsync(endpoint);
-
+                await tempSocket.ConnectAsync(endpoint, externalToken);
                 if (tempSocket.Connected)
                     return tempSocket;
             }

@@ -37,7 +37,7 @@ namespace Conduit.API.REST.Controllers
                 Response.StatusCode = (int)HttpStatusCode.BadRequest;
                 return;
             }
-            var cancellationTokenSource = new CancellationTokenSource(20000);
+            var timeoutTokenSource = new CancellationTokenSource(20000);
 
             // The header count here may be less than requested as it may be more headers than are available from the base height.
             var (headerCount, socket) = await headerService.GetHeaderSocketAsync(height, count);
@@ -51,19 +51,19 @@ namespace Conduit.API.REST.Controllers
 
                 // Stream the header data from the socket, if there is any.
                 if (headerCount > 0)
-                    await Util.FillPipeAsync(socket, Response.BodyWriter, logger, cancellationTokenSource.Token, headerDataLength);
+                    await Util.FillPipeAsync(socket, Response.BodyWriter, logger, timeoutTokenSource.Token, headerDataLength);
                 await Response.BodyWriter.CompleteAsync();
             }
         }
 
         // TODO Header web socket is incomplete.
-        [HttpGet("/websocket")]
+        [HttpGet("websocket")]
         public async Task GetWebSocket()
         {
             if (HttpContext.WebSockets.IsWebSocketRequest)
             {
                 using WebSocket webSocket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-                await HeaderWebSocketManager.ManageConnection(webSocket, headerService);
+                await HeaderWebSocketManager.ManageConnection(webSocket);
             }
             else
             {
