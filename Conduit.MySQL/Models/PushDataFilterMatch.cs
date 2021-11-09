@@ -11,12 +11,18 @@ namespace Conduit.MySQL.Models
     {
         public byte[] PushDataHash { get; set; }
         public byte[] TransactionHash { get; set; }
-        public int Index { get; set; }
+        public uint Index { get; set; }
         public TransactionReferenceType ReferenceType { get; set; }
         public byte[] SpendTransactionHash { get; set; }
-        public int SpendInputIndex { get; set; }
+        public uint SpendInputIndex { get; set; }
 
-        public PushDataFilterMatch(byte[] pushDataHash, byte[] transactionHash, int index, TransactionReferenceType referenceType, byte[] spendTransactionHash, int spendInputIndex)
+        /// <summary>
+        /// This will be the height of the block that the transaction is currently in if the transaction is in a block.
+        /// If the transaction is not in a block then it will be the maximum value of an unsigned integer (0xFFFFFFFF).
+        /// </summary>
+        public uint BlockHeight { get; set; }
+
+        public PushDataFilterMatch(byte[] pushDataHash, byte[] transactionHash, uint index, TransactionReferenceType referenceType, byte[] spendTransactionHash, uint spendInputIndex, uint blockHeight)
         {
             PushDataHash = pushDataHash;
             TransactionHash = transactionHash;
@@ -24,6 +30,7 @@ namespace Conduit.MySQL.Models
             ReferenceType = referenceType;
             SpendTransactionHash = spendTransactionHash;
             SpendInputIndex = spendInputIndex;
+            BlockHeight = blockHeight;
         }
     }
 }

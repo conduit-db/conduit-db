@@ -62,7 +62,7 @@ namespace Conduit.API.REST.Controllers
             {
                 if (requestType == RequestAcceptType.Binary)
                 {
-                    var memoryStream = new MemoryStream(105);
+                    var memoryStream = new MemoryStream(109);
                     var binaryWriter = new BinaryWriter(memoryStream);
                     binaryWriter.Write(match.PushDataHash);         // 32
                     binaryWriter.Write(match.TransactionHash);      // 32
@@ -70,13 +70,27 @@ namespace Conduit.API.REST.Controllers
                         binaryWriter.Write(emptyHash);              // 32
                     else
                         binaryWriter.Write(match.SpendTransactionHash);
-                    binaryWriter.Write(match.Index);                // 4
-                    binaryWriter.Write(match.SpendInputIndex);      // 4
+
+                    var indexBytes = BitConverter.GetBytes(match.Index);
+                    if (BitConverter.IsLittleEndian)
+                        Array.Reverse(indexBytes);
+                    binaryWriter.Write(indexBytes);                 // 4
+
+                    var spendingInputIndexBytes = BitConverter.GetBytes(match.SpendInputIndex);
+                    if (BitConverter.IsLittleEndian)
+                        Array.Reverse(spendingInputIndexBytes);
+                    binaryWriter.Write(spendingInputIndexBytes);    // 4
+
+                    var blockHeightBytes = BitConverter.GetBytes(match.BlockHeight);
+                    if (BitConverter.IsLittleEndian)
+                        Array.Reverse(blockHeightBytes);
+                    binaryWriter.Write(blockHeightBytes);           // 4
+
                     // The spare byte is packed last so that the other data can be 32 bit aligned.
                     binaryWriter.Write((byte)match.ReferenceType);  // 1
 
                     var packedBytes = memoryStream.ToArray();
-                    Debug.Assert(packedBytes.Length == 105);        // 105 = 32 + 32 + 32 + 4 + 4 + 1
+                    Debug.Assert(packedBytes.Length == 109);        // 109 = 32 + 32 + 32 + 4 + 4 + 4 + 1
                     await outputStream.WriteAsync(packedBytes.AsMemory(0, packedBytes.Length));
                 }
                 else

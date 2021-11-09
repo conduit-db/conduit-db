@@ -70,16 +70,17 @@ namespace Conduit.MySQL.Services
                     command.Parameters.AddWithValue(parameterNames[i], pushDataFilter.FilterKeys[i]);
                 }
                 command.CommandText = string.Format(
-                    "SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx FROM pushdata PD "+
+                    "SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx, CT.tx_height FROM pushdata PD "+
                     "LEFT JOIN inputs_table IT ON PD.tx_hash=IT.out_tx_hash AND PD.idx=IT.out_idx AND PD.ref_type=0 "+
+                    "LEFT JOIN confirmed_transactions CT ON CT.tx_hash=PD.tx_hash "+
                     "WHERE PD.pushdata_hash IN ({0})", string.Join(",", parameterNames));
                 command.Connection = database.Connection;
 
                 using (var reader = await command.ExecuteReaderAsync())
                     while (await reader.ReadAsync())
                     {
-                        PushDataFilterMatch match = new(new byte[32], new byte[32], reader.GetInt32(2), (Enums.TransactionReferenceType)reader.GetInt16(3), null,
-                            await reader.IsDBNullAsync(5) ? -1 : reader.GetInt32(5));
+                        PushDataFilterMatch match = new(new byte[32], new byte[32], reader.GetUInt32(2), (Enums.TransactionReferenceType)reader.GetInt16(3), null,
+                            await reader.IsDBNullAsync(5) ? uint.MaxValue : reader.GetUInt32(5), await reader.IsDBNullAsync(6) ? uint.MaxValue : reader.GetUInt32(6));
 
                         // Read the bytes from the pushdata hash column.
                         int index = 0;

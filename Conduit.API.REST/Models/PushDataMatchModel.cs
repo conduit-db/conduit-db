@@ -16,18 +16,22 @@ namespace Conduit.API.REST.Models
             ReferenceType = (int)match.ReferenceType;
             SpendTransactionId = match.SpendTransactionHash == null ? null : Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray());
             SpendInputIndex = match.SpendInputIndex;
+            BlockHeight = match.BlockHeight;
         }
 
         public string PushDataHashHex { get; set; }
 
         public string TransactionId { get; set; }
 
-        public int Index { get; set; }
+        public uint Index { get; set; }
 
         public int ReferenceType { get; set; }
 
         public string SpendTransactionId { get; set; }
 
-        public int SpendInputIndex { get; set; }
+        public uint SpendInputIndex { get; set; }
+
+        // This will be the maximum unsigned integer value 0xFFFFFFFF if the transaction is not in a block.
+        public uint BlockHeight { get; set; }
     }
 }

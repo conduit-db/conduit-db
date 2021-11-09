@@ -176,10 +176,10 @@ namespace Conduit.Test.Conduit.MySQL
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.Index);
+            Assert.StrictEqual<uint>(0, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
             Assert.Equal("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.SpendInputIndex);
+            Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
         /// <summary>
@@ -204,10 +204,10 @@ namespace Conduit.Test.Conduit.MySQL
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.Index);
+            Assert.StrictEqual<uint>(0, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
             Assert.Equal("47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(1, match.SpendInputIndex);
+            Assert.StrictEqual<uint>(1, match.SpendInputIndex);
         }
 
         /// <summary>
@@ -235,10 +235,10 @@ namespace Conduit.Test.Conduit.MySQL
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(1, match.Index);
+            Assert.StrictEqual<uint>(1, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
             Assert.Equal("1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.SpendInputIndex);
+            Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
         /// <summary>
@@ -266,10 +266,10 @@ namespace Conduit.Test.Conduit.MySQL
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(2, match.Index);
+            Assert.StrictEqual<uint>(2, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
             Assert.Equal("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.SpendInputIndex);
+            Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
         /// <summary>
@@ -296,10 +296,10 @@ namespace Conduit.Test.Conduit.MySQL
             Assert.Single(results);
             var match = results[0];
             Assert.Equal("479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2", Convert.ToHexString(match.TransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(2, match.Index);
+            Assert.StrictEqual<uint>(2, match.Index);
             Assert.Equal(TransactionReferenceType.Output, match.ReferenceType);
             Assert.Equal("0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721", Convert.ToHexString(match.SpendTransactionHash.Reverse().ToArray()).ToLower());
-            Assert.Equal(0, match.SpendInputIndex);
+            Assert.StrictEqual<uint>(0, match.SpendInputIndex);
         }
 
         public void Dispose()

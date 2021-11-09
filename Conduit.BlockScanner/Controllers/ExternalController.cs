@@ -24,6 +24,9 @@ namespace Conduit.BlockScanner.Controllers
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        // A
+        // B
+
         public IActionResult Index()
         {
             return View();
