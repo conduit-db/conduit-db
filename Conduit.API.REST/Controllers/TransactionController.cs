@@ -22,11 +22,17 @@ namespace Conduit.API.REST.Controllers
     {
         private readonly ITransactionService transactionService;
         private readonly ILogger<TransactionController> logger;
+        private static int HashXLength = 14;
 
         public TransactionController(ILogger<TransactionController> logger, ITransactionService transactionService)
         {
             this.transactionService = transactionService ?? throw new ArgumentNullException(nameof(transactionService));
             this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+        
+        private static byte[] HashToHashX(byte[] fullHash)
+        {
+            return fullHash.Take(14).ToArray();
         }
 
         [HttpGet("{transactionId}")]
@@ -52,7 +58,7 @@ namespace Conduit.API.REST.Controllers
             }
 
             // TOOD(optimisation) We should see if we can stream the transaction data in, but we would want the length ahead of the full data, so we can set content length.
-            var (transactionStream, transactionLength) = await transactionService.GetTransactionBytes(transactionHash);
+            var (transactionStream, transactionLength) = await transactionService.GetTransactionBytes(HashToHashX(transactionHash));
             if (transactionStream == null)
             {
                 Response.StatusCode = StatusCodes.Status404NotFound;
@@ -79,7 +85,7 @@ namespace Conduit.API.REST.Controllers
                     {
                         var jsonText = Convert.ToHexString(transactionData.AsSpan(0, readLength));
                         var jsonBytes = Encoding.ASCII.GetBytes(jsonText);
-                        await outputStream.WriteAsync(jsonBytes.AsMemory(0, readLength));
+                        await outputStream.WriteAsync(jsonBytes.AsMemory(0, readLength * 2));
                     }
                 }
             }

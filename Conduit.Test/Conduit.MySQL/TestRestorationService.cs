@@ -174,7 +174,10 @@ namespace Conduit.Test.Conduit.MySQL
                 "1008FD90BB1055AF8AF5272BB60B0E11FE34B777983156714D7DFD2695393513",
                 "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
                 "9E724D5DE860799E909C2B94858741033C2E4201037F860BB583136CBEAB97D8",
-            }.Select(s => Convert.FromHexString(s)).ToHashSet(new ByteArrayEqualityComparer());
+            }.Select(s => HashConversions.HexStringToHashX(s)).ToHashSet(new ByteArrayEqualityComparer());
+            _logger.LogInformation(
+                $"spentCoinbaseTransactionHashes: {string.Join(",", spentCoinbaseTransactionHashes.Select(h => Convert.ToHexString(h)))}; " +
+                $"expectedSpentCoinbaseTransactionHashes: {string.Join(",",expectedSpentCoinbaseTransactionHashes.Select(h => Convert.ToHexString(h)))}");
             Assert.True(expectedSpentCoinbaseTransactionHashes.SetEquals(spentCoinbaseTransactionHashes));
         }
 

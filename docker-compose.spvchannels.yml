@@ -18,7 +18,7 @@ services:
     image: electrumsv/spvchannels:1.1.0
     command: -startup
     ports:
-      - "25009:25009"
+      - "30001:30001"
     links:
       - spvchannels-db:spvchannels-db
     depends_on:
@@ -38,7 +38,7 @@ services:
       - AppConfiguration:CacheAbsoluteExpirationTime=600
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_NPGSQLLOGMANAGER=False
-      - ASPNETCORE_URLS=http://+:25009
+      - ASPNETCORE_URLS=http://+:30001
     networks:
       - spvchannels-network
 

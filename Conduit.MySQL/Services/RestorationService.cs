@@ -85,7 +85,7 @@ namespace Conduit.MySQL.Services
                 using (var reader = await command.ExecuteReaderAsync())
                     while (await reader.ReadAsync())
                     {
-                        PushDataFilterMatch match = new(new byte[HashXLength], new byte[HashXLength], reader.GetInt32(2), (Enums.TransactionReferenceType)reader.GetInt16(3), null, await reader.IsDBNullAsync(5) ? ? uint.MaxValue : reader.GetUInt32(5), await reader.IsDBNullAsync(6) ? uint.MaxValue : reader.GetUInt32(6));
+                        PushDataFilterMatch match = new(new byte[HashXLength], new byte[HashXLength], reader.GetUInt32(2), (Enums.TransactionReferenceType)reader.GetInt16(3), null, await reader.IsDBNullAsync(5) ? uint.MaxValue : reader.GetUInt32(5), await reader.IsDBNullAsync(6) ? uint.MaxValue : reader.GetUInt32(6));
 
                         // Read the bytes from the pushdata hash column.
                         int index = 0;
