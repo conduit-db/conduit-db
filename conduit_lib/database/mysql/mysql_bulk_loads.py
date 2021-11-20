@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import List
 
 import MySQLdb
+import bitcoinx
 from MySQLdb import _mysql
+from bitcoinx import hash_to_hex_str
 
 from ...constants import PROFILING
 from ...utils import get_log_level
@@ -154,7 +156,6 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
             column_names = ['tx_hash', 'tx_block_num', 'tx_position']
@@ -163,9 +164,6 @@ class MySQLBulkLoads:
         except MySQLdb._exceptions.IntegrityError as e:
             self.logger.error(f"{e}")
             self.handle_coinbase_dup_tx_hash(tx_rows)
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
@@ -173,49 +171,32 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_mempool_tx_rows(self, tx_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
-            column_names = ['mp_tx_hash', 'mp_tx_timestamp']
-            self._load_data_infile("mempool_transactions", string_rows, column_names,
-                binary_column_indices=[0])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
+        column_names = ['mp_tx_hash', 'mp_tx_timestamp']
+        self._load_data_infile("mempool_transactions", string_rows, column_names,
+            binary_column_indices=[0])
         t1 = time.time() - t0
-
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
     def mysql_bulk_load_output_rows(self, out_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
-            column_names = ['out_tx_hash', 'out_idx', 'out_value']
-            self._load_data_infile("txo_table", string_rows, column_names,
-                binary_column_indices=[0])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
+        column_names = ['out_tx_hash', 'out_idx', 'out_value']
+        self._load_data_infile("txo_table", string_rows, column_names,
+            binary_column_indices=[0])
         t1 = time.time() - t0
-
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
         )
 
     def mysql_bulk_load_input_rows(self, in_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
-            column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
-            self._load_data_infile("inputs_table", string_rows, column_names,
-                binary_column_indices=[0, 2])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
+        column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
+        self._load_data_infile("inputs_table", string_rows, column_names,
+            binary_column_indices=[0, 2])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
@@ -223,15 +204,10 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_pushdata_rows(self, pd_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
-            column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
-            self._load_data_infile("pushdata", string_rows, column_names,
-                binary_column_indices=[0, 1])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
+        column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
+        self._load_data_infile("pushdata", string_rows, column_names,
+            binary_column_indices=[0, 1])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
@@ -239,17 +215,19 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows):
         t0 = time.time()
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
-            column_names = ['tx_hash']
-            self._load_data_infile("temp_unsafe_txs", string_rows, column_names,
-                binary_column_indices=[0])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
+        column_names = ['tx_hash']
+        self._load_data_infile("temp_unsafe_txs", string_rows, column_names,
+            binary_column_indices=[0])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_temp_unsafe_txs = {t1} seconds for "
             f"{len(unsafe_tx_rows)}"
         )
+
+    def mysql_bulk_load_headers(self, block_header_rows: list[int, str, int, str]):
+        """block_num, block_hash, block_height, block_header"""
+        string_rows = ["%s,%s,%s,%s\n" % (row) for row in block_header_rows]
+        column_names = ['block_num', 'block_hash', 'block_height', 'block_header']
+        self._load_data_infile(f'headers', string_rows, column_names,
+            binary_column_indices=[1, 3])

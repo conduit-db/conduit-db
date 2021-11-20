@@ -436,9 +436,9 @@ class Controller:
 
     async def connect_done_block_headers(self, blocks_batch_set):
         t0 = time.perf_counter()
-        sorted_headers = sorted([(self.storage.get_header_for_hash(h).height, h) for h in
-            blocks_batch_set])
-        sorted_heights = [height for height, h in sorted_headers]
+        unsorted_headers = [self.storage.get_header_for_hash(h) for h in blocks_batch_set]
+        sorted_headers = sorted(unsorted_headers, key=lambda x: x.height)
+        sorted_heights = [h.height for h in sorted_headers]
         # Assert the resultant blocks are consecutive with no gaps
         max_height = max(sorted_heights)
         # self.logger.debug(f"block_heights={block_heights}")
@@ -449,13 +449,22 @@ class Controller:
         assert sorted_heights == expected_block_heights
 
         block_headers: bitcoinx.Headers = self.storage.block_headers
-        for height, hash in sorted_headers:
-            # self.logger.debug(f"new block tip height: {height}")
-            header = self.storage.get_header_for_hash(hash)
+        for header in sorted_headers:
+            self.logger.debug(f"new block tip height: {header.height}")
             block_headers.connect(header.raw)
 
         # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
         self.storage.block_headers.flush()
+
+        block_numbers = self.ipc_sock_client.block_number_batched(blocks_batch_set).block_numbers
+        block_hash_to_num_map = dict(zip(blocks_batch_set, block_numbers))
+        header_rows = []
+        for header in sorted_headers:
+            blk_num = block_hash_to_num_map[header.hash]
+            row = (blk_num, header.hash.hex(), header.height, header.raw.hex())
+            header_rows.append(row)
+        self.mysql_db.bulk_loads.mysql_bulk_load_headers(header_rows)
+
         # ? Add reorg and other sanity checks later here...
 
         tip = self.sync_state.get_local_block_tip()

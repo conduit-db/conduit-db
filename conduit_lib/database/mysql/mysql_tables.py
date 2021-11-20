@@ -184,6 +184,15 @@ class MySQLTables:
             );
             """)
 
+        self.mysql_conn.query(f"""
+            CREATE TABLE IF NOT EXISTS headers (
+                block_num INT PRIMARY KEY,
+                block_hash BINARY(32),
+                block_height INT,
+                block_header BINARY(80)
+            ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+            """)
+
     def mysql_create_temp_mined_tx_hashes_table(self):
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (

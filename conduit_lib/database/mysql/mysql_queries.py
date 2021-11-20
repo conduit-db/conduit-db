@@ -48,15 +48,11 @@ class MySQLQueries:
             inbound_tx_table_name: str):
         """columns: tx_hashes, blk_height"""
         self.mysql_tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
-        outfile = Path(str(uuid.uuid4()) + ".csv")
-        try:
-            string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
-            column_names = ['inbound_tx_hashes']
-            self.bulk_loads._load_data_infile(f'{inbound_tx_table_name}', string_rows, column_names,
-                binary_column_indices=[0])
-        finally:
-            if os.path.exists(outfile):
-                os.remove(outfile)
+        string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
+        column_names = ['inbound_tx_hashes']
+        self.bulk_loads._load_data_infile(f'{inbound_tx_table_name}', string_rows, column_names,
+            binary_column_indices=[0])
+
 
     def mysql_get_unprocessed_txs(self, new_tx_hashes: list[tuple[str]],
             inbound_tx_table_name: str) -> Optional[Tuple[bytes, bytes, int, bytes]]:
