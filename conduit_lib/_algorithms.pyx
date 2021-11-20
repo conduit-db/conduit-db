@@ -170,12 +170,12 @@ cpdef (list) get_pk_and_pkh_from_script(array.array[unsigned char] script):
 
 
 @cython.boundscheck(False)
-cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, unsigned int height_or_timestamp,
+cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, unsigned int blk_num_or_timestamp,
         unsigned int confirmed, unsigned int first_tx_pos_batch):
     """
     This function is dual-purpose - it can:
-    1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
-    2) ingest mempool rawtxs (buffer=rawtx) and the height_or_timestamp=datetime.now()
+    1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
+    2) ingest mempool rawtxs (buffer=rawtx) and the blk_num_or_timestamp=datetime.now()
 
     This obviates the need for duplicated code and makes it possible to do batch processing of
     mempool transactions at a later date (where buffer=contiguous array of rawtxs)
@@ -293,14 +293,14 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
                 tx_rows.append(
                     (
                         tx_hash.hex(),
-                        height_or_timestamp,
+                        blk_num_or_timestamp,
                         tx_pos,
                         tx_offset_start + adjustment,
                         next_tx_offset + adjustment,
                     )
                 )
             else:
-                tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
+                tx_rows.append((tx_hash.hex(), blk_num_or_timestamp, rawtx.hex()))
         assert len(tx_rows) == count_txs
         return tx_rows, list(in_rows), list(out_rows), list(set_pd_rows)
     except Exception as e:

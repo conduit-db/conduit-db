@@ -5,7 +5,6 @@ from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet
     Headers, MissingHeader, Network, )
 from typing import Optional, List
 
-
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .peers import Peer
 from .utils import cast_to_valid_ipv4
@@ -153,7 +152,7 @@ class NetworkConfig:
         self.MAGIC = network.MAGIC
         self.PORT = network.PORT
         self.DNS_SEEDS = network.DNS_SEEDS
-        self.BITCOINX_COIN: Coin = network.BITCOINX_COIN
+        self.BITCOINX_COIN: Network = network.BITCOINX_COIN
         self.CHECKPOINT: CheckPoint = network.CHECKPOINT
 
         self.peers: List[Peer] = []

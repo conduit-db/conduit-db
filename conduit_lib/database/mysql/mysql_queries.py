@@ -27,13 +27,13 @@ class MySQLQueries:
         self.mysql_db = mysql_db
 
     def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes):
-        """columns: tx_hashes, blk_height"""
+        """columns: tx_hashes, blk_num"""
         self.mysql_tables.mysql_create_temp_mined_tx_hashes_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s\n" % (row) for row in mined_tx_hashes]
-            column_names = ['mined_tx_hash', 'blk_height']
+            column_names = ['mined_tx_hash', 'blk_num']
             self.bulk_loads._load_data_infile("temp_mined_tx_hashes", string_rows, column_names,
                 binary_column_indices=[0])
         finally:
@@ -88,16 +88,13 @@ class MySQLQueries:
     #     )
     #     self.logger.debug(f"get_temp_mined_tx_hashes: {result}")
 
-    def mysql_invalidate_mempool_rows(self, api_block_tip_height: int):
-        """Need to deal with collisions here"""
-        # Todo - block height is unreliable.. should be done based on block_hash
-        self.logger.debug(f"Deleting mempool txs based on block height")
+    def mysql_invalidate_mempool_rows(self):
+        self.logger.debug(f"Deleting mined mempool txs")
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (
                 SELECT mined_tx_hash 
                 FROM temp_mined_tx_hashes 
-                WHERE blk_height <= {api_block_tip_height}
             );
             """
         # NOTE: It would have been nice to count the rows that were deleted for accounting
@@ -117,32 +114,40 @@ class MySQLQueries:
         self.mysql_conn.query(query)
         self.mysql_db.commit_transaction()
 
-    # Todo - lol - this is a full table scan...
-    #  instead should use LMDB index to get the lists of tx_hashes from the highest conceivable
-    #  height of the highest txn (which would be calculated by local_block_tip_height + current
-    #  max main batch size...
-    #  Then would need to ensure all of those txs are purged from the database
-    def mysql_get_max_tx_height(self) -> Optional[int]:
+    def mysql_get_max_allocated_block_num(self) -> Optional[int]:
         query = f"""
-            SELECT MAX(tx_height) FROM confirmed_transactions;
+            SELECT max_work_allocated_block_num FROM sync_state;
             """
         self.mysql_conn.query(query)
         result = self.mysql_conn.store_result()
-
-        result_unpacked = result.fetch_row(0)[0][0]
-        if result_unpacked is not None:
+        if len(result.fetch_row(0)) != 0:
+            result_unpacked = result.fetch_row(0)[0][0]
             return int(result_unpacked)
         return
 
-    def mysql_get_txids_above_last_good_height(self, last_good_height: int):
+    def mysql_update_sync_state(self, max_work_allocated_block_num: int,
+            max_work_allocated_block_hash: bytes):
+        # This is the most efficient way I can currently think of for tracking the max block
+        # number / block_hash that has (potentially) been flushed to MySQL. This is used in the
+        # event of a sudden crash and db repair when I use the arrays of tx_hashes in ConduitRaw
+        # to delete any "unsafe" transactions from all tables...
+        max_work_allocated_block_hash_hex = bitcoinx.hash_to_hex_str(max_work_allocated_block_hash)
+        query = f"""
+            REPLACE INTO sync_state(id, max_work_allocated_block_num, max_work_allocated_block_hash) 
+            VALUES(0, {max_work_allocated_block_num}, X'{max_work_allocated_block_hash_hex}')
+            """
+        # self.logger.debug(query)
+        self.mysql_conn.query(query)
+
+    def mysql_get_txids_above_last_good_block_num(self, last_good_block_num: int):
         """This query will do a full table scan and so will not scale - instead would need to
         pull txids by blockhash from merkleproof to get the set of txids..."""
-        assert isinstance(last_good_height, int)
+        assert isinstance(last_good_block_num, int)
         query = f"""
             SELECT tx_hash 
             FROM confirmed_transactions 
-            WHERE tx_height >{last_good_height} 
-            ORDER BY tx_height DESC;
+            WHERE tx_block_num > {last_good_block_num} 
+            ORDER BY tx_block_num DESC;
             """
         # self.logger.debug(query)
         self.mysql_conn.query(query)

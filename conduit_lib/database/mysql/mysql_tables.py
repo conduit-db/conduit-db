@@ -90,13 +90,13 @@ class MySQLTables:
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS confirmed_transactions (
                 tx_hash BINARY({HashXLength}),
-                tx_height INT UNSIGNED,
+                tx_block_num INT UNSIGNED,
                 tx_position BIGINT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
 
         self.mysql_conn.query("""
-            CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash, tx_height);
+            CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash);
             """)
 
         # block_offset is relative to start of rawtx
@@ -176,11 +176,19 @@ class MySQLTables:
             );
             """)
 
+        self.mysql_conn.query("""
+            CREATE TABLE IF NOT EXISTS sync_state (
+                id INT PRIMARY KEY,
+                max_work_allocated_block_num INT,
+                max_work_allocated_block_hash BINARY(32)
+            );
+            """)
+
     def mysql_create_temp_mined_tx_hashes_table(self):
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
                 mined_tx_hash BINARY({HashXLength}),
-                blk_height BIGINT,
+                blk_num BIGINT,
                 INDEX USING HASH (mined_tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)

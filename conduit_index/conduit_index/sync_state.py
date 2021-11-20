@@ -15,6 +15,7 @@ from bitcoinx import Headers, hash_to_hex_str, unpack_header, double_sha256
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
+from conduit_lib.ipc_sock_msg_types import BlockNumberBatchedResponse
 from conduit_lib.store import Storage
 from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
@@ -225,10 +226,13 @@ class SyncState:
         Todo:   Test for 1 x 4GB transaction - what happens if it exceeds CHIP_AWAY_BYTE_SIZE_LIMIT?
                 Test for 1 x 4GB block with CHIP_AWAY_BYTE_SIZE_LIMIT == 40MB -> BATCH_COUNT = 100
         """
-
+        ipc_sock_client = IPCSocketClient()
         total_allocation = 0
         remaining_work = []
         work_for_this_batch = []
+
+        max_blk_height = 0
+        max_blk_hash = None
         for idx, work_unit in enumerate(remaining_work_units):
             size_of_part, work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
                 tx_offsets = work_unit
@@ -244,7 +248,14 @@ class SyncState:
             total_allocation += size_of_part
             work_for_this_batch.append(work_unit)
             self.add_pending_chip_away_work_item(work_item_id, len(tx_offsets))
+            if max_blk_height < blk_height:
+                max_blk_height = blk_height
+                max_blk_hash = blk_hash
 
+        if max_blk_hash:
+            block_num: int = ipc_sock_client.block_number_batched([max_blk_hash]).block_numbers[0]
+            self.controller.mysql_db.queries.mysql_update_sync_state(
+                max_work_allocated_block_num=block_num, max_work_allocated_block_hash=max_blk_hash)
         return remaining_work, work_for_this_batch
 
     def get_main_batch(self, main_batch_tip: bitcoinx.Header) -> Tuple[Set[bytes], MainBatch]:
@@ -308,6 +319,7 @@ class SyncState:
     def reset_pending_blocks(self):
         self._pending_blocks_progress_counter = {}
         self.expected_work_item_tx_counts = {}
+        self.expected_blocks_tx_counts = {}
 
     # ----- SUPERVISE 'CHIP AWAY' BATCH COMPLETIONS ----- #
     # This batch can be as small as system resources need it to be (even small parts of a block)

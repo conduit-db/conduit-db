@@ -94,8 +94,8 @@ class MySQLDatabase:
     def mysql_get_unprocessed_txs(self, new_tx_hashes, inbound_tx_table_name):
         return self.queries.mysql_get_unprocessed_txs(new_tx_hashes, inbound_tx_table_name)
 
-    def mysql_invalidate_mempool_rows(self, api_block_tip_height: int):
-        self.queries.mysql_invalidate_mempool_rows(api_block_tip_height)
+    def mysql_invalidate_mempool_rows(self):
+        self.queries.mysql_invalidate_mempool_rows()
 
     def mysql_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
         self.queries.mysql_update_api_tip_height_and_hash(api_tip_height, api_tip_hash)

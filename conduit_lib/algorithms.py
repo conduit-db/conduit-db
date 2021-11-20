@@ -146,8 +146,8 @@ def parse_txs(
         confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, List, List, List]:
     """
     This function is dual-purpose - it can:
-    1) ingest raw_blocks (buffer=raw_block) and the height_or_timestamp=height
-    2) ingest mempool rawtxs (buffer=rawtx) and the height_or_timestamp=datetime.now()
+    1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
+    2) ingest mempool rawtxs (buffer=rawtx) and the blk_num_or_timestamp=datetime.now()
 
     This obviates the need for duplicated code and makes it possible to do batch processing of
     mempool transactions at a later date (where buffer=contiguous array of rawtxs)

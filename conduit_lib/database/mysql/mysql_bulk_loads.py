@@ -157,7 +157,7 @@ class MySQLBulkLoads:
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
-            column_names = ['tx_hash', 'tx_height', 'tx_position']
+            column_names = ['tx_hash', 'tx_block_num', 'tx_position']
             self._load_data_infile("confirmed_transactions", string_rows, column_names,
                 binary_column_indices=[0])
         except MySQLdb._exceptions.IntegrityError as e:

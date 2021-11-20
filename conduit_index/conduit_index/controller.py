@@ -2,6 +2,7 @@ import typing
 from asyncio import BufferedProtocol
 
 import bitcoinx
+import cbor2
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
 import logging
 import os
@@ -118,21 +119,21 @@ class Controller:
         # PUB-SUB from Controller to worker to signal when initial block download is in effect
         # Defined as when the local chain tip is within 24 hours of the best known chain tip
         # This is the same definition that the reference bitcoin-sv node uses.
-        context3 = AsyncZMQContext.instance()
-        self.is_ibd_socket = context3.socket(zmq.PUB)
+        context4 = AsyncZMQContext.instance()
+        self.is_ibd_socket = context4.socket(zmq.PUB)
         self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
         self.ibd_signal_sent = False
 
-        zmq_tx_parse_ack_ctx = AsyncZMQContext.instance()
+        context5 = AsyncZMQContext.instance()
+        self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)
+        self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
 
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
-        self.worker_ack_queue_mined_tx_hashes = multiprocessing.Queue()  # blk_height:tx_hashes
 
         # Batch Completion
         self.tx_parser_completion_queue = asyncio.Queue()
 
-        self.global_tx_hashes_dict = {}  # blk_height:tx_hashes
-        self.mined_tx_hashes_queue_waiter_executor = ThreadPoolExecutor(max_workers=1)
+        self.global_tx_hashes_dict = {}  # blk_num:tx_hashes
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
 
         # Database Interfaces
@@ -297,7 +298,6 @@ class Controller:
             p = TxParser(
                 worker_id+1,
                 self.worker_ack_queue_tx_parse_confirmed,
-                self.worker_ack_queue_mined_tx_hashes,
             )
             p.start()
             self.processes.append(p)
@@ -313,20 +313,24 @@ class Controller:
         what was safetly flushed to disc... It will not be fast at scan but is better than
         re-syncing the whole chain. It can be thought of as a last resort db repair process."""
         # Safe block tip height
-        last_good_block_height = self.sync_state.get_local_block_tip_height()
-        self.logger.debug(f"last_good_block_height={last_good_block_height}")
+        last_good_block_tip = self.sync_state.get_local_block_tip()
+        if last_good_block_tip.height == 0:
+            last_good_block_tip_num = 0
+        else:
+            last_good_block_tip_num = self.ipc_sock_client.block_number_batched([last_good_block_tip.hash]).block_numbers[0]
+            self.logger.debug(f"last_good_block_tip_num={last_good_block_tip_num}")
 
-        # Get max flushed tx height
-        max_flushed_tx_height = self.mysql_db.queries.mysql_get_max_tx_height()
-        if not max_flushed_tx_height:
+        # Get max allocated tx block num
+        max_allocated_block_num = self.mysql_db.queries.mysql_get_max_allocated_block_num()
+        if not max_allocated_block_num:
             return
-        self.logger.debug(f"max_flushed_tx_height={max_flushed_tx_height}")
-        if max_flushed_tx_height == last_good_block_height:
+        self.logger.debug(f"max_allocated_block_num={max_allocated_block_num}")
+        if max_allocated_block_num == last_good_block_tip_num:
             return
 
         # Check for any "Unsafe" flushed txs (above the safe tip height)
-        unsafe_tx_rows = self.mysql_db.queries.mysql_get_txids_above_last_good_height(
-            last_good_block_height)
+        unsafe_tx_rows = self.mysql_db.queries.mysql_get_txids_above_last_good_block_num(
+            last_good_block_tip_num)
 
         # Do rollback
         self.mysql_db.queries.mysql_rollback_unsafe_txs(unsafe_tx_rows)
@@ -357,42 +361,56 @@ class Controller:
         header = headers.header_at_height(chain, height)
         return header
 
+    def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]):
+        expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
+        expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes).block_numbers
+        block_hash_to_num_map = dict(zip(expected_block_hashes, expected_block_nums))
+
+        for block_hash in expected_block_hashes:
+            block_num = block_hash_to_num_map[block_hash]
+            processed_tx_count = len(global_tx_hashes_dict.get(block_num, 0))
+            expected_tx_count = self.sync_state.expected_blocks_tx_counts[block_hash]
+            if expected_tx_count != processed_tx_count:
+                return False
+        else:
+            return True
+
     async def update_mempool_and_api_tip_atomic(self, api_block_tip_height, api_block_tip_hash):
         # Get all tx_hashes up to api_block_tip_height
         # Must ATOMICALLY:
         #   1) invalidate mempool rows (that have been mined)
         #   2) update api chain tip
 
-        # 1) Drain queue
+        # 1) Drain queue & Update dictionary of block_num -> tx hashes processed
         new_mined_tx_hashes = {}
-        # Todo - Relying on multiprocessing queue.empty() may be fragile...
-        #  However, probably okay for now given step-wise design/pipeline
-        while not self.worker_ack_queue_mined_tx_hashes.empty():
-            new_mined_tx_hashes = await self.loop.run_in_executor(
-                self.mined_tx_hashes_queue_waiter_executor,
-                self.worker_ack_queue_mined_tx_hashes.get)
+        all_blocks_processed = False
+        while not all_blocks_processed:
+            message = await self.ack_for_mined_tx_socket.recv()
+            new_mined_tx_hashes = cbor2.loads(message)
 
-        # 2) Update dict
-        for blk_height, new_hashes in new_mined_tx_hashes.items():
-            if not self.global_tx_hashes_dict.get(blk_height):
-                self.global_tx_hashes_dict[blk_height] = []
-            self.global_tx_hashes_dict[blk_height].extend(new_hashes)
+            for blk_num, new_hashes in new_mined_tx_hashes.items():
+                if not self.global_tx_hashes_dict.get(blk_num):
+                    self.global_tx_hashes_dict[blk_num] = []
+                self.global_tx_hashes_dict[blk_num].extend(new_hashes)
+            if len(self.global_tx_hashes_dict) == len(self.sync_state.expected_blocks_tx_counts):
+                t0 = time.time()
+                all_blocks_processed = self.all_blocks_processed(self.global_tx_hashes_dict)
+                t_diff = time.time() - t0
 
-        # 3) Transfer from dict -> Temp Table for Table join with Mempool table
-        for blk_height, new_mined_tx_hashes in new_mined_tx_hashes.items():
-            if blk_height <= api_block_tip_height:
-                mined_tx_hashes = []
-                for tx_hash in self.global_tx_hashes_dict[blk_height]:
-                    mined_tx_hashes.append((tx_hash.hex(), blk_height))
+        # 2) Transfer from dict -> Temp Table for Table join with Mempool table
+        mined_tx_hashes = []
+        for blk_num, new_mined_tx_hashes in self.global_tx_hashes_dict.items():
+            for tx_hash in new_mined_tx_hashes:
+                mined_tx_hashes.append((tx_hash.hex(), blk_num))
 
-                self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-                del self.global_tx_hashes_dict[blk_height]
+        self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
+        self.global_tx_hashes_dict = {}
 
-        # 4) Invalidate mempool rows (that have been mined) ATOMICALLY
+        # 3) Invalidate mempool rows that have been mined ATOMICALLY
         self.logger.debug(f"Invalidating relevant mempool transactions...")
         self.mysql_db.start_transaction()
         try:
-            self.mysql_db.mysql_invalidate_mempool_rows(api_block_tip_height)
+            self.mysql_db.mysql_invalidate_mempool_rows()
             self.mysql_db.mysql_drop_temp_mined_tx_hashes()
             self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
                 api_block_tip_hash)
@@ -400,6 +418,7 @@ class Controller:
             self.mysql_db.commit_transaction()
 
     async def sanity_checks_and_update_api_tip(self):
+        t0 = time.time()
         api_block_tip_height = self.sync_state.get_local_block_tip_height()
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
@@ -411,6 +430,8 @@ class Controller:
             # No txs in mempool until is_ibd == True
             self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
                 api_block_tip_hash)
+        t_diff = time.time() - t0
+        self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return api_block_tip_height
 
     async def connect_done_block_headers(self, blocks_batch_set):
@@ -459,8 +480,7 @@ class Controller:
                 self.logger.exception(e)
                 raise
 
-    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
-        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+    async def check_for_ibd_status(self, conduit_best_tip):
         local_tip = self.storage.headers.longest_chain().tip
         if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
                 and not self.ibd_signal_sent:
@@ -472,6 +492,7 @@ class Controller:
             await self.handshake_complete_event.wait()
             await self.request_mempool()
 
+    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
         deserialized_header = None
         ipc_sock_client = None
         while True:
@@ -493,7 +514,9 @@ class Controller:
                 if deserialized_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {deserialized_header.height}")
-                    return deserialized_header, conduit_best_tip.height
+
+                    await self.check_for_ibd_status(deserialized_header)
+                    return deserialized_header, deserialized_header.height
                 else:
                     continue
             except Exception:
@@ -579,13 +602,11 @@ class Controller:
                     self.sync_state.reset_pending_chip_away_work_items()
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
-                self.sync_state.reset_pending_blocks()
                 api_block_tip_height = await self.sanity_checks_and_update_api_tip()
-                self.logger.debug(f"maintain_chain_tip - new block tip height: "
-                    f"{api_block_tip_height}")
+                self.sync_state.reset_pending_blocks()
                 # ------------------------- Batch complete ------------------------- #
                 self.logger.debug(f"Controller Batch {batch_id} Complete. "
-                    f"New tip height: {self.sync_state.get_local_block_tip_height()}")
+                    f"New tip height: {api_block_tip_height}")
 
         try:
             # up to 500 blocks per loop

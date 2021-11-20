@@ -14,3 +14,4 @@ REM docker-compose -f docker-compose.yml down
 REM docker volume prune --force
 REM docker-compose -f docker-compose.yml build %* --parallel
 REM docker-compose -f docker-compose.yml up
+t

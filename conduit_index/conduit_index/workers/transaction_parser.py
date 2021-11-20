@@ -13,6 +13,7 @@ from datetime import datetime
 
 from typing import Tuple, List, Sequence, Optional, Dict, cast
 
+import cbor2
 import zmq
 from MySQLdb import _mysql
 
@@ -53,8 +54,7 @@ class TxParser(multiprocessing.Process):
     ack_mempool: tx_counts
     """
 
-    def __init__(self, worker_id, worker_ack_queue_tx_parse_confirmed,
-            worker_ack_queue_mined_tx_hashes, ):
+    def __init__(self, worker_id, worker_ack_queue_tx_parse_confirmed):
         super(TxParser, self).__init__()
         self.worker_id = worker_id
 
@@ -64,7 +64,6 @@ class TxParser(multiprocessing.Process):
 
         self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
-        self.worker_ack_queue_mined_tx_hashes = worker_ack_queue_mined_tx_hashes
 
         self.confirmed_tx_flush_queue = None
         self.mempool_tx_flush_queue = None
@@ -373,7 +372,8 @@ class TxParser(multiprocessing.Process):
             tx_offsets = array.array("Q", [0])
             rawtx = array.array('B', rawtx)
             timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
-            result: Tuple[List, List, List, List] = parse_txs(rawtx, tx_offsets, timestamp, False)
+            result: Tuple[List, List, List, List] = parse_txs(
+                rawtx, tx_offsets, timestamp, False, 0)
             tx_rows, in_rows, out_rows, set_pd_rows = result
             tx_rows_batched.extend(tx_rows)
             in_rows_batched.extend(in_rows)
@@ -547,7 +547,7 @@ class TxParser(multiprocessing.Process):
 
             # These txs have no entries yet for inputs, pushdata or output tables
             rows_not_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block_slice,
-                non_mempool_tx_offsets[work_item], blk_height, True, first_tx_pos_batch)
+                non_mempool_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
             tx_rows, in_rows, out_rows, set_pd_rows = rows_not_previously_in_mempool
 
             # Mempool txs already have entries for inputs, pushdata or output tables so we handle
@@ -556,14 +556,14 @@ class TxParser(multiprocessing.Process):
             if have_mempool_txs:
                 self.logger.debug(f"mempool_tx_offsets[work_item]={mempool_tx_offsets[work_item]}")
                 rows_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block_slice,
-                    mempool_tx_offsets[work_item], blk_height, True, first_tx_pos_batch)
+                    mempool_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
                 tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
                 tx_rows.extend(tx_rows_now_confirmed)
 
             self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
 
     def process_work_items(self, work_items: List[bytes], ipc_socket_client: IPCSocketClient,
-            mysql_db: MySQLDatabase):
+            mysql_db: MySQLDatabase, ack_for_mined_tx_socket: zmq.Socket):
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
         iteratively.
@@ -581,10 +581,11 @@ class TxParser(multiprocessing.Process):
         self.parse_txs_and_push_to_queue(non_mempool_tx_offsets, mempool_tx_offsets,
             batched_raw_block_slices)
 
-        for blk_height, work_item_id, blk_hash, part_tx_hashes in acks:
+        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
             num_txs = len(part_tx_hashes)
             self.confirmed_tx_flush_ack_queue.put((work_item_id, blk_hash, num_txs))
-            self.worker_ack_queue_mined_tx_hashes.put({blk_height: part_tx_hashes})
+            msg = cbor2.dumps({blk_num: part_tx_hashes})
+            ack_for_mined_tx_socket.send(msg)
 
     def mined_blocks_thread(self):
         work_items = []
@@ -593,6 +594,10 @@ class TxParser(multiprocessing.Process):
         context: zmq.Context = zmq.Context()
         mined_tx_socket: zmq.Socket = context.socket(zmq.PULL)
         mined_tx_socket.connect("tcp://127.0.0.1:55555")
+
+        context2 = zmq.Context()
+        ack_for_mined_tx_socket = context2.socket(zmq.PUSH)
+        ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
@@ -609,7 +614,8 @@ class TxParser(multiprocessing.Process):
                         if time_diff > self.BLOCK_BATCHING_RATE:
                             prev_time_check = time.time()
                             if work_items:
-                                self.process_work_items(work_items, ipc_socket_client, mysql_db)
+                                self.process_work_items(work_items, ipc_socket_client, mysql_db,
+                                    ack_for_mined_tx_socket)
                             work_items = []
                 except zmq.error.Again:
                     self.logger.debug(f"zmq.error.Again")
@@ -621,6 +627,7 @@ class TxParser(multiprocessing.Process):
         finally:
             self.logger.info("Closing mined_blocks_thread")
             mined_tx_socket.close()
+            ack_for_mined_tx_socket.close()
             context.term()
 
     def main_thread(self):

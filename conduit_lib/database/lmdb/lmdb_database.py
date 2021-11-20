@@ -105,7 +105,7 @@ class LMDB_Database:
         with self.env.begin(db=self.block_nums_db) as txn:
             result = txn.get(block_hash)
             if result:
-                return struct_be_I.unpack(txn.get(block_hash))[0]
+                return struct_be_I.unpack(result)[0]
             raise EntryNotFound(f"Block num for block_hash: "
                                 f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
 
