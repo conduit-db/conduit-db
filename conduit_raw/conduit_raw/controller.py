@@ -20,6 +20,7 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.utils import cast_to_valid_ipv4
 from conduit_lib.wait_for_dependencies import wait_for_node
+from .aiohttp_api import server_main
 
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
@@ -326,6 +327,7 @@ class Controller:
         try:
             thread = threading.Thread(target=self.ipc_sock_server_thread)
             thread.start()
+            await self.spawn_aiohttp_api()
             await self.spawn_handler_tasks()
             await self.handshake_complete_event.wait()
 
@@ -567,3 +569,6 @@ class Controller:
         await loop.run_in_executor(self.executor, self.lmdb.sync)
         t1 = time.perf_counter() - t0
         self.logger.debug(f"Flush for batch took {t1} seconds")
+
+    async def spawn_aiohttp_api(self):
+        self.tasks.append(asyncio.create_task(server_main.main()))

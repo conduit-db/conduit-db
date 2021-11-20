@@ -130,6 +130,17 @@ class LMDB_Database:
                 len_of_slice = end_offset - start_offset
                 return f.read(len_of_slice)
 
+    def get_tx_hashes_by_tx_loc(self, tx_locs: list[tuple[bytes, int]]) -> dict[tuple[bytes, int], bytes]:
+        """Todo: Merkle Tree rows need to be stored in flat files the same way that blocks are"""
+        with self.env.begin(db=self.mtree_db) as txn:
+            level = 0  # base level with tx hashes (rather than internal merkle tree node hashes)
+            tx_hashes = {}  # tx_loc: tx_hash
+            for blockhash, tx_pos in tx_locs:
+                tx_hashes_bytes = txn.get(blockhash, struct_le_I.pack(level))
+                tx_hash = tx_hashes_bytes[tx_pos*32:(tx_pos+1)*32]
+                tx_hashes[(blockhash, tx_pos)] = tx_hash
+        return tx_hashes
+
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
             return txn.get(blk_hash + struct_le_I.pack(level))
