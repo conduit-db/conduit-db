@@ -7,6 +7,7 @@ from functools import partial
 import MySQLdb
 from MySQLdb import _mysql
 
+from .mysql_api_queries import MySQLAPIQueries
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_queries import MySQLQueries
 from .mysql_tables import MySQLTables
@@ -23,6 +24,7 @@ class MySQLDatabase:
         self.tables = MySQLTables(self.mysql_conn)
         self.bulk_loads = MySQLBulkLoads(self.mysql_conn, self)
         self.queries = MySQLQueries(self.mysql_conn, self.tables, self.bulk_loads, self)
+        self.api_queries = MySQLAPIQueries(self.mysql_conn, self.tables, self)
 
         self.start_transaction()
         # self.bulk_loads.set_rocks_db_bulk_load_off()

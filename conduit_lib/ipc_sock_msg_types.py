@@ -8,13 +8,14 @@ from typing import Optional
 import cbor2
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib.types import BlockMetadata, BlockSliceRequestType
+
 try:
     from conduit_lib import ipc_sock_commands
 except ImportError:
     import rs_server_commands
 
 
-BlockSliceRequestType = tuple[int, tuple[int, int]]  # (block_num, (start_offset, end_offset))
 BlockHashes = list[bytes]
 
 
@@ -197,6 +198,7 @@ class MerkleTreeRowResponse(BaseMsg):
         super().__init__()
         self.mtree_row = mtree_row
 
+    # Cbor serialization is not used for efficiency
     def to_cbor(self) -> bytes:
         return cbor2.dumps({'command': self.command, 'mtree_row': self.mtree_row})
 
@@ -252,15 +254,17 @@ class BlockMetadataBatchedRequest(BaseMsg):
 class BlockMetadataBatchedResponse(BaseMsg):
     command = ipc_sock_commands.BLOCK_METADATA_BATCHED
 
-    def __init__(self, block_sizes_batch: list[int], command: Optional[str]=None):
+    def __init__(self, block_metadata_batch: list[BlockMetadata], command: Optional[str]=None):
         super().__init__()
-        self.block_sizes_batch = block_sizes_batch
+        # Cast to BlockMetadata again because cbor converts tuples to lists
+        self.block_metadata_batch = [BlockMetadata(block_size, tx_count) for block_size, tx_count in block_metadata_batch]
+
 
     def to_cbor(self) -> bytes:
-        return cbor2.dumps({'command': self.command, 'block_sizes_batch': self.block_sizes_batch})
+        return cbor2.dumps({'command': self.command, 'block_metadata_batch': self.block_metadata_batch})
 
     def to_json(self) -> str:
-        return json.dumps({'command': self.command, 'block_sizes_batch': self.block_sizes_batch})
+        return json.dumps({'command': self.command, 'block_metadata_batch': self.block_metadata_batch})
 
 
 class HeadersBatchedRequest(BaseMsg):

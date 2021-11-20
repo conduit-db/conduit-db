@@ -9,9 +9,13 @@ from typing import Generator
 import cbor2
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
-from conduit_lib import ipc_sock_msg_types
-from conduit_lib.ipc_sock_msg_types import BlockSliceRequestType
+from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
+from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
+from conduit_lib.types import BlockMetadata, BlockSliceRequestType
 from conduit_lib.utils import cast_to_valid_ipv4
+
+
+BatchedBlockSlices = bytearray
 
 
 class SocketServerError(Exception):
@@ -125,11 +129,15 @@ class IPCSocketClient:
             return self.block_number_batched(block_hashes)  # recurse
 
     def block_batched(self, block_requests: list[BlockSliceRequestType]) \
-            -> bytearray:
+            -> BatchedBlockSlices:
+        """The packing protocol is a contiguous array of:
+             block_number uint32,
+             len_slice uin64,
+             raw_block_slice bytes"""
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockBatchedRequest(block_requests)
-            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+            self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv
@@ -150,9 +158,9 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
-            msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(**cbor_obj)
-            # self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            command = ipc_sock_commands.MERKLE_TREE_ROW
+            msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(mtree_row=data, command=command)
+            self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
@@ -176,20 +184,19 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.transaction_offsets_batched(block_hashes)  # recurse
 
-    def block_metadata_batched(self, block_hashes: list[bytes]) \
-            -> list[int]:
+    def block_metadata_batched(self, block_hashes: list[bytes]) -> BlockMetadataBatchedResponse:
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(block_hashes)
-            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
+            self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv
             data = self.receive_data()
             cbor_obj = cbor2.loads(data)
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(**cbor_obj)
-            # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
-            return msg_resp.block_sizes_batch
+            self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
+            return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
             return self.block_metadata_batched(block_hashes)  # recurse

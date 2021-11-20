@@ -544,7 +544,6 @@ class TxParser(multiprocessing.Process):
             batched_raw_block_slices):
         # Todo - raw_block was re-allocated & can be avoided via memoryview over cached bytearray
         for raw_block_slice, work_item, blk_num, blk_height, first_tx_pos_batch in batched_raw_block_slices:
-
             # These txs have no entries yet for inputs, pushdata or output tables
             rows_not_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block_slice,
                 non_mempool_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)

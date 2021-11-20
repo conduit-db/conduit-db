@@ -22,6 +22,7 @@ CCODES = {
 LOGGING_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 
 HashXLength = 14
+MAX_UINT32 = 2**32 - 1
 
 HEADER_LENGTH = 24
 BLOCK_HEADER_LENGTH = 80

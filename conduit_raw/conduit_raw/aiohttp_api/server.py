@@ -12,6 +12,8 @@ import queue
 import threading
 from typing import Dict, NoReturn
 
+from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
 
@@ -33,6 +35,8 @@ class ApplicationState(object):
         self.logger = logging.getLogger('app_state')
         self.app = app
         self.loop = loop
+        self.mysql_db = load_mysql_database()
+        self.lmdb = LMDB_Database()
 
     def start_threads(self):
         pass
@@ -68,6 +72,8 @@ def get_aiohttp_app() -> web.Application:
     app.add_routes([
         web.get("/", handlers.ping),
         web.get("/error", handlers.error),
+        web.get("/api/v1/restoration/search", handlers.get_pushdata_filter_matches),
+        web.get("/api/v1/transaction/{txid}", handlers.get_transaction),
     ])
     return app
 

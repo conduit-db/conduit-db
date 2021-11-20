@@ -12,6 +12,7 @@ from MySQLdb import _mysql
 from bitcoinx import hash_to_hex_str
 
 from ...constants import PROFILING
+from ...types import BlockHeaderRow
 from ...utils import get_log_level
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -225,9 +226,10 @@ class MySQLBulkLoads:
             f"{len(unsafe_tx_rows)}"
         )
 
-    def mysql_bulk_load_headers(self, block_header_rows: list[int, str, int, str]):
+    def mysql_bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]):
         """block_num, block_hash, block_height, block_header"""
-        string_rows = ["%s,%s,%s,%s\n" % (row) for row in block_header_rows]
-        column_names = ['block_num', 'block_hash', 'block_height', 'block_header']
+        string_rows = ["%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
+        column_names = ['block_num', 'block_hash', 'block_height', 'block_header', 'block_tx_count',
+            'block_size']
         self._load_data_infile(f'headers', string_rows, column_names,
             binary_column_indices=[1, 3])

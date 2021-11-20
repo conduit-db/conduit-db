@@ -13,12 +13,7 @@ from typing import Optional, Dict
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-
-try:
-    pass
-except ImportError:
-    import rs_msg_types
-
+from conduit_lib.ipc_sock_msg_types import MerkleTreeRowResponse
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 
 struct_be_Q = struct.Struct(">Q")
@@ -122,11 +117,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     def stop(self, msg: Dict):
         # Request
         msg_req = ipc_sock_msg_types.StopRequest(**msg)
-        # logger.debug(f"Got {ipc_sock_commands.STOP} request: {msg_req}")
+        logger.debug(f"Got {ipc_sock_commands.STOP} request: {msg_req}")
+
+        self.server.shutdown()
 
         # Response
         msg_resp = ipc_sock_msg_types.StopResponse()
-        # logger.debug(f"Sending {ipc_sock_commands.STOP} response: {msg_resp}")
+        logger.debug(f"Sending {ipc_sock_commands.STOP} response: {msg_resp}")
         return self.send_msg(msg_resp.to_cbor())
 
     def chain_tip(self, msg: Dict):
@@ -165,7 +162,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockBatchedRequest(**msg)
-            # logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+            logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
 
             # Response
             raw_blocks_array = bytearray()
@@ -178,10 +175,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
                     block_number, len_slice, raw_block_slice)
 
-            # len_bytearray = len(raw_blocks_array)
-            # payload = struct.pack(f"<{len_bytearray}s", raw_blocks_array)
-            # logger.debug(f"Sending block_batched response: len_bytearray: {len_bytearray}")
-            # logger.debug(f"Sending block_batched response: len(payload): {len(payload)}")
+            logger.debug(f"Sending block_batched response: len(raw_blocks_array): {len(raw_blocks_array)}")
 
             # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if raw_blocks_array:
@@ -199,8 +193,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
             # Response
             mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
-            # msg_resp = rs_msg_types.MerkleTreeRowResponse(mtree_row=mtree_row)
-            # logger.debug(f"Sending {rs_server_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            msg_resp = MerkleTreeRowResponse(mtree_row=mtree_row)
+            logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
 
             # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if mtree_row:
@@ -237,11 +231,11 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             # logger.debug(f"Got {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
 
             # Response
-            block_sizes_batch = []
+            block_metadata_batch = []
             for block_hash in msg_req.block_hashes:
-                block_size = self.server.lmdb.get_block_metadata(block_hash)
-                block_sizes_batch.append(block_size)
-            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(block_sizes_batch=block_sizes_batch)
+                block_metadata = self.server.lmdb.get_block_metadata(block_hash)
+                block_metadata_batch.append(block_metadata)
+            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(block_metadata_batch=block_metadata_batch)
             # logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
             self.send_msg(msg_resp.to_cbor())
         except Exception:

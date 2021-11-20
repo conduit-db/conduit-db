@@ -174,7 +174,7 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
         unsigned int confirmed, unsigned int first_tx_pos_batch):
     """
     This function is dual-purpose - it can:
-    1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
+    1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=blk_num
     2) ingest mempool rawtxs (buffer=rawtx) and the blk_num_or_timestamp=datetime.now()
 
     This obviates the need for duplicated code and makes it possible to do batch processing of
@@ -295,8 +295,6 @@ cpdef parse_txs(array.array buffer, array.array[unsigned long long] tx_offsets, 
                         tx_hash.hex(),
                         blk_num_or_timestamp,
                         tx_pos,
-                        tx_offset_start + adjustment,
-                        next_tx_offset + adjustment,
                     )
                 )
             else:

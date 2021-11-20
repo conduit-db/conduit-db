@@ -183,22 +183,22 @@ class SyncState:
             all_work_units = []
             work_item_id = 0
             for i, work in enumerate(all_work):
-                block_size, tx_offsets, block_header = work
+                block_size, tx_offsets, block_header, block_num = work
                 needs_breaking_up = \
                     block_size > SMALL_BLOCK_SIZE or block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
 
                 first_tx_pos_batch = 0
                 if needs_breaking_up:
                     tx_count = len(tx_offsets)
-                    divided_work = distribute_load(block_header.hash, block_header.height, tx_count,
+                    divided_work = distribute_load(block_header.hash, block_num, tx_count,
                         block_size, tx_offsets)
 
                     for work_part in divided_work:
-                        size_of_part, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+                        size_of_part, blk_hash, block_num, first_tx_pos_batch, part_end_offset, \
                             work_part_tx_offsets = work_part
 
                         # Adding work_item_id to WorkPart -> WorkUnit
-                        work_item: WorkUnit = size_of_part, work_item_id, blk_hash, blk_height, \
+                        work_item: WorkUnit = size_of_part, work_item_id, blk_hash, block_num, \
                             first_tx_pos_batch, part_end_offset, work_part_tx_offsets
                         all_work_units.append(work_item)
                         work_item_id += 1
@@ -207,11 +207,12 @@ class SyncState:
                     part_end_offset = block_size
                     size_of_part = block_size
                     all_work_units.append((size_of_part, work_item_id, block_header.hash,
-                        block_header.height, first_tx_pos_batch, part_end_offset, tx_offsets))
+                        block_num, first_tx_pos_batch, part_end_offset, tx_offsets))
                     work_item_id += 1
 
                 all_pending_block_hashes.add(block_header.hash)
                 self.add_pending_block(block_header.hash, len(tx_offsets))
+
             return all_work_units
         finally:
             t1 = time.perf_counter() - t0
@@ -231,10 +232,10 @@ class SyncState:
         remaining_work = []
         work_for_this_batch = []
 
-        max_blk_height = 0
+        max_blk_num = 0
         max_blk_hash = None
         for idx, work_unit in enumerate(remaining_work_units):
-            size_of_part, work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, \
+            size_of_part, work_item_id, blk_hash, blk_num, first_tx_pos_batch, part_end_offset, \
                 tx_offsets = work_unit
 
             # self.logger.debug(f"work_unit={work_unit}")
@@ -248,8 +249,8 @@ class SyncState:
             total_allocation += size_of_part
             work_for_this_batch.append(work_unit)
             self.add_pending_chip_away_work_item(work_item_id, len(tx_offsets))
-            if max_blk_height < blk_height:
-                max_blk_height = blk_height
+            if max_blk_num < blk_num:
+                max_blk_num = blk_num
                 max_blk_hash = blk_hash
 
         if max_blk_hash:
@@ -275,10 +276,13 @@ class SyncState:
             block_headers.append(block_header)
 
         header_hashes = [block_header.hash for block_header in block_headers]
-        block_sizes_batch = ipc_sock_client.block_metadata_batched(header_hashes)
+        block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
+        block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
         tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
+        block_numbers = ipc_sock_client.block_number_batched(header_hashes).block_numbers
 
-        all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers))
+        all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers,
+            block_numbers))
         return all_pending_block_hashes, all_work_units
 
     def incr_msg_received_count(self):

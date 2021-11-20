@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict
 import bitcoinx
 
 WorkUnit = Tuple[int, int, bytes, int, int, int, array.ArrayType]
-MainBatch = List[Tuple[int, array.ArrayType, bitcoinx.Header]]
+MainBatch = List[Tuple[int, array.ArrayType, bitcoinx.Header, int]]
 WorkPart = Tuple[int, bytes, int, int, int, array.ArrayType]
 BatchedRawBlockSlices = List[tuple[array.ArrayType, int, int, int, int]]
 ProcessedBlockAcks = List[tuple[int, int, bytes, list[bytes]]]

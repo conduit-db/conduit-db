@@ -189,9 +189,15 @@ class MySQLTables:
                 block_num INT PRIMARY KEY,
                 block_hash BINARY(32),
                 block_height INT,
-                block_header BINARY(80)
+                block_header BINARY(80),
+                block_tx_count BIGINT UNSIGNED,
+                block_size BIGINT UNSIGNED
             ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
             """)
+
+        self.mysql_conn.query("""
+            CREATE INDEX IF NOT EXISTS headers_idx ON headers (block_hash);
+        """)
 
     def mysql_create_temp_mined_tx_hashes_table(self):
         self.mysql_conn.query(f"""

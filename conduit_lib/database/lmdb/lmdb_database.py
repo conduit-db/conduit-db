@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+from io import BytesIO
 from pathlib import Path
 from struct import Struct
 from typing import List, Tuple, Dict, Optional
@@ -11,6 +12,9 @@ import bitcoinx
 import cbor2
 import lmdb
 from bitcoinx.packing import struct_le_Q
+
+from conduit_lib.algorithms import calc_mtree_base_level
+from conduit_lib.types import TxLocation, BlockMetadata
 
 try:
     from ...constants import PROFILING
@@ -77,6 +81,7 @@ class LMDB_Database:
         self.logger.debug(f"Getting next write path for raw blocks...")
         # This will do the initial scan and cache the correct self._last_dat_file_num
         self.next_write_path = self._get_next_write_path_for_blocks()
+        self.next_write_path = self._get_next_write_path_for_blocks()
         self.logger.debug(f"Next write path: {self.next_write_path}")
 
     def open(self):
@@ -119,27 +124,42 @@ class LMDB_Database:
             read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
 
         with open(read_path, 'rb') as f:
-            len_block = end_offset_in_dat_file - start_offset_in_dat_file
+            f.seek(start_offset_in_dat_file + start_offset)
             if end_offset == 0:
-                assert start_offset == 0, "Start offset must be zero when end offset is zero"
-                # Read the block in full
-                f.seek(start_offset_in_dat_file)
-                return f.read(len_block)
+                len_of_block = end_offset_in_dat_file - start_offset_in_dat_file
+                len_of_slice = len_of_block - start_offset
+                return f.read(len_of_slice)
             else:
-                f.seek(start_offset_in_dat_file + start_offset)
                 len_of_slice = end_offset - start_offset
                 return f.read(len_of_slice)
 
-    def get_tx_hashes_by_tx_loc(self, tx_locs: list[tuple[bytes, int]]) -> dict[tuple[bytes, int], bytes]:
+    def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
         """Todo: Merkle Tree rows need to be stored in flat files the same way that blocks are"""
         with self.env.begin(db=self.mtree_db) as txn:
-            level = 0  # base level with tx hashes (rather than internal merkle tree node hashes)
-            tx_hashes = {}  # tx_loc: tx_hash
-            for blockhash, tx_pos in tx_locs:
-                tx_hashes_bytes = txn.get(blockhash, struct_le_I.pack(level))
-                tx_hash = tx_hashes_bytes[tx_pos*32:(tx_pos+1)*32]
-                tx_hashes[(blockhash, tx_pos)] = tx_hash
-        return tx_hashes
+            tx_hashes_bytes = txn.get(tx_loc.block_hash + struct_le_I.pack(mtree_base_level))
+            tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
+            return tx_hash
+
+    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes:
+        with self.env.begin(write=False) as txn:
+            result = txn.get(tx_loc.block_hash, db=self.tx_offsets_db)
+            if result:
+                SIZE_UINT64_T = 8
+                tx_start_offset_bytes = result[tx_loc.tx_position: tx_loc.tx_position+SIZE_UINT64_T]
+                tx_start_offset = bitcoinx.unpack_le_uint64(tx_start_offset_bytes)[0]
+                tx_end_offset_bytes = result[tx_loc.tx_position+SIZE_UINT64_T: tx_loc.tx_position+SIZE_UINT64_T*2]
+                if tx_end_offset_bytes:
+                    tx_end_offset = bitcoinx.unpack_le_uint64(tx_end_offset_bytes)[0]
+                else:  # last tx position in block
+                    tx_end_offset = 0
+                # self.logger.debug(f"tx_start_offset={tx_start_offset}; "
+                #                   f"tx_end_offset={tx_end_offset}"
+                #                   f"tx_loc.tx_position={tx_loc.tx_position}; "
+                #                   f"tx_loc.block_hash={bitcoinx.hash_to_hex_str(tx_loc.block_hash)}")
+
+            block_slice = bytes(self.get_block(tx_loc.block_num, tx_start_offset, tx_end_offset))
+            rawtx = block_slice
+        return rawtx
 
     def get_mtree_row(self, blk_hash: bytes, level: int) -> bytes:
         with self.env.begin(db=self.mtree_db) as txn:
@@ -188,13 +208,15 @@ class LMDB_Database:
             tx = self.env.begin(write=True, buffers=False)
 
             block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
-            # print(f"block_nums={block_nums}")
+            # self.logger.debug(f"block_nums={block_nums}")
             start_offset = 0
             raw_blocks_arr = bytearray()
             write_path = self._get_next_write_path_for_blocks()
             for block_num, block_row in zip(block_nums, batched_blocks):
                 blk_hash, blk_start_pos, blk_end_pos = block_row
                 raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
+                stream = BytesIO(raw_block[80:89])
+                tx_count = bitcoinx.read_varint(stream.read)
                 len_block = blk_end_pos - blk_start_pos
 
                 raw_blocks_arr += raw_block
@@ -211,7 +233,8 @@ class LMDB_Database:
 
                 tx.put(key, val, db=self.blocks_db, append=True, overwrite=False)
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)
-                tx.put(blk_hash, struct_le_Q.pack(len(raw_block)), db=self.block_metadata_db)
+                tx.put(blk_hash, struct_le_Q.pack(len(raw_block)) + struct_le_Q.pack(tx_count),
+                    db=self.block_metadata_db)
 
                 start_offset += len_block
 
@@ -246,6 +269,11 @@ class LMDB_Database:
             for level, hashes in reversed(mtree.items()):
                 key = block_hash + struct_le_I.pack(level)
                 value = pack_list_to_concatenated_bytes(hashes)
+                # self.logger.debug(f"put_merkle_tree: "
+                #                   f"key: {bitcoinx.hash_to_hex_str(block_hash)} + {level}; "
+                #                   f"value: {value} "
+                #                   f"(hashes:{[bitcoinx.hash_to_hex_str(tx_hash) for tx_hash in hashes]});"
+                #                   f"mtree={mtree}")
                 entries.append((key, value))
             cursor.putmulti(entries)
 
@@ -261,14 +289,17 @@ class LMDB_Database:
             if result:
                 return bytes(result)
 
-    def get_block_metadata(self, block_hash: bytes) -> int:
+    def get_block_metadata(self, block_hash: bytes) -> BlockMetadata:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         with self.env.begin(db=self.block_metadata_db, write=False, buffers=True) as txn:
             val = txn.get(block_hash)
             if val:
                 # Note: This can return zero - which is a "falsey" type value. Take care
-                return struct_le_Q.unpack(bytes(val))[0]
+                val = bytes(val)
+                block_size = struct_le_Q.unpack(val[0:8])[0]
+                tx_count = struct_le_Q.unpack(val[8:16])[0]
+                return BlockMetadata(block_size, tx_count)
 
     def sync(self):
         self.env.sync(True)

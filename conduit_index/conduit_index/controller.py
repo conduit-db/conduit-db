@@ -27,6 +27,7 @@ from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
+from conduit_lib.types import BlockHeaderRow
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
     wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
@@ -434,11 +435,13 @@ class Controller:
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return api_block_tip_height
 
-    async def connect_done_block_headers(self, blocks_batch_set):
+    async def connect_done_block_headers(self, blocks_batch_set: set):
+        ipc_socket_client = IPCSocketClient()
         t0 = time.perf_counter()
         unsorted_headers = [self.storage.get_header_for_hash(h) for h in blocks_batch_set]
         sorted_headers = sorted(unsorted_headers, key=lambda x: x.height)
         sorted_heights = [h.height for h in sorted_headers]
+
         # Assert the resultant blocks are consecutive with no gaps
         max_height = max(sorted_heights)
         # self.logger.debug(f"block_heights={block_heights}")
@@ -456,12 +459,17 @@ class Controller:
         # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()
         self.storage.block_headers.flush()
 
-        block_numbers = self.ipc_sock_client.block_number_batched(blocks_batch_set).block_numbers
-        block_hash_to_num_map = dict(zip(blocks_batch_set, block_numbers))
-        header_rows = []
-        for header in sorted_headers:
+        # Get Tx Counts & Block Sizes for the headers table
+        sorted_hashes = [h.hash for h in sorted_headers]
+        block_numbers = self.ipc_sock_client.block_number_batched(sorted_hashes).block_numbers
+        block_hash_to_num_map = dict(zip(sorted_hashes, block_numbers))
+        sorted_block_metadata_batch = ipc_socket_client.block_metadata_batched(sorted_hashes).block_metadata_batch
+
+        header_rows: list[BlockHeaderRow] = []
+        for header, block_metadata in zip(sorted_headers, sorted_block_metadata_batch):
             blk_num = block_hash_to_num_map[header.hash]
-            row = (blk_num, header.hash.hex(), header.height, header.raw.hex())
+            row = BlockHeaderRow(blk_num, header.hash.hex(), header.height, header.raw.hex(),
+                block_metadata.tx_count, block_metadata.block_size)
             header_rows.append(row)
         self.mysql_db.bulk_loads.mysql_bulk_load_headers(header_rows)
 
@@ -537,12 +545,12 @@ class Controller:
 
     async def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
-        for part_size, work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, \
+        for part_size, work_item_id, block_hash, block_num, first_tx_pos_batch, part_end_offset, \
                 tx_offsets_array in work_units:
             len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
             packed_array = tx_offsets_array.tobytes()
             packed_msg = struct.pack(f"<III32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
-                work_item_id, block_hash, block_height, first_tx_pos_batch, part_end_offset, packed_array)
+                work_item_id, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
             await self.mined_tx_socket.send(packed_msg)
 
     async def chip_away(self, remaining_work_units: List[WorkUnit]):

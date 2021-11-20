@@ -75,7 +75,7 @@ async def wait_for_mysql():
             pass
         finally:
             if is_available:
-                logger.debug(f"MySQL server on is available")
+                logger.debug(f"MySQL server is available")
                 if client:
                     client.close()
             else:

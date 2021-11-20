@@ -21,10 +21,10 @@ class TestStorage:
     }
 
     net_config = NetworkConfig(config.get("network"))
-    headers = bitcoinx.Headers.from_file(
+    headers = bitcoinx.Headers(
         net_config.BITCOINX_COIN, "data/headers.mmap", net_config.CHECKPOINT
     )
-    block_headers = bitcoinx.Headers.from_file(
+    block_headers = bitcoinx.Headers(
         net_config.BITCOINX_COIN, "data/block_headers.mmap", net_config.CHECKPOINT
     )
     storage = setup_storage(config, net_config)
