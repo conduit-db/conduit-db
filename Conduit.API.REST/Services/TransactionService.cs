@@ -1,20 +1,29 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using Conduit.API.REST.Services;
+using Conduit.API.REST.Classes;
+using Microsoft.VisualBasic;
 
 namespace Conduit.MySQL.Services
 {
     public class TransactionService : ITransactionService
     {
-        public TransactionService()
+        private IHttpClientServiceImplementation _httpClient;
+        public TransactionService(IHttpClientServiceImplementation httpClient)
         {
+            _httpClient = httpClient;
         }
-
-        public async Task<(Stream, int)> GetTransactionBytes(byte[] transactionHash)
+    
+        public async Task<byte[]> GetTransactionBytes(byte[] transactionHash)
         {
             // TODO Get the transaction data as a stream.
-            var stream = new MemoryStream(transactionHash);
-            return (stream, transactionHash.Length);
+            var transactionHashHex = Util.HashToHexStr(transactionHash);
+            Debug.WriteLine($"transactionHashHex: {transactionHashHex}");
+            var result = await _httpClient.GetRawTransaction(transactionHashHex);
+            return result;
         }
 
         public async Task<(Stream, int)> GetProofBytes(byte[] transactionHash, bool withTransaction)

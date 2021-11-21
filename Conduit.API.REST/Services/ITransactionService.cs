@@ -10,7 +10,7 @@ namespace Conduit.MySQL.Services
 {
     public interface ITransactionService
     {
-        Task<(Stream, int)> GetTransactionBytes(byte[] transactionHash);
+        Task<byte[]> GetTransactionBytes(byte[] transactionHash);
         Task<(Stream, int)> GetProofBytes(byte[] transactionHash, bool withTransaction);
         Task<(Stream, int)> GetProofJSON(byte[] transactionHash, bool withTransaction);
     }

@@ -58,6 +58,7 @@ namespace Conduit.API.REST.Controllers
 
             Response.StatusCode = StatusCodes.Status200OK;
             var outputStream = Response.Body;
+            // Todo - all of this needs to be replaced by a proxied request to the aiohttp service
             await foreach (var match in restorationService.GetPushDataFilterMatches(filterModel.PushDataFilter))
             {
                 if (requestType == RequestAcceptType.Binary)

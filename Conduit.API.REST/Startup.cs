@@ -30,6 +30,8 @@ namespace Conduit.API.REST
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
+            services.AddHttpClient();
+            services.AddScoped<IHttpClientServiceImplementation, HttpClientFactoryService>();
             services.AddTransient(_ => new ApplicationDatabase(Configuration["ConnectionStrings:DefaultConnection"]));
             services.AddTransient<IHeaderService, HeaderService>();
             services.AddTransient<INetworkService, NetworkService>();

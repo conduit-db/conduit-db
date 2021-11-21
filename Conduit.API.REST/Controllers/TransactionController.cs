@@ -10,7 +10,9 @@ using System.IO.Pipelines;
 using System.Linq;
 using System.Net.Mime;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -58,8 +60,8 @@ namespace Conduit.API.REST.Controllers
             }
 
             // TOOD(optimisation) We should see if we can stream the transaction data in, but we would want the length ahead of the full data, so we can set content length.
-            var (transactionStream, transactionLength) = await transactionService.GetTransactionBytes(HashToHashX(transactionHash));
-            if (transactionStream == null)
+            var rawTransactionBytes = await transactionService.GetTransactionBytes(transactionHash);
+            if (rawTransactionBytes == null)
             {
                 Response.StatusCode = StatusCodes.Status404NotFound;
                 return;
@@ -68,28 +70,18 @@ namespace Conduit.API.REST.Controllers
             Response.StatusCode = StatusCodes.Status200OK;
             var outputStream = Response.Body;
             if (requestType == RequestAcceptType.Binary)
-                Response.ContentLength = transactionLength;
+                Response.ContentLength = rawTransactionBytes.Length;
             else
-                Response.ContentLength = transactionLength * 2;
+                Response.ContentLength = rawTransactionBytes.Length * 2;
 
-            byte[] transactionData = new byte[4096];
-            while (transactionStream.Position < transactionLength - 1)
+            if (requestType == RequestAcceptType.Binary)
+                await outputStream.WriteAsync(rawTransactionBytes.AsMemory(0, rawTransactionBytes.Length));
+            else
             {
-                // TODO Does this busy loop????? How the hell do people know these things.
-                var readLength = await transactionStream.ReadAsync(transactionData.AsMemory(0, transactionData.Length), CancellationToken.None);
-                if (readLength > 0)
-                {
-                    if (requestType == RequestAcceptType.Binary)
-                        await outputStream.WriteAsync(transactionData.AsMemory(0, readLength));
-                    else
-                    {
-                        var jsonText = Convert.ToHexString(transactionData.AsSpan(0, readLength));
-                        var jsonBytes = Encoding.ASCII.GetBytes(jsonText);
-                        await outputStream.WriteAsync(jsonBytes.AsMemory(0, readLength * 2));
-                    }
-                }
+                var jsonText = JsonSerializer.Serialize(Convert.ToHexString(rawTransactionBytes));
+                var jsonBytes = Encoding.ASCII.GetBytes(jsonText);
+                await outputStream.WriteAsync(jsonBytes.AsMemory(0, rawTransactionBytes.Length * 2));
             }
-
             await outputStream.FlushAsync();
         }
 
