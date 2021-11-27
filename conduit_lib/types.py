@@ -52,8 +52,8 @@ class RestorationFilterQueryResult(NamedTuple):
     ref_type: int
     pushdata_hashX: bytes
     transaction_hash: bytes
-    spend_transaction_hash: bytes
-    transaction_output_index: int
+    spend_transaction_hash: Optional[bytes]
+    transaction_output_index: int  # max(uint32) if no spend
     spend_input_index: int
     block_height: int
     tx_location: TxLocation
@@ -115,11 +115,16 @@ class CompositeProof(enum.IntEnum):
     COMPOSITE_PROOF = 1 << 4
 
 
+class PushdataMatchFlags(enum.IntEnum):
+    OUTPUT = 1 << 0
+    INPUT = 1 << 1
+
+
 def _get_pushdata_match_flag(ref_type: int) -> int:
     if ref_type == 0:
-        return 1 << 0
+        return PushdataMatchFlags.OUTPUT
     if ref_type == 1:
-        return 1 << 1
+        return PushdataMatchFlags.INPUT
 
 
 def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_hash,
@@ -129,11 +134,9 @@ def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_has
         tx_hash = full_tx_hash
         idx = row.transaction_output_index
         flags = row.ref_type
-        in_tx_hash = "00"*32
-        if full_spend_transaction_hash:
-            in_tx_hash = full_spend_transaction_hash
+        in_tx_hash = full_spend_transaction_hash  # can be null
         in_idx = MAX_UINT32
-        if row.spend_input_index:
+        if row.spend_input_index is not None:
             in_idx = row.spend_input_index
         block_height = row.block_height
         return {
@@ -151,10 +154,10 @@ def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_has
         idx = row.transaction_output_index
         flags = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
         in_tx_hash = hex_str_to_hash("00"*32)
-        if full_spend_transaction_hash:
+        if full_spend_transaction_hash is not None:
             in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
         in_idx = MAX_UINT32
-        if row.spend_input_index:
+        if row.spend_input_index is not None:
             in_idx = row.spend_input_index
         block_height = row.block_height
 

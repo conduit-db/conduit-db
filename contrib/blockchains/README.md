@@ -23,6 +23,8 @@ blockchain_115_3677f4
     * Pushdata = SHA256(public key): 04bca2ae277997940152716854a95347819c2e07d370d22c093b39708fb9d5eb
   * Receive P2PKH:
     * Transaction id: d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842
+    * Public key: 03adc147b2532982158af752a425407d7959691394c318d21a5ed4720a35035068
+    * Pushdata = SHA256(public key): 44c55cbcb8222d6afd5adc5f72ec3fe2b6bbefad27f9c920805ebb9cb6a43de3
     * P2PKH address: mhg6ENXhPL6LsEUG6oxdqi8LjE2bsW6NMW
     * Hash 160: 17aa9ecb9e38b91bddcc5e8d2d26154be90d8996
     * Pushdata = SHA256(hash 160): e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db

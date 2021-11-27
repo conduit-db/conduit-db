@@ -30,11 +30,10 @@ class ServiceUnavailableError(Exception):
 
 class IPCSocketClient:
 
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-    HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-    PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-
     def __init__(self):
+        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
+        self.HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
+        self.PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
         self.logger = logging.getLogger('raw-socket-client')
         self.wait_for_connection()
 

@@ -10,6 +10,7 @@ from conduit_lib.store import setup_storage, Storage
 
 
 class TestStorage:
+    # Todo - create a test database to not interfere with running servers
     config = {
         "database_name": "conduittestdb",
         "network": "regtest",
@@ -27,42 +28,46 @@ class TestStorage:
     block_headers = bitcoinx.Headers(
         net_config.BITCOINX_COIN, "data/block_headers.mmap", net_config.CHECKPOINT
     )
-    storage = setup_storage(config, net_config)
-    redis = None  # NotImplemented
-    mysql_db: MySQLDatabase
-    mysql_available: bool
-    logger = logging.getLogger("TestStorage")
+    # storage = setup_storage(config, net_config)
+    # redis = None  # NotImplemented
+    # mysql_db: MySQLDatabase
+    # mysql_available: bool
+    # logger = logging.getLogger("TestStorage")
 
     @classmethod
     def setup_class(klass) -> None:
-        try:
-            klass.mysql_db: MySQLDatabase = load_mysql_database()
-            klass.mysql_available = True
-        except MySQLdb.OperationalError:
-            klass.mysql_available = False
-            return
-
-        klass.storage = Storage(
-            klass.headers, klass.block_headers, klass.mysql_db, klass.redis
-        )
-        klass.storage.mysql_database.tables.mysql_drop_tables()
-        klass.storage.mysql_database.tables.mysql_create_permanent_tables()
+        pass
+        # try:
+        #     klass.mysql_db: MySQLDatabase = load_mysql_database()
+        #     klass.mysql_available = True
+        # except MySQLdb.OperationalError:
+        #     klass.mysql_available = False
+        #     return
+        #
+        # klass.storage = Storage(
+        #     klass.headers, klass.block_headers, klass.mysql_db, klass.redis
+        # )
+        # klass.storage.mysql_database.tables.mysql_drop_tables()
+        # klass.storage.mysql_database.tables.mysql_create_permanent_tables()
 
     def setup_method(self) -> None:
-        if not self.mysql_available:
-            pytest.skip("mysql unavailable")
-        self.mysql_db.tables.mysql_create_permanent_tables()
+        pass
+        # if not self.mysql_available:
+        #     pytest.skip("mysql unavailable")
+        # self.mysql_db.tables.mysql_create_permanent_tables()
 
     def teardown_method(self) -> None:
-        if not self.mysql_available:
-            pytest.skip("mysql unavailable")
-        self.storage.mysql_database.tables.mysql_create_permanent_tables()
+        pass
+        # if not self.mysql_available:
+        #     pytest.skip("mysql unavailable")
+        # self.storage.mysql_database.tables.mysql_create_permanent_tables()
 
     @classmethod
     def teardown_class(klass) -> None:
-        if not klass.mysql_available:
-            return
-        klass.mysql_db.close()
+        pass
+        # if not klass.mysql_available:
+        #     return
+        # klass.mysql_db.close()
 
     def test_storage_init(klass):
         assert True

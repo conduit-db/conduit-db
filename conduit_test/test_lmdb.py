@@ -23,7 +23,7 @@ LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
 def ipc_sock_server_thread():
     from conduit_lib.store import setup_headers_store
     from conduit_lib.networks import RegTestNet
-    HOST, PORT = "127.0.0.1", 50000
+    HOST, PORT = "127.0.0.1", 34586
     block_headers = setup_headers_store(RegTestNet(), "test_headers.mmap")
     ipc_sock_server = ThreadedTCPServer(addr=(HOST, PORT),
         handler=ThreadedTCPRequestHandler, storage_path=LMDB_STORAGE_PATH,
@@ -37,6 +37,7 @@ class TestLMDBDatabase:
         self.lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
         self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread)
         self.ipc_sock_server_thread.start()
+        os.environ['CONDUIT_RAW_API_HOST'] = 'localhost:34586'
         self.ipc_sock_client = IPCSocketClient()
 
     def teardown_class(self):
