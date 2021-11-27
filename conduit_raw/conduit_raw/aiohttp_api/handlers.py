@@ -34,8 +34,9 @@ async def error(request: web.Request) -> web.Response:
 
 def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) \
         -> TransactionQueryResult:
-    tx_query_result: TransactionQueryResult = mysql_db.api_queries.get_transaction_metadata(
-        tx_hash[0:HashXLength])
+    """Truncates full hash -> hashX length"""
+    tx_query_result: TransactionQueryResult = \
+        mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_query_result:
         return
     return tx_query_result
@@ -71,12 +72,14 @@ async def get_pushdata_filter_matches(request: web.Request):
         headers = {'Content-Type': 'application/octet-stream', 'User-Agent': 'ConduitDB'}
     else:
         headers = {'Content-Type': 'application/json', 'User-Agent': 'ConduitDB'}
-    response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
-    await response.prepare(request)
 
     count = 0
     result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
     for match in result_generator:
+        if count == 0:
+            response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
+            await response.prepare(request)
+
         match: RestorationFilterQueryResult
         # logger.debug(f"Sending {match}")
 
@@ -84,7 +87,12 @@ async def get_pushdata_filter_matches(request: web.Request):
         full_tx_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
         full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
         if match.spend_transaction_hash is not None:
-            full_spend_transaction_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
+            tx_metadata = _get_tx_metadata(match.spend_transaction_hash, mysql_db)
+            spend_tx_loc = TxLocation(
+                block_hash=tx_metadata.block_hash,
+                block_num=tx_metadata.block_num,
+                tx_position=tx_metadata.tx_position)
+            full_spend_transaction_hash = hash_to_hex_str(_get_full_tx_hash(spend_tx_loc, lmdb))
         else:
             full_spend_transaction_hash = "00"*32
 
@@ -94,13 +102,16 @@ async def get_pushdata_filter_matches(request: web.Request):
                 full_spend_transaction_hash, json=False)
             packed_match = filter_response_struct.pack(*response_obj)
             await response.write(packed_match)
-            count += 1
         else:  # application/json
             response_obj = _pack_pushdata_match_response(
                 match, full_tx_hash, full_pushdata_hash,
                 full_spend_transaction_hash, json=True)
             row = (json.dumps(response_obj) + "\n").encode('utf-8')
             await response.write(row)
+        count += 1
+
+    if count == 0:
+        return web.HTTPNotFound(reason="No pushdata matches found")
 
     if accept_type == 'application/octet-stream':
         total_size = count * FILTER_RESPONSE_SIZE

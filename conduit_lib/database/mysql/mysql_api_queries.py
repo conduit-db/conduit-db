@@ -22,17 +22,17 @@ class MySQLAPIQueries:
         self.mysql_tables = mysql_tables
         self.mysql_db = mysql_db
 
-    def get_transaction_metadata(self, tx_hash: bytes) -> TransactionQueryResult:
+    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TransactionQueryResult:
         self.mysql_conn.query(f"""
             SELECT CT.tx_hash, CT.tx_block_num, CT.tx_position, HD.block_num, HD.block_hash, 
                 HD.block_height FROM confirmed_transactions CT
             INNER JOIN headers HD
             ON HD.block_num = CT.tx_block_num
-            WHERE CT.tx_hash = X'{tx_hash.hex()}';""")
+            WHERE CT.tx_hash = X'{tx_hashX.hex()}';""")
         result = self.mysql_conn.store_result()
-        if result:
-            row = result.fetch_row(0)[0]
-            tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = row
+        rows = result.fetch_row(0)
+        if len(rows) != 0:
+            tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
             return TransactionQueryResult(tx_hash, tx_block_num, tx_position, block_num, block_hash,
                 block_height)
 
@@ -43,7 +43,7 @@ class MySQLAPIQueries:
         ref_type = _get_pushdata_match_flag(row[3])
         in_tx_hash = row[4]  # Can be null
         in_idx = MAX_UINT32
-        if row[5]:
+        if row[5] is not None:
             in_idx = row[5]
         block_height = row[6]
         block_hash = row[7]
@@ -75,7 +75,5 @@ class MySQLAPIQueries:
         # self.logger.debug(f"sql: {sql}")
         self.mysql_conn.query(sql)
         result = self.mysql_conn.store_result()
-
-        if result:
-            for row in result.fetch_row(0):
-                yield self._make_restoration_query_result(row)
+        for row in result.fetch_row(0):
+            yield self._make_restoration_query_result(row)
