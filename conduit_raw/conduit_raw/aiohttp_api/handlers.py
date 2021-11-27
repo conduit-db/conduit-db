@@ -29,7 +29,7 @@ async def ping(request: web.Request) -> web.Response:
 
 
 async def error(request: web.Request) -> web.Response:
-    raise ValueError("This is a test of raising an exception in the handler")
+    raise web.HTTPBadRequest(reason="This is a test of raising an exception in the handler")
 
 
 def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) \

@@ -145,9 +145,9 @@ class LMDB_Database:
             result = txn.get(tx_loc.block_hash, db=self.tx_offsets_db)
             if result:
                 SIZE_UINT64_T = 8
-                tx_start_offset_bytes = result[tx_loc.tx_position: tx_loc.tx_position+SIZE_UINT64_T]
+                tx_start_offset_bytes = result[tx_loc.tx_position*SIZE_UINT64_T:(tx_loc.tx_position)*SIZE_UINT64_T + SIZE_UINT64_T]
                 tx_start_offset = bitcoinx.unpack_le_uint64(tx_start_offset_bytes)[0]
-                tx_end_offset_bytes = result[tx_loc.tx_position+SIZE_UINT64_T: tx_loc.tx_position+SIZE_UINT64_T*2]
+                tx_end_offset_bytes = result[(tx_loc.tx_position+1)*SIZE_UINT64_T: (tx_loc.tx_position+1)*SIZE_UINT64_T + SIZE_UINT64_T]
                 if tx_end_offset_bytes:
                     tx_end_offset = bitcoinx.unpack_le_uint64(tx_end_offset_bytes)[0]
                 else:  # last tx position in block

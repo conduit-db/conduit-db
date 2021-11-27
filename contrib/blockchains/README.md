@@ -26,7 +26,8 @@ blockchain_115_3677f4
     * P2PKH address: mhg6ENXhPL6LsEUG6oxdqi8LjE2bsW6NMW
     * Hash 160: 17aa9ecb9e38b91bddcc5e8d2d26154be90d8996
     * Pushdata = SHA256(hash 160): e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db
-  * Spend P2PK/P2PKH: 47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095
+  * Spend P2PK/P2PKH: 
+    * Transaction id: 47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095
     * P2PK = index 0
     * P2PKH = index 1
 * Multi-signature wallet 1/2.
