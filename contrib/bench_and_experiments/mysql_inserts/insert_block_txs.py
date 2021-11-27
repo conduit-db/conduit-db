@@ -11,8 +11,6 @@ import time
 import os
 from pathlib import Path
 
-import bitcoinx
-
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from conduit_lib.logging_server import TCPLoggingServer
 
@@ -26,7 +24,7 @@ try:
 except ModuleNotFoundError:
     from conduit_lib.algorithms import parse_txs   # pure python
 
-from bench_and_experiments.utils import print_results, print_results_mysql_bench
+from contrib.bench_and_experiments.utils import print_results, print_results_mysql_bench
 
 from conduit_lib.logging_client import setup_tcp_logging
 

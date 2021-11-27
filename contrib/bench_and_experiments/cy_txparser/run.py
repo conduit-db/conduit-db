@@ -2,7 +2,6 @@ import io
 import os
 import time
 import array
-from pathlib import Path
 
 import bitcoinx
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
@@ -15,8 +14,8 @@ try:
     is_cython = True
 except ModuleNotFoundError:
     from conduit_lib.algorithms import parse_txs, unpack_varint, get_pk_and_pkh_from_script  # pure python
-from bench_and_experiments.cy_txparser.offsets import TX_OFFSETS
-from bench_and_experiments.utils import print_results
+from contrib.bench_and_experiments.cy_txparser.offsets import TX_OFFSETS
+from contrib.bench_and_experiments.utils import print_results
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 

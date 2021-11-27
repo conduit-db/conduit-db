@@ -8,7 +8,7 @@ try:
     from conduit_lib._algorithms import preprocessor  # cython
 except ModuleNotFoundError:
     from conduit_lib.algorithms import preprocessor  # pure python
-from bench_and_experiments.utils import print_results
+from contrib.bench_and_experiments.utils import print_results
 
 if __name__ == "__main__":
 
