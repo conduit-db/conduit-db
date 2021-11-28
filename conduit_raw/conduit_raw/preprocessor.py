@@ -6,6 +6,9 @@ import threading
 import time
 from multiprocessing import shared_memory
 
+import cbor2
+import zmq
+
 from conduit_lib.algorithms import preprocessor
 
 
@@ -34,6 +37,10 @@ class BlockPreProcessor(threading.Thread):
     def run(self):
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
+        context1 = zmq.Context()
+        merkle_tree_socket = context1.socket(zmq.PUSH)
+        merkle_tree_socket.bind("tcp://127.0.0.1:41835")
+
         try:
             while True:
                 item = self.worker_in_queue_preproc.get()
@@ -52,7 +59,8 @@ class BlockPreProcessor(threading.Thread):
                 t1 = time.perf_counter() - t0
                 # self.logger.debug(f"Preprocessing block of size: {blk_end_pos-blk_start_pos} took: {t1} seconds")
                 tx_offsets = self.tx_offsets_array[0:count_added]
-                self.worker_in_queue_mtree.put((blk_hash, blk_start_pos, blk_end_pos, tx_offsets))
+                packed_msg = cbor2.dumps((blk_hash, blk_start_pos, blk_end_pos, tx_offsets.tobytes()))
+                merkle_tree_socket.send(packed_msg)
                 self.worker_ack_queue_preproc.put(blk_hash)
         except Exception as e:
             self.logger.exception(e)

@@ -66,6 +66,8 @@ MAIN_BATCH_HEADERS_COUNT_LIMIT = 4000  # Number of headers to request (long poll
 RECV_BUFFER_HIGH_WATER = int((1024 ** 3) * 2)  # At the moment this constrains the largest block size
 MAX_RAW_BLOCK_BATCH_REQUEST_SIZE = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
 
+MAX_DAT_FILE_SIZE = 128 * (1024 ** 2)
+
 
 class MsgType(enum.IntEnum):
     ERROR = 0

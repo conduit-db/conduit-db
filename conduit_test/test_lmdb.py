@@ -10,6 +10,7 @@ from pathlib import Path
 from bitcoinx import double_sha256
 
 from conduit_index.conduit_index.sync_state import CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
+from conduit_lib.algorithms import get_mtree_node_counts_per_level
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice
@@ -86,36 +87,86 @@ class TestLMDBDatabase:
         assert expected_raw_block.tobytes() == actual_raw_block
         assert expected_raw_block.tobytes() == actual_grpc_raw_block
 
-    def test_merkle_tree_storage(self):
+        # TODO - test writing multiple blocks in the batch
+        #  (which will be added to the same .dat file) - this complicates the offset calculations
+        #  So needs tests to ensure no regressions
 
+    def test_merkle_tree_storage(self):
         block_hash = bytes.fromhex("ff" * 32)
         tx1 = bytes.fromhex("aa" * 32)
         tx2 = bytes.fromhex("bb" * 32)
-        base_level = [tx1, tx2]
-        merkle_root = double_sha256(base_level[0] + base_level[1])
-        merkle_tree = {1: base_level, 0: [merkle_root]}
-        self.lmdb.put_merkle_tree(block_hash, merkle_tree)
+        tx3 = bytes.fromhex("cc" * 32)
+        base_level = [tx1, tx2, tx3, tx3]
+        middle_level = [double_sha256(base_level[0] + base_level[1]), double_sha256(base_level[2] + base_level[2])]
+        merkle_root = double_sha256(middle_level[0] + middle_level[1])
+        merkle_tree = {2: base_level, 1: middle_level, 0: [merkle_root]}
 
-        expected_base_level = tx1 + tx2
+        write_batch = [(block_hash, merkle_tree, len(base_level))]
+        self.lmdb.put_merkle_trees(write_batch)
+
+        expected_base_level = tx1 + tx2 + tx3 + tx3
+        expected_mid_level = middle_level[0] + middle_level[1]
         expected_merkle_root = merkle_root
 
-        actual_base_level = self.lmdb.get_mtree_row(block_hash, 1)
-        actual_grpc_base_level = self.ipc_sock_client.merkle_tree_row(block_hash, 1).mtree_row
-        assert expected_base_level == actual_base_level
-        assert expected_base_level == actual_grpc_base_level
+        actual_base_level = self.lmdb.get_mtree_row(block_hash, 2)
+        actual_ipc_base_level = self.ipc_sock_client.merkle_tree_row(block_hash, 2).mtree_row
+        assert actual_base_level == expected_base_level
+        assert actual_ipc_base_level == expected_base_level
+
+        actual_mid_level = self.lmdb.get_mtree_row(block_hash, 1)
+        actual_ipc_mid_level = self.ipc_sock_client.merkle_tree_row(block_hash, 1).mtree_row
+        assert actual_mid_level == expected_mid_level
+        assert actual_ipc_mid_level == expected_mid_level
 
         actual_merkle_root = self.lmdb.get_mtree_row(block_hash, 0)
-        actual_grpc_merkle_root = self.ipc_sock_client.merkle_tree_row(block_hash, 0).mtree_row
+        actual_ipc_merkle_root = self.ipc_sock_client.merkle_tree_row(block_hash, 0).mtree_row
         assert expected_merkle_root == actual_merkle_root
-        assert expected_merkle_root == actual_grpc_merkle_root
-    #
-    # def test_tx_offset_storage(self):
-    #
-    #     block_hash = bytes.fromhex("ff" * 64)
-    #     tx_offsets = array.array("Q", [1, 2, 3])
-    #     self.lmdb.put_tx_offsets(block_hash, tx_offsets)
-    #
-    #     actual_tx_offsets = self.lmdb.get_tx_offsets(block_hash)
-    #     actual_grpc_tx_offsets = self.grpc_client.get_tx_offsets(block_hash)
-    #     assert actual_tx_offsets == tx_offsets
-    #     assert actual_grpc_tx_offsets == tx_offsets
+        assert expected_merkle_root == actual_ipc_merkle_root
+
+        array = self.lmdb.get_merkle_tree_data(block_hash, start_offset=0, end_offset=0)
+        assert array == expected_base_level + expected_mid_level + expected_merkle_root
+
+        merkle_root = self.lmdb.get_merkle_tree_data(block_hash,
+            start_offset=len(expected_base_level + expected_mid_level),
+            end_offset=len(expected_base_level + expected_mid_level + expected_merkle_root))
+        assert expected_merkle_root == merkle_root
+
+        with self.lmdb.env.begin(db=self.lmdb.mtree_db, write=False, buffers=True) as txn:
+            cursor = txn.cursor()
+            mtree_merkle_root_node = self.lmdb.get_mtree_node(block_hash, 0, position=0, cursor=cursor)
+            assert expected_merkle_root == mtree_merkle_root_node
+
+            left_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=0, cursor=cursor)
+            assert expected_mid_level[0:32] == left_mid_node
+
+            right_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=1, cursor=cursor)
+            assert expected_mid_level[32:64] == right_mid_node
+
+            zeroth_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=0, cursor=cursor)
+            assert expected_base_level[0:32] == zeroth_base_node
+
+            first_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=1, cursor=cursor)
+            assert expected_base_level[32:64] == first_index_base_node
+
+            second_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=2, cursor=cursor)
+            assert expected_base_level[64:96] == second_index_base_node
+
+            third_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=3, cursor=cursor)
+            assert expected_base_level[96:128] == third_index_base_node
+
+            # TODO - test writing multiple merkle trees in the batch
+            #  (to be added to the same .dat file) - this complicates the offset calculations
+            #  So needs tests to ensure no regressions
+
+
+    def test_tx_offset_storage(self):
+        block_hash = bytes.fromhex("ff" * 64)
+        tx_offsets = array.array("Q", [1, 2, 3])
+        batched_tx_offsets = [(block_hash, tx_offsets)]
+        self.lmdb.put_tx_offsets(batched_tx_offsets)
+
+        actual_tx_offsets = self.lmdb.get_tx_offsets(block_hash)
+        assert tx_offsets.tobytes() == actual_tx_offsets
+        actual_grpc_tx_offsets = self.ipc_sock_client.transaction_offsets_batched([block_hash])
+        for tx_os in actual_grpc_tx_offsets:
+            assert tx_os == tx_offsets

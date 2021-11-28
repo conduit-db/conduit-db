@@ -120,6 +120,11 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
         if os.path.exists(RAW_BLOCKS_DIR):
             shutil.rmtree(RAW_BLOCKS_DIR, onerror=remove_readonly)
 
+        MERKLE_TREES_DIR_DEFAULT = Path(MODULE_DIR).parent / 'merkle_trees'
+        MERKLE_TREES_DIR = os.environ.get("MERKLE_TREES_DIR", str(MERKLE_TREES_DIR_DEFAULT))
+        if os.path.exists(MERKLE_TREES_DIR):
+            shutil.rmtree(MERKLE_TREES_DIR, onerror=remove_readonly)
+
 
 def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
     if not headers_dir:

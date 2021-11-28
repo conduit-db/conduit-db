@@ -18,6 +18,13 @@ class BlockHeaderRow(NamedTuple):
     block_size: int
 
 
+class MerkleTreeArrayLocation(NamedTuple):
+    write_path: str
+    start_offset: int
+    end_offset: int
+    base_node_count: int
+
+
 class Slice(NamedTuple):
     start_offset: int
     end_offset: int
