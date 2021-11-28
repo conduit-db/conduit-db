@@ -432,7 +432,7 @@ class TxParser(multiprocessing.Process):
         finally:
             self.logger.info("Closing mined_blocks_thread")
             mempool_tx_socket.close()
-            mempool_tx_socket.term()
+            # mempool_tx_socket.term()
             if ipc_sock_client:
                 ipc_sock_client.close()
 

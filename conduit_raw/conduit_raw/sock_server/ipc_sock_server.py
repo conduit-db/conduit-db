@@ -162,7 +162,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockBatchedRequest(**msg)
-            logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+            # logger.debug(f"Got {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
 
             # Response
             raw_blocks_array = bytearray()
@@ -254,7 +254,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             # Request
             msg_req = ipc_sock_msg_types.HeadersBatchedRequest(**msg)
-            logger.debug(f"Got {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
+            # logger.debug(f"Got {ipc_sock_commands.HEADERS_BATCHED} request: {msg_req}")
 
             # Response
             start_height = msg_req.start_height

@@ -1,3 +1,4 @@
+import array
 import logging
 import multiprocessing
 import os
@@ -6,6 +7,7 @@ import threading
 import time
 from multiprocessing import shared_memory
 
+import cbor2
 import zmq
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
@@ -29,11 +31,35 @@ class MTreeCalculator(multiprocessing.Process):
         self, worker_id, shm_name, worker_in_queue_mtree, worker_ack_queue_mtree
     ):
         super(MTreeCalculator, self).__init__()
+        self.BATCHING_RATE = 0.3
         self.worker_id = worker_id
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_mtree = worker_in_queue_mtree
         self.worker_ack_queue_mtree = worker_ack_queue_mtree
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
+
+    def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database):
+        batched_merkle_trees = []
+        batched_tx_offsets = []
+        batched_acks = []
+
+        t0 = time.perf_counter()
+        for packed_msg in batch:
+            blk_hash, blk_start_pos, blk_end_pos, tx_offsets_bytes = cbor2.loads(packed_msg)
+            tx_offsets = array.array("Q", tx_offsets_bytes)
+
+            mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
+            batched_merkle_trees.append((blk_hash, mtree, len(tx_offsets)))
+            batched_tx_offsets.append((blk_hash, tx_offsets))
+            batched_acks.append(blk_hash)
+
+        lmdb.put_merkle_trees(batched_merkle_trees)
+        lmdb.put_tx_offsets(batched_tx_offsets)
+        t1 = time.perf_counter() - t0
+        self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
+
+        for blk_hash in batched_acks:
+            self.worker_ack_queue_mtree.put(blk_hash)
 
     def run(self):
         if sys.platform == "win32":
@@ -42,33 +68,51 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()
-        self.kill_worker_socket = context3.socket(zmq.SUB)
+        context1 = zmq.Context()
+        self.kill_worker_socket = context1.socket(zmq.SUB)
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         t1 = threading.Thread(target=self.kill_thread, daemon=True)
         t1.start()
 
-        lmdb_db = LMDB_Database()
+        lmdb = LMDB_Database()
+
+        batch = []
+        prev_time_check = time.time()
+
+        context2 = zmq.Context()
+        merkle_tree_socket = context2.socket(zmq.PULL)
+        merkle_tree_socket.connect("tcp://127.0.0.1:41835")
+
         try:
             while True:
-                item = self.worker_in_queue_mtree.get()
-                if not item:
-                    return
-
-                blk_hash, blk_start_pos, blk_end_pos, tx_offsets = item
-                # Todo - add batching to this like the other workers.
-                # t0 = time.perf_counter()
-                mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
-                lmdb_db.put_merkle_tree(bytes(blk_hash), mtree)
-                lmdb_db.put_tx_offsets(blk_hash, tx_offsets)
-                # t1 = time.perf_counter() - t0
-                # self.logger.debug(f"mtree and tx_offsets flush took {t1} seconds")
-
-                self.worker_ack_queue_mtree.put(blk_hash)
+                try:
+                    if merkle_tree_socket.poll(1000, zmq.POLLIN):
+                        packed_msg = merkle_tree_socket.recv(zmq.NOBLOCK)
+                        if not packed_msg:
+                            return  # poison pill stop command
+                        batch.append(bytes(packed_msg))
+                    else:
+                        time_diff = time.time() - prev_time_check
+                        # Todo: This might be redundant with poll(1000)
+                        #  1 second is longer than self.BLOCK_BATCHING_RATE
+                        if time_diff > self.BATCHING_RATE:
+                            prev_time_check = time.time()
+                            if batch:
+                                self.process_merkle_tree_batch(batch, lmdb)
+                            batch = []
+                except zmq.error.Again:
+                    self.logger.debug(f"zmq.error.Again")
+                    continue
+        except KeyboardInterrupt:
+                raise
         except Exception as e:
             self.logger.exception(e)
+        finally:
+            self.logger.info("Closing mined_blocks_thread")
+            merkle_tree_socket.close()
+            # merkle_tree_socket.term()
 
     def kill_thread(self):
         try:

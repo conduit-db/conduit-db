@@ -43,7 +43,7 @@ class TestInternalAiohttpRESTAPI:
 
     def test_error(klass):
         result = requests.get(ERROR_URL)
-        assert result.status_code == 400
+        assert result.status_code == 400, result.reason
         assert result.reason is not None
         assert isinstance(result.reason, str)
 
@@ -51,14 +51,14 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         for txid, rawtx_hex in test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.json() == rawtx_hex
 
     def test_get_transaction_binary(self):
         headers = {'Accept': "application/octet-stream"}
         for txid, rawtx_hex in test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.content == bytes.fromhex(rawtx_hex)
 
     def test_get_tsc_merkle_proof_json(self):
@@ -69,7 +69,7 @@ class TestInternalAiohttpRESTAPI:
         }
         for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_HASH.items():
             result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.json() == expected_tsc_proof
 
         body = {
@@ -78,7 +78,7 @@ class TestInternalAiohttpRESTAPI:
         }
         for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_HEADER.items():
             result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.json() == expected_tsc_proof
         body = {
             "includeFullTx": False,
@@ -86,7 +86,7 @@ class TestInternalAiohttpRESTAPI:
         }
         for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_MERKLE_ROOT.items():
             result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.json() == expected_tsc_proof
         body = {
             "includeFullTx": True,
@@ -94,7 +94,7 @@ class TestInternalAiohttpRESTAPI:
         }
         for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_INCLUDE_RAWTX.items():
             result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
-            assert result.status_code == 200
+            assert result.status_code == 200, result.reason
             assert result.json() == expected_tsc_proof
 
     def test_pushdata_no_match_json(self):
@@ -127,7 +127,7 @@ class TestInternalAiohttpRESTAPI:
             ]
         }
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:
@@ -173,7 +173,7 @@ class TestInternalAiohttpRESTAPI:
             ]
         }
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:
@@ -198,7 +198,7 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         body = {"filterKeys": ["e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db"]}
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:
@@ -223,7 +223,7 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         body = {"filterKeys": ["5e7583878789b03276d2d60a1cf3772a999084e3b12d0d3c1a33a30bd15609db"]}
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:
@@ -248,7 +248,7 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         body = {"filterKeys": ["9ed50dfe0d3a28950ee9a2ee41dce7193dd8666c4ff42c974de1bde60332a701"]}
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:
@@ -274,7 +274,7 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         body = {"filterKeys": ["e6221c70e0f3c686255b548789c63d0e2c6aa795ad87324dfd71d0b53d90d59d"]}
         result = requests.get(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200
+        assert result.status_code == 200, result.reason
         assert result.text is not None
         for line in result.iter_lines(delimiter=b"\n"):
             if not line or line == STREAM_TERMINATION_BYTE:

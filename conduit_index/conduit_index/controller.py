@@ -453,7 +453,6 @@ class Controller:
 
         block_headers: bitcoinx.Headers = self.storage.block_headers
         for header in sorted_headers:
-            self.logger.debug(f"new block tip height: {header.height}")
             block_headers.connect(header.raw)
 
         # self.mysql_db.bulk_loads.set_rocks_db_bulk_load_off()

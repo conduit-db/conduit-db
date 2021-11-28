@@ -177,22 +177,22 @@ async def get_transaction(request: web.Request) -> web.Response:
     mysql_db: MySQLDatabase = app_state.mysql_db
     lmdb: LMDB_Database = app_state.lmdb
     accept_type = request.headers.get('Accept')
+    txid = request.match_info['txid']
+    if not txid:
+        raise web.HTTPBadRequest(reason='no txid submitted')
 
-    try:
-        txid = request.match_info['txid']
-        if not txid:
-            raise ValueError('no txid submitted')
+    tx_metadata = _get_tx_metadata(hex_str_to_hash(txid), mysql_db)
+    if not tx_metadata:
+        raise web.HTTPNotFound(reason="tx_metadata not found")
 
-        tx_metadata = _get_tx_metadata(hex_str_to_hash(txid), mysql_db)
-        if not tx_metadata:
-            web.Response(status=404)
+    tx_location = TxLocation(tx_metadata.block_hash, tx_metadata.block_num,
+        tx_metadata.tx_position)
 
-        tx_location = TxLocation(tx_metadata.block_hash, tx_metadata.block_num,
-            tx_metadata.tx_position)
-        rawtx = lmdb.get_rawtx_by_loc(tx_location)
-        # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(rawtx))}")
-    except ValueError:
-        return web.Response(status=400)
+    if not tx_location:
+        raise web.HTTPNotFound(reason="tx location not found")
+
+    rawtx = lmdb.get_rawtx_by_loc(tx_location)
+    # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(rawtx))}")
 
     if accept_type == 'application/octet-stream':
         return web.Response(body=rawtx)
@@ -215,14 +215,17 @@ async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
         include_full_tx = json_body.get('includeFullTx')
         target_type = json_body.get('targetType')
         if include_full_tx is not None and include_full_tx not in {True, False}:
-            return web.Response(status=400)
+            raise web.HTTPBadRequest(reason="includeFullTx needs to be a boolean value")
 
         if target_type is not None and target_type not in {'hash', 'header', 'merkleroot'}:
-            return web.Response(status=400)
+            raise web.HTTPBadRequest(reason="target type needs to be one of: 'hash', 'header' or"
+                                            " 'merkleroot'")
 
     # Construct JSON format TSC merkle proof
     tx_hash = bitcoinx.hex_str_to_hash(txid)
     tx_metadata = _get_tx_metadata(tx_hash, mysql_db)
+    if not tx_metadata:
+        raise web.HTTPNotFound(reason="transaction metadata not found")
     tsc_merkle_proof = _get_tsc_merkle_proof(tx_metadata, mysql_db, lmdb,
         include_full_tx, target_type)
 

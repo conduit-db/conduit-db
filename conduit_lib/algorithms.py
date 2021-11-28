@@ -321,3 +321,16 @@ def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType)
     build_mtree_from_base(base_level, mtree)
     # logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")
     return mtree
+
+
+def get_mtree_node_counts_per_level(base_node_count: int):
+    depth = calc_depth(base_node_count)
+    counts = []
+
+    node_count = base_node_count
+    for level in reversed(range(depth)):
+        counts.append(node_count)
+        if node_count & 1 and level != 0:  # odd number
+            node_count += 1
+        node_count = node_count // 2
+    return list(reversed(counts))
