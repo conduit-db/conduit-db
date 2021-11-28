@@ -8,9 +8,9 @@ from bitcoinx import hash_to_hex_str, hex_str_to_hash
 
 from .mysql_tables import MySQLTables
 from ...constants import PROFILING, HashXLength, MAX_UINT32
-from ...types import TransactionQueryResult, RestorationFilterRequest, \
-    RestorationFilterJSONResponse, le_int_to_char, RestorationFilterResult, TxLocation, \
-    RestorationFilterQueryResult, _get_pushdata_match_flag
+from ...types import TxMetadata, RestorationFilterRequest, RestorationFilterJSONResponse, \
+    le_int_to_char, RestorationFilterResult, TxLocation, RestorationFilterQueryResult, \
+    _get_pushdata_match_flag, BlockHeaderRow
 
 
 class MySQLAPIQueries:
@@ -22,19 +22,43 @@ class MySQLAPIQueries:
         self.mysql_tables = mysql_tables
         self.mysql_db = mysql_db
 
-    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TransactionQueryResult:
-        self.mysql_conn.query(f"""
+    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata:
+        sql = f"""
             SELECT CT.tx_hash, CT.tx_block_num, CT.tx_position, HD.block_num, HD.block_hash, 
                 HD.block_height FROM confirmed_transactions CT
             INNER JOIN headers HD
             ON HD.block_num = CT.tx_block_num
-            WHERE CT.tx_hash = X'{tx_hashX.hex()}';""")
+            WHERE CT.tx_hash = X'{tx_hashX.hex()}';"""
+
+        self.mysql_conn.query(sql)
+
         result = self.mysql_conn.store_result()
         rows = result.fetch_row(0)
         if len(rows) != 0:
             tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
-            return TransactionQueryResult(tx_hash, tx_block_num, tx_position, block_num, block_hash,
+            return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
                 block_height)
+
+    def get_header_data(self, block_hash: bytes, raw_header_data=True) -> BlockHeaderRow:
+        if raw_header_data:
+            sql = f"""SELECT * FROM headers HD WHERE HD.block_hash = X'{block_hash.hex()}';"""
+            self.mysql_conn.query(sql)
+        else:
+            sql = f"""SELECT block_num, block_hash, block_height, block_tx_count, 
+                block_size FROM headers HD WHERE HD.block_hash = X'{block_hash.hex()}';"""
+            self.mysql_conn.query(sql)
+        result = self.mysql_conn.store_result()
+        rows = result.fetch_row(0)
+        if len(rows) != 0:
+            if raw_header_data:
+                block_num, block_hash, block_height, block_header, block_tx_count, block_size = rows[0]
+                block_header = block_header.hex()
+            else:
+                block_header = None
+                block_num, block_hash, block_height, block_tx_count, block_size = rows[0]
+
+            return BlockHeaderRow(block_num, hash_to_hex_str(block_hash), block_height,
+                block_header, block_tx_count, block_size)
 
     def _make_restoration_query_result(self, row):
         pushdata_hashX = row[0]

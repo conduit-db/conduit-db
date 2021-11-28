@@ -13,7 +13,7 @@ class BlockHeaderRow(NamedTuple):
     block_num: int
     block_hash: str
     block_height: int
-    block_header: str
+    block_header: Optional[str]
     block_tx_count: int
     block_size: int
 
@@ -39,8 +39,8 @@ class TxLocation(NamedTuple):
     tx_position: int  # 0-based index in block
 
 
-class TransactionQueryResult(NamedTuple):
-    tx_hash: bytes
+class TxMetadata(NamedTuple):
+    tx_hashX: bytes
     tx_block_num: int
     tx_position: int
     block_num: int

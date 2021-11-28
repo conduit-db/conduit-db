@@ -6,12 +6,13 @@ import bitcoinx
 import requests
 
 from conduit_lib.types import _get_pushdata_match_flag
-from conduit_test._test_data import TRANSACTIONS
+import conduit_test._test_data as test_data
 
 BASE_URL = f"http://127.0.0.1:34525"
 PING_URL = BASE_URL + "/"
 ERROR_URL = BASE_URL + "/error"
 GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
+GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
 REF_TYPE_OUTPUT = 0
@@ -46,21 +47,57 @@ class TestInternalAiohttpRESTAPI:
         assert result.reason is not None
         assert isinstance(result.reason, str)
 
-    def test_get_transaction_json(klass):
+    def test_get_transaction_json(self):
         headers = {'Accept': "application/json"}
-        for txid, rawtx_hex in TRANSACTIONS.items():
+        for txid, rawtx_hex in test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200
             assert result.json() == rawtx_hex
 
-    def test_get_transaction_binary(klass):
+    def test_get_transaction_binary(self):
         headers = {'Accept': "application/octet-stream"}
-        for txid, rawtx_hex in TRANSACTIONS.items():
+        for txid, rawtx_hex in test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200
             assert result.content == bytes.fromhex(rawtx_hex)
 
-    def test_pushdata_no_match_json(klass):
+    def test_get_tsc_merkle_proof_json(self):
+        headers = {'Accept': "application/json"}
+        body = {
+            "includeFullTx": False,
+            "targetType": 'hash'
+        }
+        for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_HASH.items():
+            result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+            assert result.status_code == 200
+            assert result.json() == expected_tsc_proof
+
+        body = {
+            "includeFullTx": False,
+            "targetType": 'header'
+        }
+        for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_HEADER.items():
+            result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+            assert result.status_code == 200
+            assert result.json() == expected_tsc_proof
+        body = {
+            "includeFullTx": False,
+            "targetType": 'merkleroot'
+        }
+        for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_TARGET_AS_MERKLE_ROOT.items():
+            result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+            assert result.status_code == 200
+            assert result.json() == expected_tsc_proof
+        body = {
+            "includeFullTx": True,
+            "targetType": 'hash'
+        }
+        for txid, expected_tsc_proof in test_data.MERKLE_PROOFS_INCLUDE_RAWTX.items():
+            result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+            assert result.status_code == 200
+            assert result.json() == expected_tsc_proof
+
+    def test_pushdata_no_match_json(self):
         """
         Find no match for something that is not there.
         """

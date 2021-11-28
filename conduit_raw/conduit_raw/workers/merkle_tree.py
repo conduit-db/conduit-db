@@ -61,7 +61,7 @@ class MTreeCalculator(multiprocessing.Process):
                 # Todo - add batching to this like the other workers.
                 # t0 = time.perf_counter()
                 mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
-                lmdb_db.put_merkle_tree(blk_hash, mtree)
+                lmdb_db.put_merkle_tree(bytes(blk_hash), mtree)
                 lmdb_db.put_tx_offsets(blk_hash, tx_offsets)
                 # t1 = time.perf_counter() - t0
                 # self.logger.debug(f"mtree and tx_offsets flush took {t1} seconds")

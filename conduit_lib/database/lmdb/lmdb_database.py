@@ -1,9 +1,11 @@
 import array
+import functools
 import logging
 import os
 import sys
 import time
 from io import BytesIO
+from math import ceil, log
 from pathlib import Path
 from struct import Struct
 from typing import List, Tuple, Dict, Optional
@@ -11,10 +13,11 @@ from typing import List, Tuple, Dict, Optional
 import bitcoinx
 import cbor2
 import lmdb
+from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_le_Q
 
-from conduit_lib.algorithms import calc_mtree_base_level
-from conduit_lib.types import TxLocation, BlockMetadata
+from conduit_lib.algorithms import calc_mtree_base_level, calc_depth
+from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata
 
 try:
     from ...constants import PROFILING
@@ -81,7 +84,6 @@ class LMDB_Database:
         self.logger.debug(f"Getting next write path for raw blocks...")
         # This will do the initial scan and cache the correct self._last_dat_file_num
         self.next_write_path = self._get_next_write_path_for_blocks()
-        self.next_write_path = self._get_next_write_path_for_blocks()
         self.logger.debug(f"Next write path: {self.next_write_path}")
 
     def open(self):
@@ -133,6 +135,7 @@ class LMDB_Database:
                 len_of_slice = end_offset - start_offset
                 return f.read(len_of_slice)
 
+    @functools.lru_cache(maxsize=256)
     def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
         """Todo: Merkle Tree rows need to be stored in flat files the same way that blocks are"""
         with self.env.begin(db=self.mtree_db) as txn:
@@ -140,6 +143,7 @@ class LMDB_Database:
             tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
             return tx_hash
 
+    @functools.lru_cache(maxsize=256)
     def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes:
         with self.env.begin(write=False) as txn:
             result = txn.get(tx_loc.block_hash, db=self.tx_offsets_db)
@@ -249,6 +253,54 @@ class LMDB_Database:
         except Exception as e:
             self.logger.exception(e)
 
+    def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
+            -> bytes:
+        array = cursor.get(block_hash + struct_le_I.pack(level))
+        node_hash = array[position*32:(position+1)*32]
+        return bytes(node_hash)  # convert from memory view if needed
+
+    def merkle_branch_length(self, tx_count: int):
+        '''Return the length of a merkle branch given the number of hashes.'''
+        return ceil(log(tx_count, 2))
+
+    def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str]:
+        block_metadata = self.get_block_metadata(tx_metadata.block_hash)
+        base_level = calc_depth(block_metadata.tx_count) - 1
+        merkle_branch_length = self.merkle_branch_length(block_metadata.tx_count)
+        block_hash = tx_metadata.block_hash
+
+        odd_node_count_for_level = lambda x: current_level_node_count & 1
+        with self.env.begin(db=self.mtree_db, write=False, buffers=True) as txn:
+            cur = txn.cursor()
+            index = tx_metadata.tx_position
+
+            branch = []
+            current_level_node_count = block_metadata.tx_count
+
+            # level = 0 is the merkle root. Increasing levels move toward the base.
+            for level in reversed(range(0, base_level + 1)):
+                pair_index = index ^ 1
+                if level == 0:
+                    merkle_root = self.get_mtree_node(block_hash, level, 0, cur)
+                    break
+
+                if odd_node_count_for_level(current_level_node_count):
+                    current_level_node_count += 1  # to account for the duplicate hash
+
+                    # Asterix used in place of "duplicated" hashes in TSC format (derivable by client)
+                    is_last_node_in_level = (index ^ 1 == current_level_node_count - 1)
+                    if is_last_node_in_level:
+                        branch.append("*")
+                    else:
+                        branch_node = self.get_mtree_node(block_hash, level, pair_index, cur)
+                        branch.append(hash_to_hex_str(branch_node))
+                else:
+                    branch_node = self.get_mtree_node(block_hash, level, pair_index, cur)
+                    branch.append(hash_to_hex_str(branch_node))
+                index >>= 1
+                current_level_node_count = current_level_node_count // 2
+            return branch, hash_to_hex_str(merkle_root)
+
     def put_merkle_tree(self, block_hash: bytes, mtree: Dict):
         """In the current design we store the entire txid set (all levels of the merkle tree) as
         this is the simplest way to cover all use cases at the moment with low latency. It is not
@@ -303,7 +355,6 @@ class LMDB_Database:
 
     def sync(self):
         self.env.sync(True)
-
 
 if __name__ == "__main__":
     # Debugging script - gives a dump of all data for a given hex blockhash

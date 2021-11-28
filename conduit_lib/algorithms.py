@@ -3,6 +3,7 @@ import array
 import logging
 import struct
 from hashlib import sha256
+from math import ceil, log
 from typing import Dict, Union, Tuple, List
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
@@ -277,12 +278,7 @@ def parse_txs(
 
 
 def calc_depth(leaves_count):
-    result = leaves_count
-    mtree_depth = 0
-    while result >= 1:  # 1 represents merkle root
-        result = result / 2
-        mtree_depth += 1
-    return mtree_depth
+    return ceil(log(leaves_count, 2)) + 1
 
 
 def calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets):
@@ -320,7 +316,7 @@ def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType)
     # This is a naive, brute force implementation
     mtree = {}
     leaves_count = len(tx_offsets)
-    base_level = calc_depth(leaves_count)
+    base_level = calc_depth(leaves_count) - 1
     mtree = calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets)
     build_mtree_from_base(base_level, mtree)
     # logger.debug(f"merkle_root={hash_to_hex_str(mtree[0][0])}")

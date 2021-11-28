@@ -2,10 +2,11 @@ import asyncio
 import io
 import socket
 from asyncio import BufferedProtocol
+from typing import Callable
 
 import bitcoinx
 from bitcoinx import read_varint
-from collections import namedtuple, Callable
+from collections import namedtuple
 from multiprocessing import shared_memory
 import logging
 import struct
