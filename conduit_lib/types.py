@@ -226,3 +226,8 @@ def tsc_merkle_proof_json_to_binary(tsc_json: Dict, include_full_tx: bool, targe
             response += hash_type_node
             response += bitcoinx.hex_str_to_hash(node)
     return response
+
+
+class Inv(TypedDict):
+    inv_type: int
+    inv_hash: bytes

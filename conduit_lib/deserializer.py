@@ -1,23 +1,15 @@
 import logging
 
 import bitcoinx
-from bitcoinx import (
-    read_le_int32,
-    read_le_uint64,
-    read_le_int64,
-    read_varbytes,
-    read_le_uint32,
-    read_varint,
-    read_le_uint16,
-    hash_to_hex_str,
-    MissingHeader,
-)
+from bitcoinx import (read_le_int32, read_le_uint64, read_le_int64, read_varbytes, read_le_uint32,
+    read_varint, read_le_uint16, hash_to_hex_str, MissingHeader, double_sha256, )
 import socket
 import time
 
 from .networks import NetworkConfig
 from .store import Storage
 from .constants import CCODES, GENESIS_BLOCK
+from .types import Inv
 from .utils import mapped_ipv6_to_ipv4
 from . import utils
 
@@ -127,15 +119,15 @@ class Deserializer:
 
         return message, ccode_translation, reason
 
-    def inv(self, f):
-        message = []
+    def inv(self, f) -> list[Inv]:
+        inv_vector = []
         count = read_varint(f.read)
         for i in range(count):
             inv_type = read_le_uint32(f.read)
             inv_hash = hash_to_hex_str(f.read(32))
-            inv_vector = {"inv_type": inv_type, "inv_hash": inv_hash}
-            message.append(inv_vector)
-        return message
+            inv = {"inv_type": inv_type, "inv_hash": inv_hash}
+            inv_vector.append(inv)
+        return inv_vector
 
     def getdata(self, f):
         message = []
@@ -164,26 +156,30 @@ class Deserializer:
         }
         return message
 
-    def connect_headers(self, f) -> bool:
+    def connect_headers(self, f) -> [bytes, bool]:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         count = bitcoinx.read_varint(f.read)
-
+        success = True
+        first_header_of_batch = None
         for i in range(count):
             try:
                 raw_header = f.read(80)
+                # logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))}")
                 _tx_count = bitcoinx.read_varint(f.read)
                 self.storage.headers.connect(raw_header)
-                # return header
+                if i == 0:
+                    first_header_of_batch = raw_header
             except MissingHeader as e:
                 if str(e).find(GENESIS_BLOCK) != -1:
                     logger.debug("skipping prev_out == genesis block")
                     continue
                 else:
-                    logger.exception(e)
-                    raise
+                    logger.error(e)
+                    success = False
+                    return first_header_of_batch, success
         self.storage.headers.flush()
-        return True
+        return first_header_of_batch, success
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)

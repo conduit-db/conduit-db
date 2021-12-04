@@ -93,8 +93,8 @@ class LMDB_Database:
         # This will do the initial scan and cache the correct _last_dat_file_num
         self.next_write_path = self._get_next_write_path_for_blocks()
         self.next_write_path_merkle = self._get_next_write_path_for_merkle_trees()
-        self.logger.debug(f"Next write path blocks: {self.next_write_path}")
-        self.logger.debug(f"Next write path merkle: {self.next_write_path_merkle}")
+        # self.logger.debug(f"Next write path blocks: {self.next_write_path}")
+        # self.logger.debug(f"Next write path merkle: {self.next_write_path_merkle}")
 
     def open(self):
         self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
@@ -241,13 +241,12 @@ class LMDB_Database:
                 return 0  # so that first entry is key==1
 
     def _get_next_write_path_for_merkle_trees(self):
-        self.logger.debug(f"Getting next write path for merkle trees...")
+        # self.logger.debug(f"Getting next write path for merkle trees...")
         padded_str_num = str(self._last_dat_file_num_merkle_trees).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
         write_path = Path(self.MERKLE_TREES_DIR) / filename
 
         while os.path.exists(write_path):
-            self.logger.debug(f"write_path: {write_path}")
             self._last_dat_file_num_merkle_trees += 1
             padded_str_num = str(self._last_dat_file_num_merkle_trees).zfill(8)
             filename = f"blk_{padded_str_num}.dat"
@@ -256,13 +255,12 @@ class LMDB_Database:
         return write_path
 
     def _get_next_write_path_for_blocks(self) -> str:
-        self.logger.debug(f"Getting next write path for raw blocks...")
+        # self.logger.debug(f"Getting next write path for raw blocks...")
         padded_str_num = str(self._last_dat_file_num_blocks).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
         write_path = Path(self.RAW_BLOCKS_DIR) / filename
 
         while os.path.exists(write_path):
-            self.logger.debug(f"write_path: {write_path}")
             self._last_dat_file_num_blocks += 1
             padded_str_num = str(self._last_dat_file_num_blocks).zfill(8)
             filename = f"blk_{padded_str_num}.dat"
@@ -295,6 +293,7 @@ class LMDB_Database:
             start_offset = 0
             raw_blocks_arr = bytearray()
             write_path = self._get_next_write_path_for_blocks()
+
             for block_num, block_row in zip(block_nums, batched_blocks):
                 blk_hash, blk_start_pos, blk_end_pos = block_row
                 raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
@@ -312,7 +311,7 @@ class LMDB_Database:
                 #                   f"write_path: {write_path}; "
                 #                   f"start_offset: {start_offset}; "
                 #                   f"end_offset: {end_offset}")
-                # self.logger.debug(f"Putting key: {key}; val: {val}")
+                # self.logger.debug(f"Putting key: {struct_be_I.unpack(key)[0]}; val: {val}")
 
                 tx.put(key, val, db=self.blocks_db, append=True, overwrite=False)
                 tx.put(blk_hash, struct_be_I.pack(block_num), db=self.block_nums_db, overwrite=False)

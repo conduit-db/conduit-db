@@ -11,6 +11,7 @@ from bitcoinx import Headers, hash_to_hex_str
 
 from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
 from conduit_lib.store import Storage
+from conduit_lib.types import Inv
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -29,15 +30,14 @@ class SyncState:
         self.storage = storage
         self.controller = controller
 
-        self.headers_msg_processed_event = asyncio.Event()
-        self.headers_event_new_tip = asyncio.Event()
+        self.headers_msg_processed_queue = asyncio.Queue()
+        self.headers_new_tip_queue = asyncio.Queue()
         self.headers_event_initial_sync = asyncio.Event()
         self.blocks_event_new_tip = asyncio.Event()
         self.target_header_height: Optional[int] = None
         self.target_block_header_height: Optional[int] = None
         self.local_tip_height: int = self.update_local_tip_height()
         self.local_block_tip_height: int = self.get_local_block_tip_height()
-        self.initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue = asyncio.Queue()
@@ -67,7 +67,6 @@ class SyncState:
         self.done_blocks_preproc_event = asyncio.Event()
 
         self.pending_blocks_inv_queue = asyncio.Queue()
-        self.initial_block_download_event_mp = multiprocessing.Event()
 
     def get_local_tip_height(self):
         return self.local_tip_height
@@ -94,18 +93,13 @@ class SyncState:
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_next_batched_blocks(self):
+    def get_next_batched_blocks(self, from_height: int, to_height: int):
         """Key Variables
         - stop_header_height
         - all_pending_block_hashes
         """
         self.all_pending_block_hashes = set()
-        headers: Headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-
-        local_headers_tip_height = self.get_local_tip_height()
-        local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = local_headers_tip_height - local_block_tip_height
+        block_height_deficit = to_height - from_height
 
         # This is intended so that as block sizes increase we are not requesting 500 x 4GB blocks!
         # As the average block size increases we should gradually reduce the number of raw blocks
@@ -113,17 +107,18 @@ class SyncState:
         max_batch_size = MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
         # This is rounded up so a block that far exceeds the MAX_RAW_BLOCK_BATCH_REQUEST_SIZE will
         # still result in a requested count == 1
-        estimated_ideal_block_count = math.ceil(max_batch_size / self.controller.estimated_moving_av_block_size)
+        estimated_ideal_block_count = math.ceil(max_batch_size /
+            self.controller.estimated_moving_av_block_size)
 
         # 500 headers is the max allowed over p2p protocol
         estimated_ideal_block_count = min(estimated_ideal_block_count, 500)
 
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count} (max_batch_size={max_batch_size / (1024**2)} MB)")
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
-        stop_header_height = local_block_tip_height + batch_count
+        stop_header_height = from_height + batch_count
 
         for i in range(1, batch_count + 1):
-            block_header = headers.header_at_height(chain, local_block_tip_height + i)
+            block_header = self.controller.get_header_for_height(from_height + i)
             self.all_pending_block_hashes.add(block_header.hash)
 
         return batch_count, self.all_pending_block_hashes, stop_header_height
@@ -136,31 +131,10 @@ class SyncState:
         with self._msg_handled_count_lock:
             self._msg_handled_count += 1
 
-    async def wait_for_new_headers_tip(self):
+    async def wait_for_new_headers_tip(self) -> Inv:
         self.headers_event_initial_sync.set()
-        await self.headers_event_new_tip.wait()
-        self.headers_event_new_tip.clear()
-
-    def is_post_IBD(self):
-        """has initial block download been completed?
-        (to syncronize all blocks with all initially fetched headers)"""
-        return self.initial_block_download_event.is_set()
-
-    def set_post_IBD_mode(self):
-        self.logger.debug(f"setting initial_block_download_event")
-        self.initial_block_download_event.set()  # once set the first time will stay set
-        self.initial_block_download_event_mp.set()
-
-    async def wait_for_new_block_tip(self):
-        if self.is_post_IBD():
-            await self.blocks_event_new_tip.wait()
-            self.blocks_event_new_tip.clear()
-
-        if not self.is_post_IBD():
-            self.set_post_IBD_mode()
-            self.blocks_event_new_tip.clear()
-            await self.blocks_event_new_tip.wait()
-            self.blocks_event_new_tip.clear()
+        inv = await self.headers_new_tip_queue.get()
+        return inv
 
     def have_processed_non_block_msgs(self) -> bool:
         return self._msg_received_count == self._msg_handled_count

@@ -1,48 +1,39 @@
+import aiohttp
 import asyncio
+from asyncio import BaseTransport, BaseProtocol
+import bitcoinx
+from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header
+from concurrent.futures.thread import ThreadPoolExecutor
 import os
 import queue
 import threading
 import time
 import typing
-from asyncio import BaseTransport, BaseProtocol
-from concurrent.futures.thread import ThreadPoolExecutor
+from typing import Optional, List, Dict
 import multiprocessing
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 import logging
-from typing import Optional, List, Dict
-
-import bitcoinx
-from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str
 import zmq
 
-from conduit_lib.ipc_sock_client import IPCSocketClient
-from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.utils import cast_to_valid_ipv4
-from conduit_lib.wait_for_dependencies import wait_for_node
+from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database, cast_to_valid_ipv4,
+    Serializer, Deserializer, Handlers, BitcoinNetIO, wait_for_node)
+from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
+from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
+    WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
 from .aiohttp_api import server_main
-
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
+from .regtest_support import RegtestSupport
 from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
 from .sync_state import SyncState
-from conduit_lib.bitcoin_net_io import BitcoinNetIO
-from .preprocessor import BlockPreProcessor
-from .workers.merkle_tree import MTreeCalculator
-from .workers.raw_blocks import BlockWriter
-from conduit_lib.store import setup_storage, Storage
-from conduit_lib.commands import VERSION, GETHEADERS, GETBLOCKS, GETDATA, BLOCK_BIN
-from conduit_lib.handlers import Handlers
-from conduit_lib.constants import (ZERO_HASH, WORKER_COUNT_MTREE_CALCULATORS,
-    WORKER_COUNT_BLK_WRITER, CONDUIT_RAW_SERVICE_NAME)
-from conduit_lib.deserializer import Deserializer
-from conduit_lib.serializer import Serializer
+from .preprocessor import BlockPreProcessor  # threading.Thread
+from .workers import MTreeCalculator, BlockWriter  # multiprocessing.Process
 
 if typing.TYPE_CHECKING:
-    from conduit_lib.networks import NetworkConfig
-    from conduit_lib.peers import Peer
-
+    from conduit_lib import NetworkConfig, Peer
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
 
 try:
     # Todo - this is messy
@@ -86,6 +77,7 @@ class Controller:
         self.handlers: Optional[Handlers] = None
         self.serializer: Optional[Serializer] = None
         self.deserializer: Optional[Deserializer] = None
+        self.regtest_support: Optional[RegtestSupport] = None
         self.lmdb: Optional[LMDB_Database] = None
         self.ipc_sock_client: Optional[IPCSocketClient] = None
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -133,6 +125,8 @@ class Controller:
 
         self.sync_state: Optional[SyncState] = None
         self.estimated_moving_av_block_size = 181  # bytes
+        self.aiohttp_client_session: Optional[aiohttp.ClientSession] = None
+        self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
@@ -140,6 +134,7 @@ class Controller:
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
+        self.regtest_support = RegtestSupport(self)
         self.sync_state = SyncState(self.storage, self)
         self.lmdb = self.storage.lmdb
         self.batch_completion_raw = BatchCompletionRaw(
@@ -174,6 +169,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
+            await self._get_aiohttp_client_session()
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
@@ -192,6 +188,7 @@ class Controller:
     async def stop(self):
         self.running = False
         try:
+            await self._close_aiohttp_client_session()
             if self.transport:
                 self.transport.close()
             if self.storage:
@@ -332,6 +329,12 @@ class Controller:
             await self.handshake_complete_event.wait()
 
             self.start_workers()
+
+            # In regtest old block timestamps (submitted to node) will not take the node out of IBD
+            # This works around it by polling the node's RPC. This is never needed in prod.
+            # if self.net_config.NET == REGTEST:
+            #     await self.spawn_poll_node_for_header_job()
+
             await self.spawn_sync_headers_task()
             await self.sync_state.headers_event_initial_sync.wait()  # one-off
             await self.spawn_initial_block_download()
@@ -347,29 +350,45 @@ class Controller:
     #     await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
-        block_locator_hashes = [self.storage.headers.longest_chain().tip.hash]
+        tip = self.storage.headers.longest_chain().tip
+        block_locator_hashes = []
+        for i in range(0, 25, 2):
+            height = tip.height - i**2
+            if i == 0 or height > 0:
+                locator_hash = self.get_header_for_height(height).hash
+                block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
         await self.send_request(
             GETHEADERS, self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
         )
 
+    async def _get_aiohttp_client_session(self):
+        if not self.aiohttp_client_session:
+            self.aiohttp_client_session = aiohttp.ClientSession()
+        return self.aiohttp_client_session
+
+    async def _close_aiohttp_client_session(self):
+        await self.aiohttp_client_session.close()
+
     async def sync_headers_job(self):
         try:
             """supervises completion of syncing all headers to target height"""
             self.logger.debug("Starting sync_headers_job...")
-
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             while True:
                 if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                    await self.sync_state.wait_for_new_headers_tip()
-                await self._get_max_headers()
-                await self.sync_state.headers_msg_processed_event.wait()
-                self.sync_state.headers_msg_processed_event.clear()
+                    inv = await self.sync_state.wait_for_new_headers_tip()
+
+                await self._get_max_headers()  # Gets ignored when node is in IBD
+                msg = await self.sync_state.headers_msg_processed_queue.get()
+                if msg is None:
+                    continue
+
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
                 self.logger.debug(
                     "New headers tip height: %s", self.sync_state.local_tip_height,
                 )
-                self.sync_state.blocks_event_new_tip.set()
+                self.new_headers_queue.put_nowait(msg)
         except Exception as e:
             self.logger.exception(f"Unexpected exception in sync_headers_job")
 
@@ -421,7 +440,52 @@ class Controller:
 
         assert count_requested == len(blocks_batch_set)
 
-    async def connect_done_block_headers(self, blocks_batch_set):
+    def find_common_parent(self, reorg_node_tip: bitcoinx.Header,
+            orphaned_tip: bitcoinx.Header) -> tuple[bitcoinx.Chain, int]:
+
+        chains: list[bitcoinx.Chain] = self.storage.headers.chains()
+
+        # Get orphan an reorg chains
+        orphaned_chain = None
+        reorg_chain = None
+        for chain in chains:
+            if chain.tip.hash == reorg_node_tip.hash:
+                reorg_chain = chain
+            elif chain.tip.hash == orphaned_tip.hash:
+                orphaned_chain = chain
+
+        if reorg_chain is not None and orphaned_chain is not None:
+            chain, common_parent_height = reorg_chain.common_chain_and_height(orphaned_chain)
+            return reorg_chain, common_parent_height
+        elif reorg_chain is not None and orphaned_chain is None:
+            return reorg_chain, 0
+        else:
+            # Should never happen
+            raise ValueError("No common parent block header could be found")
+
+    def backfill_headers(self, first_missing_header: int, reorg_tip_height: int):
+        for height in range(first_missing_header, reorg_tip_height + 1):
+            header = self.get_header_for_height(height)
+            self.storage.block_headers.connect(header.raw)
+        self.storage.block_headers.flush()
+
+    def reorg_detect(self, old_tip: bitcoinx.Header, new_tip: bitcoinx.Header) \
+            -> Optional[tuple[int, Header, Header]]:
+        try:
+            assert new_tip.height > old_tip.height
+            common_parent_chain, common_parent_height = self.find_common_parent(new_tip, old_tip)
+
+            if common_parent_height < old_tip.height:
+                depth = old_tip.height - common_parent_height
+                self.logger.debug(f"Reorg detected of depth: {depth}. "
+                                  f"Syncing missing blocks from height: "
+                                  f"{common_parent_height + 1} to {new_tip.height}")
+                return common_parent_height, new_tip, old_tip
+        except Exception:
+            self.logger.exception("unexpected exception in reorg_detect")
+
+    async def connect_done_block_headers(self, blocks_batch_set) -> None:
+        """If this returns False, it means a reorg happened"""
         sorted_headers = sorted([(self.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
         sorted_heights = [height for height, h in sorted_headers]
@@ -431,12 +495,16 @@ class Controller:
         assert sorted_heights == expected_block_heights
 
         block_headers: bitcoinx.Headers = self.storage.block_headers
-        for height, hash in sorted_headers:
-            header = self.get_header_for_hash(hash)
-            block_headers.connect(header.raw)
+        try:
+            for height, _hash in sorted_headers:
+                header = self.get_header_for_hash(_hash)
+                block_headers.connect(header.raw)
+        except bitcoinx.errors.MissingHeader as e:
+            # This should indicate a reorg but we will confirm it
+            self.logger.error(e)
+            raise
 
         self.storage.block_headers.flush()
-        # ? Add reorg and other sanity checks later here...
 
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header height: {tip.height}, "
@@ -450,8 +518,8 @@ class Controller:
             block_hashes.append(header.hash)
 
         with IPCSocketClient() as ipc_sock_client:
-            block_sizes_batch = ipc_sock_client.block_metadata_batched(block_hashes)
-        self.estimated_moving_av_block_size = sum(block_sizes_batch) / len(block_sizes_batch)
+            block_metadata_batch = ipc_sock_client.block_metadata_batched(block_hashes).block_metadata_batch
+        self.estimated_moving_av_block_size = sum([m.block_size for m in block_metadata_batch]) / len(block_metadata_batch)
         self.logger.debug(f"Updated estimated_moving_av_block_size: "
                           f"{int(self.estimated_moving_av_block_size / (1024**2))} MB")
 
@@ -468,80 +536,91 @@ class Controller:
             hash_stop = header.hash
         return hash_stop
 
+    async def wait_for_batched_blocks_completion(self, batch_id, all_pending_block_hashes,
+            stop_header_height) -> bool:
+        """all_pending_block_hashes is copied into these threads to prevent mutation"""
+        try:
+            await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
+                stop_header_height)
+
+            self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
+            self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
+            self.blocks_batch_set_queue_preproc.put_nowait(all_pending_block_hashes.copy())
+
+            # Wait for batch completion for all worker types (via ACK messages)
+            await self.sync_state.done_blocks_raw_event.wait()
+            await self.sync_state.done_blocks_mtree_event.wait()
+            await self.sync_state.done_blocks_preproc_event.wait()
+            self.sync_state.done_blocks_raw_event.clear()
+            self.sync_state.done_blocks_mtree_event.clear()
+            self.sync_state.done_blocks_preproc_event.clear()
+
+            await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
+            await self.connect_done_block_headers(all_pending_block_hashes.copy())
+
+        except Exception:
+            self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
+
+
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
-
-        async def wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes, stop_header_height) -> None:
-            """all_pending_block_hashes is copied into these threads to prevent mutation"""
-            try:
-                await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
-                    stop_header_height)
-
-                self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
-                self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
-                self.blocks_batch_set_queue_preproc.put_nowait(all_pending_block_hashes.copy())
-
-                # Wait for batch completion for all worker types (via ACK messages)
-                await self.sync_state.done_blocks_raw_event.wait()
-                await self.sync_state.done_blocks_mtree_event.wait()
-                await self.sync_state.done_blocks_preproc_event.wait()
-                self.sync_state.done_blocks_raw_event.clear()
-                self.sync_state.done_blocks_mtree_event.clear()
-                self.sync_state.done_blocks_preproc_event.clear()
-
-                await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
-                await self.connect_done_block_headers(all_pending_block_hashes.copy())
-
-            except Exception:
-                self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
         try:
             # up to 500 blocks per loop
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
-                if self.sync_state.is_synchronized() or \
-                        self.sync_state.initial_block_download_event_mp.is_set():
-                    api_block_tip_height = self.sync_state.get_local_block_tip_height()
-                    self.logger.debug(f"New block tip height: {api_block_tip_height}")
-                    await self.sync_state.wait_for_new_block_tip()
+                # If there's a reorg, starting header can be less than longest_chain().tip
+                msg = await self.new_headers_queue.get()
+                is_reorg, start_header, stop_header = msg
 
-                if batch_id == 0:
-                    self.logger.info(f"Starting Initial Block Download")
-                else:
-                    self.logger.debug(f"Controller Batch {batch_id} Start")
-                chain = self.storage.block_headers.longest_chain()
+                if start_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
+                    continue
 
-                block_locator_hashes = [chain.tip.hash]
-                hash_count = len(block_locator_hashes)
-                hash_stop = ZERO_HASH  # get max
+                original_stop_height = stop_header.height
+                while True:
+                    first_locator = self.get_header_for_height(start_header.height - 1)
 
-                # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
-                if chain.tip.height > 2016:
-                    self.update_moving_average(chain.tip.height)
+                    if batch_id == 0:
+                        self.logger.info(f"Starting Initial Block Download")
+                    else:
+                        self.logger.debug(f"Controller Batch {batch_id} Start")
+                    chain = self.storage.block_headers.longest_chain()
 
-                next_batch = self.sync_state.get_next_batched_blocks()
-                batch_count, all_pending_block_hashes, stop_header_height = next_batch
+                    block_locator_hashes = [first_locator.hash]
+                    hash_count = len(block_locator_hashes)
+                    hash_stop = ZERO_HASH  # get max
 
-                if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
-                    self.get_hash_stop(stop_header_height)
+                    # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
+                    if chain.tip.height > 2016:
+                        self.update_moving_average(chain.tip.height)
 
-                await self.send_request(
-                    GETBLOCKS,
-                    self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop),
-                )
-                # Workers are loaded by Handlers.on_block handler as messages are received
-                await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes,
-                    stop_header_height)
-                # ------------------------- Batch complete ------------------------- #
-                if batch_id == 0:
-                    self.logger.debug(f"Initial Block Download Complete. New block tip height: "
-                        f"{self.sync_state.get_local_block_tip_height()}")
-                else:
-                    self.logger.debug(f"Controller Batch {batch_id} Complete."
-                        f" New tip height: {self.sync_state.get_local_block_tip_height()}")
-                batch_id += 1
+                    from_height = self.get_header_for_hash(start_header.hash).height - 1
+                    to_height = stop_header.height
+                    next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
+                    batch_count, all_pending_block_hashes, stop_header_height = next_batch
 
+                    if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
+                        hash_stop = self.get_hash_stop(stop_header_height)
+
+                    await self.send_request(GETBLOCKS,
+                        self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
+
+                    # Workers are loaded by Handlers.on_block handler as messages are received
+                    await self.wait_for_batched_blocks_completion(batch_id,
+                        all_pending_block_hashes, stop_header_height)
+
+                    # ------------------------- Batch complete ------------------------- #
+                    if batch_id == 0:
+                        self.logger.debug(f"Initial Block Download Complete. New block tip height: "
+                            f"{self.sync_state.get_local_block_tip_height()}")
+                    else:
+                        self.logger.debug(f"Controller Batch {batch_id} Complete."
+                            f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+                    batch_id += 1
+                    start_header = self.get_header_for_height((start_header.height - 1) + batch_count)
+                    if self.sync_state.get_local_block_tip_height() == original_stop_height:
+                        break
 
         except asyncio.CancelledError:
             raise
@@ -572,3 +651,6 @@ class Controller:
 
     async def spawn_aiohttp_api(self):
         self.tasks.append(asyncio.create_task(server_main.main()))
+
+    async def spawn_poll_node_for_header_job(self):
+        self.tasks.append(asyncio.create_task(self.regtest_support.regtest_poll_node_for_tip_job()))
