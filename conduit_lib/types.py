@@ -4,7 +4,7 @@ import typing
 from typing import TypedDict, Optional, NamedTuple, Dict
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str, hex_str_to_hash
+from bitcoinx import hash_to_hex_str, hex_str_to_hash, Header
 
 from conduit_lib.constants import MAX_UINT32
 
@@ -231,3 +231,9 @@ def tsc_merkle_proof_json_to_binary(tsc_json: Dict, include_full_tx: bool, targe
 class Inv(TypedDict):
     inv_type: int
     inv_hash: bytes
+
+
+class HeaderAllocation(NamedTuple):
+    is_reorg: bool
+    start_header: Header
+    stop_header: Header

@@ -131,11 +131,6 @@ class SyncState:
         with self._msg_handled_count_lock:
             self._msg_handled_count += 1
 
-    async def wait_for_new_headers_tip(self) -> Inv:
-        self.headers_event_initial_sync.set()
-        inv = await self.headers_new_tip_queue.get()
-        return inv
-
     def have_processed_non_block_msgs(self) -> bool:
         return self._msg_received_count == self._msg_handled_count
 

@@ -21,6 +21,7 @@ from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database,
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
     WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
+from conduit_lib.types import HeaderAllocation
 from .aiohttp_api import server_main
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .regtest_support import RegtestSupport
@@ -377,7 +378,8 @@ class Controller:
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             while True:
                 if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
-                    inv = await self.sync_state.wait_for_new_headers_tip()
+                    self.sync_state.headers_event_initial_sync.set()
+                    await self.sync_state.headers_new_tip_queue.get()
 
                 await self._get_max_headers()  # Gets ignored when node is in IBD
                 msg = await self.sync_state.headers_msg_processed_queue.get()
@@ -561,20 +563,52 @@ class Controller:
         except Exception:
             self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
+    def merge_batch(self, batch: list[HeaderAllocation]) -> HeaderAllocation:
+        """Take the broadest possible start & stop points. is_reorg=True
+        merely serves to allow syncing blocks for height <
+        current block store tip"""
+        is_reorg = any([x.is_reorg for x in batch])
+        start_header_height = min([x.start_header.height for x in batch])
+        stop_header_height = max([x.stop_header.height for x in batch])
+
+        # We only care about the longest chain headers at this point so
+        # lookups by height is fine
+        start_header = self.get_header_for_height(start_header_height)
+        stop_header = self.get_header_for_height(stop_header_height)
+        return HeaderAllocation(is_reorg, start_header, stop_header)
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
-
+        BATCH_INTERVAL = 0.5
+        batch = []
+        prev_time_check = time.time()
         try:
             # up to 500 blocks per loop
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # If there's a reorg, starting header can be less than longest_chain().tip
-                msg = await self.new_headers_queue.get()
-                is_reorg, start_header, stop_header = msg
+                while True:
+                    try:
+                        # This batching mechanism is only really needed for the case where on
+                        # RegTest if you generate a ton of blocks, the node will drip feed
+                        # the p2p headers arrays with only a single header in each one.
+                        msg = await asyncio.wait_for(self.new_headers_queue.get(), timeout=0.3)
+                        batch.append(HeaderAllocation(*msg))
+                    except asyncio.exceptions.TimeoutError:
+                        if len(batch) != 0:
+                            time_diff = time.time() - prev_time_check
+                            if time_diff > BATCH_INTERVAL:
+                                break
+                            else:
+                                continue
+                        else:
+                            continue
 
-                if start_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
+                is_reorg, start_header, stop_header = self.merge_batch(batch)
+                self.logger.debug(f"is_reorg, start_header, stop_header={is_reorg, start_header, stop_header}")
+                batch = []
+                if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
                     continue
 
                 original_stop_height = stop_header.height
