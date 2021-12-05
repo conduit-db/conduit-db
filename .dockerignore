@@ -2,6 +2,8 @@
 *.dll
 
 **/test_lmdb/**
+**/raw_blocks/**
+**/merkle_trees/**
 
 ConduitRaw/bin/Debug/**
 ConduitRaw/obj/**

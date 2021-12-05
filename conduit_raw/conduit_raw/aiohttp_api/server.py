@@ -31,12 +31,12 @@ requests_logger.setLevel(logging.WARNING)
 
 class ApplicationState(object):
 
-    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database) -> None:
         self.logger = logging.getLogger('app_state')
         self.app = app
         self.loop = loop
         self.mysql_db = load_mysql_database()
-        self.lmdb = LMDB_Database()
+        self.lmdb = lmdb
 
     def start_threads(self):
         pass
@@ -59,11 +59,11 @@ async def client_session_ctx(app: web.Application) -> NoReturn:
     await app['client_session'].close()
 
 
-def get_aiohttp_app() -> web.Application:
+def get_aiohttp_app(lmdb) -> web.Application:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)
-    app_state = ApplicationState(app, loop)
+    app_state = ApplicationState(app, loop, lmdb)
 
     # This is the standard aiohttp way of managing state within the handlers
     app['app_state'] = app_state

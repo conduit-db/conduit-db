@@ -20,6 +20,9 @@ from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME
 
 
+logger = logging.getLogger("conduit-lib-utils")
+
+
 def cast_to_valid_ipv4(ipv4: str) -> str:
     try:
         ipaddress.ip_address(ipv4)
@@ -143,3 +146,14 @@ def get_log_level(service_name):
         return logging.DEBUG
     if level == 'PROFILING':
         return PROFILING
+
+
+def get_conduit_raw_host_and_port():
+    try:
+        # Todo - this is messy
+        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
+        CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
+        CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
+        return CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
+    except Exception:
+        logger.exception("unexpected exception")

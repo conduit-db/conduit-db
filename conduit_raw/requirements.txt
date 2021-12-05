@@ -6,3 +6,5 @@ Cython~=0.29.21
 mysqlclient
 zmq
 cbor2
+aiohttp
+filelock
