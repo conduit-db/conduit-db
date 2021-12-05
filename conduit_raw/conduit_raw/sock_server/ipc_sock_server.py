@@ -23,12 +23,12 @@ logger = logging.getLogger('rs-server')
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
     def __init__(self, addr: tuple[str, int], handler, storage_path: Path,
-            block_headers: bitcoinx.Headers):
+            block_headers: bitcoinx.Headers, block_headers_lock: threading.RLock):
         super(ThreadedTCPServer, self).__init__(addr, handler)
 
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
-        self.block_headers_lock = threading.RLock()
+        self.block_headers_lock = block_headers_lock
 
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
@@ -72,7 +72,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             logger.exception("Exception in ThreadedTCPRequestHandler.recv_msg")
             return None
 
-    def send_msg(self, msg: bytes) -> Optional[bool]:
+    def send_msg(self, msg: bytes) -> None:
         try:
             # Prefix each message with a 8-byte length (network byte order)
             msg = struct_be_Q.pack(len(msg)) + msg
@@ -320,8 +320,10 @@ if __name__ == "__main__":
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
     block_headers = setup_headers_store(RegTestNet(), "test_headers.mmap")
+    block_headers_lock = threading.RLock()
 
-    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler, storage_path, block_headers)
+    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler, storage_path, block_headers,
+        block_headers_lock)
     with server:
         ip, port = server.server_address
         server.serve_forever()

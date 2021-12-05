@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 from asyncio import BaseTransport, BaseProtocol
 import bitcoinx
-from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header
+from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header, Chain
 from concurrent.futures.thread import ThreadPoolExecutor
 import os
 import queue
@@ -24,7 +24,8 @@ from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERS
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
     WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
 from conduit_lib.types import HeaderSpan
-from conduit_lib.utils import get_conduit_raw_host_and_port
+from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_height, \
+    get_header_for_hash
 from conduit_lib.wait_for_dependencies import wait_for_mysql
 from .aiohttp_api import server_main
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
@@ -307,7 +308,8 @@ class Controller:
         CONDUIT_RAW_HOST, CONDUIT_RAW_PORT = get_conduit_raw_host_and_port()
         self.ipc_sock_server = ThreadedTCPServer(addr=(CONDUIT_RAW_HOST, CONDUIT_RAW_PORT),
             handler=ThreadedTCPRequestHandler, storage_path=Path(self.lmdb._storage_path),
-            block_headers=self.storage.block_headers)
+            block_headers=self.storage.block_headers,
+            block_headers_lock=self.storage.block_headers_lock)
         self.ipc_sock_server.serve_forever()
 
     async def start_jobs(self):
@@ -340,7 +342,7 @@ class Controller:
     #     await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self):
-        tip = self.storage.headers.longest_chain().tip
+        tip = self.sync_state.get_local_tip()
         block_locator_hashes = []
         for i in range(0, 25, 2):
             height = tip.height - i**2
@@ -384,14 +386,10 @@ class Controller:
             self.logger.exception(f"Unexpected exception in sync_headers_job")
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        header, chain = self.storage.headers.lookup(block_hash)
-        return header
+        return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-        header = headers.header_at_height(chain, height)
-        return header
+        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
 
     async def request_all_batch_block_data(self, batch_id, blocks_batch_set, stop_header_height):
         """
@@ -431,51 +429,11 @@ class Controller:
 
         assert count_requested == len(blocks_batch_set)
 
-    def find_common_parent(self, reorg_node_tip: bitcoinx.Header,
-            orphaned_tip: bitcoinx.Header) -> tuple[bitcoinx.Chain, int]:
-
-        chains: list[bitcoinx.Chain] = self.storage.headers.chains()
-
-        # Get orphan an reorg chains
-        orphaned_chain = None
-        reorg_chain = None
-        for chain in chains:
-            if chain.tip.hash == reorg_node_tip.hash:
-                reorg_chain = chain
-            elif chain.tip.hash == orphaned_tip.hash:
-                orphaned_chain = chain
-
-        if reorg_chain is not None and orphaned_chain is not None:
-            chain, common_parent_height = reorg_chain.common_chain_and_height(orphaned_chain)
-            return reorg_chain, common_parent_height
-        elif reorg_chain is not None and orphaned_chain is None:
-            return reorg_chain, 0
-        else:
-            # Should never happen
-            raise ValueError("No common parent block header could be found")
-
     def backfill_headers(self, first_missing_header: int, reorg_tip_height: int):
         for height in range(first_missing_header, reorg_tip_height + 1):
             header = self.get_header_for_height(height)
             self.storage.block_headers.connect(header.raw)
         self.storage.block_headers.flush()
-
-    def reorg_detect(self, old_tip: bitcoinx.Header, new_tip: bitcoinx.Header) \
-            -> Optional[tuple[int, Header, Header]]:
-        try:
-            assert new_tip.height > old_tip.height
-            common_parent_chain, common_parent_height = self.find_common_parent(new_tip, old_tip)
-
-            if common_parent_height < old_tip.height:
-                depth = old_tip.height - common_parent_height
-                self.logger.debug(f"Reorg detected of depth: {depth}. "
-                                  f"Syncing missing blocks from height: "
-                                  f"{common_parent_height + 1} to {new_tip.height}")
-                return common_parent_height, new_tip, old_tip
-            return None
-        except Exception:
-            self.logger.exception("unexpected exception in reorg_detect")
-            return None
 
     async def connect_done_block_headers(self, blocks_batch_set) -> None:
         """If this returns False, it means a reorg happened"""
@@ -521,15 +479,16 @@ class Controller:
     def get_hash_stop(self, stop_header_height: int):
         # We should only really request enough blocks at at time to keep our
         # recv buffer filling at the max rate. No point requesting 500 x 4GB blocks!!!
-        node_longest_chain = self.storage.headers.longest_chain()
-        if stop_header_height >= node_longest_chain.tip.height:
-            hash_stop = ZERO_HASH
-        else:
-            stop_height = stop_header_height + 1
-            header: bitcoinx.Header = self.storage.headers.header_at_height(node_longest_chain,
-                stop_height)
-            hash_stop = header.hash
-        return hash_stop
+        with self.storage.headers_lock:
+            node_longest_chain = self.storage.headers.longest_chain()
+            if stop_header_height >= node_longest_chain.tip.height:
+                hash_stop = ZERO_HASH
+            else:
+                stop_height = stop_header_height + 1
+                header: bitcoinx.Header = self.storage.headers.header_at_height(node_longest_chain,
+                    stop_height)
+                hash_stop = header.hash
+            return hash_stop
 
     async def wait_for_batched_blocks_completion(self, batch_id, all_pending_block_hashes,
             stop_header_height) -> None:
@@ -612,18 +571,21 @@ class Controller:
                         self.logger.info(f"Starting Initial Block Download")
                     else:
                         self.logger.debug(f"Controller Batch {batch_id} Start")
-                    chain = self.storage.block_headers.longest_chain()
 
-                    block_locator_hashes = [first_locator.hash]
-                    hash_count = len(block_locator_hashes)
-                    hash_stop = ZERO_HASH  # get max
+                    with self.storage.block_headers_lock:
+                        chain = self.storage.block_headers.longest_chain()
 
-                    # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
-                    if chain.tip.height > 2016:
-                        self.update_moving_average(chain.tip.height)
+                        block_locator_hashes = [first_locator.hash]
+                        hash_count = len(block_locator_hashes)
+                        hash_stop = ZERO_HASH  # get max
 
-                    from_height = self.get_header_for_hash(start_header.hash).height - 1
-                    to_height = stop_header.height
+                        # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
+                        if chain.tip.height > 2016:
+                            self.update_moving_average(chain.tip.height)
+
+                        from_height = self.get_header_for_hash(start_header.hash).height - 1
+                        to_height = stop_header.height
+
                     next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
                     batch_count, all_pending_block_hashes, stop_header_height = next_batch
 

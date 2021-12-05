@@ -205,16 +205,16 @@ class LMDB_Database:
             to_subtract_from_end += node_counts[lvl] * hash_length
 
         to_add_to_start = 0
-        self.logger.debug(f"calc_depth(node_counts[-1]) - 1={calc_depth(node_counts[-1]) - 1}")
+        # self.logger.debug(f"calc_depth(node_counts[-1]) - 1={calc_depth(node_counts[-1]) - 1}")
         for lvl in range(calc_depth(node_counts[-1]) - 1, level, -1):
             # self.logger.debug(f"to_add_to_start: node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
             to_add_to_start += node_counts[lvl] * hash_length
 
         end_offset = mtree_array_loc.end_offset - to_subtract_from_end
         start_offset = mtree_array_loc.start_offset + to_add_to_start
-        self.logger.debug(f"mtree_array_loc={mtree_array_loc}; node_counts={node_counts}; "
-                          f"level={level} start_offset={start_offset}; end_offset={end_offset}; "
-                          f"to_subtract_from_end={to_subtract_from_end}; to_add_to_start={to_add_to_start}")
+        # self.logger.debug(f"mtree_array_loc={mtree_array_loc}; node_counts={node_counts}; "
+        #                   f"level={level} start_offset={start_offset}; end_offset={end_offset}; "
+        #                   f"to_subtract_from_end={to_subtract_from_end}; to_add_to_start={to_add_to_start}")
         return start_offset, end_offset
 
     def get_mtree_row(self, blk_hash: bytes, level: int, cursor: Optional[lmdb.Cursor]=None) -> bytes:
@@ -338,7 +338,7 @@ class LMDB_Database:
 
     def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
             -> bytes:
-        self.logger.debug(f"get_mtree_node called for block_hash: {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
+        # self.logger.debug(f"get_mtree_node called for block_hash: {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
         array = self.get_mtree_row(block_hash, level, cursor)
         assert array is not None
         node_hash = array[position*32:(position+1)*32]

@@ -98,7 +98,6 @@ class RegtestSupport:
 
                     if not succeeded:
                         is_reorg = True
-                        failed_block_hash = hash_to_hex_str(double_sha256(stop_header))
                         not_connecting = True
 
                         # decrease height until it connects
@@ -108,7 +107,8 @@ class RegtestSupport:
                             try:
                                 stop_header = await self.regtest_fetch_block_header_for_height(height)
                                 backfill_headers.append((stop_header, height))
-                                self.storage.headers.connect(stop_header)
+                                with self.storage.headers_lock:
+                                    self.storage.headers.connect(stop_header)
                                 not_connecting = False
                             except MissingHeader:
                                 continue
@@ -118,14 +118,15 @@ class RegtestSupport:
                             for header, height in reversed(backfill_headers):
                                 # self.logger.debug(f"Connecting backfill header:
                                 # {hash_to_hex_str(double_sha256(header))}, height: {height}")
-                                self.storage.headers.connect(header)
+                                with self.storage.headers_lock:
+                                    self.storage.headers.connect(header)
                         except MissingHeader:
                             raise RuntimeError("Connecting the backfill headers is failing unexpectedly")
 
                         # Now finally this should work
                         _, _, stop_header, succeeded = await self.regtest_sync_headers(best_tip)
                         assert succeeded is True
-                        assert stop_header == self.storage.headers.longest_chain().tip.raw
+                        assert stop_header == self.controller.sync_state.get_local_tip().raw
 
                 if stop_header is not None:
                     start_header_obj = self.controller.get_header_for_hash(double_sha256(start_header))

@@ -22,12 +22,15 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.handlers import Handlers
+from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow
+from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
+    connect_headers_reorg_safe
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
     wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
@@ -150,7 +153,7 @@ class Controller:
     async def setup(self):
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
-        self.handlers = Handlers(self, self.net_config, self.storage)
+        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
@@ -357,10 +360,7 @@ class Controller:
         asyncio.create_task(self.batch_completion_job())
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-        header = headers.header_at_height(chain, height)
-        return header
+        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
 
     def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]):
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
@@ -497,7 +497,8 @@ class Controller:
                 raise
 
     async def check_for_ibd_status(self, conduit_best_tip):
-        local_tip = self.storage.headers.longest_chain().tip
+        with self.storage.headers_lock:
+            local_tip = self.storage.headers.longest_chain().tip
         if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
                 and not self.ibd_signal_sent:
             self.logger.debug(f"Initial block download mode completed. "
@@ -509,6 +510,8 @@ class Controller:
             await self.request_mempool()
 
     async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
+        self.handlers: Handlers
+
         deserialized_header = None
         ipc_sock_client = None
         while True:
@@ -517,8 +520,13 @@ class Controller:
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
-                result = await self.loop.run_in_executor(self.general_executor,
+                result: HeadersBatchedResponse = await self.loop.run_in_executor(self.general_executor,
                     ipc_sock_client.headers_batched, start_height, MAIN_BATCH_HEADERS_COUNT_LIMIT)
+
+                # TODO - complete reorg handling from here...
+                # headers_p2p_struct = headers_to_p2p_struct(result.headers_batch)
+                # is_reorg, start_header, stop_header = connect_headers_reorg_safe(
+                #     headers_p2p_struct, self.storage.headers, self.storage.headers_lock)
 
                 for new_tip in result.headers_batch:
                     self.connect_conduit_headers(new_tip)

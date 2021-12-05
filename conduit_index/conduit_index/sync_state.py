@@ -124,10 +124,12 @@ class SyncState:
 
     # Block Headers
     def get_local_block_tip_height(self) -> int:
-        return self.storage.block_headers.longest_chain().tip.height
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip.height
 
     def get_local_block_tip(self) -> bitcoinx.Header:
-        return self.storage.block_headers.longest_chain().tip
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip
 
     async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header):
         # Todo - really instead of conduit_best_tip it should come from the node...
@@ -265,17 +267,20 @@ class SyncState:
 
         all_pending_block_hashes = set()
         headers: Headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-        local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = main_batch_tip.height - local_block_tip_height
+        with self.storage.headers_lock:
+            chain = self.storage.headers.longest_chain()
+            local_block_tip_height = self.get_local_block_tip_height()
+            block_height_deficit = main_batch_tip.height - local_block_tip_height
 
-        # May need to use block_hash not height to be more correct
-        block_headers: List[bitcoinx.Header] = []
-        for i in range(1, block_height_deficit + 1):
-            block_header = headers.header_at_height(chain, local_block_tip_height + i)
-            block_headers.append(block_header)
+            # May need to use block_hash not height to be more correct
+            block_headers: List[bitcoinx.Header] = []
+            for i in range(1, block_height_deficit + 1):
+                block_header = headers.header_at_height(chain, local_block_tip_height + i)
+                block_headers.append(block_header)
 
-        header_hashes = [block_header.hash for block_header in block_headers]
+            header_hashes = [block_header.hash for block_header in block_headers]
+
+        # Todo: All four of these network calls could be done in parallel in a thread pool executor
         block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
         block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
         tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)

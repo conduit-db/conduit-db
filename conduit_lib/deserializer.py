@@ -2,7 +2,7 @@ import logging
 
 import bitcoinx
 from bitcoinx import (read_le_int32, read_le_uint64, read_le_int64, read_varbytes, read_le_uint32,
-    read_varint, read_le_uint16, hash_to_hex_str, MissingHeader, double_sha256, )
+    read_varint, read_le_uint16, hash_to_hex_str, MissingHeader, double_sha256, Headers, )
 import socket
 import time
 
@@ -155,31 +155,6 @@ class Deserializer:
             "hash_stop": hash_stop,
         }
         return message
-
-    def connect_headers(self, f) -> tuple[bytes, bool]:
-        """Two mmap files - one for "headers-first download" and the other for the
-        blocks we then download."""
-        count = bitcoinx.read_varint(f.read)
-        success = True
-        first_header_of_batch = b""
-        for i in range(count):
-            try:
-                raw_header = f.read(80)
-                # logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))}")
-                _tx_count = bitcoinx.read_varint(f.read)
-                self.storage.headers.connect(raw_header)
-                if i == 0:
-                    first_header_of_batch = raw_header
-            except MissingHeader as e:
-                if str(e).find(GENESIS_BLOCK) != -1:
-                    logger.debug("skipping prev_out == genesis block")
-                    continue
-                else:
-                    logger.error(e)
-                    success = False
-                    return first_header_of_batch, success
-        self.storage.headers.flush()
-        return first_header_of_batch, success
 
     def tx(self, f):
         return bitcoinx.Tx.read(f.read)

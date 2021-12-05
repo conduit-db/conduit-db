@@ -28,10 +28,10 @@ class SyncState:
         self.storage = storage
         self.controller = controller
 
-        self.headers_msg_processed_queue = asyncio.Queue()
-        self.headers_new_tip_queue = asyncio.Queue()
-        self.headers_event_initial_sync = asyncio.Event()
-        self.blocks_event_new_tip = asyncio.Event()
+        self.headers_msg_processed_queue: asyncio.Queue = asyncio.Queue()
+        self.headers_new_tip_queue: asyncio.Queue = asyncio.Queue()
+        self.headers_event_initial_sync: asyncio.Event = asyncio.Event()
+        self.blocks_event_new_tip: asyncio.Event = asyncio.Event()
         self.target_header_height: Optional[int] = None
         self.target_block_header_height: Optional[int] = None
         self.local_tip_height: int = self.update_local_tip_height()
@@ -65,18 +65,26 @@ class SyncState:
         self.done_blocks_preproc_event: asyncio.Event = asyncio.Event()
         self.pending_blocks_inv_queue: asyncio.Queue = asyncio.Queue()
 
+    def get_local_tip(self):
+        with self.storage.headers_lock:
+            return self.storage.headers.longest_chain().tip
+
     def get_local_tip_height(self):
-        return self.local_tip_height
+        with self.storage.headers_lock:
+            return self.local_tip_height
 
     def get_local_block_tip_height(self) -> int:
-        return self.storage.block_headers.longest_chain().tip.height
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip.height
 
     def get_local_block_tip(self) -> bitcoinx.Header:
-        return self.storage.block_headers.longest_chain().tip
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip
 
     def update_local_tip_height(self) -> int:
-        self.local_tip_height = self.storage.headers.longest_chain().tip.height
-        return self.local_tip_height
+        with self.storage.headers_lock:
+            self.local_tip_height = self.storage.headers.longest_chain().tip.height
+            return self.local_tip_height
 
     def set_target_header_height(self, height) -> None:
         self.target_header_height = height

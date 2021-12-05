@@ -159,7 +159,7 @@ class IPCSocketClient:
             data = self.receive_data()
             command = ipc_sock_commands.MERKLE_TREE_ROW
             msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(mtree_row=data, command=command)
-            self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            # self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
@@ -187,14 +187,14 @@ class IPCSocketClient:
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockMetadataBatchedRequest(block_hashes)
-            self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
+            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv
             data = self.receive_data()
             cbor_obj = cbor2.loads(data)
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(**cbor_obj)
-            self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
+            # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()

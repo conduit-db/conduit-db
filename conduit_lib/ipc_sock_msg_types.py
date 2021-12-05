@@ -17,6 +17,7 @@ except ImportError:
 
 
 BlockHashes = list[bytes]
+BlockHeaders = list[bytes]
 
 
 class BaseMsg:
@@ -293,7 +294,7 @@ class HeadersBatchedRequest(BaseMsg):
 class HeadersBatchedResponse(BaseMsg):
     command = ipc_sock_commands.HEADERS_BATCHED
 
-    def __init__(self, headers_batch: BlockHashes, command: Optional[str]=None):
+    def __init__(self, headers_batch: BlockHeaders, command: Optional[str]=None):
         super().__init__()
         self.headers_batch = headers_batch
 
