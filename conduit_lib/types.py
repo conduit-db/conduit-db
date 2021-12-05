@@ -233,7 +233,8 @@ class Inv(TypedDict):
     inv_hash: bytes
 
 
-class HeaderAllocation(NamedTuple):
+class HeaderSpan(NamedTuple):
+    """Used to allocate which continguous set of raw blocks to pre-fetch and process"""
     is_reorg: bool
     start_header: Header
     stop_header: Header

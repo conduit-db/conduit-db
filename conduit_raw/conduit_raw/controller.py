@@ -21,7 +21,9 @@ from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database,
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
     WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
-from conduit_lib.types import HeaderAllocation
+from conduit_lib.types import HeaderSpan
+from conduit_lib.utils import get_conduit_raw_host_and_port
+from conduit_lib.wait_for_dependencies import wait_for_mysql
 from .aiohttp_api import server_main
 from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
 from .regtest_support import RegtestSupport
@@ -34,16 +36,6 @@ if typing.TYPE_CHECKING:
     from conduit_lib import NetworkConfig, Peer
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-
-
-try:
-    # Todo - this is messy
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-    CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-    CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-except Exception:
-    logger = logging.getLogger('sync-state-env-vars')
-    logger.exception("unexpected exception")
 
 
 class Controller:
@@ -174,6 +166,7 @@ class Controller:
             await self.setup()
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
+            await wait_for_mysql()
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))
@@ -316,6 +309,7 @@ class Controller:
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
     def ipc_sock_server_thread(self):
+        CONDUIT_RAW_HOST, CONDUIT_RAW_PORT = get_conduit_raw_host_and_port()
         self.ipc_sock_server = ThreadedTCPServer(addr=(CONDUIT_RAW_HOST, CONDUIT_RAW_PORT),
             handler=ThreadedTCPRequestHandler, storage_path=Path(self.lmdb._storage_path),
             block_headers=self.storage.block_headers)
@@ -333,8 +327,8 @@ class Controller:
 
             # In regtest old block timestamps (submitted to node) will not take the node out of IBD
             # This works around it by polling the node's RPC. This is never needed in prod.
-            # if self.net_config.NET == REGTEST:
-            #     await self.spawn_poll_node_for_header_job()
+            if self.net_config.NET == REGTEST:
+                await self.spawn_poll_node_for_header_job()
 
             await self.spawn_sync_headers_task()
             await self.sync_state.headers_event_initial_sync.wait()  # one-off
@@ -539,7 +533,7 @@ class Controller:
         return hash_stop
 
     async def wait_for_batched_blocks_completion(self, batch_id, all_pending_block_hashes,
-            stop_header_height) -> bool:
+            stop_header_height) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
             await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
@@ -563,7 +557,7 @@ class Controller:
         except Exception:
             self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
-    def merge_batch(self, batch: list[HeaderAllocation]) -> HeaderAllocation:
+    def merge_batch(self, batch: list[HeaderSpan]) -> HeaderSpan:
         """Take the broadest possible start & stop points. is_reorg=True
         merely serves to allow syncing blocks for height <
         current block store tip"""
@@ -575,7 +569,7 @@ class Controller:
         # lookups by height is fine
         start_header = self.get_header_for_height(start_header_height)
         stop_header = self.get_header_for_height(stop_header_height)
-        return HeaderAllocation(is_reorg, start_header, stop_header)
+        return HeaderSpan(is_reorg, start_header, stop_header)
 
     async def sync_all_blocks_job(self):
         """supervises completion of syncing all blocks to target height"""
@@ -594,7 +588,7 @@ class Controller:
                         # RegTest if you generate a ton of blocks, the node will drip feed
                         # the p2p headers arrays with only a single header in each one.
                         msg = await asyncio.wait_for(self.new_headers_queue.get(), timeout=0.3)
-                        batch.append(HeaderAllocation(*msg))
+                        batch.append(HeaderSpan(*msg))
                     except asyncio.exceptions.TimeoutError:
                         if len(batch) != 0:
                             time_diff = time.time() - prev_time_check
@@ -684,7 +678,7 @@ class Controller:
         self.logger.debug(f"Flush for batch took {t1} seconds")
 
     async def spawn_aiohttp_api(self):
-        self.tasks.append(asyncio.create_task(server_main.main()))
+        self.tasks.append(asyncio.create_task(server_main.main(self.lmdb)))
 
     async def spawn_poll_node_for_header_job(self):
         self.tasks.append(asyncio.create_task(self.regtest_support.regtest_poll_node_for_tip_job()))

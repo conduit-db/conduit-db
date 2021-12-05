@@ -8,17 +8,20 @@ services:
       dockerfile: ./conduit_raw/Dockerfile
     ports:
       - "50000:50000"
+      - "34525:34525"
     depends_on:
       - node
     environment:
       - CONDUIT_RAW_API_HOST=0.0.0.0:50000
+      - BITCOIN_HOST=node
+      - BITCOIN_RPC_PORT=18332
       - LMDB_READONLY=0
       - LMDB_DATABASE_PATH=/opt/lmdb_data
     working_dir: /opt
     # Note - node-host=172.17.0.1:8333 (accesses a bare metal node on linux but leads to "Bad
     # Address" errors after a short time and I don't know why... So on linux platform, our hand
     # is currently forced to deploy to production bare metal!
-    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py --reset --regtest --node-host=node:18444'
+    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py --reset --regtest --node-host=node:18444 --mysql-host=mysql:3306'
 
   conduit-index:
     build:

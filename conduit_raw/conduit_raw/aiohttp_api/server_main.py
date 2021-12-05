@@ -9,6 +9,8 @@ from typing import Optional
 
 from aiohttp import web
 
+from conduit_lib import LMDB_Database
+
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
 
@@ -61,17 +63,20 @@ class AiohttpServer:
         await self.runner.cleanup()
 
 
-async def main():
-    app = get_aiohttp_app()
+async def main(lmdb):
+    app = get_aiohttp_app(lmdb)
     server = AiohttpServer(app)
     try:
         await server.start()
+    except Exception:
+        logger.exception("Unexpected exception in aiohttp server")
     finally:
         await server.stop()
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        lmdb = LMDB_Database()
+        asyncio.run(main(lmdb))
         sys.exit(0)
     except KeyboardInterrupt:
         pass

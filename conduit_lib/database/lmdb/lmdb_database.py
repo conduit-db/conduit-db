@@ -14,9 +14,11 @@ from typing import List, Tuple, Dict, Optional, IO
 
 import bitcoinx
 import cbor2
+import filelock
 import lmdb
 from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_le_Q
+from filelock import FileLock
 
 from conduit_lib.algorithms import calc_depth, get_mtree_node_counts_per_level
 from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, MerkleTreeArrayLocation
@@ -92,7 +94,7 @@ class LMDB_Database:
         self._last_dat_file_num_merkle_trees = 0
         # This will do the initial scan and cache the correct _last_dat_file_num
         self.next_write_path = self._get_next_write_path_for_blocks()
-        self.next_write_path_merkle = self._get_next_write_path_for_merkle_trees()
+        self.next_write_path_merkle, self.next_merkle_flock = self._get_next_write_path_for_merkle_trees()
         # self.logger.debug(f"Next write path blocks: {self.next_write_path}")
         # self.logger.debug(f"Next write path merkle: {self.next_write_path_merkle}")
 
@@ -240,7 +242,7 @@ class LMDB_Database:
             else:
                 return 0  # so that first entry is key==1
 
-    def _get_next_write_path_for_merkle_trees(self):
+    def _get_next_write_path_for_merkle_trees(self) -> [Path, FileLock]:
         # self.logger.debug(f"Getting next write path for merkle trees...")
         padded_str_num = str(self._last_dat_file_num_merkle_trees).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
@@ -252,7 +254,10 @@ class LMDB_Database:
             filename = f"blk_{padded_str_num}.dat"
             write_path = Path(self.MERKLE_TREES_DIR) / filename
 
-        return write_path
+        lock_path = filename
+
+        flock = FileLock(lock_path, timeout=10)
+        return write_path, flock
 
     def _get_next_write_path_for_blocks(self) -> str:
         # self.logger.debug(f"Getting next write path for raw blocks...")
@@ -401,20 +406,32 @@ class LMDB_Database:
 
     def _open_next_merkle_tree_file(self, file: typing.IO) -> [typing.IO, str]:
         file.close()
-        write_path = self._get_next_write_path_for_merkle_trees()
+        write_path, flock = self._get_next_write_path_for_merkle_trees()
+        flock.acquire()
         file = open(write_path, 'ab')
-        return file, write_path
+        return file, write_path, flock
 
     def _open_initial_merkle_tree_file(self) -> [typing.IO, int, str]:
         """Note: Leaves an open file - must remember to close"""
         # cached so that subsequent batches can append to the same file
-        write_path = self.next_write_path_merkle
-        file = open(write_path, 'ab')
-        file.seek(0, io.SEEK_END)
-        file_size = file.tell()
-        if file_size > MAX_DAT_FILE_SIZE:
-            file, write_path = self._open_next_merkle_tree_file(file)
-        return file, file_size, write_path
+        try:
+            write_path = self.next_write_path_merkle
+            flock = self.next_merkle_flock
+
+            with flock:
+                file = open(str(self.next_write_path_merkle), 'ab')
+                file.seek(0, io.SEEK_END)
+                file_size = file.tell()
+                if file_size > MAX_DAT_FILE_SIZE:
+                    file.close()
+                else:
+                    write_path, other_flock = self._get_next_write_path_for_merkle_trees()
+                    with other_flock:
+                        file = open(write_path, 'ab')
+
+                return file, file_size, write_path
+        except filelock.Timeout:
+            self.logger.exception("Filelock timed out")
 
     def put_merkle_trees(self, batched_merkle_trees: list[tuple[bytes, dict, int]]):
         """In the current design we store the entire txid set and all levels of the merkle tree)
