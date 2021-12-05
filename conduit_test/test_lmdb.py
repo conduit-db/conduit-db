@@ -51,7 +51,7 @@ class TestLMDBDatabase:
             shutil.rmtree(LMDB_STORAGE_PATH)
 
     def test_block_storage(self):
-        with open("./data/block413567.raw", "rb") as f:
+        with open(MODULE_DIR / "data/block413567.raw", "rb") as f:
             raw_block = array.array('B', f.read())
 
         expected_block_num = 1

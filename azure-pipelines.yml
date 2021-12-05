@@ -1,0 +1,59 @@
+trigger:
+  batch: true
+  branches:
+    include:
+    - master
+    - releases/*
+    - features/*
+  paths:
+    exclude: [ 'README.md' ]
+
+pool:
+  vmImage: ubuntu-latest
+  timeoutInMinutes:
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: 3.10
+- script: |
+    set -e
+    python3 -m pip install wheel
+    python3 -m pip install pytest pytest-cov
+    python3 -m pip install -r conduit_raw/requirements.txt
+    python3 -m pip install -r conduit_index/requirements.txt
+  displayName: 'Install ConduitDB dependencies'
+- script: |
+    set -e
+    python3 -m pip install -U pylint
+    python3 -m pylint --rcfile ./.pylintrc ./electrumsv_sdk
+    if [ $? -gt 0 ]
+    then
+      # https://docs.pylint.org/en/1.6.0/run.html#exit-codes
+      echo "##vso[task.complete result=Failed;]DONE"
+    fi
+  continueOnError: true
+
+- script: |
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml build --parallel
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml up --detach
+    sleep 10
+    python3 contrib/scripts/import_blocks.py ./contrib/blockchains/blockchain_115_3677f4
+    sleep 10
+  timeoutInMinutes: 10
+  continueOnError: true
+  displayName: 'Run dockerized services & Import blockchain_115_3677f4'
+
+- script: |
+    coverage run --parallel-mode -m pytest conduit_test --verbose
+    coverage combine --append
+    coverage report -m
+  timeoutInMinutes: 10
+  continueOnError: true
+  displayName: 'Pytest with Coverage report'
+
+- script: |
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml down
+  timeoutInMinutes: 10
+  continueOnError: true
+  displayName: 'Docker Down'

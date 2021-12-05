@@ -1,4 +1,6 @@
 import logging
+import os
+from pathlib import Path
 
 import MySQLdb
 import bitcoinx
@@ -7,6 +9,9 @@ import pytest
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.store import setup_storage, Storage
+
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TestStorage:
@@ -23,10 +28,10 @@ class TestStorage:
 
     net_config = NetworkConfig(config.get("network"))
     headers = bitcoinx.Headers(
-        net_config.BITCOINX_COIN, "data/headers.mmap", net_config.CHECKPOINT
+        net_config.BITCOINX_COIN, MODULE_DIR / "data/headers.mmap", net_config.CHECKPOINT
     )
     block_headers = bitcoinx.Headers(
-        net_config.BITCOINX_COIN, "data/block_headers.mmap", net_config.CHECKPOINT
+        net_config.BITCOINX_COIN, MODULE_DIR / "data/block_headers.mmap", net_config.CHECKPOINT
     )
     # storage = setup_storage(config, net_config)
     # redis = None  # NotImplemented
