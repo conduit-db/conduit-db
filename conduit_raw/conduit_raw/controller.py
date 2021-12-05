@@ -1,3 +1,5 @@
+import math
+
 import aiohttp
 import asyncio
 from asyncio import BaseTransport, BaseProtocol
@@ -16,7 +18,7 @@ from pathlib import Path
 import logging
 import zmq
 
-from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database, cast_to_valid_ipv4,
+from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database,
     Serializer, Deserializer, Handlers, BitcoinNetIO, wait_for_node)
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
@@ -54,8 +56,8 @@ class Controller:
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.logging_server_proc: BaseProcess = logging_server_proc
-        self.processes: List[BaseProcess] = [self.logging_server_proc]
-        self.tasks = []
+        self.processes: list[BaseProcess] = [self.logging_server_proc]
+        self.tasks: list[asyncio.Task] = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
         if loop_type == 'uvloop':
@@ -65,16 +67,6 @@ class Controller:
 
         self.config = config  # cli args & env_vars
 
-        # Defined in async method at startup (self.run)
-        self.storage: Optional[Storage] = None
-        self.handlers: Optional[Handlers] = None
-        self.serializer: Optional[Serializer] = None
-        self.deserializer: Optional[Deserializer] = None
-        self.regtest_support: Optional[RegtestSupport] = None
-        self.lmdb: Optional[LMDB_Database] = None
-        self.ipc_sock_client: Optional[IPCSocketClient] = None
-        self.executor = ThreadPoolExecutor(max_workers=1)
-
         # Bitcoin network/peer net_config
         self.net_config = net_config
         self.peers = self.net_config.peers
@@ -82,13 +74,24 @@ class Controller:
         self.host = host  # bind address
         self.port = port  # bind port
 
+        # Defined in async method at startup (self.run)
+        headers_dir = MODULE_DIR.parent
+        self.storage = setup_storage(self.config, self.net_config, headers_dir)
+        self.handlers = Handlers(self, self.net_config, self.storage)
+        self.serializer = Serializer(self.net_config, self.storage)
+        self.deserializer = Deserializer(self.net_config, self.storage)
+        self.sync_state = SyncState(self.storage, self)
+        self.lmdb = self.storage.lmdb
+        self.ipc_sock_client: Optional[IPCSocketClient] = None
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
         # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
         self.con_lost_event = asyncio.Event()
 
         # Worker queues & events
-        self.worker_in_queue_preproc = queue.Queue()  # no ack needed
-        self.worker_ack_queue_preproc = queue.Queue()
+        self.worker_in_queue_preproc: queue.Queue = queue.Queue()  # no ack needed
+        self.worker_ack_queue_preproc: queue.Queue = queue.Queue()
 
         # PUB-SUB from Controller to worker to kill the worker
         # Todo - this will be very unreliable due to how ZMQ works... Need a better solution
@@ -96,14 +99,14 @@ class Controller:
         self.kill_worker_socket = context.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:46464")
 
-        self.worker_in_queue_mtree = multiprocessing.Queue()
-        self.worker_in_queue_blk_writer = multiprocessing.Queue()
-        self.worker_ack_queue_mtree = multiprocessing.Queue()
-        self.worker_ack_queue_blk_writer = multiprocessing.Queue()
+        self.worker_in_queue_mtree: multiprocessing.Queue = multiprocessing.Queue()
+        self.worker_in_queue_blk_writer: multiprocessing.Queue = multiprocessing.Queue()
+        self.worker_ack_queue_mtree: multiprocessing.Queue = multiprocessing.Queue()
+        self.worker_ack_queue_blk_writer: multiprocessing.Queue = multiprocessing.Queue()
 
-        self.blocks_batch_set_queue_raw = queue.Queue()
-        self.blocks_batch_set_queue_mtree = queue.Queue()
-        self.blocks_batch_set_queue_preproc = queue.Queue()
+        self.blocks_batch_set_queue_raw: queue.Queue = queue.Queue()
+        self.blocks_batch_set_queue_mtree: queue.Queue = queue.Queue()
+        self.blocks_batch_set_queue_preproc: queue.Queue = queue.Queue()
 
         # Database Interfaces
         # self.mysql_db: Optional[MySQLDatabase] = None
@@ -116,20 +119,12 @@ class Controller:
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
-        self.sync_state: Optional[SyncState] = None
         self.estimated_moving_av_block_size = 181  # bytes
         self.aiohttp_client_session: Optional[aiohttp.ClientSession] = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
     async def setup(self):
-        headers_dir = MODULE_DIR.parent
-        self.storage = setup_storage(self.config, self.net_config, headers_dir)
-        self.handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer = Serializer(self.net_config, self.storage)
-        self.deserializer = Deserializer(self.net_config, self.storage)
         self.regtest_support = RegtestSupport(self)
-        self.sync_state = SyncState(self.storage, self)
-        self.lmdb = self.storage.lmdb
         self.batch_completion_raw = BatchCompletionRaw(
             self,
             self.sync_state,
@@ -269,7 +264,7 @@ class Controller:
                 if command != BLOCK_BIN:
                     self.sync_state.incr_msg_handled_count()
             except Exception as e:
-                self.logger.exception("Handle: ", e)
+                self.logger.exception("Handler exception")
                 raise
 
     async def send_request(self, command_name: str, message: bytes):
@@ -366,8 +361,8 @@ class Controller:
         await self.aiohttp_client_session.close()
 
     async def sync_headers_job(self):
+        """supervises completion of syncing all headers to target height"""
         try:
-            """supervises completion of syncing all headers to target height"""
             self.logger.debug("Starting sync_headers_job...")
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             while True:
@@ -477,8 +472,10 @@ class Controller:
                                   f"Syncing missing blocks from height: "
                                   f"{common_parent_height + 1} to {new_tip.height}")
                 return common_parent_height, new_tip, old_tip
+            return None
         except Exception:
             self.logger.exception("unexpected exception in reorg_detect")
+            return None
 
     async def connect_done_block_headers(self, blocks_batch_set) -> None:
         """If this returns False, it means a reorg happened"""
@@ -515,7 +512,9 @@ class Controller:
 
         with IPCSocketClient() as ipc_sock_client:
             block_metadata_batch = ipc_sock_client.block_metadata_batched(block_hashes).block_metadata_batch
-        self.estimated_moving_av_block_size = sum([m.block_size for m in block_metadata_batch]) / len(block_metadata_batch)
+
+        block_sizes = [m.block_size for m in block_metadata_batch]
+        self.estimated_moving_av_block_size = math.ceil(sum(block_sizes) / len(block_metadata_batch))
         self.logger.debug(f"Updated estimated_moving_av_block_size: "
                           f"{int(self.estimated_moving_av_block_size / (1024**2))} MB")
 

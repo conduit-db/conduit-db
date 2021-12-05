@@ -163,7 +163,8 @@ class Handlers:
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
         if hasattr(self.controller, 'mempool_tx_socket'):  # Only conduit_index has this
-            await self.controller.mempool_tx_socket.send(packed_message)
+            # dynamic typing here - hence type: ignore
+            await self.controller.mempool_tx_socket.send(packed_message)  # type: ignore
             self.controller.sync_state.incr_msg_handled_count()
 
     async def on_block(self, special_message: Tuple[int, int, bytes, int]):

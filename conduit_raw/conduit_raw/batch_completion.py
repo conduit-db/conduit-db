@@ -11,8 +11,7 @@ if typing.TYPE_CHECKING:
     from .controller import Controller
     from .sync_state import SyncState
 
-
-"""
+_ = """
 These threads wait on full completion of the batch of blocks submitted to their corresponding worker
 processes. In a crash, the batch will be re-done on start-up because the block_headers.mmap
 file is not updated until all work in the batch is ack'd and flushed.

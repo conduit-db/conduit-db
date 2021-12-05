@@ -120,7 +120,7 @@ class LMDB_Database:
         self._db2 = None
         self._opened = False
 
-    def get_block_num(self, block_hash: bytes) -> Optional[int]:
+    def get_block_num(self, block_hash: bytes) -> int:
         with self.env.begin(db=self.block_nums_db) as txn:
             result = txn.get(block_hash)
             if result:

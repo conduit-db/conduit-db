@@ -1,16 +1,10 @@
-import time
-from pathlib import Path
-
 import aiohttp
-import bitcoinx
-import requests
 from aiohttp import web
 import asyncio
+from pathlib import Path
 import os
 import logging
-import queue
-import threading
-from typing import Dict, NoReturn
+from typing import NoReturn
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
@@ -80,5 +74,6 @@ def get_aiohttp_app(lmdb) -> web.Application:
 
 
 if __name__ == "__main__":
-    app = get_aiohttp_app()
+    lmdb = LMDB_Database()
+    app = get_aiohttp_app(lmdb)
     web.run_app(app, host=SERVER_HOST, port=SERVER_PORT)

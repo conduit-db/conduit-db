@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 import bitcoinx
 from aiohttp import web
-from bitcoinx import hex_str_to_hash, hash_to_hex_str, double_sha256
+from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib.algorithms import calc_depth
 from conduit_lib.constants import HashXLength

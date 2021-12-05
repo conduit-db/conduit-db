@@ -125,7 +125,7 @@ class Deserializer:
         for i in range(count):
             inv_type = read_le_uint32(f.read)
             inv_hash = hash_to_hex_str(f.read(32))
-            inv = {"inv_type": inv_type, "inv_hash": inv_hash}
+            inv: Inv = {"inv_type": inv_type, "inv_hash": inv_hash}
             inv_vector.append(inv)
         return inv_vector
 
@@ -156,12 +156,12 @@ class Deserializer:
         }
         return message
 
-    def connect_headers(self, f) -> [bytes, bool]:
+    def connect_headers(self, f) -> tuple[bytes, bool]:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
         count = bitcoinx.read_varint(f.read)
         success = True
-        first_header_of_batch = None
+        first_header_of_batch = b""
         for i in range(count):
             try:
                 raw_header = f.read(80)

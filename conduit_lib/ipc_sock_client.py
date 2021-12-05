@@ -163,7 +163,7 @@ class IPCSocketClient:
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
-            return self.merkle_tree_row(block_hashes)  # recurse
+            return self.merkle_tree_row(block_hash, level)  # recurse
 
     def transaction_offsets_batched(self, block_hashes: list[bytes]) -> Generator:
         try:

@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import typing
+from typing import Optional, Tuple
 
 from bitcoinx import MissingHeader, double_sha256, hash_to_hex_str
 
@@ -28,6 +29,7 @@ class RegtestSupport:
             -> str:
         body = {"jsonrpc": "2.0", "method": "getblockheader", "params": [block_hash, verbose],
             "id": 1}
+        assert self.aiohttp_client_session is not None
         result = await self.aiohttp_client_session.post(REGTEST_BITCOIN_RPC_URL, json=body)
         response_json = await result.json()
         block_header = response_json['result']
@@ -35,6 +37,7 @@ class RegtestSupport:
 
     async def regtest_fetch_block_header_for_height(self, height: int) -> bytes:
         body = {"jsonrpc": "2.0", "method": "getblockhash", "params": [height], "id": 1}
+        assert self.aiohttp_client_session is not None
         result = await self.aiohttp_client_session.post(REGTEST_BITCOIN_RPC_URL, json=body)
         response_json = await result.json()
         block_hash = response_json['result']
@@ -48,20 +51,21 @@ class RegtestSupport:
             self.logger.error(f"regtest_poll_node_for_tip_job error. Status: {result.status} "
                               f"Reason: {result.reason}")
             return
-        response_json = await result.json()
+        response_json: dict = await result.json()
         # self.logger.debug(f"regtest_poll_node_for_tip_job result: {response_json}")
 
-        best_tip = None
+        best_tip: Optional[dict[str, dict]] = None
         for tip in response_json['result']:
             if not best_tip:
                 best_tip = tip
             else:
-                if tip['height'] > best_tip['height']:
+                if tip['height'] > best_tip['height']:  # pylint: disable=E1136
                     best_tip = tip
 
         return best_tip
 
-    async def regtest_sync_headers(self, best_tip: dict) -> [int, bytes, bytes, bool]:
+    async def regtest_sync_headers(self, best_tip: dict) \
+            -> Tuple[Optional[int], Optional[bytes], Optional[bytes], bool]:
         from_height = self.controller.sync_state.get_local_tip_height() + 1
         to_height = best_tip['height']
         height = None
@@ -112,7 +116,8 @@ class RegtestSupport:
                         try:
                             start_header = backfill_headers[-1][0]
                             for header, height in reversed(backfill_headers):
-                                # self.logger.debug(f"Connecting backfill header: {hash_to_hex_str(double_sha256(header))}, height: {height}")
+                                # self.logger.debug(f"Connecting backfill header:
+                                # {hash_to_hex_str(double_sha256(header))}, height: {height}")
                                 self.storage.headers.connect(header)
                         except MissingHeader:
                             raise RuntimeError("Connecting the backfill headers is failing unexpectedly")

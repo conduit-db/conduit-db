@@ -1,17 +1,15 @@
 import asyncio
 import logging
 import math
-import multiprocessing
 import threading
 import typing
 from typing import Optional
 
 import bitcoinx
-from bitcoinx import Headers, hash_to_hex_str
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
 from conduit_lib.store import Storage
-from conduit_lib.types import Inv
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -62,11 +60,10 @@ class SyncState:
 
         # Done blocks Events - Note initialization of logging tcp connection is expensive so
         # a thread pool is unsuitable - as you pay the initialization overhead repeatedly
-        self.done_blocks_raw_event = asyncio.Event()
-        self.done_blocks_mtree_event = asyncio.Event()
-        self.done_blocks_preproc_event = asyncio.Event()
-
-        self.pending_blocks_inv_queue = asyncio.Queue()
+        self.done_blocks_raw_event: asyncio.Event = asyncio.Event()
+        self.done_blocks_mtree_event: asyncio.Event = asyncio.Event()
+        self.done_blocks_preproc_event: asyncio.Event = asyncio.Event()
+        self.pending_blocks_inv_queue: asyncio.Queue = asyncio.Queue()
 
     def get_local_tip_height(self):
         return self.local_tip_height
@@ -113,7 +110,8 @@ class SyncState:
         # 500 headers is the max allowed over p2p protocol
         estimated_ideal_block_count = min(estimated_ideal_block_count, 500)
 
-        self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count} (max_batch_size={max_batch_size / (1024**2)} MB)")
+        self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count} "
+                          f"(max_batch_size={max_batch_size / (1024**2)} MB)")
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count
 
@@ -136,14 +134,6 @@ class SyncState:
 
     def have_processed_block_msgs(self) -> bool:
         try:
-            # self.logger.debug(f"len(self.done_blocks_raw)={len(self.done_blocks_raw)}")
-            # self.logger.debug(f"len(self.done_blocks_mtree)={len(self.done_blocks_mtree)}")
-            # self.logger.debug(f"len(self.done_blocks_preproc)={len(self.done_blocks_preproc)}")
-            # self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
-            # self.logger.debug(f"self.controller.worker_ack_queue_preproc.qsize()={self.controller.worker_ack_queue_preproc.qsize()}")
-            # self.logger.debug(f"self.controller.worker_ack_queue_blk_writer.qsize()={self.controller.worker_ack_queue_blk_writer.qsize()}")
-            # self.logger.debug(f"self.controller.worker_ack_queue_mtree.qsize()={self.controller.worker_ack_queue_mtree.qsize()}")
-
             with self.done_blocks_raw_lock:
                 for blk_hash in self.done_blocks_raw:
                     if not blk_hash in self.received_blocks:

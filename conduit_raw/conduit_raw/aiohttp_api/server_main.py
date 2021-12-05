@@ -1,15 +1,12 @@
+from aiohttp import web
+from conduit_lib import LMDB_Database
 import os
 import sys
 from pathlib import Path
 import asyncio
 import logging
 import typing
-from logging.handlers import RotatingFileHandler
 from typing import Optional
-
-from aiohttp import web
-
-from conduit_lib import LMDB_Database
 
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
@@ -55,7 +52,7 @@ class AiohttpServer:
         site = web.TCPSite(self.runner, self.host, self.port, reuse_address=True)
         await site.start()
         self.app_state.start_threads()
-        while self.app.is_alive:
+        while self.app.is_alive:  # type: ignore
             await asyncio.sleep(0.5)
 
     async def stop(self) -> None:

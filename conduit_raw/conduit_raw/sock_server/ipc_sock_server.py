@@ -45,7 +45,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     server: ThreadedTCPServer
 
-    def recvall(self, n: int) -> bytearray:
+    def recvall(self, n: int) -> Optional[bytearray]:
         try:
             # Helper function to recv n bytes or return None if EOF is hit
             data = bytearray()
@@ -57,6 +57,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return data
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
+            return None
 
     def recv_msg(self) -> Optional[bytearray]:
         try:
@@ -69,8 +70,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return self.recvall(msglen)
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recv_msg")
+            return None
 
-    def send_msg(self, msg: bytes) -> bool:
+    def send_msg(self, msg: bytes) -> Optional[bool]:
         try:
             # Prefix each message with a 8-byte length (network byte order)
             msg = struct_be_Q.pack(len(msg)) + msg
@@ -78,6 +80,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return True
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.send_msg")
+            return None
 
     def handle(self):
         command = None
@@ -201,7 +204,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 self.send_msg(mtree_row)
             else:
                 logger.debug(
-                    f"Transaction offsets not found for block_hash: {hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}")
+                    f"Transaction offsets not found for block_hash: "
+                    f"{hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}")
                 self.send_msg(b"")
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.merkle_tree_row")

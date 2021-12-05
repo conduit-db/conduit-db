@@ -13,7 +13,7 @@ from typing import Dict
 from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
 from conduit_lib.constants import (DATABASE_NAME_VARNAME, BITCOIN_NETWORK_VARNAME,
     DATABASE_USER_VARNAME, DATABASE_HOST_VARNAME, DATABASE_PORT_VARNAME, DATABASE_PASSWORD_VARNAME,
-    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, PROFILING, CONDUIT_RAW_SERVICE_NAME, )
+    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, CONDUIT_RAW_SERVICE_NAME, )
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 
