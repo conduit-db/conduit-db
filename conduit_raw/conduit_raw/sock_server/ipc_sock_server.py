@@ -309,6 +309,20 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 self.request.sendall(header.raw)
         return True
 
+    def reorg_differential(self, msg: Dict):
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.ReorgDifferentialRequest(**msg)
+            logger.debug(f"Got {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
+
+            # Response
+            removals_from_mempool, additions_to_mempool = self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
+            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(removals_from_mempool, additions_to_mempool)
+            logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} response: {msg_resp}")
+            self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.reorg_differential")
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)

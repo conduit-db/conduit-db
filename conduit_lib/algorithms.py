@@ -184,7 +184,8 @@ def parse_txs(
                 next_tx_offset = len(buffer)
 
             rawtx = buffer[tx_offset_start:next_tx_offset].tobytes()
-            tx_hashX = double_sha256(rawtx)[0:HashXLength]
+            tx_hash = double_sha256(rawtx)
+            tx_hashX = tx_hash[0:HashXLength]
 
             # version
             offset += 4
@@ -262,7 +263,8 @@ def parse_txs(
                     )
                 )
             else:
-                tx_rows.append((tx_hashX.hex(), height_or_timestamp, rawtx.hex()))
+                # Note mempool uses full length tx_hash
+                tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
         assert len(tx_rows) == count_txs
         return tx_rows, list(in_rows), list(out_rows), list(set_pd_rows)
     except Exception as e:

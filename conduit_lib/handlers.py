@@ -43,14 +43,15 @@ class Handlers:
 
     async def on_verack(self, message):
         # logger.debug("handling verack...")
-        logger.debug("handshake complete")
-        self.controller.handshake_complete_event.set()
+        # logger.debug("handshake complete")
+        # self.controller.handshake_complete_event.set()
+        pass
 
     async def on_protoconf(self, message):
-        # logger.debug("handling protoconf...")
+        logger.debug("handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
-        # logger.debug(f"protoconf: {protoconf}")
-        # self.controller.handshake_complete_event.set()
+        logger.debug(f"protoconf: {protoconf}")
+        self.controller.handshake_complete_event.set()
 
     async def on_sendheaders(self, message):
         # logger.debug("handling sendheaders...")
@@ -131,7 +132,9 @@ class Handlers:
         if isinstance(message, memoryview):
             message = message.tobytes()
 
-        is_reorg, start_header, stop_header = connect_headers_reorg_safe(
+        # message always includes headers far back enough to include common parent in the
+        # event of a reorg
+        is_reorg, start_header, stop_header, old_hashes, new_hashes = connect_headers_reorg_safe(
             message, self.storage.headers, headers_lock=self.storage.headers_lock)
         self.controller.sync_state.headers_msg_processed_queue.put_nowait((is_reorg, start_header, stop_header))
 

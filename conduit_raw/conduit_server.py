@@ -23,8 +23,9 @@ from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
 
 loop_type = None
 if sys.platform == 'win32':
-    selector = selectors.SelectSelector()
-    loop = asyncio.SelectorEventLoop(selector)
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # selector = selectors.SelectSelector()
+    # loop = asyncio.SelectorEventLoop(selector)
 
 # If uvloop is installed - make use of it
 elif sys.platform == 'linux':

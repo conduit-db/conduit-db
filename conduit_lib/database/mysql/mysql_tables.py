@@ -75,7 +75,27 @@ class MySQLTables:
         except Exception:
             self.logger.exception("mysql_drop_temp_inbound_tx_hashes failed unexpectedly")
 
-    def mysql_drop_mysql_afe_txs(self):
+    def mysql_drop_temp_mempool_removals(self):
+        try:
+            self.start_transaction()
+            self.mysql_conn.query(f"""
+                DROP TABLE IF EXISTS temp_mempool_removals;
+            """)
+            self.commit_transaction()
+        except Exception:
+            self.logger.exception("mysql_drop_temp_mempool_removals failed unexpectedly")
+
+    def mysql_drop_temp_mempool_additions(self):
+        try:
+            self.start_transaction()
+            self.mysql_conn.query(f"""
+                DROP TABLE IF EXISTS temp_mempool_additions;
+            """)
+            self.commit_transaction()
+        except Exception:
+            self.logger.exception("mysql_drop_temp_mempool_additions failed unexpectedly")
+
+    def mysql_drop_mysql_unsafe_txs(self):
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_unsafe_txs;
@@ -162,7 +182,7 @@ class MySQLTables:
         #  ENGINE=MEMORY and USING HASH index.
         self.mysql_conn.query(f"""
             CREATE TABLE IF NOT EXISTS mempool_transactions (
-                mp_tx_hash BINARY({HashXLength}),
+                mp_tx_hash BINARY(32),
                 mp_tx_timestamp TIMESTAMP,
                 INDEX USING HASH (mp_tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
@@ -205,6 +225,23 @@ class MySQLTables:
                 mined_tx_hash BINARY({HashXLength}),
                 blk_num BIGINT,
                 INDEX USING HASH (mined_tx_hash)
+            ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
+            """)
+
+    def mysql_create_temp_mempool_removals_table(self):
+        self.mysql_conn.query(f"""
+            CREATE TABLE IF NOT EXISTS temp_mempool_removals (
+                tx_hash BINARY({HashXLength}),
+                INDEX USING HASH (tx_hash)
+            ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
+            """)
+
+    def mysql_create_temp_mempool_additions_table(self):
+        self.mysql_conn.query(f"""
+            CREATE TABLE IF NOT EXISTS temp_mempool_additions (
+                tx_hash BINARY({HashXLength}),
+                tx_timestamp TIMESTAMP,
+                INDEX USING HASH (tx_hash)
             ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
             """)
 

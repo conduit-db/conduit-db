@@ -11,7 +11,7 @@ import cbor2
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
-from conduit_lib.types import BlockMetadata, BlockSliceRequestType
+from conduit_lib.types import BlockSliceRequestType, ChainHashes
 from conduit_lib.utils import cast_to_valid_ipv4
 
 
@@ -217,6 +217,24 @@ class IPCSocketClient:
         except ConnectionResetError:
             self.wait_for_connection()
             return self.headers_batched(start_height, batch_size)  # recurse
+
+    def reorg_differential(self, old_hashes: ChainHashes, new_hashes: ChainHashes) -> \
+            ipc_sock_msg_types.ReorgDifferentialResponse:
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.ReorgDifferentialRequest(old_hashes, new_hashes)
+            self.logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
+
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cbor2.loads(data)
+            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(**cbor_obj)
+            self.logger.debug(f"Received {ipc_sock_commands.REORG_DIFFERENTIAL} response: {msg_resp}")
+            return msg_resp
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.reorg_differential(old_hashes, new_hashes)  # recurse
 
 
 if __name__ == "__main__":

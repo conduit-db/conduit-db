@@ -13,11 +13,12 @@ from typing import Tuple, Optional
 
 import bitcoinx
 from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes,
-    pack_le_uint32, MissingHeader, Headers, Header, Chain, )
+    pack_le_uint32, MissingHeader, Headers, Header, Chain, hash_to_hex_str, )
 
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     GENESIS_BLOCK
+from .types import ChainHashes
 
 logger = logging.getLogger("conduit-lib-utils")
 
@@ -164,6 +165,7 @@ def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
     ba += bitcoinx.pack_varint(count)
     for header in headers:
         ba += header
+        ba += bitcoinx.pack_varint(0)  # tx count
     return ba
 
 
@@ -176,7 +178,8 @@ def connect_headers(stream: BytesIO, headers_store: Headers) -> tuple[bytes, boo
     for i in range(count):
         try:
             raw_header = stream.read(80)
-            # logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))}")
+            logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))} "
+                         f"({i+1} of ({count})")
             _tx_count = bitcoinx.read_varint(stream.read)
             headers_store.connect(raw_header)
             if i == 0:
@@ -269,8 +272,26 @@ def reorg_detect(old_tip: bitcoinx.Header, new_tip: bitcoinx.Header, chains: lis
             lock.release()
 
 
+def _get_chain_hashes_back_to_common_parent(tip: Header, common_parent_height: int,
+        headers_store: Headers, lock: threading.RLock) -> ChainHashes:
+    """Used in reorg handling see: lmdb.get_reorg_differential"""
+    common_parent = get_header_for_height(common_parent_height, headers_store, lock)
+
+    chain_hashes = []
+    cur_header = tip
+    while common_parent.hash != cur_header.hash:
+        cur_header = get_header_for_hash(cur_header.hash, headers_store, lock)
+        chain_hashes.append(cur_header.hash)
+        cur_header = get_header_for_hash(cur_header.prev_hash, headers_store, lock)
+
+    return chain_hashes
+
+
 def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, headers_lock: threading.RLock) \
-        -> tuple[bool, Header, Header]:
+        -> tuple[bool, Header, Header, Optional[ChainHashes], Optional[ChainHashes]]:
+    """This needs to ingest a p2p messaging protocol style headers message and if they do indeed
+    constitute a reorg event, they need to go far back enough to include the common parent
+    height so it can connect to our local headers longest chain. Otherwise, raises ValueError"""
     with headers_lock:
         headers_stream = io.BytesIO(message)
         old_tip = headers_store.longest_chain().tip
@@ -282,8 +303,11 @@ def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, heade
         count_chains_after = len(headers_store.chains())
         new_tip: Header = headers_store.longest_chain().tip
 
+        # Todo: consider what would happen if rogue BTC or BCH block headers were received
         # On reorg we want the block pre-fetcher to start further back at the common parent height
         is_reorg = False
+        old_chain = None
+        new_chain = None
         if count_chains_before < count_chains_after:
             is_reorg = True
             reorg_info = reorg_detect(old_tip, new_tip, headers_store.chains(), lock=None)
@@ -293,8 +317,13 @@ def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, heade
             stop_header = new_tip
             logger.debug(f"Reorg detected - common parent height: {common_parent_height}; "
                          f"old_tip={old_tip}; new_tip={new_tip}")
+
+            old_chain = _get_chain_hashes_back_to_common_parent(old_tip, common_parent_height,
+                headers_store, headers_lock)
+            new_chain = _get_chain_hashes_back_to_common_parent(new_tip, common_parent_height,
+                headers_store, headers_lock)
         else:
             start_header = get_header_for_hash(double_sha256(first_header_of_batch), headers_store,
                 lock=None)
             stop_header = new_tip
-        return is_reorg, start_header, stop_header
+        return is_reorg, start_header, stop_header, old_chain, new_chain

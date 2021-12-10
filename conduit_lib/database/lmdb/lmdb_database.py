@@ -10,7 +10,7 @@ from io import BytesIO
 from math import ceil, log
 from pathlib import Path
 from struct import Struct
-from typing import List, Tuple, Dict, Optional, IO
+from typing import List, Tuple, Dict, Optional, IO, Set
 
 import bitcoinx
 import cbor2
@@ -21,7 +21,8 @@ from bitcoinx.packing import struct_le_Q
 from filelock import FileLock
 
 from conduit_lib.algorithms import calc_depth, get_mtree_node_counts_per_level
-from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, MerkleTreeArrayLocation
+from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, MerkleTreeArrayLocation, \
+    ChainHashes
 
 try:
     from ...constants import PROFILING, MAX_DAT_FILE_SIZE
@@ -492,6 +493,39 @@ class LMDB_Database:
                 block_size = struct_le_Q.unpack(val[0:8])[0]
                 tx_count = struct_le_Q.unpack(val[8:16])[0]
                 return BlockMetadata(block_size, tx_count)
+
+    def _make_reorg_tx_set(self, chain: ChainHashes):
+        chain_tx_hashes = set()
+        for block_hash in chain:
+            block_metadata = self.get_block_metadata(block_hash)
+            base_level = calc_depth(block_metadata.tx_count) - 1
+            stream = BytesIO(self.get_mtree_row(block_hash, level=base_level))
+            for i in range(block_metadata.tx_count):
+                if i == 0:  # skip coinbase txs because they can never be in the mempool
+                    continue
+                tx_hash = stream.read(32)
+                chain_tx_hashes.add(tx_hash)
+        return chain_tx_hashes
+
+    def get_reorg_differential(self, old_chain: ChainHashes, new_chain: ChainHashes) \
+            -> Tuple[Set[bytes], Set[bytes]]:
+        """This query basically wants to find out the ** differential ** in terms of tx hashes
+         between the orphaned chain of blocks vs the new reorging longest chain.
+         It should go without saying that we only care about the block hashes going back to
+         the common parent height.
+
+         We want two sets:
+         1) What tx hashes must be put back to the current mempool
+         2) What tx hashes must be removed from the current mempool
+         """
+        # NOTE: This could in theory use a lot of memory but the reorg would have to be very
+        # deep to cause problems. It wouldn't be too hard to run the same check in bite sized
+        # chunks to avoid too much memory allocation but I don't want to spend the time on it.
+        old_chain_tx_hashes = self._make_reorg_tx_set(old_chain)
+        new_chain_tx_hashes = self._make_reorg_tx_set(new_chain)
+        additions_to_mempool = old_chain_tx_hashes - new_chain_tx_hashes
+        removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
+        return removals_from_mempool, additions_to_mempool
 
     def sync(self):
         self.env.sync(True)

@@ -1,7 +1,7 @@
 import enum
 import struct
 import typing
-from typing import TypedDict, Optional, NamedTuple, Dict
+from typing import TypedDict, Optional, NamedTuple, Dict, List
 
 import bitcoinx
 from bitcoinx import hash_to_hex_str, hex_str_to_hash, Header
@@ -238,3 +238,6 @@ class HeaderSpan(NamedTuple):
     is_reorg: bool
     start_header: Header
     stop_header: Header
+
+
+ChainHashes = List[bytes]
