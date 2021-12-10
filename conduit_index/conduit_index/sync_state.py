@@ -122,12 +122,21 @@ class SyncState:
             if ipc_sock_client:
                 ipc_sock_client.close()
 
+    def get_local_tip(self):
+        """In ConduitIndex, this set of headers is used differently. We only fetch and connect
+        what is needed to assist us with processing the next set of raw blocks. This is in contrast
+        to ConduitRaw which fetches ALL headers before doing anything else."""
+        with self.storage.headers_lock:
+            return self.storage.headers.longest_chain().tip
+
     # Block Headers
     def get_local_block_tip_height(self) -> int:
-        return self.storage.block_headers.longest_chain().tip.height
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip.height
 
     def get_local_block_tip(self) -> bitcoinx.Header:
-        return self.storage.block_headers.longest_chain().tip
+        with self.storage.block_headers_lock:
+            return self.storage.block_headers.longest_chain().tip
 
     async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header):
         # Todo - really instead of conduit_best_tip it should come from the node...
@@ -259,23 +268,23 @@ class SyncState:
                 max_work_allocated_block_num=block_num, max_work_allocated_block_hash=max_blk_hash)
         return remaining_work, work_for_this_batch
 
-    def get_main_batch(self, main_batch_tip: bitcoinx.Header) -> Tuple[Set[bytes], MainBatch]:
+    def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) \
+            -> MainBatch:
         """Must run in thread due to ipc_sock_client not being async"""
         ipc_sock_client = IPCSocketClient()
 
-        all_pending_block_hashes = set()
-        headers: Headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-        local_block_tip_height = self.get_local_block_tip_height()
-        block_height_deficit = main_batch_tip.height - local_block_tip_height
+        with self.storage.headers_lock:
+            block_height_deficit = stop_header.height - (start_header.height - 1)
 
-        # May need to use block_hash not height to be more correct
-        block_headers: List[bitcoinx.Header] = []
-        for i in range(1, block_height_deficit + 1):
-            block_header = headers.header_at_height(chain, local_block_tip_height + i)
-            block_headers.append(block_header)
+            # May need to use block_hash not height to be more correct
+            block_headers: List[bitcoinx.Header] = []
+            for i in range(1, block_height_deficit + 1):
+                block_header = self.controller.get_header_for_height(start_header.height - 1 + i)
+                block_headers.append(block_header)
 
-        header_hashes = [block_header.hash for block_header in block_headers]
+            header_hashes = [block_header.hash for block_header in block_headers]
+
+        # Todo: All four of these network calls could be done in parallel in a thread pool executor
         block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
         block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
         tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
@@ -283,7 +292,7 @@ class SyncState:
 
         all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers,
             block_numbers))
-        return all_pending_block_hashes, all_work_units
+        return all_work_units
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:

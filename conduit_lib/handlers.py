@@ -2,10 +2,9 @@ import io
 import typing
 import logging
 import struct
-from typing import Tuple
+from typing import Tuple, Union
 
 import bitcoinx
-import zmq
 from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
 
 from .constants import MsgType
@@ -14,6 +13,7 @@ from .deserializer import Deserializer
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
+from .utils import connect_headers, connect_headers_reorg_safe
 
 logger = logging.getLogger("handlers")
 
@@ -43,14 +43,15 @@ class Handlers:
 
     async def on_verack(self, message):
         # logger.debug("handling verack...")
-        logger.debug("handshake complete")
-        self.controller.handshake_complete_event.set()
+        # logger.debug("handshake complete")
+        # self.controller.handshake_complete_event.set()
+        pass
 
     async def on_protoconf(self, message):
-        # logger.debug("handling protoconf...")
+        logger.debug("handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
-        # logger.debug(f"protoconf: {protoconf}")
-        # self.controller.handshake_complete_event.set()
+        logger.debug(f"protoconf: {protoconf}")
+        self.controller.handshake_complete_event.set()
 
     async def on_sendheaders(self, message):
         # logger.debug("handling sendheaders...")
@@ -123,38 +124,18 @@ class Handlers:
     async def on_getdata(self, message: bytes):
         logger.debug("handling getdata...")
 
-    async def on_headers(self, message: memoryview):
-        # logger.debug(f"handling headers: {message.tobytes()}")
+    async def on_headers(self, message: Union[bytearray, memoryview]):
         if message[0:1].tobytes() == b'\x00':
-            # logger.debug(f"Putting to headers_msg_processed_queue: {None}")
             self.controller.sync_state.headers_msg_processed_queue.put_nowait(None)
             return
 
-        headers_stream = io.BytesIO(message.tobytes())
-        old_tip = self.storage.headers.longest_chain().tip
-        count_chains_before = len(self.storage.headers.chains())
-        first_header_of_batch, success = self.deserializer.connect_headers(headers_stream)
-        if not success:
-            raise ValueError("Could not connect p2p headers")
+        if isinstance(message, memoryview):
+            message = message.tobytes()
 
-        count_chains_after = len(self.storage.headers.chains())
-        new_tip = self.storage.headers.longest_chain().tip
-
-        # On reorg we want the block pre-fetcher to start further back at the common parent height
-        is_reorg = False
-        if count_chains_before < count_chains_after:
-            is_reorg = True
-            reorg_info = self.controller.reorg_detect(old_tip, new_tip)
-            assert reorg_info is not None
-            common_parent_height, new_tip, old_tip = reorg_info
-            start_header = self.controller.get_header_for_height(common_parent_height + 1)
-            stop_header = new_tip
-            logger.debug(f"Reorg detected - common parent height: {common_parent_height}; old_tip={old_tip}; new_tip={new_tip}")
-        else:
-            start_header = self.controller.get_header_for_hash(double_sha256(first_header_of_batch))
-            stop_header = new_tip
-
-        # logger.debug(f"Putting to headers_msg_processed_queue start_header: {start_header}, stop_header: {stop_header}; is_reorg: {is_reorg}")
+        # message always includes headers far back enough to include common parent in the
+        # event of a reorg
+        is_reorg, start_header, stop_header, old_hashes, new_hashes = connect_headers_reorg_safe(
+            message, self.storage.headers, headers_lock=self.storage.headers_lock)
         self.controller.sync_state.headers_msg_processed_queue.put_nowait((is_reorg, start_header, stop_header))
 
     # ----- Special case messages ----- #  # Todo - should probably be registered callbacks

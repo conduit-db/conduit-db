@@ -32,6 +32,7 @@ class Storage:
         self.headers = headers
         self.headers_lock = threading.RLock()
         self.block_headers = block_headers
+        self.block_headers_lock = threading.RLock()
         self.lmdb = lmdb
 
     async def close(self):

@@ -371,7 +371,7 @@ class TxParser(multiprocessing.Process):
             dt = datetime.utcnow()
             tx_offsets = array.array("Q", [0])
             rawtx = array.array('B', rawtx)
-            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+            timestamp = dt.isoformat()
             result: Tuple[List, List, List, List] = parse_txs(
                 rawtx, tx_offsets, timestamp, False, 0)
             tx_rows, in_rows, out_rows, set_pd_rows = result

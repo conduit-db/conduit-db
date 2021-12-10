@@ -8,7 +8,7 @@ from typing import Optional
 import cbor2
 from bitcoinx import hash_to_hex_str
 
-from conduit_lib.types import BlockMetadata, BlockSliceRequestType
+from conduit_lib.types import BlockMetadata, BlockSliceRequestType, ChainHashes
 
 try:
     from conduit_lib import ipc_sock_commands
@@ -17,6 +17,7 @@ except ImportError:
 
 
 BlockHashes = list[bytes]
+BlockHeaders = list[bytes]
 
 
 class BaseMsg:
@@ -293,7 +294,7 @@ class HeadersBatchedRequest(BaseMsg):
 class HeadersBatchedResponse(BaseMsg):
     command = ipc_sock_commands.HEADERS_BATCHED
 
-    def __init__(self, headers_batch: BlockHashes, command: Optional[str]=None):
+    def __init__(self, headers_batch: BlockHeaders, command: Optional[str]=None):
         super().__init__()
         self.headers_batch = headers_batch
 
@@ -302,3 +303,50 @@ class HeadersBatchedResponse(BaseMsg):
 
     def to_json(self) -> str:
         return json.dumps({'command': self.command, 'headers_batch': [x.hex() for x in self.headers_batch]})
+
+
+class ReorgDifferentialRequest(BaseMsg):
+    command = ipc_sock_commands.REORG_DIFFERENTIAL
+
+    def __init__(self, old_hashes: ChainHashes, new_hashes: ChainHashes, command: Optional[str]=None):
+        super().__init__()
+        self.old_hashes = old_hashes
+        self.new_hashes = new_hashes
+
+    def to_cbor(self) -> bytes:
+        return cbor2.dumps({
+            'command': self.command,
+            'old_hashes': self.old_hashes,
+            'new_hashes': self.new_hashes,
+        })
+
+    def to_json(self) -> str:
+        return json.dumps({
+            'command': self.command,
+            'old_hashes': [x.hex() for x in self.old_hashes],
+            'new_hashes': [x.hex() for x in self.new_hashes]
+        })
+
+
+class ReorgDifferentialResponse(BaseMsg):
+    command = ipc_sock_commands.REORG_DIFFERENTIAL
+
+    def __init__(self, removals_from_mempool: set[bytes], additions_to_mempool: set[bytes], command: Optional[str]=None):
+        super().__init__()
+        self.removals_from_mempool = removals_from_mempool
+        self.additions_to_mempool = additions_to_mempool
+
+    def to_cbor(self) -> bytes:
+        return cbor2.dumps({
+            'command': self.command,
+            'removals_from_mempool': self.removals_from_mempool,
+            'additions_to_mempool': self.additions_to_mempool
+
+        })
+
+    def to_json(self) -> str:
+        return json.dumps({
+            'command': self.command,
+            'removals_from_mempool': [x.hex() for x in self.removals_from_mempool],
+            'additions_to_mempool': [x.hex() for x in self.additions_to_mempool]
+        })

@@ -56,7 +56,7 @@ class Serializer:
 
     # ----- ADD HEADER ----- #
 
-    def payload_to_message(self, command, payload):
+    def payload_to_message(self, command, payload) -> bytes:
         magic = int_to_be_bytes(self.net_config.MAGIC)
         length = pack_le_uint32(len(payload))
         checksum = payload_to_checksum(payload)

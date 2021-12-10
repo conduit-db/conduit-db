@@ -2,8 +2,9 @@ import math
 import os
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 import logging
 
@@ -12,7 +13,7 @@ from MySQLdb import _mysql
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
-from ...constants import PROFILING
+from ...constants import PROFILING, HashXLength
 
 
 class MySQLQueries:
@@ -97,6 +98,59 @@ class MySQLQueries:
         # purposes but MySQL makes this difficult.
         self.mysql_conn.query(query)
         self.mysql_conn.commit()
+
+    def mysql_load_temp_mempool_removals(self, removals_from_mempool: List[bytes]) -> None:
+        self.mysql_tables.mysql_create_temp_mempool_removals_table()
+
+        outfile = Path(str(uuid.uuid4()) + ".csv")
+        try:
+            string_rows = ["%s\n" % (tx_hash.hex()) for tx_hash in removals_from_mempool]
+            column_names = ['tx_hash']
+            self.bulk_loads._load_data_infile("temp_mempool_removals", string_rows, column_names,
+                binary_column_indices=[0])
+        finally:
+            if os.path.exists(outfile):
+                os.remove(outfile)
+
+    def mysql_load_temp_mempool_additions(self, additions_to_mempool: List[bytes]) -> None:
+        self.mysql_tables.mysql_create_temp_mempool_additions_table()
+
+        dt = datetime.utcnow()
+        outfile = Path(str(uuid.uuid4()) + ".csv")
+        try:
+            string_rows = ["%s,%s\n" % (tx_hash.hex(), dt.isoformat()) for tx_hash in additions_to_mempool]
+            column_names = ['tx_hash', 'tx_timestamp']
+            self.bulk_loads._load_data_infile("temp_mempool_additions", string_rows, column_names,
+                binary_column_indices=[0])
+        finally:
+            if os.path.exists(outfile):
+                os.remove(outfile)
+
+    def mysql_remove_from_mempool(self, removals_from_mempool: List[bytes]):
+        self.logger.debug(f"Removing reorg differential from mempool")
+        self.mysql_load_temp_mempool_removals(removals_from_mempool)
+        query = f"""
+            DELETE FROM mempool_transactions
+            WHERE mempool_transactions.mp_tx_hash in (
+                SELECT tx_hash 
+                FROM temp_mempool_removals 
+            );
+            """
+        self.mysql_conn.query(query)
+        self.mysql_conn.commit()
+        self.mysql_tables.mysql_drop_temp_mempool_removals()
+
+    def mysql_add_to_mempool(self, additions_to_mempool: List[bytes]):
+        self.logger.debug(f"Adding reorg differential to mempool")
+        self.mysql_load_temp_mempool_additions(additions_to_mempool)
+        query = f"""
+            INSERT INTO mempool_transactions 
+                SELECT tx_hash, tx_timestamp
+                FROM temp_mempool_additions;
+            """
+        self.mysql_conn.query(query)
+        self.mysql_conn.commit()
+        self.mysql_tables.mysql_drop_temp_mempool_additions()
 
     def mysql_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
         assert isinstance(api_tip_height, int)

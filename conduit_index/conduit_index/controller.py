@@ -1,14 +1,16 @@
+import sys
 import typing
 from asyncio import BufferedProtocol
+from io import BytesIO
 
 import bitcoinx
 import cbor2
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
 import logging
 import os
 import struct
 import time
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Set
 from concurrent.futures.thread import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
@@ -22,12 +24,15 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.handlers import Handlers
+from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.types import BlockHeaderRow
+from conduit_lib.types import BlockHeaderRow, ChainHashes
+from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
+    connect_headers_reorg_safe, get_header_for_hash
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
     wait_for_node
 from contrib.scripts.export_blocks import GENESIS_HASH_HEX
@@ -129,6 +134,10 @@ class Controller:
         self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)
         self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
 
+        context6 = AsyncZMQContext.instance()
+        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PUSH)
+        self.reorg_event_socket.connect("tcp://127.0.0.1:51495")
+
         self.worker_ack_queue_tx_parse_confirmed = multiprocessing.Queue()  # blk_hash:tx_count
 
         # Batch Completion
@@ -139,18 +148,15 @@ class Controller:
 
         # Database Interfaces
         self.mysql_db: Optional[MySQLDatabase] = None
-
         self.ipc_sock_client: Optional[IPCSocketClient] = None
-
         self.total_time_connecting_headers = 0
-
         self.sync_state: Optional[SyncState] = None
         self.general_executor = ThreadPoolExecutor(max_workers=1)
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
         self.storage = setup_storage(self.config, self.net_config, headers_dir)
-        self.handlers = Handlers(self, self.net_config, self.storage)
+        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
@@ -177,19 +183,23 @@ class Controller:
             await self.stop()
 
     async def maintain_node_connection(self):
+        first_loop = True
         while True:
             await wait_for_node(node_host=self.config['node_host'],
                 serializer=self.serializer, deserializer=self.deserializer)
-
+            if not first_loop:
+                self.logger.debug(f"Bitcoin daemon disconnected. "
+                                  f"Reconnecting & Re-requesting mempool (as appropriate)...")
             await self.connect_session()  # on_connection_made callback -> starts jobs
             await self.send_version(self.peer.host, self.peer.port, self.host, self.port)
             await self.handshake_complete_event.wait()
-            await self.con_lost_event.wait()
-            self.con_lost_event.clear()
-            self.logger.debug(f"Bitcoin daemon disconnected. "
-                              f"Reconnecting & Re-requesting mempool (as appropriate)...")
+            await asyncio.sleep(2)
             if self.ibd_signal_sent:
                 await self.request_mempool()
+
+            await self.con_lost_event.wait()
+            self.con_lost_event.clear()
+            first_loop = False
 
     async def stop(self):
         self.running = False
@@ -357,10 +367,7 @@ class Controller:
         asyncio.create_task(self.batch_completion_job())
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        headers = self.storage.headers
-        chain = self.storage.headers.longest_chain()
-        header = headers.header_at_height(chain, height)
-        return header
+        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
 
     def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]):
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
@@ -376,7 +383,10 @@ class Controller:
         else:
             return True
 
-    async def update_mempool_and_api_tip_atomic(self, api_block_tip_height, api_block_tip_hash):
+    async def update_mempool_and_api_tip_atomic(self, api_block_tip_height: int,
+            api_block_tip_hash: bytes, is_reorg: bool,
+            removals_from_mempool: Set[bytes],
+            additions_to_mempool: Set[bytes]) -> None:
         # Get all tx_hashes up to api_block_tip_height
         # Must ATOMICALLY:
         #   1) invalidate mempool rows (that have been mined)
@@ -386,6 +396,8 @@ class Controller:
         new_mined_tx_hashes = {}
         all_blocks_processed = False
         while not all_blocks_processed:
+            # Todo - in theory this ack_for_mined_tx_socket buffer could overflow as it waits
+            #  until the batch is done... may need a background task to store the acks
             message = await self.ack_for_mined_tx_socket.recv()
             new_mined_tx_hashes = cbor2.loads(message)
 
@@ -408,25 +420,40 @@ class Controller:
         self.global_tx_hashes_dict = {}
 
         # 3) Invalidate mempool rows that have been mined ATOMICALLY
-        self.logger.debug(f"Invalidating relevant mempool transactions...")
-        self.mysql_db.start_transaction()
-        try:
-            self.mysql_db.mysql_invalidate_mempool_rows()
-            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
-            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
-                api_block_tip_hash)
-        finally:
-            self.mysql_db.commit_transaction()
 
-    async def sanity_checks_and_update_api_tip(self):
+        # If there is a reorg, it is not as simple as just deleting the mined txs
+        # we must both add and remove txs based on the differential between the old and new chain
+        if is_reorg:
+            self._apply_reorg_diff_to_mempool(api_block_tip_height, api_block_tip_hash,
+                additions_to_mempool, removals_from_mempool)
+        else:
+            self._invalidate_mempool_rows(api_block_tip_height, api_block_tip_hash)
+
+    async def sanity_checks_and_update_api_tip(self, is_reorg: bool,
+            old_hashes: Optional[ChainHashes]=None, new_hashes: Optional[ChainHashes]=None):
         t0 = time.time()
         api_block_tip_height = self.sync_state.get_local_block_tip_height()
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
+        removals_from_mempool = None  # only relevant in a reorg
+        additions_to_mempool = None  # only relevant in a reorg
+        if is_reorg:
+            assert old_hashes is not None
+            assert new_hashes is not None
+            ipc_sock_client = IPCSocketClient()
+            response = ipc_sock_client.reorg_differential(old_hashes, new_hashes)
+            removals_from_mempool = response.removals_from_mempool
+            additions_to_mempool = response.additions_to_mempool
+            self.logger.debug(f"removals_from_mempool (len={len(removals_from_mempool)}), "
+                              f"additions_to_mempool (len={len(additions_to_mempool)})")
+
+        # Update API tip for filtering of queries in the internal aiohttp API
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
         if await self.sync_state.is_ibd(api_block_tip, conduit_best_tip):
-            await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash)
+            await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash,
+                is_reorg, removals_from_mempool, additions_to_mempool)
+
         else:
             # No txs in mempool until is_ibd == True
             self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
@@ -497,7 +524,8 @@ class Controller:
                 raise
 
     async def check_for_ibd_status(self, conduit_best_tip):
-        local_tip = self.storage.headers.longest_chain().tip
+        with self.storage.headers_lock:
+            local_tip = self.storage.headers.longest_chain().tip
         if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
                 and not self.ibd_signal_sent:
             self.logger.debug(f"Initial block download mode completed. "
@@ -508,31 +536,51 @@ class Controller:
             await self.handshake_complete_event.wait()
             await self.request_mempool()
 
-    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bitcoinx.Header, int]:
-        deserialized_header = None
+    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bool, Header, Header,
+            Optional[ChainHashes], Optional[ChainHashes]]:
+        OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
+        self.handlers: Handlers
+
+        old_hashes = None
+        new_hashes = None
         ipc_sock_client = None
         while True:
+            is_reorg = False
             try:
                 start_height = self.sync_state.get_local_block_tip_height() + 1
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
-                result = await self.loop.run_in_executor(self.general_executor,
+                result: HeadersBatchedResponse = await self.loop.run_in_executor(self.general_executor,
                     ipc_sock_client.headers_batched, start_height, MAIN_BATCH_HEADERS_COUNT_LIMIT)
 
-                for new_tip in result.headers_batch:
-                    self.connect_conduit_headers(new_tip)
+                headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
+                first_header_of_batch, success = connect_headers(BytesIO(headers_p2p_msg), self.storage.headers)
+                if success:
+                    start_header = get_header_for_hash(double_sha256(first_header_of_batch),
+                        self.storage.headers, lock=None)
+                    stop_header = self.sync_state.get_local_tip()
+                else:
+                    self.logger.debug(f"POTENTIAL REORG DETECTED")
+                    # This should mean there has been a reorg. The tip should always connect
+                    from_height = max(start_height - OVERKILL_REORG_DEPTH, 1)
+                    count = MAIN_BATCH_HEADERS_COUNT_LIMIT + OVERKILL_REORG_DEPTH
+                    result: HeadersBatchedResponse = await self.loop.run_in_executor(
+                        self.general_executor, ipc_sock_client.headers_batched, from_height, count)
 
-                    # For debugging only
-                    tip_hash = double_sha256(new_tip)
-                    deserialized_header = self.storage.get_header_for_hash(tip_hash)
+                    # Try again
+                    headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
+                    is_reorg, start_header, stop_header, old_hashes, new_hashes = \
+                        connect_headers_reorg_safe(headers_p2p_msg,
+                        self.storage.headers, self.storage.headers_lock)
+                    self.logger.exception("REORG CONFIRMED")
 
-                if deserialized_header:
+                if stop_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
-                                      f"parsing at height: {deserialized_header.height}")
+                                      f"parsing at height: {stop_header.height}")
 
-                    await self.check_for_ibd_status(deserialized_header)
-                    return deserialized_header, deserialized_header.height
+                    await self.check_for_ibd_status(stop_header)
+                    return is_reorg, start_header, stop_header, old_hashes, new_hashes
                 else:
                     continue
             except Exception:
@@ -583,25 +631,26 @@ class Controller:
             while True:
                 # ------------------------- Batch Start ------------------------- #
                 # This queue is just a trigger to check the new tip and allocate another batch
-                main_batch_tip, conduit_raw_tip_height = await self.long_poll_conduit_raw_chain_tip()
+                is_reorg, start_header, stop_header, old_hashes, new_hashes = \
+                    await self.long_poll_conduit_raw_chain_tip()
 
-                deficit = main_batch_tip.height - self.sync_state.get_local_block_tip_height()
+                deficit = stop_header.height - (start_header.height - 1)
                 local_tip_height = self.sync_state.get_local_block_tip_height()
-                remaining = conduit_raw_tip_height - local_tip_height
-                self.logger.debug(f"Allocated {deficit} headers in main batch to height: "
-                    f"{main_batch_tip.height}")
-                self.logger.debug(f"ConduitRaw tip height: {conduit_raw_tip_height}. "
-                                  f"Local tip height: {local_tip_height} "
-                                  f"(remaining={remaining})")
-                if main_batch_tip.height <= self.sync_state.get_local_block_tip_height():
+                self.logger.debug(f"Allocated {deficit} headers in main batch to from height: "
+                    f"{start_header.height} to height: {stop_header.height}")
+                self.logger.debug(f"ConduitRaw tip height: {local_tip_height}. "
+                                  f"(remaining={deficit})")
+                if stop_header.height <= self.sync_state.get_local_block_tip_height():
                     continue  # drain the queue until we hit relevant ones
 
                 batch_id += 1
                 self.logger.debug(f"Controller Batch {batch_id} Start")
 
                 # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
-                all_pending_block_hashes, main_batch = await self.loop.run_in_executor(
-                        self.general_executor, self.sync_state.get_main_batch, main_batch_tip)
+                main_batch = await self.loop.run_in_executor(
+                    self.general_executor, self.sync_state.get_main_batch, start_header,
+                    stop_header)
+                all_pending_block_hashes = set()
                 all_work_units = self.sync_state.get_work_units_all(all_pending_block_hashes,
                     main_batch)
                 self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
@@ -618,8 +667,27 @@ class Controller:
                     self.sync_state.reset_pending_chip_away_work_items()
 
                 await wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes)
-                api_block_tip_height = await self.sanity_checks_and_update_api_tip()
+
+                #  Todo: if is_reorg=True then need to preserve this context to ensure that the final
+                #   mempool invalidation step is done with extreme care.
+                #   May also need to trigger an event in the aiohttp API around a critical final
+                #   atomic commit (to update mempool + API tip)
+                if is_reorg:
+                    reorg_handling_complete = False
+                    await self.reorg_event_socket.send(
+                        cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
+
+                    api_block_tip_height = await self.sanity_checks_and_update_api_tip(is_reorg,
+                        old_hashes, new_hashes)
+
+                else:
+                    api_block_tip_height = await self.sanity_checks_and_update_api_tip(is_reorg)
                 self.sync_state.reset_pending_blocks()
+
+                if is_reorg:
+                    reorg_handling_complete = True
+                    await self.reorg_event_socket.send(
+                        cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
                 # ------------------------- Batch complete ------------------------- #
                 self.logger.debug(f"Controller Batch {batch_id} Complete. "
                     f"New tip height: {api_block_tip_height}")
@@ -694,3 +762,26 @@ class Controller:
                 batch_id += 1
             except Exception as e:
                 self.logger.exception(e)
+
+    def _invalidate_mempool_rows(self, api_block_tip_height: int, api_block_tip_hash: bytes) \
+            -> None:
+        self.mysql_db.start_transaction()
+        try:
+            self.mysql_db.mysql_invalidate_mempool_rows()
+            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
+            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+                api_block_tip_hash)
+        finally:
+            self.mysql_db.commit_transaction()
+
+    def _apply_reorg_diff_to_mempool(self, api_block_tip_height: int, api_block_tip_hash: bytes,
+            additions_to_mempool: Set[bytes], removals_from_mempool: Set[bytes]) -> None:
+        self.mysql_db.start_transaction()
+        try:
+            self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # not required so discard it
+            self.mysql_db.queries.mysql_remove_from_mempool(removals_from_mempool)
+            self.mysql_db.queries.mysql_add_to_mempool(additions_to_mempool)
+            self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
+                api_block_tip_hash)
+        finally:
+            self.mysql_db.commit_transaction()

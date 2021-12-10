@@ -26,9 +26,10 @@ def ipc_sock_server_thread():
     from conduit_lib.networks import RegTestNet
     HOST, PORT = "127.0.0.1", 34586
     block_headers = setup_headers_store(RegTestNet(), "test_headers.mmap")
+    block_headers_lock = threading.RLock()
     ipc_sock_server = ThreadedTCPServer(addr=(HOST, PORT),
         handler=ThreadedTCPRequestHandler, storage_path=LMDB_STORAGE_PATH,
-        block_headers=block_headers)
+        block_headers=block_headers, block_headers_lock=block_headers_lock)
     ipc_sock_server.serve_forever()
 
 
