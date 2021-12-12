@@ -25,21 +25,20 @@ def submit_block(block_bytes: bytes) -> None:
     result.raise_for_status()
 
 
-def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"{sys.argv[0]} <directory path>")
-        sys.exit(1)
-
-    output_dir_path = os.path.realpath(sys.argv[1])
+def validate_inputs(blockchain_dir: str):
+    output_dir_path = os.path.realpath(blockchain_dir)
     if not os.path.exists(output_dir_path) or not os.path.isdir(output_dir_path):
-        print(f"Directory does not exist: {sys.argv[1]}")
+        print(f"Directory does not exist: {blockchain_dir}")
         sys.exit(1)
 
     headers_file_path = os.path.join(output_dir_path, "headers.txt")
     if not os.path.exists(headers_file_path):
-        print(f"Directory does not look like a blockchain export: {sys.argv[1]}")
+        print(f"Directory does not look like a blockchain export: {blockchain_dir}")
         sys.exit(1)
+    return output_dir_path, headers_file_path
 
+
+def get_header_hash_hexs(headers_file_path: str, output_dir_path: str):
     header_hash_hexs: List[str] = []
     with open(headers_file_path, "r") as hf:
         i = 0
@@ -53,7 +52,10 @@ def main() -> None:
                 sys.exit(1)
             header_hash_hexs.append(header_hash_hex)
             i += 1
+    return header_hash_hexs
 
+
+def submit_blocks(header_hash_hexs: List[str], output_dir_path: str):
     for i, header_hash_hex in enumerate(header_hash_hexs):
         print(f"Uploading block {i} {header_hash_hex[:6]}")
         block_file_path = os.path.join(output_dir_path, header_hash_hex)
@@ -61,6 +63,19 @@ def main() -> None:
             block_bytes = bf.read()
             submit_block(block_bytes)
 
+
+def import_blocks(blockchain_dir: str):
+    output_dir_path, headers_file_path = validate_inputs(blockchain_dir)
+    header_hash_hexs = get_header_hash_hexs(headers_file_path, output_dir_path)
+    submit_blocks(header_hash_hexs, output_dir_path)
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        print(f"{sys.argv[0]} <directory path>")
+        sys.exit(1)
+
+    import_blocks(sys.argv[1])
     sys.exit(0)
 
 

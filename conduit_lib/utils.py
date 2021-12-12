@@ -178,8 +178,8 @@ def connect_headers(stream: BytesIO, headers_store: Headers) -> tuple[bytes, boo
     for i in range(count):
         try:
             raw_header = stream.read(80)
-            logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))} "
-                         f"({i+1} of ({count})")
+            # logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))} "
+            #              f"({i+1} of ({count})")
             _tx_count = bitcoinx.read_varint(stream.read)
             headers_store.connect(raw_header)
             if i == 0:

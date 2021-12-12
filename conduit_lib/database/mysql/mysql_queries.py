@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Set
 
 import logging
 
@@ -55,26 +55,45 @@ class MySQLQueries:
             binary_column_indices=[0])
 
 
-    def mysql_get_unprocessed_txs(self, new_tx_hashes: list[tuple[str]],
-            inbound_tx_table_name: str) -> Optional[Tuple[bytes, bytes, int, bytes]]:
+    def mysql_get_unprocessed_txs(self, is_reorg: bool, new_tx_hashes: list[tuple[str]],
+            inbound_tx_table_name: str) -> Set[bytes]:
         """
         NOTE: usually (if all mempool txs have been processed, this function will only return
         the coinbase tx)
         """
         self.mysql_load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
-        self.mysql_conn.query(
-            f"""
-            -- tx_hash ISNULL implies no match therefore not previously processed yet
-            SELECT *
-            FROM {inbound_tx_table_name}
-            LEFT OUTER JOIN mempool_transactions
-            ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
-            WHERE mempool_transactions.mp_tx_hash IS NULL
-            ;"""
-        )
-        result = self.mysql_conn.store_result()
-        self.mysql_tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
-        return result.fetch_row(0)
+        try:
+            self.mysql_conn.query(
+                f"""
+                -- tx_hash ISNULL implies no match therefore not previously processed yet
+                SELECT *
+                FROM {inbound_tx_table_name}
+                LEFT OUTER JOIN mempool_transactions
+                ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
+                WHERE mempool_transactions.mp_tx_hash IS NULL
+                ;"""
+            )
+            result = self.mysql_conn.store_result()
+            final_result = set(x[0] for x in result.fetch_row(0))
+        finally:
+            self.mysql_db.commit_transaction()
+
+        if not is_reorg:
+            self.mysql_tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+            return final_result
+        else:
+            # Todo - need the full set of orphaned transactions to be subtracted from end result
+            try:
+                self.mysql_conn.query(f"""SELECT * FROM temp_orphaned_txs;""")
+                # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hashes
+                result = self.mysql_conn.store_result()
+                orphaned_txs = set(x[0] for x in result.fetch_row(0))
+            finally:
+                self.mysql_db.commit_transaction()
+
+            final_result = final_result - orphaned_txs
+            self.mysql_tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+            return set(final_result)
 
     # # Debugging
     # def get_temp_mined_tx_hashes(self):
@@ -100,6 +119,7 @@ class MySQLQueries:
         self.mysql_conn.commit()
 
     def mysql_load_temp_mempool_removals(self, removals_from_mempool: List[bytes]) -> None:
+        """i.e. newly mined transactions in a reorg context"""
         self.mysql_tables.mysql_create_temp_mempool_removals_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
@@ -126,9 +146,22 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_remove_from_mempool(self, removals_from_mempool: List[bytes]):
+    def mysql_load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: List[bytes]) -> None:
+        self.mysql_tables.mysql_create_temp_orphaned_txs_table()
+
+        outfile = Path(str(uuid.uuid4()) + ".csv")
+        try:
+            string_rows = ["%s\n" % tx_hash.hex() for tx_hash in orphaned_tx_hashes]
+            column_names = ['tx_hash']
+            self.bulk_loads._load_data_infile("temp_orphaned_txs", string_rows, column_names,
+                binary_column_indices=[0])
+        finally:
+            if os.path.exists(outfile):
+                os.remove(outfile)
+
+    def mysql_remove_from_mempool(self):
         self.logger.debug(f"Removing reorg differential from mempool")
-        self.mysql_load_temp_mempool_removals(removals_from_mempool)
+        # Note the loading of the temp_mempool_removals is not done here
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mempool_transactions.mp_tx_hash in (
@@ -140,9 +173,9 @@ class MySQLQueries:
         self.mysql_conn.commit()
         self.mysql_tables.mysql_drop_temp_mempool_removals()
 
-    def mysql_add_to_mempool(self, additions_to_mempool: List[bytes]):
+    def mysql_add_to_mempool(self):
         self.logger.debug(f"Adding reorg differential to mempool")
-        self.mysql_load_temp_mempool_additions(additions_to_mempool)
+        # Note the loading of the temp_mempool_additions is not done here
         query = f"""
             INSERT INTO mempool_transactions 
                 SELECT tx_hash, tx_timestamp
@@ -153,27 +186,33 @@ class MySQLQueries:
         self.mysql_tables.mysql_drop_temp_mempool_additions()
 
     def mysql_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
-        assert isinstance(api_tip_height, int)
-        assert isinstance(api_tip_hash, bytes)
-        api_tip_hash_hex = bitcoinx.hash_to_hex_str(api_tip_hash)
-        self.mysql_db.start_transaction()
-        query = f"""
-            REPLACE INTO api_state(id, api_tip_height, api_tip_hash) 
-            VALUES(0, {api_tip_height}, UNHEX('{api_tip_hash_hex}'))
-        """
-        self.mysql_conn.query(query)
-        self.mysql_db.commit_transaction()
+        try:
+            assert isinstance(api_tip_height, int)
+            assert isinstance(api_tip_hash, bytes)
+            api_tip_hash_hex = bitcoinx.hash_to_hex_str(api_tip_hash)
+            self.mysql_db.start_transaction()
+            query = f"""
+                REPLACE INTO api_state(id, api_tip_height, api_tip_hash) 
+                VALUES(0, {api_tip_height}, UNHEX('{api_tip_hash_hex}'))
+            """
+            self.mysql_conn.query(query)
+        finally:
+            self.mysql_db.commit_transaction()
 
     def mysql_get_max_allocated_block_num(self) -> Optional[int]:
-        query = f"""
-            SELECT max_work_allocated_block_num FROM sync_state;
-            """
-        self.mysql_conn.query(query)
-        result = self.mysql_conn.store_result()
-        if len(result.fetch_row(0)) != 0:
-            result_unpacked = result.fetch_row(0)[0][0]
-            return int(result_unpacked)
-        return
+        try:
+            query = f"""
+                SELECT max_work_allocated_block_num FROM sync_state;
+                """
+            self.mysql_conn.query(query)
+            result = self.mysql_conn.store_result()
+            rows = result.fetch_row(0)
+            if len(rows) != 0:
+                result_unpacked = rows[0][0]
+                return int(result_unpacked)
+            return
+        finally:
+            self.mysql_db.commit_transaction()
 
     def mysql_update_sync_state(self, max_work_allocated_block_num: int,
             max_work_allocated_block_hash: bytes):
@@ -181,32 +220,38 @@ class MySQLQueries:
         # number / block_hash that has (potentially) been flushed to MySQL. This is used in the
         # event of a sudden crash and db repair when I use the arrays of tx_hashes in ConduitRaw
         # to delete any "unsafe" transactions from all tables...
-        max_work_allocated_block_hash_hex = bitcoinx.hash_to_hex_str(max_work_allocated_block_hash)
-        query = f"""
-            REPLACE INTO sync_state(id, max_work_allocated_block_num, max_work_allocated_block_hash) 
-            VALUES(0, {max_work_allocated_block_num}, X'{max_work_allocated_block_hash_hex}')
-            """
-        # self.logger.debug(query)
-        self.mysql_conn.query(query)
+        try:
+            max_work_allocated_block_hash_hex = bitcoinx.hash_to_hex_str(max_work_allocated_block_hash)
+            query = f"""
+                REPLACE INTO sync_state(id, max_work_allocated_block_num, max_work_allocated_block_hash) 
+                VALUES(0, {max_work_allocated_block_num}, X'{max_work_allocated_block_hash_hex}')
+                """
+            # self.logger.debug(query)
+            self.mysql_conn.query(query)
+        finally:
+            self.mysql_db.commit_transaction()
 
     def mysql_get_txids_above_last_good_block_num(self, last_good_block_num: int):
         """This query will do a full table scan and so will not scale - instead would need to
         pull txids by blockhash from merkleproof to get the set of txids..."""
         assert isinstance(last_good_block_num, int)
-        query = f"""
-            SELECT tx_hash 
-            FROM confirmed_transactions 
-            WHERE tx_block_num > {last_good_block_num} 
-            ORDER BY tx_block_num DESC;
-            """
-        # self.logger.debug(query)
-        self.mysql_conn.query(query)
-        result = self.mysql_conn.store_result()
-        count = result.num_rows()
-        if count != 0:
-            self.logger.warning(f"The database was abruptly shutdown ({count} unsafe txs for "
-                f"rollback) - beginning repair process...")
-        return result.fetch_row(0)
+        try:
+            query = f"""
+                SELECT tx_hash 
+                FROM confirmed_transactions 
+                WHERE tx_block_num > {last_good_block_num} 
+                ORDER BY tx_block_num DESC;
+                """
+            # self.logger.debug(query)
+            self.mysql_conn.query(query)
+            result = self.mysql_conn.store_result()
+            count = result.num_rows()
+            if count != 0:
+                self.logger.warning(f"The database was abruptly shutdown ({count} unsafe txs for "
+                    f"rollback) - beginning repair process...")
+            return result.fetch_row(0)
+        finally:
+            self.mysql_db.commit_transaction()
 
     def mysql_rollback_unsafe_txs(self, unsafe_tx_rows):
         """Todo(rollback) - Probably need to rollback the corresponding pushdata and io table
@@ -241,30 +286,46 @@ class MySQLQueries:
         self.logger.debug(f"Successfully completed database repair")
 
     def mysql_get_duplicate_tx_hashes(self, tx_rows):
-        candidate_tx_hashes = [(row[0],) for row in tx_rows]
+        try:
+            candidate_tx_hashes = [(row[0],) for row in tx_rows]
 
-        t0 = time.time()
-        BATCH_SIZE = 2000
-        BATCHES_COUNT = math.ceil(len(candidate_tx_hashes)/BATCH_SIZE)
-        results = []
-        for i in range(BATCHES_COUNT):
-            if i == BATCHES_COUNT - 1:
-                batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:]
-            else:
-                batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-            stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
-                batched_unsafe_txs])
+            t0 = time.time()
+            BATCH_SIZE = 2000
+            BATCHES_COUNT = math.ceil(len(candidate_tx_hashes)/BATCH_SIZE)
+            results = []
+            for i in range(BATCHES_COUNT):
+                if i == BATCHES_COUNT - 1:
+                    batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:]
+                else:
+                    batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
+                    batched_unsafe_txs])
 
-            query = f"""
-                SELECT * FROM confirmed_transactions
-                WHERE tx_hash in ({stringified_tx_hashes})"""
-            self.mysql_conn.query(query)
-            result = self.mysql_conn.store_result()
-            for row in result.fetch_row(0):
-                results.append(row)
-        t1 = time.time() - t0
-        self.logger.log(PROFILING,
-            f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for "
-            f"{len(candidate_tx_hashes)}"
-        )
-        return results
+                query = f"""
+                    SELECT * FROM confirmed_transactions
+                    WHERE tx_hash in ({stringified_tx_hashes})"""
+                self.mysql_conn.query(query)
+                result = self.mysql_conn.store_result()
+                for row in result.fetch_row(0):
+                    results.append(row)
+            t1 = time.time() - t0
+            self.logger.log(PROFILING,
+                f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for "
+                f"{len(candidate_tx_hashes)}"
+            )
+            return results
+        finally:
+            self.mysql_db.commit_transaction()
+
+    def mysql_update_oprhaned_headers(self, block_hashes: List[bytes]):
+        """This allows us to filter out any query results that do not lie on the longest chain"""
+        for block_hash in block_hashes:
+            try:
+                query = f"""
+                    UPDATE headers
+                    SET is_orphaned = 1
+                    WHERE block_hash = X'{block_hash.hex()}'
+                    """
+                self.mysql_conn.query(query)
+            finally:
+                self.mysql_db.commit_transaction()

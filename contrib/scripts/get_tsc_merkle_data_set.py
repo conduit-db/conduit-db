@@ -9,7 +9,7 @@ from pprint import pprint
 
 from electrumsv_node import electrumsv_node
 
-from conduit_test._test_data import TRANSACTIONS
+from tests_functional._pre_reorg_data import TRANSACTIONS
 
 
 def get_merkle():
