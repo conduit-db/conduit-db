@@ -102,8 +102,10 @@ class MySQLBulkLoads:
 
             query += ";"
             self.mysql_db.start_transaction()
-            self.mysql_conn.query(query)
-            self.mysql_db.commit_transaction()
+            try:
+                self.mysql_conn.query(query)
+            finally:
+                self.mysql_db.commit_transaction()
         except MySQLdb.OperationalError as e:
             if not have_retried:
                 self.logger.error(f"MySQLdb.OperationalError: {e}; "
@@ -228,8 +230,8 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]):
         """block_num, block_hash, block_height, block_header"""
-        string_rows = ["%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
+        string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
         column_names = ['block_num', 'block_hash', 'block_height', 'block_header', 'block_tx_count',
-            'block_size']
+            'block_size', 'is_orphaned']
         self._load_data_infile(f'headers', string_rows, column_names,
             binary_column_indices=[1, 3])

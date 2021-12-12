@@ -3,6 +3,7 @@ import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
+from typing import List, Tuple, Set
 
 import MySQLdb
 from MySQLdb import _mysql
@@ -93,8 +94,10 @@ class MySQLDatabase:
     def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes, inbound_tx_table_name):
         self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes, inbound_tx_table_name)
 
-    def mysql_get_unprocessed_txs(self, new_tx_hashes, inbound_tx_table_name):
-        return self.queries.mysql_get_unprocessed_txs(new_tx_hashes, inbound_tx_table_name)
+    def mysql_get_unprocessed_txs(self, is_reorg: bool,
+            new_tx_hashes: List[Tuple[str]], inbound_tx_table_name: str) -> Set[bytes]:
+        return self.queries.mysql_get_unprocessed_txs(is_reorg, new_tx_hashes,
+            inbound_tx_table_name)
 
     def mysql_invalidate_mempool_rows(self):
         self.queries.mysql_invalidate_mempool_rows()

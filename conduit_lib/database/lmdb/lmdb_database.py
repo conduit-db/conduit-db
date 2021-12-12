@@ -502,13 +502,20 @@ class LMDB_Database:
             stream = BytesIO(self.get_mtree_row(block_hash, level=base_level))
             for i in range(block_metadata.tx_count):
                 if i == 0:  # skip coinbase txs because they can never be in the mempool
+                    _ = stream.read(32)
                     continue
                 tx_hash = stream.read(32)
                 chain_tx_hashes.add(tx_hash)
         return chain_tx_hashes
 
     def get_reorg_differential(self, old_chain: ChainHashes, new_chain: ChainHashes) \
-            -> Tuple[Set[bytes], Set[bytes]]:
+            -> Tuple[Set[bytes], Set[bytes], Set[bytes]]:
+        # Todo - technically if there was a second rapid-fire reorg covering the same block hashes
+        #  we'd need to check all N chains against each other. Would need to query the old_chain
+        #  heights in MySQL to see if there are any other block_hashes to check at each height
+        #  would also need to return a 3rd return type for this and have a segregated temp table
+        #  (because the mempool diff only needs the prev. longest chain and doesn't care about
+        #  older orphans).
         """This query basically wants to find out the ** differential ** in terms of tx hashes
          between the orphaned chain of blocks vs the new reorging longest chain.
          It should go without saying that we only care about the block hashes going back to
@@ -524,8 +531,9 @@ class LMDB_Database:
         old_chain_tx_hashes = self._make_reorg_tx_set(old_chain)
         new_chain_tx_hashes = self._make_reorg_tx_set(new_chain)
         additions_to_mempool = old_chain_tx_hashes - new_chain_tx_hashes
+
         removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
-        return removals_from_mempool, additions_to_mempool
+        return removals_from_mempool, additions_to_mempool, old_chain_tx_hashes
 
     def sync(self):
         self.env.sync(True)

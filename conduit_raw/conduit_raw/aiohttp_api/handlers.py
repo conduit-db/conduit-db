@@ -33,7 +33,7 @@ async def error(request: web.Request) -> web.Response:
     raise web.HTTPBadRequest(reason="This is a test of raising an exception in the handler")
 
 
-@functools.lru_cache(maxsize=256)
+# @functools.lru_cache(maxsize=256)  # on reorg need to call _get_tx_metadata.cache_clear()
 def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) \
         -> TxMetadata:
     """Truncates full hash -> hashX length"""
@@ -110,66 +110,72 @@ async def get_pushdata_filter_matches(request: web.Request):
     lmdb: LMDB_Database = app_state.lmdb
     accept_type = request.headers.get('Accept')
 
-    body = await request.content.read()
-    if body:
-        pushdata_hashes: RestorationFilterRequest = json.loads(body.decode('utf-8'))['filterKeys']
-        pushdata_hashXes = [h[0:HashXLength*2].lower() for h in pushdata_hashes]
-        pushdata_hashX_map = dict(zip(pushdata_hashXes, pushdata_hashes))
-    else:
-        return web.Response(status=400)
-
-    if accept_type == 'application/octet-stream':
-        headers = {'Content-Type': 'application/octet-stream', 'User-Agent': 'ConduitDB'}
-    else:
-        headers = {'Content-Type': 'application/json', 'User-Agent': 'ConduitDB'}
-
-    count = 0
-    result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
-    for match in result_generator:
-        if count == 0:
-            response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
-            await response.prepare(request)
-
-        match: RestorationFilterQueryResult
-        # logger.debug(f"Sending {match}")
-
-        # Get Full tx hashes and pushdata hashes for response object
-        full_tx_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
-        full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
-        if match.spend_transaction_hash is not None:
-            tx_metadata = _get_tx_metadata(match.spend_transaction_hash, mysql_db)
-            spend_tx_loc = TxLocation(
-                block_hash=tx_metadata.block_hash,
-                block_num=tx_metadata.block_num,
-                tx_position=tx_metadata.tx_position)
-            full_spend_transaction_hash = hash_to_hex_str(_get_full_tx_hash(spend_tx_loc, lmdb))
+    try:
+        body = await request.content.read()
+        if body:
+            pushdata_hashes: RestorationFilterRequest = json.loads(body.decode('utf-8'))['filterKeys']
+            pushdata_hashXes = [h[0:HashXLength*2].lower() for h in pushdata_hashes]
+            pushdata_hashX_map = dict(zip(pushdata_hashXes, pushdata_hashes))
         else:
-            full_spend_transaction_hash = None
+            return web.Response(status=400)
 
         if accept_type == 'application/octet-stream':
-            response_obj = _pack_pushdata_match_response(
-                match, full_tx_hash, full_pushdata_hash,
-                full_spend_transaction_hash, json=False)
-            packed_match = filter_response_struct.pack(*response_obj)
-            await response.write(packed_match)
-        else:  # application/json
-            response_obj = _pack_pushdata_match_response(
-                match, full_tx_hash, full_pushdata_hash,
-                full_spend_transaction_hash, json=True)
-            row = (json.dumps(response_obj) + "\n").encode('utf-8')
-            await response.write(row)
-        count += 1
+            headers = {'Content-Type': 'application/octet-stream', 'User-Agent': 'ConduitDB'}
+        else:
+            headers = {'Content-Type': 'application/json', 'User-Agent': 'ConduitDB'}
 
-    if count == 0:
-        return web.HTTPNotFound(reason="No pushdata matches found")
+        count = 0
+        result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+        for match in result_generator:
+            if count == 0:
+                response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
+                await response.prepare(request)
 
-    if accept_type == 'application/octet-stream':
-        total_size = count * FILTER_RESPONSE_SIZE
-        logger.debug(
-            f"Total pushdata filter match response size: {total_size} for count: {count}")
-    finalization_flag = b'\x00'
-    await response.write(finalization_flag)
-    return response
+            match: RestorationFilterQueryResult
+            # logger.debug(f"Sending {match}")
+
+            # Get Full tx hashes and pushdata hashes for response object
+
+            full_tx_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
+            full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
+            if match.spend_transaction_hash is not None:
+                tx_metadata = _get_tx_metadata(match.spend_transaction_hash, mysql_db)
+                spend_tx_loc = TxLocation(
+                    block_hash=tx_metadata.block_hash,
+                    block_num=tx_metadata.block_num,
+                    tx_position=tx_metadata.tx_position)
+                full_spend_transaction_hash = hash_to_hex_str(_get_full_tx_hash(spend_tx_loc, lmdb))
+            else:
+                full_spend_transaction_hash = None
+
+            if accept_type == 'application/octet-stream':
+                response_obj = _pack_pushdata_match_response(
+                    match, full_tx_hash, full_pushdata_hash,
+                    full_spend_transaction_hash, json=False)
+                packed_match = filter_response_struct.pack(*response_obj)
+                await response.write(packed_match)
+            else:  # application/json
+                response_obj = _pack_pushdata_match_response(
+                    match, full_tx_hash, full_pushdata_hash,
+                    full_spend_transaction_hash, json=True)
+                row = (json.dumps(response_obj) + "\n").encode('utf-8')
+                await response.write(row)
+            count += 1
+
+        if count == 0:
+            return web.HTTPNotFound(reason="No pushdata matches found")
+
+        if accept_type == 'application/octet-stream':
+            total_size = count * FILTER_RESPONSE_SIZE
+            logger.debug(
+                f"Total pushdata filter match response size: {total_size} for count: {count}")
+        finalization_flag = b'\x00'
+        await response.write(finalization_flag)
+        return response
+    except Exception:
+        # Todo - maybe we need a flag to indicate an error occurred mid-way through streaming
+        logger.exception("Unexpected exception in get_pushdata_filter_matches")
+        return web.HTTPInternalServerError()
 
 
 async def get_transaction(request: web.Request) -> web.Response:

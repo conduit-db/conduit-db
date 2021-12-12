@@ -184,8 +184,9 @@ class SyncState:
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_work_units_all(self, all_pending_block_hashes: Set[bytes], all_work: MainBatch) \
+    def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: Set[bytes], all_work: MainBatch) \
             -> List[WorkUnit]:
+        """is_reorg means that this block hash was one of the ones affected by the reorg."""
 
         t0 = time.perf_counter()
         try:
@@ -207,7 +208,7 @@ class SyncState:
                             work_part_tx_offsets = work_part
 
                         # Adding work_item_id to WorkPart -> WorkUnit
-                        work_item: WorkUnit = size_of_part, work_item_id, blk_hash, block_num, \
+                        work_item: WorkUnit = is_reorg, size_of_part, work_item_id, blk_hash, block_num, \
                             first_tx_pos_batch, part_end_offset, work_part_tx_offsets
                         all_work_units.append(work_item)
                         work_item_id += 1
@@ -215,7 +216,7 @@ class SyncState:
                 else:
                     part_end_offset = block_size
                     size_of_part = block_size
-                    all_work_units.append((size_of_part, work_item_id, block_header.hash,
+                    all_work_units.append((is_reorg, size_of_part, work_item_id, block_header.hash,
                         block_num, first_tx_pos_batch, part_end_offset, tx_offsets))
                     work_item_id += 1
 
@@ -244,7 +245,7 @@ class SyncState:
         max_blk_num = 0
         max_blk_hash = None
         for idx, work_unit in enumerate(remaining_work_units):
-            size_of_part, work_item_id, blk_hash, blk_num, first_tx_pos_batch, part_end_offset, \
+            is_reorg, size_of_part, work_item_id, blk_hash, blk_num, first_tx_pos_batch, part_end_offset, \
                 tx_offsets = work_unit
 
             # self.logger.debug(f"work_unit={work_unit}")

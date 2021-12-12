@@ -197,7 +197,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             # Response
             mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
             msg_resp = MerkleTreeRowResponse(mtree_row=mtree_row)
-            logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
+            # logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
 
             # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if mtree_row:
@@ -313,12 +313,14 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             # Request
             msg_req = ipc_sock_msg_types.ReorgDifferentialRequest(**msg)
-            logger.debug(f"Got {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
+            # logger.debug(f"Got {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
 
             # Response
-            removals_from_mempool, additions_to_mempool = self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
-            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(removals_from_mempool, additions_to_mempool)
-            logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} response: {msg_resp}")
+            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
+                self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
+            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(removals_from_mempool,
+                additions_to_mempool, orphaned_tx_hashes)
+            # logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} response: {msg_resp}")
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.reorg_differential")

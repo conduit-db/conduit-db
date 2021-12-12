@@ -331,16 +331,19 @@ class ReorgDifferentialRequest(BaseMsg):
 class ReorgDifferentialResponse(BaseMsg):
     command = ipc_sock_commands.REORG_DIFFERENTIAL
 
-    def __init__(self, removals_from_mempool: set[bytes], additions_to_mempool: set[bytes], command: Optional[str]=None):
+    def __init__(self, removals_from_mempool: set[bytes], additions_to_mempool: set[bytes],
+            orphaned_tx_hashes:set[bytes], command: Optional[str]=None):
         super().__init__()
         self.removals_from_mempool = removals_from_mempool
         self.additions_to_mempool = additions_to_mempool
+        self.orphaned_tx_hashes = orphaned_tx_hashes
 
     def to_cbor(self) -> bytes:
         return cbor2.dumps({
             'command': self.command,
             'removals_from_mempool': self.removals_from_mempool,
-            'additions_to_mempool': self.additions_to_mempool
+            'additions_to_mempool': self.additions_to_mempool,
+            'orphaned_tx_hashes': self.orphaned_tx_hashes
 
         })
 
@@ -348,5 +351,6 @@ class ReorgDifferentialResponse(BaseMsg):
         return json.dumps({
             'command': self.command,
             'removals_from_mempool': [x.hex() for x in self.removals_from_mempool],
-            'additions_to_mempool': [x.hex() for x in self.additions_to_mempool]
+            'additions_to_mempool': [x.hex() for x in self.additions_to_mempool],
+            'orphaned_tx_hashes': [x.hex() for x in self.orphaned_tx_hashes]
         })

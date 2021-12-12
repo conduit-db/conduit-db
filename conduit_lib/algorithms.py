@@ -211,7 +211,8 @@ def parse_txs(
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
-                if not tx_pos == 0 and confirmed:  # mempool txs will appear to have a tx_pos=0
+                # mempool txs will appear to have a tx_pos=0
+                if (not tx_pos == 0 and confirmed) or not confirmed:
 
                     pushdata_hashXes = get_pk_and_pkh_from_script(script_sig)
                     if len(pushdata_hashXes):

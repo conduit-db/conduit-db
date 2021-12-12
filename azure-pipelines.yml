@@ -45,17 +45,15 @@ steps:
 - script: |
     docker-compose -f docker-compose.yml -f docker-compose.indexing.yml build --parallel
     docker-compose -f docker-compose.yml -f docker-compose.indexing.yml up --detach
-    sleep 10
-    python3 contrib/scripts/import_blocks.py ./contrib/blockchains/blockchain_115_3677f4
-    sleep 10
+    sleep 15
+    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml logs
   timeoutInMinutes: 10
   continueOnError: true
   displayName: 'Run dockerized services & Import blockchain_115_3677f4'
 
 - script: |
-    coverage run --parallel-mode -m pytest conduit_test --verbose
-    coverage combine --append
-    coverage report -m
+    pytest tests --verbose
+    pytest tests_functional --verbose
   timeoutInMinutes: 10
   continueOnError: true
   displayName: 'Pytest with Coverage report'

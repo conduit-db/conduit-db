@@ -16,6 +16,7 @@ from typing import Tuple, List, Sequence, Optional, Dict, cast
 import cbor2
 import zmq
 from MySQLdb import _mysql
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -288,8 +289,10 @@ class TxParser(multiprocessing.Process):
             tx_hash_rows.append((tx_hashX.hex(),))
         return partition_tx_hashXes, tx_hash_rows
 
-    def get_processed_vs_unprocessed_tx_offsets(self, merged_offsets_map: Dict[bytes, int],
-            merged_tx_to_work_item_id_map: Dict[bytes, int], merged_part_tx_hash_rows,
+    def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
+            merged_offsets_map: Dict[bytes, int],
+            merged_tx_to_work_item_id_map: Dict[bytes, int],
+            merged_part_tx_hash_rows,
             mysql_db: MySQLDatabase) -> Tuple[Dict[int, List[int]], Dict[int, List[int]]]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
@@ -303,52 +306,50 @@ class TxParser(multiprocessing.Process):
         is critically important with this particular MySQL query (for performance reasons)
 
         Returns a map of {blk_num: offsets} for:
-            a) not_in_mempool_offsets
-            b) in_mempool_offsets
+            a) new_tx_offsets  # Must not be in an orphaned block
+            b) not_new_tx_offsets  # Either in mempool or an orphaned block
         """
         t0 = time.time()
         t1 = 0
 
-        not_in_mempool_offsets = {}
-        in_mempool_offsets = {}
+        new_tx_offsets = {}
+        not_new_tx_offsets = {}
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
-            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(merged_part_tx_hash_rows,
-                self.inbound_tx_table_name)
+            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(is_reorg,
+                merged_part_tx_hash_rows, self.inbound_tx_table_name)
 
-            for row in unprocessed_tx_hashes:
-                tx_hash = row[0]
+            len_merged_offsets_map_before = len(merged_offsets_map)
+            for tx_hash in unprocessed_tx_hashes:
                 tx_offset = merged_offsets_map[tx_hash]  # pop the non-mempool txs out
                 del merged_offsets_map[tx_hash]
                 work_item_id = merged_tx_to_work_item_id_map[tx_hash]
 
-                has_block_num = not_in_mempool_offsets.get(work_item_id)
+                has_block_num = new_tx_offsets.get(work_item_id)
                 if not has_block_num:  # init empty array of offsets
-                    not_in_mempool_offsets[work_item_id] = []
-                not_in_mempool_offsets[work_item_id].append(tx_offset)
+                    new_tx_offsets[work_item_id] = []
+                new_tx_offsets[work_item_id].append(tx_offset)
 
-            # left-overs are mempool txs
+            # left-overs are not new txs
             for tx_hash, tx_offset in merged_offsets_map.items():
                 work_item_id = merged_tx_to_work_item_id_map[tx_hash]
-
-                has_block_num = in_mempool_offsets.get(work_item_id)
+                has_block_num = not_new_tx_offsets.get(work_item_id)
                 if not has_block_num:  # init empty array of offsets
-                    in_mempool_offsets[work_item_id] = []
-                in_mempool_offsets[work_item_id].append(tx_offset)
+                    not_new_tx_offsets[work_item_id] = []
+                not_new_tx_offsets[work_item_id].append(tx_offset)
 
             # Remember to sort the offsets!
-            for work_item_id in not_in_mempool_offsets:
-                not_in_mempool_offsets[work_item_id].sort()
+            for work_item_id in new_tx_offsets:
+                new_tx_offsets[work_item_id].sort()
 
-            for work_item_id in in_mempool_offsets:
-                in_mempool_offsets[work_item_id].sort()
+            for work_item_id in not_new_tx_offsets:
+                not_new_tx_offsets[work_item_id].sort()
 
             t1 = time.time() - t0
-            return not_in_mempool_offsets, in_mempool_offsets
+            return new_tx_offsets, not_new_tx_offsets
         except KeyError as e:
             self.logger.exception("KeyError in get_processed_vs_unprocessed_tx_offsets")
-            self.logger.debug(f"{str(e).split(':')[0].strip()[::-1]}")
             raise
         except Exception:
             self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
@@ -460,20 +461,24 @@ class TxParser(multiprocessing.Process):
                 self.last_grpc_time = self.grpc_time
                 self.logger.debug(f"total time for grpc calls={self.grpc_time}")
 
-    def unpack_batched_msgs(self, work_items: List[bytes]) -> Tuple[
-        TxHashes, List[BlockSliceOffsets], List[WorkPart]]:
+    def unpack_batched_msgs(self, work_items: List[bytes]) \
+            -> Tuple[TxHashes, List[BlockSliceOffsets], List[WorkPart], bool]:
         """Batched messages from zmq PULL socket"""
         block_slice_offsets: List[BlockSliceOffsets] = []  # start_offset, end_offset
         block_hashes: TxHashes = []
         unpacked_work_items: List[WorkPart] = []
 
+        reorg = False
         for packed_msg in work_items:
             msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
-            msg_type, len_arr, work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, packed_array = struct.unpack(
-                f"<III32sIIQ{len_arr}s", packed_msg)
+            msg_type, len_arr, work_item_id, is_reorg, blk_hash, block_num, first_tx_pos_batch, \
+                part_end_offset, packed_array = struct.unpack(f"<IIII32sIIQ{len_arr}s", packed_msg)
             tx_offsets_part = array.array("Q", packed_array)
 
-            work_unit: WorkPart = cast(WorkPart, (work_item_id, blk_hash, blk_height,
+            if bool(is_reorg) is True:
+                reorg = True
+
+            work_unit: WorkPart = cast(WorkPart, (work_item_id, blk_hash, block_num,
                 first_tx_pos_batch, part_end_offset, tx_offsets_part))
             unpacked_work_items.append(work_unit)
 
@@ -483,7 +488,7 @@ class TxParser(multiprocessing.Process):
             block_slice_offsets.append((slice_start_offset, slice_end_offset))
             block_hashes.append(blk_hash)
 
-        return block_hashes, block_slice_offsets, unpacked_work_items
+        return block_hashes, block_slice_offsets, unpacked_work_items, reorg
 
     def build_merged_data_structures(self, work_items: List[bytes],
             ipc_socket_client: IPCSocketClient) -> \
@@ -492,7 +497,8 @@ class TxParser(multiprocessing.Process):
                 TxHashToWorkIdMap,
                 TxHashRows,
                 BatchedRawBlockSlices,
-                ProcessedBlockAcks
+                ProcessedBlockAcks,
+                bool
             ]:
         """NOTE: For a very large block the work_items can arrive out of sequential order
         (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10) so
@@ -505,15 +511,21 @@ class TxParser(multiprocessing.Process):
         batched_raw_block_slices: BatchedRawBlockSlices = []
         acks: ProcessedBlockAcks = []
 
-        block_hashes, block_slice_offsets, unpacked_batch_msgs = self.unpack_batched_msgs(
+        block_hashes, block_slice_offsets, unpacked_batch_msgs, is_reorg = self.unpack_batched_msgs(
             work_items)
 
         raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
             ipc_socket_client)
 
         offset = 0
-        for work_item_id, blk_hash, blk_height, first_tx_pos_batch, part_end_offset, tx_offsets_part in unpacked_batch_msgs:
+        contains_reorg_tx = False
+        # todo - block_num may not be needed, only block_hash
+        for work_item_id, blk_hash, block_num, first_tx_pos_batch, part_end_offset, \
+                tx_offsets_part in unpacked_batch_msgs:
 
+            is_reorg = bool(is_reorg)
+            if is_reorg is True:
+                contains_reorg_tx = True
             # Todo - Maybe could make an iterator and call next() to read the next block slice
             #   from a cached memory view? Then the same mem allocation could be reused by
             #   parse_txs...
@@ -534,30 +546,50 @@ class TxParser(multiprocessing.Process):
             # Todo - I don't like this re-allocation of raw_block_slice
             raw_block_slice = array.array('B', raw_block_slice)
             batched_raw_block_slices.append(
-                (raw_block_slice, work_item_id, blk_num, blk_height, first_tx_pos_batch))
-            acks.append((blk_height, work_item_id, blk_hash, part_tx_hashes))
+                (raw_block_slice, work_item_id, is_reorg, blk_num, first_tx_pos_batch))
+            acks.append((block_num, work_item_id, blk_hash, part_tx_hashes))
 
         return merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
-            batched_raw_block_slices, acks
+            batched_raw_block_slices, acks, contains_reorg_tx
 
-    def parse_txs_and_push_to_queue(self, non_mempool_tx_offsets, mempool_tx_offsets,
+    def parse_txs_and_push_to_queue(self, new_tx_offsets, not_new_tx_offsets,
             batched_raw_block_slices):
-        # Todo - raw_block was re-allocated & can be avoided via memoryview over cached bytearray
-        for raw_block_slice, work_item, blk_num, blk_height, first_tx_pos_batch in batched_raw_block_slices:
-            # These txs have no entries yet for inputs, pushdata or output tables
-            rows_not_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block_slice,
-                non_mempool_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
-            tx_rows, in_rows, out_rows, set_pd_rows = rows_not_previously_in_mempool
+        # Todo - raw_block memory allocations
 
+        for raw_block_slice, work_item, is_reorg, blk_num, first_tx_pos_batch \
+                in batched_raw_block_slices:
+            tx_rows, in_rows, out_rows, set_pd_rows = [], [], [], []
             # Mempool txs already have entries for inputs, pushdata or output tables so we handle
             # them differently
-            have_mempool_txs = mempool_tx_offsets.get(blk_num)
-            if have_mempool_txs:
-                self.logger.debug(f"mempool_tx_offsets[work_item]={mempool_tx_offsets[work_item]}")
+
+            # These txs have no entries yet for inputs, pushdata or output tables
+            have_new_mined_txs = work_item in new_tx_offsets
+            if have_new_mined_txs:
+                rows_not_previously_in_mempool: Tuple[List, List, List, List] = \
+                    parse_txs(raw_block_slice, new_tx_offsets[work_item], blk_num, True,
+                        first_tx_pos_batch)
+                tx_rows, in_rows, out_rows, set_pd_rows = rows_not_previously_in_mempool
+
+            have_not_new_txs = work_item in not_new_tx_offsets
+            if have_not_new_txs:  # Includes orphaned block txs
                 rows_previously_in_mempool: Tuple[List, List, List, List] = parse_txs(raw_block_slice,
-                    mempool_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
+                    not_new_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
                 tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
-                tx_rows.extend(tx_rows_now_confirmed)
+                tx_rows_now_confirmed_fixed = []
+                if is_reorg:  # the tx_pos will actually be wrong so need to fix it here
+                    all_tx_offsets: List = new_tx_offsets[work_item]
+                    all_tx_offsets.extend(not_new_tx_offsets[work_item])
+                    all_tx_offsets.sort()
+                    corrected_tx_positions = []
+                    for tx_offset in not_new_tx_offsets[work_item]:
+                        corrected_tx_pos = all_tx_offsets.index(tx_offset)
+                        corrected_tx_positions.append(corrected_tx_pos)
+                    for row, corrected_tx_pos in zip(tx_rows_now_confirmed, corrected_tx_positions):
+                        tx_rows_now_confirmed_fixed.append((row[0], row[1], corrected_tx_pos))
+
+                    tx_rows.extend(tx_rows_now_confirmed_fixed)
+                else:
+                    tx_rows.extend(tx_rows_now_confirmed)
 
             self.confirmed_tx_flush_queue.put((tx_rows, in_rows, out_rows, set_pd_rows))
 
@@ -572,12 +604,13 @@ class TxParser(multiprocessing.Process):
         """
 
         merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
-            batched_raw_block_slices, acks = self.build_merged_data_structures(work_items, ipc_socket_client)
+            batched_raw_block_slices, acks, is_reorg = \
+                self.build_merged_data_structures(work_items, ipc_socket_client)
 
-        non_mempool_tx_offsets, mempool_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(
+        new_tx_offsets, not_new_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(is_reorg,
             merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, mysql_db)
 
-        self.parse_txs_and_push_to_queue(non_mempool_tx_offsets, mempool_tx_offsets,
+        self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets,
             batched_raw_block_slices)
 
         for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:

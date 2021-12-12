@@ -24,7 +24,7 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.handlers import Handlers
-from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse
+from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage
 from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
@@ -384,9 +384,7 @@ class Controller:
             return True
 
     async def update_mempool_and_api_tip_atomic(self, api_block_tip_height: int,
-            api_block_tip_hash: bytes, is_reorg: bool,
-            removals_from_mempool: Set[bytes],
-            additions_to_mempool: Set[bytes]) -> None:
+            api_block_tip_hash: bytes, is_reorg: bool) -> None:
         # Get all tx_hashes up to api_block_tip_height
         # Must ATOMICALLY:
         #   1) invalidate mempool rows (that have been mined)
@@ -424,35 +422,21 @@ class Controller:
         # If there is a reorg, it is not as simple as just deleting the mined txs
         # we must both add and remove txs based on the differential between the old and new chain
         if is_reorg:
-            self._apply_reorg_diff_to_mempool(api_block_tip_height, api_block_tip_hash,
-                additions_to_mempool, removals_from_mempool)
+            self._apply_reorg_diff_to_mempool(api_block_tip_height, api_block_tip_hash)
         else:
             self._invalidate_mempool_rows(api_block_tip_height, api_block_tip_hash)
 
-    async def sanity_checks_and_update_api_tip(self, is_reorg: bool,
-            old_hashes: Optional[ChainHashes]=None, new_hashes: Optional[ChainHashes]=None):
+    async def sanity_checks_and_update_api_tip(self, is_reorg: bool):
         t0 = time.time()
         api_block_tip_height = self.sync_state.get_local_block_tip_height()
         api_block_tip = self.get_header_for_height(api_block_tip_height)
         api_block_tip_hash = api_block_tip.hash
 
-        removals_from_mempool = None  # only relevant in a reorg
-        additions_to_mempool = None  # only relevant in a reorg
-        if is_reorg:
-            assert old_hashes is not None
-            assert new_hashes is not None
-            ipc_sock_client = IPCSocketClient()
-            response = ipc_sock_client.reorg_differential(old_hashes, new_hashes)
-            removals_from_mempool = response.removals_from_mempool
-            additions_to_mempool = response.additions_to_mempool
-            self.logger.debug(f"removals_from_mempool (len={len(removals_from_mempool)}), "
-                              f"additions_to_mempool (len={len(additions_to_mempool)})")
-
         # Update API tip for filtering of queries in the internal aiohttp API
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
         if await self.sync_state.is_ibd(api_block_tip, conduit_best_tip):
             await self.update_mempool_and_api_tip_atomic(api_block_tip_height, api_block_tip_hash,
-                is_reorg, removals_from_mempool, additions_to_mempool)
+                is_reorg)
 
         else:
             # No txs in mempool until is_ibd == True
@@ -495,7 +479,7 @@ class Controller:
         for header, block_metadata in zip(sorted_headers, sorted_block_metadata_batch):
             blk_num = block_hash_to_num_map[header.hash]
             row = BlockHeaderRow(blk_num, header.hash.hex(), header.height, header.raw.hex(),
-                block_metadata.tx_count, block_metadata.block_size)
+                block_metadata.tx_count, block_metadata.block_size, is_orphaned=0)
             header_rows.append(row)
         self.mysql_db.bulk_loads.mysql_bulk_load_headers(header_rows)
 
@@ -561,7 +545,7 @@ class Controller:
                         self.storage.headers, lock=None)
                     stop_header = self.sync_state.get_local_tip()
                 else:
-                    self.logger.debug(f"POTENTIAL REORG DETECTED")
+                    self.logger.debug(f"Potential reorg detected")
                     # This should mean there has been a reorg. The tip should always connect
                     from_height = max(start_height - OVERKILL_REORG_DEPTH, 1)
                     count = MAIN_BATCH_HEADERS_COUNT_LIMIT + OVERKILL_REORG_DEPTH
@@ -573,7 +557,7 @@ class Controller:
                     is_reorg, start_header, stop_header, old_hashes, new_hashes = \
                         connect_headers_reorg_safe(headers_p2p_msg,
                         self.storage.headers, self.storage.headers_lock)
-                    self.logger.exception("REORG CONFIRMED")
+                    self.logger.exception("Reorg confirmed")
 
                 if stop_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
@@ -592,12 +576,12 @@ class Controller:
 
     async def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
-        for part_size, work_item_id, block_hash, block_num, first_tx_pos_batch, part_end_offset, \
-                tx_offsets_array in work_units:
+        for is_reorg, part_size, work_item_id, block_hash, block_num, first_tx_pos_batch, \
+                part_end_offset, tx_offsets_array in work_units:
             len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
             packed_array = tx_offsets_array.tobytes()
-            packed_msg = struct.pack(f"<III32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
-                work_item_id, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
+            packed_msg = struct.pack(f"<IIII32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
+                work_item_id, is_reorg, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
             await self.mined_tx_socket.send(packed_msg)
 
     async def chip_away(self, remaining_work_units: List[WorkUnit]):
@@ -607,6 +591,22 @@ class Controller:
             self.sync_state.get_work_units_chip_away(remaining_work_units)
         await self.push_chip_away_work(work_for_this_batch)
         return remaining_work
+
+    async def _get_differential_post_reorg(self, old_hashes: List[bytes], new_hashes: List[bytes])\
+            -> Tuple[Set[bytes], Set[bytes], Set[bytes]]:
+        # The transaction_parser.py needs the "removals_from_mempool"
+        # to only include these in the inputs, outputs, pushdata tables
+        # the rest of the reorging block txs are already included for these tables
+        ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
+        response: ReorgDifferentialResponse = await self.loop.run_in_executor(self.general_executor,
+            ipc_sock_client.reorg_differential, old_hashes, new_hashes)
+        removals_from_mempool = response.removals_from_mempool
+        additions_to_mempool = response.additions_to_mempool
+        orphaned_tx_hashes = response.orphaned_tx_hashes
+        self.logger.debug(f"removals_from_mempool (len={len(removals_from_mempool)}), "
+                          f"additions_to_mempool (len={len(additions_to_mempool)}),"
+                          f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)}")
+        return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
 
     async def sync_all_blocks_job(self):
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""
@@ -634,6 +634,18 @@ class Controller:
                 is_reorg, start_header, stop_header, old_hashes, new_hashes = \
                     await self.long_poll_conduit_raw_chain_tip()
 
+                removals_from_mempool, additions_to_mempool = None, None
+                if is_reorg:
+                    self.mysql_db.queries.mysql_update_oprhaned_headers(old_hashes)
+                    assert old_hashes is not None
+                    assert new_hashes is not None
+                    removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
+                        await self._get_differential_post_reorg(old_hashes, new_hashes)
+
+                    self.mysql_db.queries.mysql_load_temp_mempool_additions(additions_to_mempool)
+                    self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
+                    self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+
                 deficit = stop_header.height - (start_header.height - 1)
                 local_tip_height = self.sync_state.get_local_block_tip_height()
                 self.logger.debug(f"Allocated {deficit} headers in main batch to from height: "
@@ -651,8 +663,9 @@ class Controller:
                     self.general_executor, self.sync_state.get_main_batch, start_header,
                     stop_header)
                 all_pending_block_hashes = set()
-                all_work_units = self.sync_state.get_work_units_all(all_pending_block_hashes,
-                    main_batch)
+                self.logger.debug(f"is_reorg={is_reorg} in controller")
+                all_work_units = self.sync_state.get_work_units_all(is_reorg,
+                    all_pending_block_hashes, main_batch)
                 self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
 
@@ -677,8 +690,8 @@ class Controller:
                     await self.reorg_event_socket.send(
                         cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
 
-                    api_block_tip_height = await self.sanity_checks_and_update_api_tip(is_reorg,
-                        old_hashes, new_hashes)
+                    api_block_tip_height = await self.sanity_checks_and_update_api_tip(is_reorg)
+                    self.mysql_db.tables.mysql_drop_temp_orphaned_txs()
 
                 else:
                     api_block_tip_height = await self.sanity_checks_and_update_api_tip(is_reorg)
@@ -774,13 +787,12 @@ class Controller:
         finally:
             self.mysql_db.commit_transaction()
 
-    def _apply_reorg_diff_to_mempool(self, api_block_tip_height: int, api_block_tip_hash: bytes,
-            additions_to_mempool: Set[bytes], removals_from_mempool: Set[bytes]) -> None:
+    def _apply_reorg_diff_to_mempool(self, api_block_tip_height: int, api_block_tip_hash: bytes) -> None:
         self.mysql_db.start_transaction()
         try:
             self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # not required so discard it
-            self.mysql_db.queries.mysql_remove_from_mempool(removals_from_mempool)
-            self.mysql_db.queries.mysql_add_to_mempool(additions_to_mempool)
+            self.mysql_db.queries.mysql_remove_from_mempool()
+            self.mysql_db.queries.mysql_add_to_mempool()
             self.mysql_db.mysql_update_api_tip_height_and_hash(api_block_tip_height,
                 api_block_tip_hash)
         finally:

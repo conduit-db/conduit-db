@@ -223,7 +223,7 @@ class IPCSocketClient:
         try:
             # Request
             msg_req = ipc_sock_msg_types.ReorgDifferentialRequest(old_hashes, new_hashes)
-            self.logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
+            # self.logger.debug(f"Sending {ipc_sock_commands.REORG_DIFFERENTIAL} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv

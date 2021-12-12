@@ -16,6 +16,7 @@ class BlockHeaderRow(NamedTuple):
     block_header: Optional[str]
     block_tx_count: int
     block_size: int
+    is_orphaned: int  # mysql TINYINT either 1 or zero
 
 
 class MerkleTreeArrayLocation(NamedTuple):
