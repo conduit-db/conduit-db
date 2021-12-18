@@ -36,6 +36,10 @@ cumulative_blockchain_size = 0
 cumulative_tx_count = 0
 lines = []
 
+import bitcoinx
+block_hash = bitcoinx.hex_str_to_hash("1ccd26ea6d3c1a017bd490051b6bd23c9a9f7f27ee9c47a723278e487a5455a9")
+lmdb_db.get_tx_offsets(block_hash)
+
 headers = ['Height', 'Cumulative Tx Count', 'Blockchain Total Size (MB)', 'Tx Count', 'Block Size (MB)', 'Block Hash']
 with open('metrics.csv', 'w') as f:
     f.write(",".join(headers) + "\n")

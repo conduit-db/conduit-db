@@ -7,15 +7,17 @@ import threading
 import time
 from pathlib import Path
 
+import bitcoinx
 from bitcoinx import double_sha256
 
 from conduit_index.conduit_index.sync_state import CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
 from conduit_lib.algorithms import get_mtree_node_counts_per_level
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.types import BlockSliceRequestType, Slice
+from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
 from conduit_raw.conduit_raw.sock_server.ipc_sock_server import ThreadedTCPServer, \
     ThreadedTCPRequestHandler
+from tests.data.offsets import TX_OFFSETS
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
@@ -171,3 +173,24 @@ class TestLMDBDatabase:
         actual_grpc_tx_offsets = self.ipc_sock_client.transaction_offsets_batched([block_hash])
         for tx_os in actual_grpc_tx_offsets:
             assert tx_os == tx_offsets
+
+        # Block 413567 on mainnet
+        block_hash = bitcoinx.hex_str_to_hash(
+            "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069")
+        tx_offsets = array.array('Q', TX_OFFSETS)
+        self.lmdb.put_tx_offsets([(block_hash, tx_offsets)])
+        block_num = self.lmdb.get_block_num(block_hash)
+        tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=0)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        assert coinbase_start_offset == 83
+        assert coinbase_end_offset == 268
+
+        tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=1)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        assert coinbase_start_offset == 268
+        assert coinbase_end_offset == 494
+
+        tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=2)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        assert coinbase_start_offset == 494
+        assert coinbase_end_offset == 720

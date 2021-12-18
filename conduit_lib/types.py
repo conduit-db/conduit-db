@@ -26,6 +26,13 @@ class MerkleTreeArrayLocation(NamedTuple):
     base_node_count: int
 
 
+class TxOffsetsArrayLocation(NamedTuple):
+    write_path: str
+    start_offset: int
+    end_offset: int
+
+
+
 class Slice(NamedTuple):
     start_offset: int
     end_offset: int

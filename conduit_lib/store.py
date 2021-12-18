@@ -126,6 +126,11 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
         if os.path.exists(MERKLE_TREES_DIR):
             shutil.rmtree(MERKLE_TREES_DIR, onerror=remove_readonly)
 
+        TX_OFFSETS_DIR_DEFAULT = Path(MODULE_DIR).parent / 'tx_offsets'
+        TX_OFFSETS_DIR = os.environ.get("TX_OFFSETS_DIR", str(TX_OFFSETS_DIR_DEFAULT))
+        if os.path.exists(TX_OFFSETS_DIR):
+            shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
+
 
 def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
     if not headers_dir:
