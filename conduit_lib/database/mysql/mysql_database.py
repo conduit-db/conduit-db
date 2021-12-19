@@ -6,6 +6,7 @@ from functools import partial
 from typing import List, Tuple, Set
 
 import MySQLdb
+import bitcoinx
 from MySQLdb import _mysql
 
 from .mysql_api_queries import MySQLAPIQueries
@@ -102,8 +103,8 @@ class MySQLDatabase:
     def mysql_invalidate_mempool_rows(self):
         self.queries.mysql_invalidate_mempool_rows()
 
-    def mysql_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
-        self.queries.mysql_update_api_tip_height_and_hash(api_tip_height, api_tip_hash)
+    def mysql_update_checkpoint_tip(self, checkpoint_tip: bitcoinx.Header):
+        self.queries.mysql_update_checkpoint_tip(checkpoint_tip)
 
     # BULK LOADS
     def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):

@@ -127,9 +127,26 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
+    def mysql_create_mempool_table(self):
+        try:
+            # Note: MEMORY table doesn't support BLOB/TEXT columns - will need to find a different
+            # way if we want to cache the mempool full rawtxs.
+            self.mysql_conn.query(f"""
+                CREATE TABLE IF NOT EXISTS mempool_transactions (
+                    mp_tx_hash BINARY(32),
+                    mp_tx_timestamp TIMESTAMP,
+                    INDEX USING HASH (mp_tx_hash)
+                ) ENGINE=MEMORY DEFAULT CHARSET=latin1;"""
+            )
+        except Exception:
+            self.logger.exception("mysql_create_mempool_table failed unexpectedly")
+        finally:
+            self.commit_transaction()
+
     # Todo - make all offsets BINARY(5) and tx_position BINARY(5) because this gives enough capacity
     #  for 1 TB block sizes.
     def mysql_create_permanent_tables(self):
+        self.mysql_create_mempool_table()
         try:
             # tx_offset_start is relative to start of the raw block
             self.mysql_conn.query(f"""
@@ -193,39 +210,16 @@ class MySQLTables:
                 CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, tx_hash, idx, ref_type);
             """)
 
-            # ?? should this be an in-memory only table?
-            # need to store the full tx_hash (albeit non-indexed) because the client
-            # may not be providing the tx_hash in their query (e.g. for key history).
-
-            # Note: removed "mp_rawtx LONGBLOB," field because of an error:
-            #  MySQLdb._exceptions.OperationalError:
-            #  (1163, "Storage engine MEMORY doesn't support BLOB/TEXT columns")
-            #  But come to think of it, it may be for the best to fit more txs in memory and the
-            #  node (even if pruned) will have the full rawtx for requesting on-demand anyway.
-            #  LSM databases are not designed for millions of random deletes every 10 mins!
-            #  40,000 deletes takes 3mins 25 seconds with ENGINE=MyRocks but is instant with
-            #  ENGINE=MEMORY and USING HASH index.
-            self.mysql_conn.query(f"""
-                CREATE TABLE IF NOT EXISTS mempool_transactions (
-                    mp_tx_hash BINARY(32),
-                    mp_tx_timestamp TIMESTAMP,
-                    INDEX USING HASH (mp_tx_hash)
-                ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
-                """)
-
             self.mysql_conn.query("""
-                CREATE TABLE IF NOT EXISTS api_state (
+                CREATE TABLE IF NOT EXISTS checkpoint_state (
                     id INT PRIMARY KEY,
-                    api_tip_height INT,
-                    api_tip_hash BINARY(32)
-                );
-                """)
-
-            self.mysql_conn.query("""
-                CREATE TABLE IF NOT EXISTS sync_state (
-                    id INT PRIMARY KEY,
-                    max_work_allocated_block_num INT,
-                    max_work_allocated_block_hash BINARY(32)
+                    best_flushed_block_height INT,
+                    best_flushed_block_hash BINARY(32),
+                    reorg_was_allocated SMALLINT, 
+                    first_allocated_block_hash BINARY(32),
+                    last_allocated_block_hash BINARY(32),
+                    old_hashes_array BLOB,
+                    new_hashes_array BLOB
                 );
                 """)
 
@@ -300,6 +294,20 @@ class MySQLTables:
                     inbound_tx_hashes BINARY({HashXLength}),
                     INDEX USING HASH (inbound_tx_hashes)
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
+                """)
+        finally:
+            self.commit_transaction()
+
+    def initialise_checkpoint_state(self):
+        self.start_transaction()
+        try:
+            # Initialise checkpoint_state if needed
+            self.mysql_conn.query("""SELECT * FROM checkpoint_state""")
+            result = self.mysql_conn.store_result()
+            rows = result.fetch_row(0)
+            if len(rows) == 0:
+                self.mysql_conn.query(f"""
+                    INSERT INTO checkpoint_state VALUES(0, 0, NULL, NULL, false, NULL, NULL, NULL)
                 """)
         finally:
             self.commit_transaction()

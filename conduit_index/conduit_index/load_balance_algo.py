@@ -17,7 +17,8 @@ logger = logging.getLogger("distribute_load")
 def distribute_load(blk_hash, blk_height, count_added, block_size, tx_offsets_array) \
         -> List[WorkPart]:
     """tx_offsets_array must be all the tx_offsets in a full raw block
-    Todo - This very badly needs unittest coverage!
+    Todo - This very badly needs unittest coverage - and TDD for working around the risk of a
+        freakishly large transaction in the batch.
     """
     # logger.debug(f"Length of tx_offsets_array={len(tx_offsets_array)}")
 

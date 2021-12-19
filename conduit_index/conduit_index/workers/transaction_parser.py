@@ -55,7 +55,7 @@ class TxParser(multiprocessing.Process):
     ack_mempool: tx_counts
     """
 
-    def __init__(self, worker_id, worker_ack_queue_tx_parse_confirmed):
+    def __init__(self, worker_id):
         super(TxParser, self).__init__()
         self.worker_id = worker_id
 
@@ -63,7 +63,6 @@ class TxParser(multiprocessing.Process):
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
 
-        self.worker_ack_queue_tx_parse_confirmed = worker_ack_queue_tx_parse_confirmed
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
 
         self.confirmed_tx_flush_queue = None
@@ -91,7 +90,7 @@ class TxParser(multiprocessing.Process):
     def run(self):
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context()
-        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket: zmq.Socket = context3.socket(zmq.SUB)
         self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
@@ -99,6 +98,10 @@ class TxParser(multiprocessing.Process):
         self.is_ibd_socket = context4.socket(zmq.SUB)
         self.is_ibd_socket.connect("tcp://127.0.0.1:52841")
         self.is_ibd_socket.setsockopt(zmq.SUBSCRIBE, b"is_ibd_signal")
+
+        context6 = zmq.Context()
+        self.tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PUSH)
+        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:53213")
 
         # Todo - these should all be local to the thread's state only - not global to
         #  avoid race... Need to refactor to class-based thread module. For now it will
@@ -123,7 +126,7 @@ class TxParser(multiprocessing.Process):
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.info(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f"Started {self.__class__.__name__}")
 
         self.confirmed_tx_flush_queue = queue.Queue()
         self.mempool_tx_flush_queue = queue.Queue()
@@ -149,14 +152,6 @@ class TxParser(multiprocessing.Process):
         for t in threads:
             t.join()
 
-    # ------------------------------------------------- #
-
-    # Todo - A late-arriving mempool tx could theoretically cause duplicate
-    #  input / output / pushdata rows for a given tx... This is an extreme edge case reliant on
-    #  a timing window of milliseconds due to an (only theoretical) out-of-order arrival of a block
-    #  tx before a mempool tx leading to commit of a confirmed tx before the mempool tx.
-    #  To check for this would be ridiculously wasteful compared to having the External API merely
-    #  de-duplicate as necessary (if it is even deemed as necessary).
     def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows, out_rows, set_pd_rows, mysql_db):
         mysql_db.mysql_bulk_load_output_rows(out_rows)
         mysql_db.mysql_bulk_load_input_rows(in_rows)
@@ -167,35 +162,17 @@ class TxParser(multiprocessing.Process):
         with self.flush_lock:
             try:
                 if confirmed:
-                    # for work_item_id, blk_hash, tx_count in acks:
-                    #     self.logger.debug(f"pre-flush work_item_id={work_item_id}, "
-                    #                       f"block hash={hash_to_hex_str(blk_hash)}, "
-                    #                       f"with tx_count={tx_count}")
-
                     mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
                         mysql_db)
 
                     # Ack for all flushed blocks
                     for work_item_id, blk_hash, tx_count in acks:
-                        # self.logger.debug(f"updated work_item_id={work_item_id}, "
-                        #                   f"block hash={hash_to_hex_str(blk_hash)}, "
-                        #                   f"with tx_count={tx_count}")
-                        self.worker_ack_queue_tx_parse_confirmed.put(
-                            (self.worker_id, work_item_id, blk_hash, tx_count))
-
-                    # After each block (or batch of blocks) that is fully ACK'd -> atomically..  # 1) invalidate mempool rows  # 2) update api tip height
-
-                    # This is done via a table join of the mempool with a temporary table of  # the mined tx hashes for this block (or batch of blocks)
-
-                    # The allocate work -> ack -> invalidate mempool cycle spans all worker  # spans all worker processes. They must all ack for all allocated work  # to satisfy the controller
-
+                        self.tx_parse_ack_socket.send(cbor2.dumps((self.worker_id, work_item_id, blk_hash, tx_count)))
                 else:
                     mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows)
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, set_pd_rows,
                         mysql_db)
-
-                    # Todo - ACKs for mempool txs back to the controller + check for them in the  #  controller.  # for tx_count in acks:  # self.worker_ack_queue_tx_parse_mempool.put((tx_count))
 
             except _mysql.IntegrityError as e:
                 self.logger.exception(f"IntegrityError: {e}")
@@ -516,6 +493,10 @@ class TxParser(multiprocessing.Process):
 
         raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
             ipc_socket_client)
+
+        # self.logger.debug(f"len(raw_block_slice_array)={len(raw_block_slice_array)}")
+        # self.logger.debug(f"len(block_slice_offsets)={len(block_slice_offsets)}")
+        # self.logger.debug(f"block_hashes={[hash_to_hex_str(x) for x in block_hashes]}")
 
         offset = 0
         contains_reorg_tx = False

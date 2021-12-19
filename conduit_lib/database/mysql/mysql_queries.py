@@ -8,12 +8,14 @@ from typing import Optional, Tuple, List, Set
 
 import logging
 
+import MySQLdb
 import bitcoinx
 from MySQLdb import _mysql
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
 from ...constants import PROFILING, HashXLength
+from ...types import ChainHashes
 
 
 class MySQLQueries:
@@ -185,49 +187,44 @@ class MySQLQueries:
         self.mysql_conn.commit()
         self.mysql_tables.mysql_drop_temp_mempool_additions()
 
-    def mysql_update_api_tip_height_and_hash(self, api_tip_height: int, api_tip_hash: bytes):
+    def mysql_update_checkpoint_tip(self, checkpoint_tip: bitcoinx.Header):
         try:
-            assert isinstance(api_tip_height, int)
-            assert isinstance(api_tip_hash, bytes)
-            api_tip_hash_hex = bitcoinx.hash_to_hex_str(api_tip_hash)
+            assert isinstance(checkpoint_tip, bitcoinx.Header)
             self.mysql_db.start_transaction()
             query = f"""
-                REPLACE INTO api_state(id, api_tip_height, api_tip_hash) 
-                VALUES(0, {api_tip_height}, UNHEX('{api_tip_hash_hex}'))
+                UPDATE checkpoint_state
+                SET id = 0, 
+                    best_flushed_block_height = {checkpoint_tip.height}, 
+                    best_flushed_block_hash = X'{checkpoint_tip.hash.hex()}'
+                WHERE id = 0;
             """
             self.mysql_conn.query(query)
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_get_max_allocated_block_num(self) -> Optional[int]:
+    def mysql_get_checkpoint_state(self) -> Optional[tuple[int, bytes, bool, bytes, bytes, bytes,
+            bytes]]:
+        """We 'allocate' work up to a given block hash and then we set the new checkpoint only
+        after every block in the batch is successfully flushed"""
         try:
-            query = f"""
-                SELECT max_work_allocated_block_num FROM sync_state;
-                """
+            query = f"""SELECT * FROM checkpoint_state;"""
             self.mysql_conn.query(query)
             result = self.mysql_conn.store_result()
             rows = result.fetch_row(0)
             if len(rows) != 0:
-                result_unpacked = rows[0][0]
-                return int(result_unpacked)
-            return
-        finally:
-            self.mysql_db.commit_transaction()
-
-    def mysql_update_sync_state(self, max_work_allocated_block_num: int,
-            max_work_allocated_block_hash: bytes):
-        # This is the most efficient way I can currently think of for tracking the max block
-        # number / block_hash that has (potentially) been flushed to MySQL. This is used in the
-        # event of a sudden crash and db repair when I use the arrays of tx_hashes in ConduitRaw
-        # to delete any "unsafe" transactions from all tables...
-        try:
-            max_work_allocated_block_hash_hex = bitcoinx.hash_to_hex_str(max_work_allocated_block_hash)
-            query = f"""
-                REPLACE INTO sync_state(id, max_work_allocated_block_num, max_work_allocated_block_hash) 
-                VALUES(0, {max_work_allocated_block_num}, X'{max_work_allocated_block_hash_hex}')
-                """
-            # self.logger.debug(query)
-            self.mysql_conn.query(query)
+                row = rows[0]
+                best_flushed_block_height = row[1]
+                best_flushed_block_hash = row[2]
+                reorg_was_allocated = row[3]
+                first_allocated_block_hash = row[4]
+                last_allocated_block_hash = row[5]
+                old_hashes_array = row[6]
+                new_hashes_array = row[7]
+                return best_flushed_block_height, best_flushed_block_hash, reorg_was_allocated, \
+                    first_allocated_block_hash, last_allocated_block_hash, old_hashes_array, \
+                    new_hashes_array
+            else:
+                return None
         finally:
             self.mysql_db.commit_transaction()
 
@@ -253,37 +250,105 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_rollback_unsafe_txs(self, unsafe_tx_rows):
-        """Todo(rollback) - Probably need to rollback the corresponding pushdata and io table
-            entries too."""
-        unsafe_tx_rows = [(row[0].hex(),) for row in unsafe_tx_rows]
-
+    def mysql_delete_transaction_rows(self, tx_hash_hexes: List[str]):
         # Deletion is very slow for large batch sizes
         t0 = time.time()
         BATCH_SIZE = 2000
-        BATCHES_COUNT = math.ceil(len(unsafe_tx_rows)/BATCH_SIZE)
+        BATCHES_COUNT = math.ceil(len(tx_hash_hexes)/BATCH_SIZE)
         for i in range(BATCHES_COUNT):
             self.mysql_db.start_transaction()
             try:
                 if i == BATCHES_COUNT - 1:
-                    batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:]
+                    tx_hash_hexes_batch = tx_hash_hexes[i*BATCH_SIZE:]
                 else:
-                    batched_unsafe_txs = unsafe_tx_rows[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-                stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
-                    batched_unsafe_txs])
+                    tx_hash_hexes_batch = tx_hash_hexes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                stringified_tx_hash_hexes = ','.join(
+                    [f"X'{tx_hash_hex}'" for tx_hash_hex in tx_hash_hexes_batch])
 
                 query = f"""
                     DELETE FROM confirmed_transactions
-                    WHERE tx_hash in ({stringified_tx_hashes})"""
+                    WHERE tx_hash in ({stringified_tx_hash_hexes})"""
                 self.mysql_conn.query(query)
             finally:
                 self.mysql_db.commit_transaction()
         t1 = time.time() - t0
         self.logger.log(PROFILING,
-            f"elapsed time for bulk delete all unsafe txs = {t1} seconds for "
-            f"{len(unsafe_tx_rows)}"
+            f"elapsed time for bulk delete of transactions = {t1} seconds for "
+            f"{len(tx_hash_hexes)}"
         )
-        self.logger.debug(f"Successfully completed database repair")
+
+    def mysql_delete_pushdata_rows(self, pushdata_rows):
+        t0 = time.time()
+        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor.execute("START TRANSACTION;")
+        try:
+            for pushdata_hash, tx_hash, idx, ref_type in pushdata_rows:
+                query = f"""
+                    DELETE FROM pushdata
+                    WHERE pushdata_hash = X'{pushdata_hash}'
+                        AND tx_hash = X'{tx_hash}'
+                        AND idx = {idx}
+                        AND ref_type = {ref_type}"""
+                cursor.execute(query)
+        finally:
+            cursor.execute("COMMIT;")
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for bulk delete of pushdata rows = {t1} seconds for "
+            f"{len(pushdata_rows)}"
+        )
+
+    def mysql_delete_output_rows(self, output_rows):
+        t0 = time.time()
+        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor.execute("START TRANSACTION;")
+        try:
+            for out_tx_hash, out_idx, out_value in output_rows:
+                query = f"""
+                    DELETE FROM txo_table
+                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}"""
+                cursor.execute(query)
+        finally:
+            cursor.execute("COMMIT;")
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for bulk delete of output rows = {t1} seconds for "
+            f"{len(output_rows)}"
+        )
+
+    def mysql_delete_input_rows(self, input_rows):
+        t0 = time.time()
+        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor.execute("START TRANSACTION;")
+        try:
+            for out_tx_hash, out_idx, in_tx_hash, in_idx,  in input_rows:
+                query = f"""
+                    DELETE FROM inputs_table
+                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}"""
+                cursor.execute(query)
+        finally:
+            cursor.execute("COMMIT;")
+        t1 = time.time() - t0
+
+        self.logger.log(PROFILING,
+            f"elapsed time for bulk delete of input rows = {t1} seconds for "
+            f"{len(input_rows)}"
+        )
+
+    def mysql_delete_header_row(self, block_hash: bytes):
+        t0 = time.time()
+        self.mysql_db.start_transaction()
+        try:
+            query = f"""
+                DELETE FROM headers
+                WHERE block_hash = %s"""
+            cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+            cursor.execute(query, (block_hash,))
+        finally:
+            self.mysql_db.commit_transaction()
+        t1 = time.time() - t0
+        self.logger.log(PROFILING,
+            f"elapsed time for delete of header row = {t1} seconds")
 
     def mysql_get_duplicate_tx_hashes(self, tx_rows):
         try:
@@ -321,6 +386,7 @@ class MySQLQueries:
         """This allows us to filter out any query results that do not lie on the longest chain"""
         for block_hash in block_hashes:
             try:
+                self.mysql_db.start_transaction()
                 query = f"""
                     UPDATE headers
                     SET is_orphaned = 1
@@ -329,3 +395,47 @@ class MySQLQueries:
                 self.mysql_conn.query(query)
             finally:
                 self.mysql_db.commit_transaction()
+
+    def update_allocated_state(self, reorg_was_allocated: bool, first_allocated: bitcoinx.Header,
+            last_allocated: bitcoinx.Header, old_hashes: Optional[ChainHashes],
+            new_hashes: Optional[ChainHashes]) -> None:
+
+        if old_hashes is not None:
+            old_hashes_array = bytearray()
+            for block_hash in old_hashes:
+                old_hashes_array += block_hash
+        else:
+            old_hashes_array = None
+
+        if new_hashes is not None:
+            new_hashes_array = bytearray()
+            for block_hash in new_hashes:
+                new_hashes_array += block_hash
+        else:
+            new_hashes_array = None
+
+        try:
+            self.mysql_db.start_transaction()
+            if old_hashes and new_hashes is not None:
+                query = f"""
+                    UPDATE checkpoint_state
+                    SET reorg_was_allocated = {reorg_was_allocated}, 
+                        first_allocated_block_hash = X'{first_allocated.hash.hex()}', 
+                        last_allocated_block_hash = X'{last_allocated.hash.hex()}', 
+                        old_hashes_array = X'{old_hashes_array.hex()}', 
+                        new_hashes_array = X'{new_hashes_array.hex()}'
+                    WHERE id = 0
+                    """
+            else:
+                query = f"""
+                    UPDATE checkpoint_state
+                    SET reorg_was_allocated = {reorg_was_allocated}, 
+                        first_allocated_block_hash = X'{first_allocated.hash.hex()}', 
+                        last_allocated_block_hash = X'{last_allocated.hash.hex()}', 
+                        old_hashes_array = null, 
+                        new_hashes_array = null
+                    WHERE id = 0
+                    """
+            self.mysql_conn.query(query)
+        finally:
+            self.mysql_db.commit_transaction()
