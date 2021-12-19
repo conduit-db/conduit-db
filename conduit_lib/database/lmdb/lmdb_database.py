@@ -10,7 +10,7 @@ from io import BytesIO
 from math import ceil, log
 from pathlib import Path
 from struct import Struct
-from typing import List, Tuple, Dict, Optional, IO, Set
+from typing import List, Tuple, Optional, IO, Set
 
 import bitcoinx
 import cbor2
@@ -565,13 +565,13 @@ class LMDB_Database:
                     # LMDB only stores the mapping of hash -> location
                     tx_offsets_location = TxOffsetsArrayLocation(str(write_path), start_offset,
                         end_offset)
-                    self.logger.debug(f"writing tx offsets array ({hash_to_hex_str(block_hash)}): "
-                                      f"{tx_offsets_location}")
+                    # self.logger.debug(f"writing tx offsets array ({hash_to_hex_str(block_hash)}): "
+                    #                   f"{tx_offsets_location}")
                     cursor.put(block_hash, cbor2.dumps(tx_offsets_location))
 
                     start_offset += len(tx_offsets*SIZE_UINT64_T)
-                    self.logger.debug(f"block_hash={bitcoinx.hash_to_hex_str(block_hash)};"
-                                      f"tx_offsets={tx_offsets}")
+                    # self.logger.debug(f"block_hash={bitcoinx.hash_to_hex_str(block_hash)};"
+                    #                   f"tx_offsets={tx_offsets}")
         finally:
             file.close()
             acquired_flock.release()

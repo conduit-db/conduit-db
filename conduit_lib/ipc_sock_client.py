@@ -127,8 +127,8 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.block_number_batched(block_hashes)  # recurse
 
-    def block_batched(self, block_requests: list[BlockSliceRequestType]) \
-            -> BatchedBlockSlices:
+    # Todo - make a streaming API for blocks to protect against freakishly large txs
+    def block_batched(self, block_requests: list[BlockSliceRequestType]) -> BatchedBlockSlices:
         """The packing protocol is a contiguous array of:
              block_number uint32,
              len_slice uin64,
@@ -136,7 +136,7 @@ class IPCSocketClient:
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockBatchedRequest(block_requests)
-            self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
+            # self.logger.debug(f"Sending {ipc_sock_commands.BLOCK_BATCHED} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv

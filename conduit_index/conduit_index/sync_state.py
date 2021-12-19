@@ -162,9 +162,6 @@ class SyncState:
     def have_processed_block_msgs(self) -> bool:
         self.logger.debug(f"len(self.done_blocks_raw)={len(self.done_blocks_tx_parser)}")
         self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
-        self.logger.debug(f"self.controller.worker_ack_queue_preproc.qsize()="
-                          f"{self.controller.worker_ack_queue_tx_parse_confirmed.qsize()}")
-
 
         with self.done_blocks_tx_parser_lock:
             for blk_hash in self.done_blocks_tx_parser:
@@ -184,8 +181,8 @@ class SyncState:
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: Set[bytes], all_work: MainBatch) \
-            -> List[WorkUnit]:
+    def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: Set[bytes],
+            all_work: MainBatch) -> List[WorkUnit]:
         """is_reorg means that this block hash was one of the ones affected by the reorg."""
 
         t0 = time.perf_counter()
@@ -208,8 +205,8 @@ class SyncState:
                             work_part_tx_offsets = work_part
 
                         # Adding work_item_id to WorkPart -> WorkUnit
-                        work_item: WorkUnit = is_reorg, size_of_part, work_item_id, blk_hash, block_num, \
-                            first_tx_pos_batch, part_end_offset, work_part_tx_offsets
+                        work_item: WorkUnit = is_reorg, size_of_part, work_item_id, blk_hash, \
+                            block_num, first_tx_pos_batch, part_end_offset, work_part_tx_offsets
                         all_work_units.append(work_item)
                         work_item_id += 1
                         # self.logger.debug(f"divided_work={divided_work}")
@@ -237,13 +234,10 @@ class SyncState:
         Todo:   Test for 1 x 4GB transaction - what happens if it exceeds CHIP_AWAY_BYTE_SIZE_LIMIT?
                 Test for 1 x 4GB block with CHIP_AWAY_BYTE_SIZE_LIMIT == 40MB -> BATCH_COUNT = 100
         """
-        ipc_sock_client = IPCSocketClient()
         total_allocation = 0
         remaining_work = []
         work_for_this_batch = []
 
-        max_blk_num = 0
-        max_blk_hash = None
         for idx, work_unit in enumerate(remaining_work_units):
             is_reorg, size_of_part, work_item_id, blk_hash, blk_num, first_tx_pos_batch, part_end_offset, \
                 tx_offsets = work_unit
@@ -259,14 +253,7 @@ class SyncState:
             total_allocation += size_of_part
             work_for_this_batch.append(work_unit)
             self.add_pending_chip_away_work_item(work_item_id, len(tx_offsets))
-            if max_blk_num < blk_num:
-                max_blk_num = blk_num
-                max_blk_hash = blk_hash
 
-        if max_blk_hash:
-            block_num: int = ipc_sock_client.block_number_batched([max_blk_hash]).block_numbers[0]
-            self.controller.mysql_db.queries.mysql_update_sync_state(
-                max_work_allocated_block_num=block_num, max_work_allocated_block_hash=max_blk_hash)
         return remaining_work, work_for_this_batch
 
     def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) \
