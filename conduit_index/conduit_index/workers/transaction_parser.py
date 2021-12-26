@@ -11,20 +11,19 @@ import threading
 import time
 from datetime import datetime
 
-from typing import Tuple, List, Sequence, Optional, Dict, cast
+from typing import Tuple, List, Sequence, Dict, cast
 
 import cbor2
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
 
-from ..types import BatchedRawBlockSlices, ProcessedBlockAcks, TxHashRows, TxHashes, \
-    TxHashToWorkIdMap, TxHashToOffsetMap, BlockSliceOffsets, WorkPart
+from ..types import ProcessedBlockAcks, TxHashRows, TxHashes, TxHashToWorkIdMap, TxHashToOffsetMap, \
+    BlockSliceOffsets, WorkPart, BatchedRawBlockSlices
 
 try:
     from conduit_lib._algorithms import calc_mtree_base_level, parse_txs
@@ -55,7 +54,7 @@ class TxParser(multiprocessing.Process):
     ack_mempool: tx_counts
     """
 
-    def __init__(self, worker_id):
+    def __init__(self, worker_id: int) -> None:
         super(TxParser, self).__init__()
         self.worker_id = worker_id
 
@@ -158,7 +157,7 @@ class TxParser(multiprocessing.Process):
         mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
 
     def mysql_flush_rows(self, tx_rows: Sequence, in_rows: Sequence, out_rows: Sequence,
-            set_pd_rows: Sequence, acks: Optional[Sequence], confirmed: bool, mysql_db):
+            set_pd_rows: Sequence, acks: Sequence, confirmed: bool, mysql_db):
         with self.flush_lock:
             try:
                 if confirmed:
@@ -287,10 +286,10 @@ class TxParser(multiprocessing.Process):
             b) not_new_tx_offsets  # Either in mempool or an orphaned block
         """
         t0 = time.time()
-        t1 = 0
+        t1 = 0.
 
-        new_tx_offsets = {}
-        not_new_tx_offsets = {}
+        new_tx_offsets: Dict[int, List[int]] = {}
+        not_new_tx_offsets: Dict[int, List[int]] = {}
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool

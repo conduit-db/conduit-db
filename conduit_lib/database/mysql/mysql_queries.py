@@ -4,7 +4,8 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Set
+import typing
+from typing import Optional, List, Set, Iterator, Any, cast
 
 import logging
 
@@ -13,14 +14,18 @@ import bitcoinx
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
+from .types import PushdataRow, OutputRow, InputRow, ConfirmedTransactionRow, MinedTxHashes
 from ...constants import PROFILING
 from ...types import ChainHashes
+
+if typing.TYPE_CHECKING:
+    from ... import MySQLDatabase
 
 
 class MySQLQueries:
 
     def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables, bulk_loads:
-            MySQLBulkLoads, mysql_db):
+            MySQLBulkLoads, mysql_db: 'MySQLDatabase') -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn
@@ -28,7 +33,7 @@ class MySQLQueries:
         self.bulk_loads = bulk_loads
         self.mysql_db = mysql_db
 
-    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes):
+    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: List[MinedTxHashes]) -> None:
         """columns: tx_hashes, blk_num"""
         self.mysql_tables.mysql_create_temp_mined_tx_hashes_table()
 
@@ -47,7 +52,7 @@ class MySQLQueries:
         # )
 
     def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes: list[tuple[str]],
-            inbound_tx_table_name: str):
+            inbound_tx_table_name: str) -> None:
         """columns: tx_hashes, blk_height"""
         self.mysql_tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
         string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
@@ -105,7 +110,7 @@ class MySQLQueries:
     #     )
     #     self.logger.debug(f"get_temp_mined_tx_hashes: {result}")
 
-    def mysql_invalidate_mempool_rows(self):
+    def mysql_invalidate_mempool_rows(self) -> None:
         self.logger.debug(f"Deleting mined mempool txs")
         query = f"""
             DELETE FROM mempool_transactions
@@ -160,7 +165,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_remove_from_mempool(self):
+    def mysql_remove_from_mempool(self) -> None:
         self.logger.debug(f"Removing reorg differential from mempool")
         # Note the loading of the temp_mempool_removals is not done here
         query = f"""
@@ -174,7 +179,7 @@ class MySQLQueries:
         self.mysql_conn.commit()
         self.mysql_tables.mysql_drop_temp_mempool_removals()
 
-    def mysql_add_to_mempool(self):
+    def mysql_add_to_mempool(self) -> None:
         self.logger.debug(f"Adding reorg differential to mempool")
         # Note the loading of the temp_mempool_additions is not done here
         query = f"""
@@ -186,7 +191,7 @@ class MySQLQueries:
         self.mysql_conn.commit()
         self.mysql_tables.mysql_drop_temp_mempool_additions()
 
-    def mysql_update_checkpoint_tip(self, checkpoint_tip: bitcoinx.Header):
+    def mysql_update_checkpoint_tip(self, checkpoint_tip: bitcoinx.Header) -> None:
         try:
             assert isinstance(checkpoint_tip, bitcoinx.Header)
             self.mysql_db.start_transaction()
@@ -227,7 +232,7 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_get_txids_above_last_good_block_num(self, last_good_block_num: int):
+    def mysql_get_txids_above_last_good_block_num(self, last_good_block_num: int) -> Iterator[Any]:
         """This query will do a full table scan and so will not scale - instead would need to
         pull txids by blockhash from merkleproof to get the set of txids..."""
         assert isinstance(last_good_block_num, int)
@@ -245,11 +250,11 @@ class MySQLQueries:
             if count != 0:
                 self.logger.warning(f"The database was abruptly shutdown ({count} unsafe txs for "
                     f"rollback) - beginning repair process...")
-            return result.fetch_row(0)
+            return cast(Iterator[Any], result.fetch_row(0))
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_delete_transaction_rows(self, tx_hash_hexes: List[str]):
+    def mysql_delete_transaction_rows(self, tx_hash_hexes: List[str]) -> None:
         # Deletion is very slow for large batch sizes
         t0 = time.time()
         BATCH_SIZE = 2000
@@ -276,7 +281,7 @@ class MySQLQueries:
             f"{len(tx_hash_hexes)}"
         )
 
-    def mysql_delete_pushdata_rows(self, pushdata_rows):
+    def mysql_delete_pushdata_rows(self, pushdata_rows: List[PushdataRow]) -> None:
         t0 = time.time()
         cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
         cursor.execute("START TRANSACTION;")
@@ -297,7 +302,7 @@ class MySQLQueries:
             f"{len(pushdata_rows)}"
         )
 
-    def mysql_delete_output_rows(self, output_rows):
+    def mysql_delete_output_rows(self, output_rows: List[OutputRow]) -> None:
         t0 = time.time()
         cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
         cursor.execute("START TRANSACTION;")
@@ -315,7 +320,7 @@ class MySQLQueries:
             f"{len(output_rows)}"
         )
 
-    def mysql_delete_input_rows(self, input_rows):
+    def mysql_delete_input_rows(self, input_rows: List[InputRow]) -> None:
         t0 = time.time()
         cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
         cursor.execute("START TRANSACTION;")
@@ -335,7 +340,7 @@ class MySQLQueries:
             f"{len(input_rows)}"
         )
 
-    def mysql_delete_header_row(self, block_hash: bytes):
+    def mysql_delete_header_row(self, block_hash: bytes) -> None:
         t0 = time.time()
         self.mysql_db.start_transaction()
         try:
@@ -350,7 +355,8 @@ class MySQLQueries:
         self.logger.log(PROFILING,
             f"elapsed time for delete of header row = {t1} seconds")
 
-    def mysql_get_duplicate_tx_hashes(self, tx_rows):
+    def mysql_get_duplicate_tx_hashes(self, tx_rows: List[ConfirmedTransactionRow]) \
+            -> List[ConfirmedTransactionRow]:
         try:
             candidate_tx_hashes = [(row[0],) for row in tx_rows]
 
@@ -382,7 +388,7 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_update_oprhaned_headers(self, block_hashes: List[bytes]):
+    def mysql_update_oprhaned_headers(self, block_hashes: List[bytes]) -> None:
         """This allows us to filter out any query results that do not lie on the longest chain"""
         for block_hash in block_hashes:
             try:
@@ -416,7 +422,7 @@ class MySQLQueries:
 
         try:
             self.mysql_db.start_transaction()
-            if old_hashes and new_hashes is not None:
+            if old_hashes_array and new_hashes_array is not None:
                 query = f"""
                     UPDATE checkpoint_state
                     SET reorg_was_allocated = {reorg_was_allocated}, 

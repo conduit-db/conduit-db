@@ -12,6 +12,8 @@ from pathlib import Path
 
 
 # Log level
+from typing import Optional, Callable, Any
+
 import zmq
 
 PROFILING = 9
@@ -27,7 +29,7 @@ class LogRecordStreamHandler(socketserver.StreamRequestHandler):
 
     logger = logging.getLogger("TCPServer-Handler")
 
-    def handle(self):
+    def handle(self) -> None:
         """
         Handle multiple requests - each expected to be a 4-byte length,
         followed by the LogRecord in pickle format. Logs the record
@@ -47,18 +49,18 @@ class LogRecordStreamHandler(socketserver.StreamRequestHandler):
                     break
 
                 obj = self.unPickle(chunk)
-                record = logging.makeLogRecord(obj)
+                record: logging.LogRecord = logging.makeLogRecord(obj)
                 self.handleLogRecord(record)
 
         except ConnectionResetError:
             self.logger.info(f"Forceful disconnect from {repr(self.connection.getpeername())}")
 
-    def unPickle(self, data):
+    def unPickle(self, data: bytes) -> Any:
         return pickle.loads(data)
 
-    def handleLogRecord(self, record):
-        if self.server.logname is not None:
-            name = self.server.logname
+    def handleLogRecord(self, record: logging.LogRecord) -> None:
+        if self.server.logname is not None:  # type: ignore[attr-defined]
+            name = self.server.logname  # type: ignore[attr-defined]
         else:
             name = record.name
         logger = logging.getLogger(name)
@@ -72,30 +74,26 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
     logger = logging.getLogger("TCPServer")
     allow_reuse_address = True
 
-    def __init__(
-        self,
-        host="127.0.0.1",
-        port=63451,
-        handler=LogRecordStreamHandler,
-    ):
+    def __init__(self, host: str="127.0.0.1", port: int=63451,
+            handler: Callable[..., socketserver.StreamRequestHandler]=LogRecordStreamHandler) -> None:
         socketserver.ThreadingTCPServer.__init__(self, (host, port), handler)
-        self.abort = 0
-        self.timeout = 1
-        self.logname = None
+        self.abort: int = 0
+        self.timeout: int = 1
+        self.logname: Optional[int] = None
 
 
 class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
     Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
 
-    def __init__(self, port: int, service_name: str, kill_port=46464):
+    def __init__(self, port: int, service_name: str, kill_port: int=46464) -> None:
         super(TCPLoggingServer, self).__init__()
-        self.port = port
-        self.kill_port = kill_port
-        self.tcpserver = None
-        self.service_name = service_name
+        self.port: int = port
+        self.kill_port: int = kill_port
+        self.tcpserver: Optional[LogRecordSocketReceiver] = None
+        self.service_name: str = service_name
 
-    def setup_local_logging_policy(self):
+    def setup_local_logging_policy(self) -> None:
         rootLogger = logging.getLogger('')
         logging.addLevelName(PROFILING, 'PROFILING')
 
@@ -119,10 +117,11 @@ class TCPLoggingServer(multiprocessing.Process):
         file_handler.setLevel(PROFILING)
         rootLogger.addHandler(file_handler)
 
-    def main_thread(self):
+    def main_thread(self) -> None:
+        assert self.tcpserver is not None
         self.tcpserver.serve_forever()
 
-    def run(self):
+    def run(self) -> None:
         self.setup_local_logging_policy()
 
         self.stop_event = threading.Event()
@@ -131,12 +130,12 @@ class TCPLoggingServer(multiprocessing.Process):
         self.logger.info(f'Starting {self.__class__.__name__}...')
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()
+        context3: zmq.Context = zmq.Context()  # type: ignore
 
         # Todo there is cross-talk of the stop_signal from ConduitIndex and ConduitRaw because
         #  they both import this common library and use port: 63241
-        self.kill_worker_socket = context3.socket(zmq.SUB)
-        self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")
+        self.kill_worker_socket: zmq.Socket = context3.socket(zmq.SUB)  # type: ignore
+        self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")  # type: ignore
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         main_thread = threading.Thread(target=self.main_thread, daemon=True)
@@ -153,8 +152,9 @@ class TCPLoggingServer(multiprocessing.Process):
         except Exception as e:
             self.logger.exception(e)
         finally:
-            self.tcpserver.shutdown()
-            self.logger.info("Process Stopped")
+            if self.tcpserver is not None:
+                self.tcpserver.shutdown()
+                self.logger.info("Process Stopped")
 
 
 if __name__ == "__main__":

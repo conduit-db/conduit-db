@@ -5,7 +5,7 @@ import bitcoinx
 
 WorkUnit = Tuple[bool, int, int, bytes, int, int, int, array.ArrayType]
 MainBatch = List[Tuple[int, array.ArrayType, bitcoinx.Header, int]]
-WorkPart = Tuple[int, bool, bytes, int, int, int, array.ArrayType]
+WorkPart = Tuple[int, bytes, int, int, int, array.ArrayType]
 BatchedRawBlockSlices = List[tuple[array.ArrayType, int, int, int, int]]
 ProcessedBlockAcks = List[tuple[int, int, bytes, list[bytes]]]
 TxHashRows = List[Tuple[bytes]]

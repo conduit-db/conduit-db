@@ -23,7 +23,7 @@ from conduit_lib.utils import get_header_for_hash, get_header_for_height, get_ne
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
-def setup():
+def setup() -> None:
     dotenv_path = MODULE_DIR.parent.parent / '.env'
     load_dotenv(dotenv_path)
     resolve_hosts_and_update_env_vars()
@@ -31,7 +31,7 @@ def setup():
 
 class DbRepairTool:
 
-    def __init__(self):
+    def __init__(self) -> None:
         logging.basicConfig(level=logging.DEBUG)
         self.logger = logging.getLogger('db-repair-tool')
         setup()
@@ -93,7 +93,7 @@ class DbRepairTool:
         self.logger.debug(f"Database repair complete. "
                           f"New chain tip: {best_flushed_tip_height}")
 
-    async def undo_blocks_above_height(self, height: int):
+    async def undo_blocks_above_height(self, height: int) -> None:
         unsafe_blocks = []
         tip_header = self.get_local_block_tip()
         for height in range(height + 1, tip_header.height + 1):
@@ -134,7 +134,7 @@ class DbRepairTool:
             self.mysql_db.queries.mysql_delete_header_row(block_hash)
 
 
-async def main():
+async def main() -> None:
     # There is no reason to believe that database corruption should ever occur but I want to
     # be prepared in case it does.
     if len(sys.argv) != 2:

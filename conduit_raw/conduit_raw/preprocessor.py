@@ -1,6 +1,5 @@
 import array
 import logging
-import multiprocessing
 import queue
 import threading
 import time
@@ -21,9 +20,12 @@ class BlockPreProcessor(threading.Thread):
     """
 
     def __init__(
-        self, shm_name, worker_in_queue_preproc,
-            worker_in_queue_mtree, worker_ack_queue_preproc, daemon=True
-    ):
+            self,
+            shm_name: str,
+            worker_in_queue_preproc: queue.Queue,
+            worker_ack_queue_preproc: queue.Queue,
+            daemon: bool=True
+    ) -> None:
         super(BlockPreProcessor, self).__init__(daemon=daemon)
 
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
@@ -31,8 +33,6 @@ class BlockPreProcessor(threading.Thread):
         self.worker_ack_queue_preproc: queue.Queue = worker_ack_queue_preproc
         self.tx_offsets_array = array.array("Q", [i for i in range(4_000_000)])
         self.logger = logging.getLogger("pre-processor")
-
-        self.worker_in_queue_mtree: multiprocessing.Queue = worker_in_queue_mtree
 
     def run(self):
         self.logger.info(f"Starting {self.__class__.__name__}...")

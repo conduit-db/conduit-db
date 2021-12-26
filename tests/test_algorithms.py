@@ -3,7 +3,7 @@ from bitcoinx import double_sha256
 from conduit_lib.algorithms import calc_depth, get_mtree_node_counts_per_level
 
 
-def test_calc_depth():
+def test_calc_depth() -> None:
     tx_count = 1
     assert calc_depth(tx_count) == 1
     tx_count = 2
@@ -18,7 +18,7 @@ def test_calc_depth():
     assert calc_depth(tx_count) == 5
 
 
-def test_get_mtree_node_counts_per_level():
+def test_get_mtree_node_counts_per_level() -> None:
     base_node_count = 4
     assert get_mtree_node_counts_per_level(base_node_count) == [1, 2, 4]
     base_node_count = 7

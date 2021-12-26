@@ -1,19 +1,31 @@
 import enum
 import struct
 import typing
-from typing import TypedDict, Optional, NamedTuple, Dict, List
+from queue import Queue
+from typing import TypedDict, Optional, NamedTuple, List
 
 import bitcoinx
 from bitcoinx import hex_str_to_hash, Header
 
 from conduit_lib.constants import MAX_UINT32
 
+MultiprocessingQueue = Queue  # workaround for mypy: https://github.com/python/typeshed/issues/4266
+Hash256 = bytes
+
+
+class TSCMerkleProof(TypedDict):
+    index: int
+    txOrId: str
+    target: str
+    nodes: list[str]
+    targetType: Optional[str]
+
 
 class BlockHeaderRow(NamedTuple):
     block_num: int
     block_hash: str
     block_height: int
-    block_header: Optional[str]
+    block_header: str
     block_tx_count: int
     block_size: int
     is_orphaned: int  # mysql TINYINT either 1 or zero
@@ -24,6 +36,7 @@ class MerkleTreeArrayLocation(NamedTuple):
     start_offset: int
     end_offset: int
     base_node_count: int
+
 
 
 class TxOffsetsArrayLocation(NamedTuple):
@@ -105,7 +118,7 @@ assert struct.calcsize(RESULT_UNPACK_FORMAT) == FILTER_RESPONSE_SIZE
 filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
 
 
-def le_int_to_char(le_int):
+def le_int_to_char(le_int) -> bytes:
     return struct.pack('<I', le_int)[0:1]
 
 
@@ -140,6 +153,7 @@ def _get_pushdata_match_flag(ref_type: int) -> int:
         return PushdataMatchFlags.OUTPUT
     if ref_type == 1:
         return PushdataMatchFlags.INPUT
+    raise ValueError("Unrecognised ref_type")
 
 
 def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_hash,
@@ -167,7 +181,7 @@ def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_has
         pushdata_hash = hex_str_to_hash(full_pushdata_hash)
         tx_hash = hex_str_to_hash(full_tx_hash)
         idx = row.transaction_output_index
-        flags = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
+        flags_as_char = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
         in_tx_hash = hex_str_to_hash("00"*32)
         if full_spend_transaction_hash is not None:
             in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
@@ -177,7 +191,7 @@ def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_has
         block_height = row.block_height
 
         return RestorationFilterResult(
-            flags=flags,
+            flags=flags_as_char,
             push_data_hash=pushdata_hash,
             transaction_hash=tx_hash,
             spend_transaction_hash=in_tx_hash,
@@ -187,7 +201,7 @@ def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_has
         )
 
 
-def tsc_merkle_proof_json_to_binary(tsc_json: Dict, include_full_tx: bool, target_type: str) \
+def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: bool, target_type: str) \
         -> bytearray:
     """{'index': 0, 'txOrId': txOrId, 'target': target, 'nodes': []}"""
     response = bytearray()
@@ -234,11 +248,6 @@ def tsc_merkle_proof_json_to_binary(tsc_json: Dict, include_full_tx: bool, targe
             response += hash_type_node
             response += bitcoinx.hex_str_to_hash(node)
     return response
-
-
-class Inv(TypedDict):
-    inv_type: int
-    inv_hash: bytes
 
 
 class HeaderSpan(NamedTuple):

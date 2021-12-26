@@ -3,11 +3,12 @@ import logging
 import MySQLdb
 
 from conduit_lib.constants import HashXLength
+from typing import Tuple
 
 
 class MySQLTables:
 
-    def __init__(self, mysql_conn: MySQLdb.Connection):
+    def __init__(self, mysql_conn: MySQLdb.Connection) -> None:
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 
@@ -16,12 +17,12 @@ class MySQLTables:
             """START TRANSACTION;"""
         )
 
-    def commit_transaction(self):
+    def commit_transaction(self) -> None:
         self.mysql_conn.query(
             """COMMIT;"""
         )
 
-    def get_tables(self):
+    def get_tables(self) -> Tuple[Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str]]:
         try:
             self.mysql_conn.query("""SHOW TABLES""")
             result = self.mysql_conn.store_result()
@@ -31,7 +32,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_tables(self):
+    def mysql_drop_tables(self) -> None:
         try:
             result = self.get_tables()
             queries = []
@@ -63,7 +64,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_temp_mined_tx_hashes(self):
+    def mysql_drop_temp_mined_tx_hashes(self) -> None:
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_mined_tx_hashes;
@@ -84,7 +85,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_temp_mempool_removals(self):
+    def mysql_drop_temp_mempool_removals(self) -> None:
         try:
             self.start_transaction()
             self.mysql_conn.query(f"""
@@ -95,7 +96,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_temp_mempool_additions(self):
+    def mysql_drop_temp_mempool_additions(self) -> None:
         try:
             self.start_transaction()
             self.mysql_conn.query(f"""
@@ -241,7 +242,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_temp_mined_tx_hashes_table(self):
+    def mysql_create_temp_mined_tx_hashes_table(self) -> None:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
@@ -253,7 +254,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_temp_mempool_removals_table(self):
+    def mysql_create_temp_mempool_removals_table(self) -> None:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mempool_removals (
@@ -264,7 +265,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_temp_mempool_additions_table(self):
+    def mysql_create_temp_mempool_additions_table(self) -> None:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mempool_additions (
@@ -276,7 +277,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_temp_orphaned_txs_table(self):
+    def mysql_create_temp_orphaned_txs_table(self) -> None:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_orphaned_txs (

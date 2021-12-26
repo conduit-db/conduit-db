@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import typing
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TypedDict, Dict, Any
 
 from bitcoinx import MissingHeader, double_sha256
 
@@ -17,9 +17,20 @@ BITCOIN_RPC_PORT = os.getenv('BITCOIN_RPC_PORT', '18332')
 REGTEST_BITCOIN_RPC_URL = f"http://rpcuser:rpcpassword@{BITCOIN_HOST}:{BITCOIN_RPC_PORT}"
 
 
+class NodeRPCResult(TypedDict):
+    result: Dict[Any, Any]
+
+
+class NodeRPCTipJson(TypedDict):
+    height: int
+    hash: str
+    branchlen: int
+    status: str
+
+
 class RegtestSupport:
 
-    def __init__(self, controller: 'Controller'):
+    def __init__(self, controller: 'Controller') -> None:
         self.logger = logging.getLogger('regtest-support')
         self.controller = controller
         self.aiohttp_client_session = self.controller.aiohttp_client_session
@@ -32,7 +43,7 @@ class RegtestSupport:
         assert self.aiohttp_client_session is not None
         result = await self.aiohttp_client_session.post(REGTEST_BITCOIN_RPC_URL, json=body)
         response_json = await result.json()
-        block_header = response_json['result']
+        block_header: str = response_json['result']
         return block_header
 
     async def regtest_fetch_block_header_for_height(self, height: int) -> bytes:
@@ -44,17 +55,18 @@ class RegtestSupport:
         block_header = await self.regtest_fetch_block_header_for_hash(block_hash)
         return bytes.fromhex(block_header)
 
-    async def regtest_get_chain_tip(self):
+    async def regtest_get_chain_tip(self) -> Optional[NodeRPCTipJson]:
+        assert self.aiohttp_client_session is not None
         body = {"jsonrpc": "2.0", "method": "getchaintips", "params": [], "id": 1}
         result = await self.aiohttp_client_session.post(REGTEST_BITCOIN_RPC_URL, json=body)
         if result.status != 200:
             self.logger.error(f"regtest_poll_node_for_tip_job error. Status: {result.status} "
                               f"Reason: {result.reason}")
-            return
-        response_json: dict = await result.json()
+            return None
+        response_json: NodeRPCResult = await result.json()
         # self.logger.debug(f"regtest_poll_node_for_tip_job result: {response_json}")
 
-        best_tip: Optional[dict[str, dict]] = None
+        best_tip: Optional[NodeRPCTipJson] = None
         for tip in response_json['result']:
             if not best_tip:
                 best_tip = tip
@@ -64,14 +76,18 @@ class RegtestSupport:
 
         return best_tip
 
-    async def regtest_sync_headers(self, best_tip: dict) \
-            -> Tuple[Optional[int], Optional[bytes], Optional[bytes], bool]:
+    async def regtest_sync_headers(self, best_tip: NodeRPCTipJson) -> Tuple[int, bytes, bytes, bool]:
+        # Types
+        height: int = -1
+        first_header_of_batch: bytes = bytes()
+        block_header: bytes = bytes()
+
         from_height = self.controller.sync_state.get_local_tip_height() + 1
         to_height = best_tip['height']
-        height = None
-        first_header_of_batch = None
-        block_header = None
         try:
+            if not to_height > self.controller.sync_state.get_local_tip_height():
+                raise ValueError("Already synchronized to tip")
+
             for height in range(from_height, to_height + 1):
                 block_header = await self.regtest_fetch_block_header_for_height(height)
                 if height == from_height:
@@ -81,7 +97,7 @@ class RegtestSupport:
         except MissingHeader:
             return height, first_header_of_batch, block_header, False
 
-    async def regtest_poll_node_for_tip_job(self):
+    async def regtest_poll_node_for_tip_job(self) -> None:
         """REGTEST ONLY WORKER TASK"""
         while True:
             stop_header = None

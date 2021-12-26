@@ -32,7 +32,7 @@ def _get_tsc_merkle_proof_target_hash_json(post_reorg=False):
     for txid, expected_tsc_proof in test_data.items():
         result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
         assert result.status_code == 200, result.reason
-        assert result.json() == expected_tsc_proof
+        assert result.json() == expected_tsc_proof, f"result.json()={result.json()}; expected_tsc_proof={expected_tsc_proof}"
 
 
 def _get_tsc_merkle_proof_target_header_json(post_reorg=False):

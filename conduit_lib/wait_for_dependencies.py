@@ -3,17 +3,16 @@ import io
 import logging
 import os
 import socket
-
 import MySQLdb
 
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .serializer import Serializer
-from .deserializer import Deserializer
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
+from conduit_lib.deserializer import Deserializer
+from conduit_lib.serializer import Serializer
 
 
 async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializer,
-        serializer: Serializer):
+        serializer: Serializer) -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -52,7 +51,7 @@ async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializ
                 await asyncio.sleep(5)
 
 
-async def wait_for_mysql():
+async def wait_for_mysql() -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -81,13 +80,12 @@ async def wait_for_mysql():
                 await asyncio.sleep(5)
 
 
-async def wait_for_conduit_raw_api():
+async def wait_for_conduit_raw_api() -> None:
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-
-    host: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')
+    host: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
     port: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
 
     was_waiting = False

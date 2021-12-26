@@ -7,13 +7,15 @@ import asyncio
 from pathlib import Path
 import os
 import logging
-from typing import NoReturn
+from typing import AsyncGenerator
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
+from aiohttp.web_app import Application
+from asyncio.events import AbstractEventLoop
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +31,8 @@ requests_logger.setLevel(logging.WARNING)
 
 class ApplicationState(object):
 
-    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database) -> None:
+    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database) \
+            -> None:
         self.logger = logging.getLogger('app_state')
         self.app = app
         self.loop = loop
@@ -40,13 +43,13 @@ class ApplicationState(object):
         self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)
         self.reorg_event_socket.bind("tcp://127.0.0.1:51495")
 
-    def start_threads(self):
+    def start_threads(self) -> None:
         pass
 
-    def start_tasks(self):
+    def start_tasks(self) -> None:
         asyncio.create_task(self.listen_for_reorg_event_job())
 
-    async def listen_for_reorg_event_job(self):
+    async def listen_for_reorg_event_job(self) -> None:
         """This may not actually be needed for the most part because db entries are immutable.
         In theory this should only be relevant for queries that touch the mempool because
         there will be an atomic step where txs must be both invalidated and put back.
@@ -64,7 +67,8 @@ class ApplicationState(object):
                               f"start_hash: {bitcoinx.hash_to_hex_str(start_hash)}, "
                               f"stop_hash: {bitcoinx.hash_to_hex_str(stop_hash)}")
 
-async def client_session_ctx(app: web.Application) -> NoReturn:
+
+async def client_session_ctx(app: web.Application) -> AsyncGenerator:
     """
     Cleanup context async generator to create and properly close aiohttp ClientSession
     Ref.:
@@ -81,7 +85,7 @@ async def client_session_ctx(app: web.Application) -> NoReturn:
     await app['client_session'].close()
 
 
-def get_aiohttp_app(lmdb) -> web.Application:
+def get_aiohttp_app(lmdb: LMDB_Database) -> web.Application:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)

@@ -67,7 +67,7 @@ class MsgType(enum.IntEnum):
     MSG_CMPCT_BLOCK = 4
 
 
-# Log Level
+# Log MTreeLevel
 PROFILING = 9
 
 CONDUIT_RAW_SERVICE_NAME = 'conduit_raw'

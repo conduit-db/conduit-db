@@ -12,9 +12,11 @@ if typing.TYPE_CHECKING:
     from .server import ApplicationState
 
 try:
-    from .server import get_aiohttp_app, SERVER_HOST, SERVER_PORT
+    from .constants import SERVER_HOST, SERVER_PORT
+    from .server import get_aiohttp_app
 except ImportError:
-    from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app, SERVER_HOST, SERVER_PORT
+    from conduit_lib.constants import SERVER_HOST, SERVER_PORT  # type: ignore[no-redef, attr-defined]
+    from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -61,7 +63,7 @@ class AiohttpServer:
         await self.runner.cleanup()
 
 
-async def main(lmdb):
+async def main(lmdb: LMDB_Database) -> None:
     app = get_aiohttp_app(lmdb)
     server = AiohttpServer(app)
     try:

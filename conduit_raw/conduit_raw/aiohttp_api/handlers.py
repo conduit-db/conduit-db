@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import aiohttp
 import bitcoinx
@@ -14,8 +14,8 @@ from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.types import TxMetadata, TxLocation, RestorationFilterRequest, \
-    FILTER_RESPONSE_SIZE, filter_response_struct, RestorationFilterQueryResult, \
-    _pack_pushdata_match_response, tsc_merkle_proof_json_to_binary, BlockHeaderRow
+    FILTER_RESPONSE_SIZE, filter_response_struct, _pack_pushdata_match_response, \
+    tsc_merkle_proof_json_to_binary, BlockHeaderRow, TSCMerkleProof
 
 if TYPE_CHECKING:
     from .server import ApplicationState
@@ -34,7 +34,7 @@ async def error(request: web.Request) -> web.Response:
 
 # @functools.lru_cache(maxsize=256)  # on reorg need to call _get_tx_metadata.cache_clear()
 def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) \
-        -> TxMetadata:
+        -> Optional[TxMetadata]:
     """Truncates full hash -> hashX length"""
     tx_metadata: TxMetadata = \
         mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
@@ -55,7 +55,7 @@ def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database):
 
 
 def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb: LMDB_Database,
-        include_full_tx: bool=True, target_type: str="hash") -> dict:
+        include_full_tx: bool=True, target_type: str="hash") -> TSCMerkleProof:
     """
     Return a pair (tsc_proof, cost) where tsc_proof is a dictionary with fields:
         index - the position of the transaction
@@ -63,8 +63,6 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
         target - either "hash", "header" or "merkleroot"
         nodes - the nodes in the merkle branch excluding the "target
     """
-    tsc_proof = {}
-
     # Merkle Branch + Root
     merkle_branch, merkle_root = lmdb.get_merkle_branch(tx_metadata)
 
@@ -86,20 +84,21 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
         target = hash_to_hex_str(tx_metadata.block_hash)
 
     # Sanity check - Todo: remove when satisfied
-    header_row: BlockHeaderRow = mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
+    header_row = mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
         raw_header_data=True)
-    root_from_header = bytes.fromhex(header_row.block_header)[36:36 + 32]
+    root_from_header: bytes = bytes.fromhex(header_row.block_header)[36:36 + 32]
     if target_type == 'merkleroot' and merkle_root != hash_to_hex_str(root_from_header):
-        logger.debug(f"merkleroot: {merkle_root}; root_from_header: {root_from_header} ")
+        logger.debug(f"merkleroot: {merkle_root}; "
+                     f"root_from_header: {hash_to_hex_str(root_from_header)} ")
         raise ValueError("Merkle root does not match expected value from header")
 
-    tsc_proof['index'] = tx_metadata.tx_position
-    tsc_proof['txOrId'] = txid_or_tx_field
-    tsc_proof['target'] = target
-    tsc_proof['nodes'] = merkle_branch
-    if target_type != 'hash':
-        tsc_proof['targetType'] = target_type
-    return tsc_proof
+    return TSCMerkleProof(
+        index=tx_metadata.tx_position,
+        txOrId=txid_or_tx_field,
+        target=target,
+        nodes=merkle_branch,
+        targetType=target_type
+    )
 
 
 async def get_pushdata_filter_matches(request: web.Request):
@@ -130,7 +129,6 @@ async def get_pushdata_filter_matches(request: web.Request):
                 response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
                 await response.prepare(request)
 
-            match: RestorationFilterQueryResult
             # logger.debug(f"Sending {match}")
 
             # Get Full tx hashes and pushdata hashes for response object

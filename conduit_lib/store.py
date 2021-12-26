@@ -6,7 +6,7 @@ import mmap
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union, Callable
 
 import bitcoinx
 from bitcoinx import Headers
@@ -26,7 +26,7 @@ class Storage:
     """High-level Interface to database (postgres at present)"""
 
     def __init__(self, headers: Headers, block_headers: Headers,
-            mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database], ):
+            mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database]) -> None:
         self.mysql_database = mysql_database
         self.headers = headers
         self.headers_lock = threading.RLock()
@@ -34,7 +34,7 @@ class Storage:
         self.block_headers_lock = threading.RLock()
         self.lmdb = lmdb
 
-    async def close(self):
+    async def close(self) -> None:
         if self.mysql_database:
             self.mysql_database.close()
 
@@ -46,7 +46,7 @@ class Storage:
             return header
 
 
-def setup_headers_store(net_config, mmap_filename):
+def setup_headers_store(net_config: NetworkConfig, mmap_filename: Union[str, Path]) -> bitcoinx.Headers:
     bitcoinx_chain_logger = logging.getLogger('chain')
     bitcoinx_chain_logger.setLevel(logging.WARNING)
 
@@ -54,14 +54,14 @@ def setup_headers_store(net_config, mmap_filename):
     HeadersRegTestMod.max_cache_size = MMAP_SIZE
 
     if net_config.NET == REGTEST:
-        headers = HeadersRegTestMod(net_config.BITCOINX_COIN, mmap_filename,
+        headers = HeadersRegTestMod(net_config.BITCOINX_COIN, str(mmap_filename),
             net_config.CHECKPOINT)
     else:
-        headers = Headers(net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT)
+        headers = Headers(net_config.BITCOINX_COIN, str(mmap_filename), net_config.CHECKPOINT)
     return headers
 
 
-def reset_headers(headers_path: Path, block_headers_path: Path):
+def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
     if sys.platform == 'win32':
         if os.path.exists(headers_path):
             with open(headers_path, 'w+') as f:
@@ -85,7 +85,7 @@ def reset_headers(headers_path: Path, block_headers_path: Path):
             pass
 
 
-def reset_datastore(headers_path: Path, block_headers_path: Path):
+def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
     reset_headers(headers_path, block_headers_path)
@@ -99,7 +99,8 @@ def reset_datastore(headers_path: Path, block_headers_path: Path):
             mysql_database.close()
 
     if os.environ['SERVER_TYPE'] == "ConduitRaw":
-        def remove_readonly(func, path, excinfo):
+        def remove_readonly(func: Callable[[Path], None], path: Path,
+                excinfo: Optional[BaseException]) -> None:
             lmdb_db = LMDB_Database()
             lmdb_db.close()
             os.chmod(path, stat.S_IWRITE)

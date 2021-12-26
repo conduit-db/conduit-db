@@ -8,15 +8,22 @@ import os
 import sys
 from pathlib import Path
 
+import typing
+
+if typing.TYPE_CHECKING:
+    from conduit_index.conduit_index.controller import Controller
+else:
+    from conduit_index.controller import Controller
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+CONDUIT_ROOT_PATH = MODULE_DIR.parent
+sys.path.insert(1, str(CONDUIT_ROOT_PATH))
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.constants import CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_client import setup_tcp_logging, set_logging_level
 from conduit_lib.networks import NetworkConfig
-from conduit_lib.utils import get_log_level, get_network_type, \
-    resolve_hosts_and_update_env_vars, load_dotenv
-
-from conduit_index.controller import Controller
-
+from conduit_lib.utils import get_log_level, resolve_hosts_and_update_env_vars, load_dotenv, \
+    is_docker
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,8 +44,10 @@ elif sys.platform == 'linux':
         pass
 
 
-def configure():
+def configure() -> None:
     dotenv_path = MODULE_DIR.parent / '.env'
+    if is_docker():
+        dotenv_path = MODULE_DIR.parent / '.env.docker'
     load_dotenv(dotenv_path)
     resolve_hosts_and_update_env_vars()
     set_logging_level(get_log_level(CONDUIT_INDEX_SERVICE_NAME))

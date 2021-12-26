@@ -21,7 +21,7 @@ class FailedMySQLOperation(Exception):
 
 class MySQLBulkLoads:
 
-    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_db):
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_db) -> None:
         self.mysql_db = mysql_db
         self.worker_id = self.mysql_db.worker_id
         if self.worker_id:
@@ -31,15 +31,15 @@ class MySQLBulkLoads:
         self.mysql_conn = mysql_conn
 
         self.logger.setLevel(get_log_level('conduit_index'))
-        self.total_db_time = 0
+        self.total_db_time = 0.
         self.total_rows_flushed_since_startup = 0  # for current controller
         self.newline_symbol = r"'\r\n'" if sys.platform == 'win32' else r"'\n'"
 
-    def set_local_infile_on(self):
+    def set_local_infile_on(self) -> None:
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"
         self.mysql_conn.query(extra_settings)
 
-    def set_rocks_db_bulk_load_on(self):
+    def set_rocks_db_bulk_load_on(self) -> None:
         self.mysql_db.start_transaction()
         settings = f"""SET global rocksdb_bulk_load_allow_unsorted=0;
             SET global rocksdb_bulk_load=1;"""
@@ -47,7 +47,7 @@ class MySQLBulkLoads:
             self.mysql_conn.query(sql)
         self.mysql_db.commit_transaction()
 
-    def set_rocks_db_bulk_load_off(self):
+    def set_rocks_db_bulk_load_off(self) -> None:
         self.mysql_db.start_transaction()
         settings = f"""SET global rocksdb_bulk_load=0;
             SET global rocksdb_bulk_load_allow_unsorted=0;"""
@@ -128,7 +128,7 @@ class MySQLBulkLoads:
                                        f"(worker_id={self.worker_id if self.worker_id else None})"
                 f"={self.total_rows_flushed_since_startup}")
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows):
+    def handle_coinbase_dup_tx_hash(self, tx_rows) -> None:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
@@ -154,7 +154,7 @@ class MySQLBulkLoads:
         self.logger.debug(f"bulk loading new tx rows")
         self.mysql_bulk_load_confirmed_tx_rows(new_tx_rows)  # retry without problematic coinbase tx
 
-    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows):
+    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows) -> None:
         t0 = time.time()
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
@@ -169,7 +169,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    def mysql_bulk_load_mempool_tx_rows(self, tx_rows):
+    def mysql_bulk_load_mempool_tx_rows(self, tx_rows) -> None:
         t0 = time.time()
         string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
         column_names = ['mp_tx_hash', 'mp_tx_timestamp']
@@ -180,7 +180,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    def mysql_bulk_load_output_rows(self, out_rows):
+    def mysql_bulk_load_output_rows(self, out_rows) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
         column_names = ['out_tx_hash', 'out_idx', 'out_value']
@@ -191,7 +191,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
         )
 
-    def mysql_bulk_load_input_rows(self, in_rows):
+    def mysql_bulk_load_input_rows(self, in_rows) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
         column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
@@ -202,7 +202,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
         )
 
-    def mysql_bulk_load_pushdata_rows(self, pd_rows):
+    def mysql_bulk_load_pushdata_rows(self, pd_rows) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
         column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
@@ -213,7 +213,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
 
-    def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows):
+    def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows) -> None:
         t0 = time.time()
         string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
         column_names = ['tx_hash']
@@ -225,7 +225,7 @@ class MySQLBulkLoads:
             f"{len(unsafe_tx_rows)}"
         )
 
-    def mysql_bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]):
+    def mysql_bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
         """block_num, block_hash, block_height, block_header"""
         string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
         column_names = ['block_num', 'block_hash', 'block_height', 'block_header', 'block_tx_count',

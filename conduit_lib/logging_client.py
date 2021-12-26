@@ -5,12 +5,12 @@ import sys
 
 from .constants import LOGGING_LEVEL_VARNAME
 
-# Log Level
+# Log MTreeLevel
 PROFILING = 9
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def set_logging_level(logging_level) -> None:
+def set_logging_level(logging_level: int) -> None:
     if LOGGING_LEVEL_VARNAME in os.environ:
         logging_level_name = os.environ[LOGGING_LEVEL_VARNAME].lower()
         logging_levels = {
@@ -30,7 +30,7 @@ def set_logging_level(logging_level) -> None:
     logging.root.setLevel(logging_level)
 
 
-def setup_tcp_logging(port=54545):
+def setup_tcp_logging(port: int = 54545) -> None:
     rootLogger = logging.getLogger('')
     logging.addLevelName(PROFILING, 'PROFILING')
 
