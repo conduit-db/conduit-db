@@ -158,7 +158,7 @@ class TCPLoggingServer(multiprocessing.Process):
 
 
 if __name__ == "__main__":
-    TCPLoggingServer(54545).start()
+    TCPLoggingServer(54545, service_name="test_server").start()
     time.sleep(5)
 
     logging.debug("shutting down...")

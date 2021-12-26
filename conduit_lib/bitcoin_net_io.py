@@ -1,17 +1,14 @@
 import asyncio
 import io
-import socket
 from asyncio import BufferedProtocol
 from typing import Callable
-
-import bitcoinx
 from bitcoinx import read_varint
 from collections import namedtuple
 from multiprocessing import shared_memory
 import logging
 import struct
 
-from .commands import BLOCK_BIN, TX_BIN, HEADERS_BIN
+from .commands import BLOCK_BIN, TX_BIN
 from .constants import HEADER_LENGTH, RECV_BUFFER_HIGH_WATER
 
 Header = namedtuple("Header", "magic command payload_size checksum")

@@ -1,7 +1,7 @@
 import logging
 from typing import Generator
 
-from MySQLdb import _mysql
+import MySQLdb
 from bitcoinx import hash_to_hex_str
 
 from .mysql_tables import MySQLTables
@@ -12,7 +12,7 @@ from ...types import TxMetadata, RestorationFilterJSONResponse, TxLocation, \
 
 class MySQLAPIQueries:
 
-    def __init__(self, mysql_conn: _mysql.connection, mysql_tables: MySQLTables, mysql_db):
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables, mysql_db):
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn

@@ -1,14 +1,16 @@
 import logging
 
 import bitcoinx
-from bitcoinx import (read_le_int32, read_le_uint64, read_le_int64, read_varbytes, read_le_uint32,
-    read_varint, read_le_uint16, hash_to_hex_str, MissingHeader, double_sha256, Headers, )
+from bitcoinx import (
+    read_le_int32, read_le_uint64, read_le_int64, read_varbytes, read_le_uint32, read_varint,
+    read_le_uint16, hash_to_hex_str
+)
 import socket
 import time
 
 from .networks import NetworkConfig
 from .store import Storage
-from .constants import CCODES, GENESIS_BLOCK
+from .constants import CCODES
 from .types import Inv
 from .utils import mapped_ipv6_to_ipv4
 from . import utils

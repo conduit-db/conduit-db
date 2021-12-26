@@ -9,11 +9,7 @@ import cbor2
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.types import BlockMetadata, BlockSliceRequestType, ChainHashes
-
-try:
-    from conduit_lib import ipc_sock_commands
-except ImportError:
-    import rs_server_commands
+from conduit_lib import ipc_sock_commands
 
 
 BlockHashes = list[bytes]
@@ -152,22 +148,6 @@ class BlockBatchedRequest(BaseMsg):
             'command': self.command,
             'block_requests': self.block_requests,
         })
-
-## Commented out because response for raw block slices is performance critical
-## do not use cbor serialization - directly pack the bytearray for sending over the socket.
-# class BlockBatchedResponse(BaseMsg):
-#     command = rs_server_commands.BLOCK_BATCHED
-#
-#     def __init__(self, raw_block_slices_array: bytes, command: Optional[str]=None):
-#         super().__init__()
-#         self.raw_block_slices_array = raw_block_slices_array
-#
-#     def to_cbor(self) -> bytes:
-#         return cbor2.dumps({'command': self.command, 'raw_block_slices_array': self.raw_block_slices_array})
-#
-#     def to_json(self) -> str:
-#         return json.dumps({'command': self.command, 'raw_block_slices_array': self.raw_block_slices_array.hex()})
-
 
 class MerkleTreeRowRequest(BaseMsg):
     command = ipc_sock_commands.MERKLE_TREE_ROW

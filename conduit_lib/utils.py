@@ -9,13 +9,13 @@ import struct
 import threading
 from binascii import hexlify
 from io import BytesIO
-from typing import Tuple, Optional, Dict, Any, List
+from typing import Tuple, Optional
 
 import bitcoinx
-from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes,
-    pack_le_uint32, MissingHeader, Headers, Header, Chain, hash_to_hex_str, )
-
-from .argparsing import get_parser
+from bitcoinx import (
+    read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes, pack_le_uint32, MissingHeader,
+    Headers, Header, Chain
+)
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET

@@ -14,7 +14,7 @@ from .deserializer import Deserializer
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
-from .utils import connect_headers, connect_headers_reorg_safe
+from .utils import connect_headers_reorg_safe
 
 logger = logging.getLogger("handlers")
 

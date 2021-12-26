@@ -1,26 +1,22 @@
 import asyncio
+import bitcoinx
 import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
 from functools import partial
 from typing import List, Tuple, Set
-
 import MySQLdb
-import bitcoinx
-from MySQLdb import _mysql
 
 from .mysql_api_queries import MySQLAPIQueries
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_queries import MySQLQueries
 from .mysql_tables import MySQLTables
-
-from ...constants import PROFILING
-from ...utils import is_docker, get_log_level
+from ...utils import get_log_level
 
 
 class MySQLDatabase:
 
-    def __init__(self, mysql_conn: _mysql.connection, worker_id=None):
+    def __init__(self, mysql_conn: MySQLdb.Connection, worker_id=None):
         self.mysql_conn = mysql_conn
         self.worker_id = worker_id
         self.tables = MySQLTables(self.mysql_conn)

@@ -7,7 +7,6 @@ import socket
 import MySQLdb
 
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .utils import cast_to_valid_ipv4
 from .serializer import Serializer
 from .deserializer import Deserializer
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
@@ -62,7 +61,7 @@ async def wait_for_mysql():
         is_available = False
         try:
             # Attempt to connect
-            mysql_db: 'MySQLDatabase' = load_mysql_database()
+            mysql_db: MySQLDatabase = load_mysql_database()
             _result = mysql_db.tables.get_tables()
             is_available = True
             break

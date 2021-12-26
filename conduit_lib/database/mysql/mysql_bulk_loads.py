@@ -7,9 +7,6 @@ from pathlib import Path
 from typing import List
 
 import MySQLdb
-import bitcoinx
-from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str
 
 from ...constants import PROFILING
 from ...types import BlockHeaderRow
@@ -24,7 +21,7 @@ class FailedMySQLOperation(Exception):
 
 class MySQLBulkLoads:
 
-    def __init__(self, mysql_conn: _mysql.connection, mysql_db):
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_db):
         self.mysql_db = mysql_db
         self.worker_id = self.mysql_db.worker_id
         if self.worker_id:

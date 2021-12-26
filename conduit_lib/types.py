@@ -4,7 +4,7 @@ import typing
 from typing import TypedDict, Optional, NamedTuple, Dict, List
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str, hex_str_to_hash, Header
+from bitcoinx import hex_str_to_hash, Header
 
 from conduit_lib.constants import MAX_UINT32
 

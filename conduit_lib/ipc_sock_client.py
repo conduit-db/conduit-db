@@ -12,7 +12,6 @@ from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 from conduit_lib.types import BlockSliceRequestType, ChainHashes
-from conduit_lib.utils import cast_to_valid_ipv4
 
 
 BatchedBlockSlices = bytearray

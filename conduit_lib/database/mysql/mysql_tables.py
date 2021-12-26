@@ -1,13 +1,13 @@
 import logging
 
-from MySQLdb import _mysql
+import MySQLdb
 
 from conduit_lib.constants import HashXLength
 
 
 class MySQLTables:
 
-    def __init__(self, mysql_conn: _mysql.connection):
+    def __init__(self, mysql_conn: MySQLdb.Connection):
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 

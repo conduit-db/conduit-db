@@ -229,13 +229,15 @@ class LMDB_Database:
         hash_length = 32
         to_subtract_from_end = 0
         for lvl in range(0, level):
-            # self.logger.debug(f"node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
+            # self.logger.debug(
+            # f"node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
             to_subtract_from_end += node_counts[lvl] * hash_length
 
         to_add_to_start = 0
         # self.logger.debug(f"calc_depth(node_counts[-1]) - 1={calc_depth(node_counts[-1]) - 1}")
         for lvl in range(calc_depth(node_counts[-1]) - 1, level, -1):
-            # self.logger.debug(f"to_add_to_start: node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
+            # self.logger.debug(f"to_add_to_start:
+            # node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
             to_add_to_start += node_counts[lvl] * hash_length
 
         end_offset = mtree_array_loc.end_offset - to_subtract_from_end
@@ -284,7 +286,7 @@ class LMDB_Database:
 
         lock_path = filename
 
-        flock = FileLock(lock_path, timeout=10)
+        flock = FileLock(lock_path, timeout=10)  # pylint: disable=E0110
         return write_path, flock
 
     def _get_next_write_path_for_tx_offsets(self) -> [Path, FileLock]:
@@ -301,7 +303,7 @@ class LMDB_Database:
 
         lock_path = filename
 
-        flock = FileLock(lock_path, timeout=10)
+        flock = FileLock(lock_path, timeout=10)  # pylint: disable=E0110
         return write_path, flock
 
     def _get_next_write_path_for_blocks(self) -> str:
@@ -383,7 +385,8 @@ class LMDB_Database:
 
     def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
             -> bytes:
-        # self.logger.debug(f"get_mtree_node called for block_hash: {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
+        # self.logger.debug(f"get_mtree_node called for block_hash:
+        # {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
         array = self.get_mtree_row(block_hash, level, cursor)
         assert array is not None
         node_hash = array[position*32:(position+1)*32]
@@ -508,8 +511,10 @@ class LMDB_Database:
                         file, write_path, acquired_flock = self._open_next_merkle_tree_file(file)
 
                     # LMDB only stores the mapping of hash -> location
-                    mtree_array_location = MerkleTreeArrayLocation(str(write_path), start_offset, end_offset, base_node_count)
-                    # self.logger.debug(f"writing merkle tree array ({hash_to_hex_str(block_hash)}): {mtree_array_location}")
+                    mtree_array_location = MerkleTreeArrayLocation(str(write_path), start_offset,
+                        end_offset, base_node_count)
+                    # self.logger.debug(f"writing merkle tree array (
+                    # {hash_to_hex_str(block_hash)}): {mtree_array_location}")
                     cursor.put(block_hash, cbor2.dumps(mtree_array_location))
 
                     start_offset += len(mtree_array)

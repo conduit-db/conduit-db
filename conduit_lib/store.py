@@ -5,9 +5,8 @@ import stat
 import mmap
 import sys
 import threading
-import time
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional
 
 import bitcoinx
 from bitcoinx import Headers

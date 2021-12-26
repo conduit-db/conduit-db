@@ -4,23 +4,22 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, List, Set
+from typing import Optional, List, Set
 
 import logging
 
 import MySQLdb
 import bitcoinx
-from MySQLdb import _mysql
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
-from ...constants import PROFILING, HashXLength
+from ...constants import PROFILING
 from ...types import ChainHashes
 
 
 class MySQLQueries:
 
-    def __init__(self, mysql_conn: _mysql.connection, mysql_tables: MySQLTables, bulk_loads:
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables, bulk_loads:
             MySQLBulkLoads, mysql_db):
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)

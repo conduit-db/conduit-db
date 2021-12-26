@@ -7,16 +7,14 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, NamedTuple
 
 from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 
-from conduit_raw.controller import Controller
-from conduit_lib.utils import get_log_level, get_network_type, \
-    resolve_hosts_and_update_env_vars, load_dotenv
+from conduit_raw.controller import Controller  # pylint: disable=E0611,E0401
+from conduit_lib.utils import get_log_level, resolve_hosts_and_update_env_vars, load_dotenv
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))

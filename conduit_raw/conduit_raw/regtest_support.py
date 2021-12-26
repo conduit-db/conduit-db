@@ -4,7 +4,7 @@ import os
 import typing
 from typing import Optional, Tuple
 
-from bitcoinx import MissingHeader, double_sha256, hash_to_hex_str
+from bitcoinx import MissingHeader, double_sha256
 
 from conduit_lib import cast_to_valid_ipv4
 
