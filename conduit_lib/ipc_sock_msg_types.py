@@ -258,7 +258,8 @@ class BlockMetadataBatchedResponse(BaseMsg):
     def __init__(self, block_metadata_batch: list[BlockMetadata], command: Optional[str]=None):
         super().__init__()
         # Cast to BlockMetadata again because cbor converts tuples to lists
-        self.block_metadata_batch = [BlockMetadata(block_size, tx_count) for block_size, tx_count in block_metadata_batch]
+        self.block_metadata_batch = [BlockMetadata(block_size, tx_count)
+            for block_size, tx_count in block_metadata_batch]
 
 
     def to_cbor(self) -> bytes:

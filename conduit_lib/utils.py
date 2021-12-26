@@ -9,15 +9,16 @@ import struct
 import threading
 from binascii import hexlify
 from io import BytesIO
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any, List
 
 import bitcoinx
 from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes,
     pack_le_uint32, MissingHeader, Headers, Header, Chain, hash_to_hex_str, )
 
+from .argparsing import get_parser
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
-    GENESIS_BLOCK
+    GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .types import ChainHashes
 
 logger = logging.getLogger("conduit-lib-utils")
@@ -148,15 +149,10 @@ def get_log_level(service_name):
         return PROFILING
 
 
-def get_conduit_raw_host_and_port():
-    try:
-        # Todo - this is messy
-        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-        CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-        CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-        return CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
-    except Exception:
-        logger.exception("unexpected exception")
+def get_conduit_raw_host_and_port() -> tuple[str, int]:
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')
+    CONDUIT_RAW_API_PORT: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
+    return CONDUIT_RAW_API_HOST, CONDUIT_RAW_API_PORT
 
 
 def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
@@ -327,3 +323,33 @@ def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, heade
                 lock=None)
             stop_header = new_tip
         return is_reorg, start_header, stop_header, old_chain, new_chain
+
+
+def load_dotenv(dotenv_path):
+    with open(dotenv_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            if line.startswith("#") or line.strip() == '':
+                continue
+
+            # Split line on "=" symbol but need to take care of base64 encoded string values.
+            split_line = line.strip().split("=")
+            key = split_line[0]
+            val = split_line[1] + "".join(["=" + part for part in split_line[2:]])
+            os.environ[key] = val
+
+
+def get_network_type() -> str:
+    nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
+    for key, val in os.environ.items():
+        if key == 'NETWORK':
+            assert val.lower() in nets, f"Network not found: must be one of: {nets}"
+            return val.lower()
+
+
+def resolve_hosts_and_update_env_vars():
+    for key in os.environ:
+        if key.lower() in {"MYSQL_HOST", "NODE_HOST", "CONDUIT_RAW_API_HOST"}:
+            # Resolve the IP address (particularly important for docker container names)
+            host = cast_to_valid_ipv4(os.environ[key].split(":")[0])
+            os.environ["MYSQL_HOST"] = host

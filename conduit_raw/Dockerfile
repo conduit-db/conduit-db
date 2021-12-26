@@ -3,6 +3,8 @@ FROM python:3.9
 WORKDIR /opt
 
 COPY . .
+RUN rm /opt/.env
+RUN mv /opt/.env.docker /opt/.env
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH "${PYTHONPATH}:/opt/"

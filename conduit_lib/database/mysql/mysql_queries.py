@@ -321,10 +321,11 @@ class MySQLQueries:
         cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
         cursor.execute("START TRANSACTION;")
         try:
-            for out_tx_hash, out_idx, in_tx_hash, in_idx,  in input_rows:
+            for out_tx_hash, out_idx, in_tx_hash, in_idx in input_rows:
                 query = f"""
                     DELETE FROM inputs_table
-                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}"""
+                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}
+                        AND in_tx_hash=X'{in_tx_hash}' and in_idx={in_idx}"""
                 cursor.execute(query)
         finally:
             cursor.execute("COMMIT;")

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import multiprocessing
-import os
 import threading
 import time
 import typing
@@ -11,28 +10,16 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Optional
 
 import bitcoinx
-from bitcoinx import Headers, hash_to_hex_str, unpack_header, double_sha256
+from bitcoinx import hash_to_hex_str, unpack_header, double_sha256
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
-from conduit_lib.ipc_sock_msg_types import BlockNumberBatchedResponse
 from conduit_lib.store import Storage
-from conduit_lib.utils import cast_to_valid_ipv4
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
-
-
-try:
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-    CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-    CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-except Exception:
-    logger = logging.getLogger('sync-state-env-vars')
-    logger.exception("unexpected exception")
-
 
 
 class SyncState:
@@ -259,28 +246,32 @@ class SyncState:
     def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) \
             -> MainBatch:
         """Must run in thread due to ipc_sock_client not being async"""
-        ipc_sock_client = IPCSocketClient()
+        try:
+            ipc_sock_client = IPCSocketClient()
 
-        with self.storage.headers_lock:
-            block_height_deficit = stop_header.height - (start_header.height - 1)
+            with self.storage.headers_lock:
+                block_height_deficit = stop_header.height - (start_header.height - 1)
 
-            # May need to use block_hash not height to be more correct
-            block_headers: List[bitcoinx.Header] = []
-            for i in range(1, block_height_deficit + 1):
-                block_header = self.controller.get_header_for_height(start_header.height - 1 + i)
-                block_headers.append(block_header)
+                # May need to use block_hash not height to be more correct
+                block_headers: List[bitcoinx.Header] = []
+                for i in range(1, block_height_deficit + 1):
+                    block_header = self.controller.get_header_for_height(start_header.height - 1 + i)
+                    block_headers.append(block_header)
 
-            header_hashes = [block_header.hash for block_header in block_headers]
+                header_hashes = [block_header.hash for block_header in block_headers]
 
-        # Todo: All four of these network calls could be done in parallel in a thread pool executor
-        block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
-        block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
-        tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
-        block_numbers = ipc_sock_client.block_number_batched(header_hashes).block_numbers
+            # Todo: All four of these network calls could be done in parallel in a thread pool executor
 
-        all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers,
-            block_numbers))
-        return all_work_units
+            block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
+            block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
+            tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
+            block_numbers = ipc_sock_client.block_number_batched(header_hashes).block_numbers
+
+            all_work_units = list(zip(block_sizes_batch, tx_offsets_results, block_headers,
+                block_numbers))
+            return all_work_units
+        except Exception as e:
+            self.logger.exception(f"Unexpected exception in get_main_batch thread")
 
     def incr_msg_received_count(self):
         with self._msg_received_count_lock:

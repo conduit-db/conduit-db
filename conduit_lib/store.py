@@ -15,7 +15,7 @@ from bitcoinx import Headers
 from .database.lmdb.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database, mysql_connect
 from .constants import REGTEST
-from .networks import HeadersRegTestMod
+from .networks import HeadersRegTestMod, NetworkConfig
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 MMAP_SIZE = 2_000_000  # count of headers
@@ -86,20 +86,20 @@ def reset_headers(headers_path: Path, block_headers_path: Path):
             pass
 
 
-def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
+def reset_datastore(headers_path: Path, block_headers_path: Path):
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
     reset_headers(headers_path, block_headers_path)
 
     # remove postgres tables
-    if config['server_type'] == "ConduitIndex":
+    if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = mysql_connect()
         try:
             mysql_database.mysql_drop_tables()
         finally:
             mysql_database.close()
 
-    if config['server_type'] == "ConduitRaw":
+    if os.environ['SERVER_TYPE'] == "ConduitRaw":
         def remove_readonly(func, path, excinfo):
             lmdb_db = LMDB_Database()
             lmdb_db.close()
@@ -132,7 +132,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
             shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
 
 
-def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
+def setup_storage(net_config: NetworkConfig, headers_dir: Optional[Path] = None) -> Storage:
     if not headers_dir:
         headers_dir = MODULE_DIR.parent
         headers_path = headers_dir.joinpath("headers.mmap")
@@ -142,18 +142,18 @@ def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Sto
         headers_path = headers_dir.joinpath("headers.mmap")
         block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
-    if config.get('reset'):
-        reset_datastore(headers_path, block_headers_path, config)
+    if int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1:
+        reset_datastore(headers_path, block_headers_path)
 
     headers = setup_headers_store(net_config, headers_path)
     block_headers = setup_headers_store(net_config, block_headers_path)
 
-    if config['server_type'] == "ConduitIndex":
+    if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = load_mysql_database()
     else:
         mysql_database = None
 
-    if config['server_type'] == "ConduitRaw":  # comment out until we have gRPC wrapper
+    if os.environ['SERVER_TYPE'] == "ConduitRaw":  # comment out until we have gRPC wrapper
         lmdb_db = LMDB_Database()
     else:
         lmdb_db = None

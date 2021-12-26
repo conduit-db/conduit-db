@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 from asyncio import BaseTransport, BaseProtocol
 import bitcoinx
-from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header, Chain
+from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header
 from concurrent.futures.thread import ThreadPoolExecutor
 import os
 import queue
@@ -18,8 +18,8 @@ from pathlib import Path
 import logging
 import zmq
 
-from conduit_lib import (setup_storage, Storage, IPCSocketClient, LMDB_Database,
-    Serializer, Deserializer, Handlers, BitcoinNetIO, wait_for_node)
+from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
+    BitcoinNetIO, wait_for_node)
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
     WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
@@ -52,7 +52,7 @@ class Controller:
     a time up to HIGH_WATER)
     """
 
-    def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
+    def __init__(self, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
             logging_server_proc=None, loop_type=None):
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
@@ -66,8 +66,6 @@ class Controller:
         elif not loop_type:
             self.logger.debug(f"Using default asyncio event loop")
 
-        self.config = config  # cli args & env_vars
-
         # Bitcoin network/peer net_config
         self.net_config = net_config
         self.peers = self.net_config.peers
@@ -77,7 +75,7 @@ class Controller:
 
         # Defined in async method at startup (self.run)
         headers_dir = MODULE_DIR.parent
-        self.storage = setup_storage(self.config, self.net_config, headers_dir)
+        self.storage = setup_storage(self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
@@ -160,8 +158,9 @@ class Controller:
         try:
             await self._get_aiohttp_client_session()
             await self.setup()
-            await wait_for_node(node_host=self.config['node_host'],
-                serializer=self.serializer, deserializer=self.deserializer)
+            await wait_for_node(node_host=os.environ['NODE_HOST'],
+                node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
+                deserializer=self.deserializer)
             await wait_for_mysql()
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
@@ -305,8 +304,8 @@ class Controller:
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
     def ipc_sock_server_thread(self):
-        CONDUIT_RAW_HOST, CONDUIT_RAW_PORT = get_conduit_raw_host_and_port()
-        self.ipc_sock_server = ThreadedTCPServer(addr=(CONDUIT_RAW_HOST, CONDUIT_RAW_PORT),
+        host, port = get_conduit_raw_host_and_port()
+        self.ipc_sock_server = ThreadedTCPServer(addr=(host, port),
             handler=ThreadedTCPRequestHandler, storage_path=Path(self.lmdb._storage_path),
             block_headers=self.storage.block_headers,
             block_headers_lock=self.storage.block_headers_lock)

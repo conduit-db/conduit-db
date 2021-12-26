@@ -43,7 +43,7 @@ from .workers.transaction_parser import TxParser
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
+
 
 if typing.TYPE_CHECKING:
     from conduit_lib.networks import NetworkConfig
@@ -60,13 +60,13 @@ class Controller:
     - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
     """
 
-    def __init__(self, config: Dict, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
+    def __init__(self, net_config: 'NetworkConfig', host="127.0.0.1", port=8000,
             logging_server_proc: TCPLoggingServer=None, loop_type=None):
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.logging_server_proc = logging_server_proc
         self.processes = [self.logging_server_proc]
-        # self.processes = []
+
         self.tasks = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
@@ -75,8 +75,6 @@ class Controller:
             self.logger.debug(f"Using uvloop")
         elif not loop_type:
             self.logger.debug(f"Using default asyncio event loop")
-
-        self.config = config  # cli args & env_vars
 
         # Defined in async method at startup (self.run)
         self.storage = None
@@ -157,7 +155,7 @@ class Controller:
 
     async def setup(self):
         headers_dir = MODULE_DIR.parent
-        self.storage = setup_storage(self.config, self.net_config, headers_dir)
+        self.storage = setup_storage(self.net_config, headers_dir)
         self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
         self.deserializer = Deserializer(self.net_config, self.storage)
@@ -172,7 +170,7 @@ class Controller:
     async def run(self):
         self.running = True
         try:
-            await wait_for_conduit_raw_api(conduit_raw_api_host=CONDUIT_RAW_API_HOST)
+            await wait_for_conduit_raw_api()
             await wait_for_mysql()
             await self.setup()
             self.tasks.append(asyncio.create_task(self.start_jobs()))
@@ -187,8 +185,9 @@ class Controller:
     async def maintain_node_connection(self):
         first_loop = True
         while True:
-            await wait_for_node(node_host=self.config['node_host'],
-                serializer=self.serializer, deserializer=self.deserializer)
+            await wait_for_node(node_host=os.environ['NODE_HOST'],
+                node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
+                deserializer=self.deserializer)
             if not first_loop:
                 self.logger.debug(f"Bitcoin daemon disconnected. "
                                   f"Reconnecting & Re-requesting mempool (as appropriate)...")
@@ -319,7 +318,7 @@ class Controller:
         self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
 
     async def maybe_do_db_repair(self) -> None:
-        """If there were blocks that were only partially flushed that go beyond the checkpointed
+        """If there were blocks that were only partially flushed that go beyond the check-pointed
         block hash, we need to purge those rows from the tables before we resume synchronization."""
         result = self.mysql_db.queries.mysql_get_checkpoint_state()
         if not result:
@@ -340,25 +339,51 @@ class Controller:
         self.mysql_db.tables.mysql_create_mempool_table()
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
+        if reorg_was_allocated:
+            await self.undo_specific_block_hashes(new_hashes_array)
+        else:
+            best_header = self.get_header_for_hash(best_flushed_block_hash)
+            await self.undo_blocks_above_height(best_header.height)
+
+        # Re-attempt indexing of allocated work (that did not complete last time)
+        self.logger.debug(f"Re-attempting previously allocated work")
+        first_allocated_header = self.get_header_for_hash(first_allocated_block_hash)
+        last_allocated_header = self.get_header_for_hash(last_allocated_block_hash)
+        best_flushed_tip_height = await self.index_blocks(reorg_was_allocated, first_allocated_header,
+            last_allocated_header, old_hashes_array, new_hashes_array)
+        self.logger.debug(f"Database repair complete. "
+                          f"New chain tip: {best_flushed_tip_height}")
+
+    async def undo_blocks_above_height(self, height: int):
         unsafe_blocks = []
-        last_allocated_header = get_header_for_hash(last_allocated_block_hash, self.storage.headers,
-            self.storage.headers_lock)
-        for height in range(best_flushed_block_height+1, last_allocated_header.height+1):
+        tip_header = self.sync_state.get_local_block_tip()
+        for height in range(height+1, tip_header.height+1):
             header = self.get_header_for_height(height)
             unsafe_blocks.append((header.hash, height))
 
+        await self._undo_blocks(unsafe_blocks)
+
+    async def undo_specific_block_hashes(self, block_hashes: list[bytes]) -> None:
+        unsafe_blocks = []
+        for block_hash in block_hashes:
+            header = self.get_header_for_hash(block_hash)
+            unsafe_blocks.append((block_hash, header.height))
+
+        await self._undo_blocks(unsafe_blocks)
+
+    async def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:
         ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
-        for block_hash, height in unsafe_blocks:
+        for block_hash, height in blocks_to_undo:
             tx_offsets = next(ipc_sock_client.transaction_offsets_batched([block_hash]))
             block_num = ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
             slice = Slice(start_offset=0, end_offset=0)
-            raw_blocks_array = ipc_sock_client.block_batched([BlockSliceRequestType(block_num, slice)])
+            raw_blocks_array = ipc_sock_client.block_batched(
+                [BlockSliceRequestType(block_num, slice)])
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s",
                 raw_blocks_array, 0)
-            tx_rows, in_rows, out_rows, pd_rows = \
-                parse_txs(array.array('B', raw_block), tx_offsets, height, confirmed=True,
-                    first_tx_pos_batch=0)
+            tx_rows, in_rows, out_rows, pd_rows = parse_txs(array.array('B', raw_block), tx_offsets,
+                height, confirmed=True, first_tx_pos_batch=0)
 
             # Delete
             tx_hashes = [row[0] for row in tx_rows]
@@ -367,17 +392,6 @@ class Controller:
             self.mysql_db.queries.mysql_delete_output_rows(out_rows)
             self.mysql_db.queries.mysql_delete_input_rows(in_rows)
             self.mysql_db.queries.mysql_delete_header_row(block_hash)
-
-        # Re-attempt indexing of allocated work (that did not complete last time)
-        self.logger.debug(f"Re-attempting previously allocated work")
-        first_allocated_header = get_header_for_hash(first_allocated_block_hash,
-            self.storage.headers, self.storage.headers_lock)
-        last_allocated_header = get_header_for_hash(last_allocated_block_hash,
-            self.storage.headers, self.storage.headers_lock)
-        best_flushed_tip_height = await self.index_blocks(reorg_was_allocated, first_allocated_header,
-            last_allocated_header, old_hashes_array, new_hashes_array)
-        self.logger.debug(f"Database repair complete. "
-                          f"New chain tip: {best_flushed_tip_height}")
 
     async def request_mempool(self):
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
@@ -398,6 +412,9 @@ class Controller:
 
     async def spawn_batch_completion_job(self):
         asyncio.create_task(self.batch_completion_job())
+
+    def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
+        return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
         return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
@@ -564,8 +581,7 @@ class Controller:
                 headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
                 first_header_of_batch, success = connect_headers(BytesIO(headers_p2p_msg), self.storage.headers)
                 if success:
-                    start_header = get_header_for_hash(double_sha256(first_header_of_batch),
-                        self.storage.headers, lock=None)
+                    start_header = self.get_header_for_hash(double_sha256(first_header_of_batch))
                     stop_header = self.sync_state.get_local_tip()
                 else:
                     self.logger.debug(f"Potential reorg detected")
@@ -653,8 +669,8 @@ class Controller:
             self.mysql_db.queries.mysql_update_oprhaned_headers(old_hashes)
             assert old_hashes is not None
             assert new_hashes is not None
-            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = await self._get_differential_post_reorg(
-                old_hashes, new_hashes)
+            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
+                await self._get_differential_post_reorg(old_hashes, new_hashes)
 
             self.mysql_db.queries.mysql_load_temp_mempool_additions(additions_to_mempool)
             self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
@@ -671,6 +687,7 @@ class Controller:
         main_batch = await self.loop.run_in_executor(self.general_executor,
             self.sync_state.get_main_batch, start_header, stop_header)
         all_pending_block_hashes = set()
+
 
         all_work_units = self.sync_state.get_work_units_all(is_reorg,
             all_pending_block_hashes, main_batch)
@@ -773,7 +790,7 @@ class Controller:
                         self.sync_state.chip_away_batch_event.set()
 
                 if self.sync_state.block_is_fully_processed(block_hash):
-                    header = self.storage.get_header_for_hash(block_hash)
+                    header = self.get_header_for_hash(block_hash)
                     if not block_hash in blocks_batch_set:
                         self.logger.exception(f"also wrote unexpected block: "
                                               f"{hash_to_hex_str(header.hash)} {header.height} to disc")
@@ -783,7 +800,7 @@ class Controller:
                     with self.sync_state.done_blocks_tx_parser_lock:
                         self.sync_state.done_blocks_tx_parser.add(block_hash)
             except KeyError:
-                header = self.storage.get_header_for_hash(block_hash)
+                header = self.get_header_for_hash(block_hash)
                 self.logger.debug(f"also parsed block: {header.height}")
 
             # all blocks in batch processed

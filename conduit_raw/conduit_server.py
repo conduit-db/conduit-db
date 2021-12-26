@@ -5,21 +5,21 @@ import asyncio
 import logging.handlers
 import logging
 import os
-import selectors
 import sys
-from typing import Dict
-
+from pathlib import Path
+from typing import Any, NamedTuple
 
 from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
-from conduit_lib.constants import (DATABASE_NAME_VARNAME, BITCOIN_NETWORK_VARNAME,
-    DATABASE_USER_VARNAME, DATABASE_HOST_VARNAME, DATABASE_PORT_VARNAME, DATABASE_PASSWORD_VARNAME,
-    TESTNET, SCALINGTESTNET, REGTEST, MAINNET, RESET_VARNAME, CONDUIT_RAW_SERVICE_NAME, )
+from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 
 from conduit_raw.controller import Controller
-from conduit_lib.argparsing import get_parser
-from conduit_lib.utils import cast_to_valid_ipv4, get_log_level
+from conduit_lib.utils import get_log_level, get_network_type, \
+    resolve_hosts_and_update_env_vars, load_dotenv
+
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 loop_type = None
 if sys.platform == 'win32':
@@ -37,68 +37,12 @@ elif sys.platform == 'linux':
         pass
 
 
-DEFAULT_ENV_VARS = [
-    (DATABASE_NAME_VARNAME, "conduitdb", DATABASE_NAME_VARNAME),
-    (BITCOIN_NETWORK_VARNAME, REGTEST, BITCOIN_NETWORK_VARNAME),
-    (RESET_VARNAME, False, RESET_VARNAME),
-    (DATABASE_USER_VARNAME, "conduitadmin", DATABASE_USER_VARNAME),
-    (DATABASE_HOST_VARNAME, "127.0.0.1", DATABASE_HOST_VARNAME),
-    (DATABASE_PORT_VARNAME, 5432, DATABASE_PORT_VARNAME),
-    (DATABASE_PASSWORD_VARNAME, "conduitpass", DATABASE_PASSWORD_VARNAME),
-]
-
-
-def get_env_vars() -> Dict:
-    env_vars = {}
-    for varname, vardefault, configname in DEFAULT_ENV_VARS:
-        varvalue = vardefault
-        if varname in os.environ:
-            varvalue = type(vardefault)(os.environ[varname])
-        env_vars[configname] = varvalue
-    return env_vars
-
-
-def get_and_set_network_type(env_vars):
-    nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
-    for arg in env_vars.keys():
-        if (arg in nets and env_vars.get(arg) is True):
-            env_vars['network'] = arg
-    return env_vars.get('network')
-
-
-def parse_args() -> Dict:
-    parser = get_parser()
-    args = parser.parse_args()
-
-    # net_config is an object passed to various constructors
-    config_options = args.__dict__
-    config_options = {
-        key: value for key, value in config_options.items() if value is not None
-    }
-    return config_options
-
-
-def setup():
-    env_vars = {}
-    env_vars.update(get_env_vars())
-    env_vars.update(parse_args())  # overrides
-    get_and_set_network_type(env_vars)
+def configure():
+    dotenv_path = MODULE_DIR.parent / '.env'
+    load_dotenv(dotenv_path)
+    resolve_hosts_and_update_env_vars()
     set_logging_level(get_log_level(CONDUIT_RAW_SERVICE_NAME))
     setup_tcp_logging(port=54545)
-    return env_vars
-
-
-def set_env_vars(config: Dict):
-    logger = logging.getLogger("set_env_vars")
-    os.environ['GRPC_ENABLE_FORK_SUPPORT'] = '1'
-    if sys.platform == 'linux':
-        os.environ['GRPC_POLL_STRATEGY'] = 'epoll1'
-    host = cast_to_valid_ipv4(config['mysql_host'].split(":")[0])
-    port = config['mysql_host'].split(":")[1]
-    os.environ['MYSQL_HOST'] = host
-    os.environ['MYSQL_PORT'] = port
-    logger.debug(f"MYSQL_HOST: {host}")
-    logger.debug(f"MYSQL_PORT: {port}")
 
 
 def loop_exception_handler(loop, context) -> None:
@@ -107,19 +51,25 @@ def loop_exception_handler(loop, context) -> None:
     logger.debug(context)
 
 
+def print_config():
+    logger = logging.getLogger("print-config")  # Not logged to file or remote TCPLoggingServer
+    logger.debug(f"MYSQL_HOST: {os.environ['MYSQL_HOST']}")
+    logger.debug(f"MYSQL_PORT: {os.environ['MYSQL_PORT']}")
+
+
 async def main():
+    os.environ['SERVER_TYPE'] = "ConduitRaw"
     loop = asyncio.get_running_loop()
     try:
         logging_server_proc = TCPLoggingServer(port=54545, service_name=CONDUIT_RAW_SERVICE_NAME,
             kill_port=46464)
         logging_server_proc.start()
-        config = setup()
-        set_env_vars(config)
-        config['server_type'] = "ConduitRaw"
+        configure()  # All configuration is via environment variables
+
         loop.set_exception_handler(loop_exception_handler)
-        net_config = NetworkConfig(config.get("network"), node_host=config['node_host'])
+        net_config = NetworkConfig(os.environ["NETWORK"], node_host=os.environ['NODE_HOST'],
+            node_port=int(os.environ['NODE_PORT']))
         controller = Controller(
-            config=config,
             net_config=net_config, host="127.0.0.1", port=8000,
             logging_server_proc=logging_server_proc,
             loop_type=loop_type,

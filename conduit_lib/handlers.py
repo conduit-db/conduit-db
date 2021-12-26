@@ -1,4 +1,5 @@
 import io
+import os
 import typing
 import logging
 import struct
@@ -31,7 +32,7 @@ class Handlers:
         self.serializer = Serializer(self.net_config, storage)
         self.deserializer = Deserializer(self.net_config, storage)
         self.storage = storage
-        self.server_type = self.controller.config['server_type']
+        self.server_type = os.environ['SERVER_TYPE']
 
     async def on_version(self, message):
         # logger.debug("handling version...")

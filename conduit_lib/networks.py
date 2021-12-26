@@ -2,7 +2,7 @@ import logging
 
 
 from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet, BitcoinRegtest,
-    Headers, MissingHeader, Network, )
+    Headers, MissingHeader, Network)
 from typing import Optional, List
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
@@ -140,9 +140,10 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network_type: str, node_host: Optional[str]=None):
+    def __init__(self, network_type: str, node_host: str, node_port: int):
         network: AbstractNetwork = NETWORKS[network_type]
         self.node_host = node_host
+        self.node_port = node_port
         self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
@@ -180,11 +181,9 @@ class NetworkConfig:
 
     def set_peers(self, network):
         if self.node_host:
-            host = self.node_host.split(":")[0]
-            host = cast_to_valid_ipv4(host)  # in docker a container name needs dns resolution
-            port = int(self.node_host.split(":")[1])
+            host = cast_to_valid_ipv4(self.node_host)  # in docker a container name needs dns resolution
+            port = int(self.node_port)
             self.peers = [Peer(host, port)]
-
         else:
             self.get_default_peers(network)
 
