@@ -9,7 +9,7 @@ import pytest
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.store import setup_storage, Storage
-
+from conduit_lib.utils import get_network_type
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,7 +26,7 @@ class TestStorage:
         "server_type": "ConduitRaw"
     }
 
-    net_config = NetworkConfig(config.get("network"))
+    net_config = NetworkConfig(get_network_type(), node_host='127.0.0.1', node_port=18444)
     headers = bitcoinx.Headers(
         net_config.BITCOINX_COIN, MODULE_DIR / "data/headers.mmap", net_config.CHECKPOINT
     )

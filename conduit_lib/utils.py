@@ -7,18 +7,23 @@ import os
 import socket
 import struct
 import threading
+import time
 from binascii import hexlify
-from io import BytesIO
 from typing import Tuple, Optional
 
 import bitcoinx
-from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes,
-    pack_le_uint32, MissingHeader, Headers, Header, Chain, hash_to_hex_str, )
-
+from bitcoinx import (
+    read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes, pack_le_uint32, MissingHeader,
+    Headers, Header, Chain
+)
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
-    GENESIS_BLOCK
+    GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
+from .deserializer_types import NodeAddr
 from .types import ChainHashes
+from typing import Union
+from _io import BytesIO
+from pathlib import Path
 
 logger = logging.getLogger("conduit-lib-utils")
 
@@ -29,7 +34,11 @@ def cast_to_valid_ipv4(ipv4: str) -> str:
         return ipv4
     except ValueError:
         # Need to resolve dns name to get ipv4
-        ipv4 = socket.gethostbyname(ipv4)
+        try:
+            ipv4 = socket.gethostbyname(ipv4)
+        except socket.gaierror:
+            logger.error(f"Failed to resolve ip address for hostname: {ipv4}")
+            time.sleep(0.2)
         return ipv4
 
 
@@ -41,7 +50,7 @@ def is_docker() -> bool:
     )
 
 
-def payload_to_checksum(payload):
+def payload_to_checksum(payload: Union[bytearray, bytes]) -> bytes:
     return double_sha256(payload)[:4]
 
 
@@ -65,20 +74,20 @@ def ipv4_to_mapped_ipv6(ipv4: str) -> bytes:
     return bytes(10) + bytes.fromhex("ffff") + ipaddress.IPv4Address(ipv4).packed
 
 
-def mapped_ipv6_to_ipv4(f):
+def mapped_ipv6_to_ipv4(f: BytesIO) -> NodeAddr:
     services = read_le_uint64(f.read)
     reserved = f.read(12)
     ipv4 = socket.inet_ntoa(f.read(4))
     port = read_be_uint16(f.read)
-    return services, ipv4, port
+    return NodeAddr(services, ipv4, port)
 
 
-def bytes_to_hex(bytestr, upper=False):
+def bytes_to_hex(bytestr: bytes, upper: bool = False) -> str:
     hexed = hexlify(bytestr).decode()
     return hexed.upper() if upper else hexed
 
 
-def hex_to_bytes(hexed):
+def hex_to_bytes(hexed: str):
 
     if len(hexed) & 1:
         hexed = "0" + hexed
@@ -104,13 +113,14 @@ def flip_hex_byte_order(string):
     return bytes_to_hex(hex_to_bytes(string)[::-1])
 
 
-def calc_bloom_filter_size(n_elements, false_positive_rate):
+# NOTE(AustEcon) - This is untested and probably wrong - I've never used it
+def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     """two parameters that need to be chosen. One is the size of the filter in bytes. The other
         is the number of hash functions to use. See bip37."""
     filter_size = (
         -1 / math.pow(math.log(2), 2) * n_elements * math.log(false_positive_rate)
     ) / 8
-    return filter_size
+    return int(filter_size)
 
 
 def unpack_varint_from_mv(buffer) -> Tuple[int, int]:
@@ -126,7 +136,7 @@ def unpack_varint_from_mv(buffer) -> Tuple[int, int]:
     return struct.unpack_from("<Q", buffer, offset=1)[0], 9
 
 
-def get_log_level(service_name):
+def get_log_level(service_name: str) -> int:
     if service_name == CONDUIT_INDEX_SERVICE_NAME:
         level = os.getenv(f'CONDUIT_INDEX_LOG_LEVEL', 'DEBUG')
     elif service_name == CONDUIT_RAW_SERVICE_NAME:
@@ -148,15 +158,10 @@ def get_log_level(service_name):
         return PROFILING
 
 
-def get_conduit_raw_host_and_port():
-    try:
-        # Todo - this is messy
-        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-        CONDUIT_RAW_HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-        CONDUIT_RAW_PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-        return CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
-    except Exception:
-        logger.exception("unexpected exception")
+def get_conduit_raw_host_and_port() -> tuple[str, int]:
+    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')
+    CONDUIT_RAW_API_PORT: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
+    return CONDUIT_RAW_API_HOST, CONDUIT_RAW_API_PORT
 
 
 def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
@@ -287,8 +292,9 @@ def _get_chain_hashes_back_to_common_parent(tip: Header, common_parent_height: i
     return chain_hashes
 
 
-def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, headers_lock: threading.RLock) \
-        -> tuple[bool, Header, Header, Optional[ChainHashes], Optional[ChainHashes]]:
+def connect_headers_reorg_safe(message: bytes, headers_store: Headers,
+        headers_lock: threading.RLock) \
+            -> tuple[bool, Header, Header, Optional[ChainHashes], Optional[ChainHashes]]:
     """This needs to ingest a p2p messaging protocol style headers message and if they do indeed
     constitute a reorg event, they need to go far back enough to include the common parent
     height so it can connect to our local headers longest chain. Otherwise, raises ValueError"""
@@ -327,3 +333,42 @@ def connect_headers_reorg_safe(message: bytearray, headers_store: Headers, heade
                 lock=None)
             stop_header = new_tip
         return is_reorg, start_header, stop_header, old_chain, new_chain
+
+
+def load_dotenv(dotenv_path: Path) -> None:
+    with open(dotenv_path, 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            if line.startswith("#") or line.strip() == '':
+                continue
+
+            # Split line on "=" symbol but need to take care of base64 encoded string values.
+            split_line = line.strip().split("=")
+            key = split_line[0]
+            val = split_line[1] + "".join(["=" + part for part in split_line[2:]])
+            os.environ[key] = val
+
+
+class InvalidNetworkException(Exception):
+    pass
+
+
+def get_network_type() -> str:
+    nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
+    for key, val in os.environ.items():
+        if key == 'NETWORK':
+            if not val.lower() in nets:
+                raise InvalidNetworkException(f"Network not found: must be one of: {nets}")
+            return val.lower()
+    raise ValueError("There is no 'NETWORK' key in os.environ")
+
+
+def resolve_hosts_and_update_env_vars() -> None:
+    for key in os.environ:
+        if key in {"MYSQL_HOST", "NODE_HOST", "CONDUIT_RAW_API_HOST"}:
+            logger.debug(f"Checking environment variable: {key}")
+            logger.debug(f"os.environ[key] before: {os.environ[key]}")
+            # Resolve the IP address (particularly important for docker container names)
+            host = cast_to_valid_ipv4(os.environ[key].split(":")[0])
+            os.environ[key] = host
+            logger.debug(f"os.environ[key] after: {os.environ[key]}")

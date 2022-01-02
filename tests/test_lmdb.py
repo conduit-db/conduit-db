@@ -10,8 +10,7 @@ from pathlib import Path
 import bitcoinx
 from bitcoinx import double_sha256
 
-from conduit_index.conduit_index.sync_state import CONDUIT_RAW_HOST, CONDUIT_RAW_PORT
-from conduit_lib.algorithms import get_mtree_node_counts_per_level
+
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
@@ -41,7 +40,8 @@ class TestLMDBDatabase:
         self.lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
         self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread)
         self.ipc_sock_server_thread.start()
-        os.environ['CONDUIT_RAW_API_HOST'] = 'localhost:34586'
+        os.environ['CONDUIT_RAW_API_HOST'] = 'localhost'
+        os.environ['CONDUIT_RAW_API_PORT'] = '34586'
         self.ipc_sock_client = IPCSocketClient()
 
     def teardown_class(self):

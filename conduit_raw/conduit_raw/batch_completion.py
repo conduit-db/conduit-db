@@ -1,11 +1,14 @@
 import asyncio
 import logging
-import multiprocessing
 import queue
 import threading
 import typing
 
 from bitcoinx import hash_to_hex_str
+from queue import Queue
+from typing import Set
+
+from conduit_lib.types import MultiprocessingQueue
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -25,17 +28,18 @@ class BatchCompletionRaw(threading.Thread):
     """Only Processes ACK messages from the BlockWriter worker"""
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_blk_writer, blocks_batch_set_queue_raw, daemon=True):
+            worker_ack_queue_blk_writer: MultiprocessingQueue,
+            blocks_batch_set_queue_raw: Queue[Set[bytes]], daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-raw")
         self.controller: Controller = controller
         self.sync_state = sync_state
         self.get_header_for_hash = self.controller.get_header_for_hash
-        self.worker_ack_queue_blk_writer: multiprocessing.Queue = worker_ack_queue_blk_writer
+        self.worker_ack_queue_blk_writer: Queue = worker_ack_queue_blk_writer
         self.blocks_batch_set_queue_raw = blocks_batch_set_queue_raw
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set):
+    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_blk_writer.get()
             if block_hash in blocks_batch_set:
@@ -67,18 +71,24 @@ class BatchCompletionRaw(threading.Thread):
 class BatchCompletionMtree(threading.Thread):
     """Only Processes ACK messages from the MTree worker"""
 
-    def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_mtree, blocks_batch_set_queue_mtree, daemon=True):
+    def __init__(
+            self,
+            controller: 'Controller',
+            sync_state: 'SyncState',
+            worker_ack_queue_mtree: Queue[bytes],
+            blocks_batch_set_queue_mtree: Queue,
+            daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
+
         self.logger = logging.getLogger("batch-completion-mtree")
         self.controller: Controller = controller
         self.sync_state = sync_state
         self.get_header_for_hash = self.controller.get_header_for_hash
-        self.worker_ack_queue_mtree: multiprocessing.Queue = worker_ack_queue_mtree
+        self.worker_ack_queue_mtree: Queue[bytes] = worker_ack_queue_mtree
         self.blocks_batch_set_queue_mtree = blocks_batch_set_queue_mtree
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set):
+    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_mtree.get()
             if block_hash in blocks_batch_set:
@@ -111,7 +121,7 @@ class BatchCompletionPreprocessor(threading.Thread):
     """Only Processes ACK messages from the Preprocessor worker"""
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_preproc, blocks_batch_set_queue_preproc, daemon=True):
+            worker_ack_queue_preproc: Queue, blocks_batch_set_queue_preproc: Queue, daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-preproc")
         self.controller: Controller = controller
@@ -121,7 +131,7 @@ class BatchCompletionPreprocessor(threading.Thread):
         self.blocks_batch_set_queue_preproc = blocks_batch_set_queue_preproc
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set):
+    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_preproc.get()
             if block_hash in blocks_batch_set:

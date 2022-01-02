@@ -1,16 +1,14 @@
-import array
 import functools
 import io
 import logging
 import os
 import sys
 import time
-import typing
 from io import BytesIO
 from math import ceil, log
 from pathlib import Path
 from struct import Struct
-from typing import List, Tuple, Optional, IO, Set
+from typing import List, Tuple, Optional, Set, Callable, BinaryIO, cast
 
 import bitcoinx
 import cbor2
@@ -18,9 +16,10 @@ import filelock
 import lmdb
 from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_le_Q
-from filelock import FileLock
+from filelock import FileLock, BaseFileLock
 
 from conduit_lib.algorithms import calc_depth, get_mtree_node_counts_per_level
+from conduit_lib.database.lmdb.types import MerkleTree
 from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, MerkleTreeArrayLocation, \
     ChainHashes, TxOffsetsArrayLocation
 
@@ -32,10 +31,6 @@ except ImportError:
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 struct_be_I = Struct(">I")
 struct_le_I = Struct("<I")
-
-
-class EntryNotFound(Exception):
-    pass
 
 
 class LMDB_Database:
@@ -59,7 +54,7 @@ class LMDB_Database:
     TX_OFFSETS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'tx_offsets'
     TX_OFFSETS_DIR = os.environ.get("TX_OFFSETS_DIR", str(TX_OFFSETS_DIR_DEFAULT))
 
-    def __init__(self, storage_path: Optional[str]=None):
+    def __init__(self, storage_path: Optional[str]=None) -> None:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
@@ -78,14 +73,6 @@ class LMDB_Database:
         if not Path(storage_path).exists():
             os.makedirs(Path(storage_path), exist_ok=True)
 
-        self.env: Optional[lmdb.Environment] = None
-        self.blocks_db = None
-        self.block_nums_db = None
-        self.mtree_db = None
-        self.tx_offsets_db = None
-        self.block_metadata_db = None
-        self._opened = False
-
         if sys.platform == 'linux':
             self._map_size = pow(1024, 4) * 32  # 64 terabytes
         else:
@@ -94,7 +81,16 @@ class LMDB_Database:
             # windows is for development use only...
             self._map_size = pow(1024, 3) * 20
         self._storage_path = storage_path
-        self.open()
+
+        self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
+            readahead=False, sync=False, map_size=self._map_size)
+        self.blocks_db = self.env.open_db(self.BLOCKS_DB)
+        self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)
+        self.mtree_db = self.env.open_db(self.MTREE_DB)
+        self.tx_offsets_db = self.env.open_db(self.TX_OFFSETS_DB)
+        self.block_metadata_db = self.env.open_db(self.BLOCK_METADATA_DB)
+        self._opened = True
+
         self.logger.debug(f"opened LMDB database at {storage_path}")
 
         self._last_dat_file_num_blocks = 0
@@ -110,18 +106,7 @@ class LMDB_Database:
         # self.logger.debug(f"Next write path blocks: {self.next_write_path}")
         # self.logger.debug(f"Next write path merkle: {self.next_write_path_merkle}")
 
-    def open(self):
-        self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
-            readahead=False, sync=False, map_size=self._map_size)
-        self.blocks_db = self.env.open_db(self.BLOCKS_DB)
-        self.block_nums_db = self.env.open_db(self.BLOCK_NUMS_DB)
-        self.mtree_db = self.env.open_db(self.MTREE_DB)
-        self.tx_offsets_db = self.env.open_db(self.TX_OFFSETS_DB)
-        self.block_metadata_db = self.env.open_db(self.BLOCK_METADATA_DB)
-        self._opened = True
-        return True
-
-    def close(self):
+    def close(self) -> None:
         if not self._opened:
             return
 
@@ -133,7 +118,7 @@ class LMDB_Database:
         self._opened = False
 
     def _read_slice(self, read_path: str, start_offset: int, end_offset: int,
-            start_offset_in_dat_file: int, end_offset_in_dat_file: int):
+            start_offset_in_dat_file: int, end_offset_in_dat_file: int) -> bytes:
         with open(read_path, 'rb') as f:
             f.seek(start_offset_in_dat_file + start_offset)
             if end_offset == 0:
@@ -144,33 +129,37 @@ class LMDB_Database:
                 len_of_slice = end_offset - start_offset
                 return f.read(len_of_slice)
 
-    def get_block_num(self, block_hash: bytes) -> int:
+    def get_block_num(self, block_hash: bytes) -> Optional[int]:
         with self.env.begin(db=self.block_nums_db) as txn:
             result = txn.get(block_hash)
             if result:
-                return struct_be_I.unpack(result)[0]
-            raise EntryNotFound(f"Block num for block_hash: "
-                                f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
+                return cast(int, struct_be_I.unpack(result)[0])
+            self.logger.error(f"Block num for block_hash: "
+                              f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
+            return None
 
     def get_block(self, block_num: int, start_offset: int=0,
-            end_offset: int=0, buffers=False) -> bytes:
+            end_offset: int=0) -> Optional[bytes]:
         """If end_offset=0 then it goes to the end of the block"""
         with self.env.begin(db=self.blocks_db, buffers=False) as txn:
             val: bytes = txn.get(struct_be_I.pack(block_num))
             if not val:
-                raise EntryNotFound(f"Block for block_num: {block_num} not found")
+                logger.error(f"Block for block_num: {block_num} not found")
+                return None
             read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
 
         return self._read_slice(read_path, start_offset, end_offset, start_offset_in_dat_file,
             end_offset_in_dat_file)
 
     def get_merkle_tree_data(self, block_hash: bytes, start_offset: int=0,
-            end_offset: int=0, buffers=False) -> bytes:
+            end_offset: int=0) -> Optional[bytes]:
         """If end_offset=0 then it goes to the end of the block"""
         with self.env.begin(db=self.mtree_db, buffers=False) as txn:
             val: bytes = txn.get(block_hash)
             if not val:
-                raise EntryNotFound(f"Merkle tree for block_hash: {block_hash} not found")
+                logger.error(f"Merkle tree for block_hash: {hash_to_hex_str(block_hash)} "
+                             f"not found")
+                return None
             read_path, start_offset_in_dat_file, end_offset_in_dat_file, base_node_count = cbor2.loads(val)
 
         with open(read_path, 'rb') as f:
@@ -191,13 +180,16 @@ class LMDB_Database:
             tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
             return tx_hash
 
-    def get_single_tx_offset(self, tx_loc: TxLocation) -> Tuple[int, int]:
+    def get_single_tx_offset(self, tx_loc: TxLocation) -> Optional[Tuple[int, int]]:
         """If end_offset=0 then it goes to the end of the block"""
-        self.logger.debug(f"get_single_tx_offset: block_hash={bitcoinx.hash_to_hex_str(tx_loc.block_hash)}")
+        self.logger.debug(f"get_single_tx_offset: block_hash: "
+                          f"{bitcoinx.hash_to_hex_str(tx_loc.block_hash)}")
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(tx_loc.block_hash)
             if not val:
-                raise EntryNotFound(f"Tx offsets for block_hash: {tx_loc.block_hash} not found")
+                logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(tx_loc.block_hash)} "
+                             f"not found")
+                return None
             read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
 
         # Starting offset of tx
@@ -225,17 +217,19 @@ class LMDB_Database:
         return rawtx
 
     def _get_merkle_file_offsets_for_level(self, mtree_array_loc: MerkleTreeArrayLocation,
-            node_counts: list[int], level: int):
+            node_counts: list[int], level: int) -> Tuple[int, int]:
         hash_length = 32
         to_subtract_from_end = 0
         for lvl in range(0, level):
-            # self.logger.debug(f"node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
+            # self.logger.debug(
+            # f"node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
             to_subtract_from_end += node_counts[lvl] * hash_length
 
         to_add_to_start = 0
         # self.logger.debug(f"calc_depth(node_counts[-1]) - 1={calc_depth(node_counts[-1]) - 1}")
         for lvl in range(calc_depth(node_counts[-1]) - 1, level, -1):
-            # self.logger.debug(f"to_add_to_start: node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
+            # self.logger.debug(f"to_add_to_start:
+            # node_counts[lvl] * hash_length={node_counts[lvl] * hash_length}; level={lvl}")
             to_add_to_start += node_counts[lvl] * hash_length
 
         end_offset = mtree_array_loc.end_offset - to_subtract_from_end
@@ -264,13 +258,13 @@ class LMDB_Database:
             # print(f"cur.last()={cur.last()}")
             if cur.last():
                 # print(f"cur.key()={cur.key()}")
-                last_block_num = struct_be_I.unpack(cur.key())[0]
+                last_block_num: int = struct_be_I.unpack(cur.key())[0]
                 # print(f"last_block_num: {last_block_num}")
                 return last_block_num
             else:
                 return 0  # so that first entry is key==1
 
-    def _get_next_write_path_for_merkle_trees(self) -> [Path, FileLock]:
+    def _get_next_write_path_for_merkle_trees(self) -> Tuple[Path, BaseFileLock]:
         # self.logger.debug(f"Getting next write path for merkle trees...")
         padded_str_num = str(self._last_dat_file_num_merkle_trees).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
@@ -284,10 +278,10 @@ class LMDB_Database:
 
         lock_path = filename
 
-        flock = FileLock(lock_path, timeout=10)
+        flock = FileLock(lock_path, timeout=10)  # pylint: disable=E0110
         return write_path, flock
 
-    def _get_next_write_path_for_tx_offsets(self) -> [Path, FileLock]:
+    def _get_next_write_path_for_tx_offsets(self) -> Tuple[Path, BaseFileLock]:
         self.logger.debug(f"Getting next write path for tx offsets...")
         padded_str_num = str(self._last_dat_file_num_tx_offsets).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
@@ -301,10 +295,10 @@ class LMDB_Database:
 
         lock_path = filename
 
-        flock = FileLock(lock_path, timeout=10)
+        flock = FileLock(lock_path, timeout=10)  # pylint: disable=E0110
         return write_path, flock
 
-    def _get_next_write_path_for_blocks(self) -> str:
+    def _get_next_write_path_for_blocks(self) -> Path:
         # self.logger.debug(f"Getting next write path for raw blocks...")
         padded_str_num = str(self._last_dat_file_num_blocks).zfill(8)
         filename = f"blk_{padded_str_num}.dat"
@@ -318,15 +312,16 @@ class LMDB_Database:
 
         return write_path
 
-    def write_blocks_to_file(self, buffer: bytes, write_path: str):
+    def write_blocks_to_file(self, buffer: bytes, write_path: Path) -> None:
         with open(write_path, 'wb') as f:
             f.write(buffer)
 
-    def append_to_file(self, buffer: bytes, file: IO) -> int:
+    def append_to_file(self, buffer: bytes, file: BinaryIO) -> int:
         file.write(buffer)
         return file.tell()
 
-    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]], shared_mem_buffer: memoryview):
+    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]],
+            shared_mem_buffer: memoryview) -> None:
         """write blocks in append-only mode to disc. The whole batch is written to a single
         file."""
         try:
@@ -352,11 +347,11 @@ class LMDB_Database:
                 len_block = blk_end_pos - blk_start_pos
 
                 raw_blocks_arr += raw_block
-                write_path = Path(write_path).as_posix()
+                write_path_as_str = Path(write_path).as_posix()
                 end_offset = start_offset + len_block
 
                 key = struct_be_I.pack(block_num)
-                val = cbor2.dumps((write_path, start_offset, end_offset))
+                val = cbor2.dumps((write_path_as_str, start_offset, end_offset))
                 # self.logger.debug(f"Writing block num: {block_num} to "
                 #                   f"write_path: {write_path}; "
                 #                   f"start_offset: {start_offset}; "
@@ -383,15 +378,16 @@ class LMDB_Database:
 
     def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
             -> bytes:
-        # self.logger.debug(f"get_mtree_node called for block_hash: {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
+        # self.logger.debug(f"get_mtree_node called for block_hash:
+        # {hash_to_hex_str(block_hash)} ({block_hash}), level: {level}, position: {position}")
         array = self.get_mtree_row(block_hash, level, cursor)
         assert array is not None
         node_hash = array[position*32:(position+1)*32]
         assert node_hash is not None
-        assert len(node_hash) == 32, f"this is the array: {array}"
+        assert len(node_hash) == 32, f"this is the array: {array!r}"
         return bytes(node_hash)  # convert from memory view if needed
 
-    def merkle_branch_length(self, tx_count: int):
+    def merkle_branch_length(self, tx_count: int) -> int:
         '''Return the length of a merkle branch given the number of hashes.'''
         return ceil(log(tx_count, 2))
 
@@ -400,7 +396,7 @@ class LMDB_Database:
         base_level = calc_depth(block_metadata.tx_count) - 1
         block_hash = tx_metadata.block_hash
 
-        odd_node_count_for_level = lambda x: current_level_node_count & 1
+        odd_node_count_for_level: Callable[[int], int] = lambda x: x & 1
         with self.env.begin(db=self.mtree_db, write=False, buffers=True) as txn:
             cur = txn.cursor()
             index = tx_metadata.tx_position
@@ -433,14 +429,14 @@ class LMDB_Database:
                 current_level_node_count = current_level_node_count // 2
             return branch, hash_to_hex_str(merkle_root)
 
-    def _pack_list_to_concatenated_bytes(self, hashes):
+    def _pack_list_to_concatenated_bytes(self, hashes: List[bytes]) -> bytearray:
         # Todo - see algorithms.py for future optimization plans
         byte_array = bytearray()
         for _hash in hashes:
             byte_array += _hash
         return byte_array
 
-    def _pack_mtree_to_array(self, mtree: dict):
+    def _pack_mtree_to_array(self, mtree: MerkleTree) -> bytes:
         """Note: Each level has an even number of nodes (duplicate hashes appended as needed)"""
         mtree_array = bytearray()
         for level in reversed(range(len(mtree))):
@@ -449,13 +445,13 @@ class LMDB_Database:
             mtree_array += value
         return mtree_array
 
-    def _open_next_merkle_tree_file(self, file: typing.IO) -> [typing.IO, str]:
+    def _open_next_merkle_tree_file(self) -> Tuple[BinaryIO, Path, BaseFileLock]:
         write_path, flock = self._get_next_write_path_for_merkle_trees()
         flock.acquire()
         file = open(write_path, 'ab')
         return file, write_path, flock
 
-    def _open_initial_merkle_tree_file(self) -> [typing.IO, int, str]:
+    def _open_initial_merkle_tree_file(self) -> Tuple[BinaryIO, int, Path, BaseFileLock]:
         """Note: Leaves an open file - must remember to close"""
         # cached so that subsequent batches can append to the same file
         try:
@@ -478,8 +474,9 @@ class LMDB_Database:
                 return file, file_size, write_path, other_flock
         except filelock.Timeout:
             self.logger.exception("Filelock timed out")
+            raise
 
-    def put_merkle_trees(self, batched_merkle_trees: list[tuple[bytes, dict, int]]):
+    def put_merkle_trees(self, batched_merkle_trees: list[tuple[bytes, MerkleTree, int]]) -> None:
         """In the current design we store the entire txid set and all levels of the merkle tree)
         We need the full, ordered txid set for other queries anyway so there is little to be gained
         by not storing the interior hashes as well. """
@@ -505,11 +502,13 @@ class LMDB_Database:
                     if new_file_size > MAX_DAT_FILE_SIZE:
                         file.close()
                         acquired_flock.release()
-                        file, write_path, acquired_flock = self._open_next_merkle_tree_file(file)
+                        file, write_path, acquired_flock = self._open_next_merkle_tree_file()
 
                     # LMDB only stores the mapping of hash -> location
-                    mtree_array_location = MerkleTreeArrayLocation(str(write_path), start_offset, end_offset, base_node_count)
-                    # self.logger.debug(f"writing merkle tree array ({hash_to_hex_str(block_hash)}): {mtree_array_location}")
+                    mtree_array_location = MerkleTreeArrayLocation(str(write_path), start_offset,
+                        end_offset, base_node_count)
+                    # self.logger.debug(f"writing merkle tree array (
+                    # {hash_to_hex_str(block_hash)}): {mtree_array_location}")
                     cursor.put(block_hash, cbor2.dumps(mtree_array_location))
 
                     start_offset += len(mtree_array)
@@ -517,13 +516,13 @@ class LMDB_Database:
             file.close()
             acquired_flock.release()
 
-    def _open_next_tx_offsets_file(self, file: typing.IO) -> [typing.IO, str]:
+    def _open_next_tx_offsets_file(self) -> Tuple[BinaryIO, Path, BaseFileLock]:
         write_path, flock = self._get_next_write_path_for_tx_offsets()
         flock.acquire()
         file = open(write_path, 'ab')
         return file, write_path, flock
 
-    def _open_initial_tx_offsets_file(self) -> [typing.IO, int, str]:
+    def _open_initial_tx_offsets_file(self) -> Tuple[BinaryIO, int, Path, BaseFileLock]:
         """Note: Leaves an open file - must remember to close"""
         # cached so that subsequent batches can append to the same file
         try:
@@ -546,8 +545,9 @@ class LMDB_Database:
                 return file, file_size, write_path, other_flock
         except filelock.Timeout:
             self.logger.exception("Filelock timed out")
+            raise
 
-    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, array.ArrayType]]):
+    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) -> None:
         """Maybe should write this out to flat files as for mtrees and blocks..."""
         file, file_size, write_path, acquired_flock = self._open_initial_tx_offsets_file()
         try:
@@ -560,7 +560,7 @@ class LMDB_Database:
                     if new_file_size > MAX_DAT_FILE_SIZE:
                         file.close()
                         acquired_flock.release()
-                        file, write_path, flock = self._open_next_tx_offsets_file(file)
+                        file, write_path, flock = self._open_next_tx_offsets_file()
 
                     # LMDB only stores the mapping of hash -> location
                     tx_offsets_location = TxOffsetsArrayLocation(str(write_path), start_offset,
@@ -576,12 +576,13 @@ class LMDB_Database:
             file.close()
             acquired_flock.release()
 
-    def get_tx_offsets(self, block_hash: bytes) -> bytes:
+    def get_tx_offsets(self, block_hash: bytes) -> Optional[bytes]:
         """If end_offset=0 then it goes to the end of the block"""
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(block_hash)
             if not val:
-                raise EntryNotFound(f"Tx offsets for block_hash: {block_hash} not found")
+                logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(block_hash)} not found")
+                return None
             read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
 
         return self._read_slice(read_path, 0, 0, start_offset_in_dat_file, end_offset_in_dat_file)
@@ -589,6 +590,7 @@ class LMDB_Database:
     def get_block_metadata(self, block_hash: bytes) -> BlockMetadata:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
+        assert self.env is not None
         with self.env.begin(db=self.block_metadata_db, write=False, buffers=True) as txn:
             val = txn.get(block_hash)
             if val:
@@ -598,7 +600,7 @@ class LMDB_Database:
                 tx_count = struct_le_Q.unpack(val[8:16])[0]
                 return BlockMetadata(block_size, tx_count)
 
-    def _make_reorg_tx_set(self, chain: ChainHashes):
+    def _make_reorg_tx_set(self, chain: ChainHashes) -> Set[bytes]:
         chain_tx_hashes = set()
         for block_hash in chain:
             block_metadata = self.get_block_metadata(block_hash)
@@ -639,7 +641,7 @@ class LMDB_Database:
         removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
         return removals_from_mempool, additions_to_mempool, old_chain_tx_hashes
 
-    def sync(self):
+    def sync(self) -> None:
         self.env.sync(True)
 
 

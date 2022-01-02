@@ -1,20 +1,24 @@
 import asyncio
 import io
-import socket
-from asyncio import BufferedProtocol
-from typing import Callable
-
-import bitcoinx
+from asyncio import BufferedProtocol, Transport, BaseProtocol, BaseTransport
+from typing import Callable, cast, Optional, NamedTuple, Union
 from bitcoinx import read_varint
 from collections import namedtuple
 from multiprocessing import shared_memory
 import logging
 import struct
 
-from .commands import BLOCK_BIN, TX_BIN, HEADERS_BIN
+from .commands import BLOCK_BIN, TX_BIN
 from .constants import HEADER_LENGTH, RECV_BUFFER_HIGH_WATER
 
 Header = namedtuple("Header", "magic command payload_size checksum")
+
+
+class BlockCallback(NamedTuple):
+    cur_msg_start_pos: int
+    cur_msg_end_pos: int
+    raw_block_header: bytes
+    block_tx_count: int
 
 
 class BitcoinNetIO(BufferedProtocol):
@@ -43,41 +47,46 @@ class BitcoinNetIO(BufferedProtocol):
     shm_buffer_view = shm_buffer.buf
     _pos = 0
     _last_msg_end_pos = 0
+    _payload_size = 0
 
-    def __init__(self, on_buffer_full: Callable, on_msg: Callable, on_connection_made: Callable,
-            on_connection_lost: Callable):
+    def __init__(self, on_buffer_full: Callable[[], None],
+            on_msg: Callable[[bytes, Union[BlockCallback, memoryview]], None],
+            on_connection_made: Callable[[], None],
+            on_connection_lost: Callable[[], None]) -> None:
 
         self.on_buffer_full_callback = on_buffer_full
         self.on_msg_callback = on_msg
         self.on_connection_made_callback = on_connection_made
         self.on_connection_lost_callback = on_connection_lost
 
-    async def connect(self, host: str, port: int):
+    async def connect(self, host: str, port: int) -> tuple[BaseTransport, BaseProtocol]:
         loop = asyncio.get_event_loop()
         protocol_factory = lambda: self
         self.transport, self.session = await loop.create_connection(protocol_factory, host, port)
         return self.transport, self.session
 
     # Two states: 'resumed' & 'paused'
-    def resume(self):
+    def resume(self) -> None:
         self.logger.debug("resuming reading...")
         self._new_buffer()
+        self.transport = cast(Transport, self.transport)
         self.transport.resume_reading()
 
-    def pause(self):
+    def pause(self) -> None:
         self.logger.debug("pausing reading...")
+        self.transport = cast(Transport, self.transport)
         self.transport.pause_reading()
 
-    def send_message(self, message):
+    def send_message(self, message: bytes) -> None:
+        self.transport = cast(Transport, self.transport)
         self.transport.write(message)
 
-    def connection_made(self, transport):
+    def connection_made(self, transport: BaseTransport) -> None:
         self.transport = transport
-        self._payload_size = None
         self.logger.info("connection made")
         self.on_connection_made_callback()
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Optional[BaseException]) -> None:
         if exc:
             self.logger.exception(exc)
         self.on_connection_lost_callback()
@@ -94,7 +103,7 @@ class BitcoinNetIO(BufferedProtocol):
     #     except Exception:
     #         self.logger.exception("unexpected problem in '_resize_buffer'")
 
-    def _new_buffer(self):
+    def _new_buffer(self) -> None:
         """takes the remainder of buffer and places it at the start then extends to size"""
 
         assert self._pos >= self.HIGH_WATER
@@ -111,8 +120,8 @@ class BitcoinNetIO(BufferedProtocol):
         self._pos = self._pos - self._last_msg_end_pos
         self._last_msg_end_pos = 0
 
-    def get_buffer(self, sizehint):
-        return self.shm_buffer_view[self._pos :]
+    def get_buffer(self, sizehint: int) -> memoryview:  # type: ignore
+        return self.shm_buffer_view[self._pos:]
 
     def _unpack_msg_header(self) -> Header:
         cur_header_view = self.shm_buffer_view[
@@ -126,27 +135,24 @@ class BitcoinNetIO(BufferedProtocol):
     def is_next_payload_available(self) -> bool:
         return self._pos - self._last_msg_end_pos >= HEADER_LENGTH + self._payload_size
 
-    def get_block_tx_count(self, end_blk_header_pos):
+    def get_block_tx_count(self, end_blk_header_pos: int) -> int:
         # largest varint (tx_count) is 9 bytes
         block_tx_count_view = self.shm_buffer_view[end_blk_header_pos : end_blk_header_pos + 10]
-        return read_varint(io.BytesIO(block_tx_count_view).read)
+        return cast(int, read_varint(io.BytesIO(block_tx_count_view.tobytes()).read))
 
-    def make_special_blk_msg(self, cur_msg_start_pos, cur_msg_end_pos):
+    def make_special_blk_msg(self, cur_msg_start_pos: int, cur_msg_end_pos: int) \
+            -> BlockCallback:
         end_blk_header_pos = cur_msg_start_pos + 80
         raw_block_header = self.shm_buffer_view[cur_msg_start_pos:end_blk_header_pos].tobytes()
         block_tx_count = self.get_block_tx_count(end_blk_header_pos)
-        return (
+        return BlockCallback(
             cur_msg_start_pos,
             cur_msg_end_pos,
             raw_block_header,
             block_tx_count,
         )
 
-    def make_special_tx_msg(self, rawtx: memoryview):
-        """returns a list in preparation for future batching of continuous mempool rawtxs"""
-        return rawtx
-
-    def buffer_updated(self, nbytes):
+    def buffer_updated(self, nbytes: int) -> None:
 
         self._pos += nbytes
 
@@ -172,7 +178,7 @@ class BitcoinNetIO(BufferedProtocol):
 
                     self.on_msg_callback(
                         cur_header.command,
-                        self.make_special_tx_msg(rawtx),
+                        rawtx,
                     )
 
                 # Non-block messages

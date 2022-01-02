@@ -13,6 +13,7 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
 
 from conduit_lib.algorithms import calc_mtree
+from conduit_lib.types import MultiprocessingQueue
 
 
 class MTreeCalculator(multiprocessing.Process):
@@ -27,17 +28,16 @@ class MTreeCalculator(multiprocessing.Process):
     """
 
     def __init__(
-        self, worker_id, shm_name, worker_in_queue_mtree, worker_ack_queue_mtree
-    ):
+        self, worker_id: int, shm_name: str, worker_ack_queue_mtree: MultiprocessingQueue[bytes]
+    ) -> None:
         super(MTreeCalculator, self).__init__()
         self.BATCHING_RATE = 0.3
         self.worker_id = worker_id
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
-        self.worker_in_queue_mtree = worker_in_queue_mtree
         self.worker_ack_queue_mtree = worker_ack_queue_mtree
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
 
-    def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database):
+    def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
         batched_merkle_trees = []
         batched_tx_offsets = []
         batched_acks = []
@@ -60,7 +60,7 @@ class MTreeCalculator(multiprocessing.Process):
         for blk_hash in batched_acks:
             self.worker_ack_queue_mtree.put(blk_hash)
 
-    def run(self):
+    def run(self) -> None:
         if sys.platform == "win32":
             setup_tcp_logging(port=54545)
         self.logger.setLevel(logging.DEBUG)
@@ -113,7 +113,7 @@ class MTreeCalculator(multiprocessing.Process):
             merkle_tree_socket.close()
             # merkle_tree_socket.term()
 
-    def kill_thread(self):
+    def kill_thread(self) -> None:
         try:
             while True:
                 message = self.kill_worker_socket.recv()

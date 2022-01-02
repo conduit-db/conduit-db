@@ -3,13 +3,14 @@ import logging
 import math
 import threading
 import typing
-from typing import Optional
+from typing import Optional, Set, Tuple
 
 import bitcoinx
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
 from conduit_lib.store import Storage
+from bitcoinx.networks import Header
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -23,7 +24,7 @@ class SyncState:
     can be requested from the node.
     """
 
-    def __init__(self, storage: Storage, controller: 'Controller'):
+    def __init__(self, storage: Storage, controller: 'Controller') -> None:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
@@ -38,20 +39,20 @@ class SyncState:
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue = asyncio.Queue()
+        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
         self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
-        self.all_pending_block_hashes = set()  # usually a set of 500 hashes during IBD
-        self.received_blocks = set()  # received in network buffer - must process before buf reset
+        self.all_pending_block_hashes: Set[bytes] = set()  # usually a set of 500 hashes during IBD
+        self.received_blocks: Set[bytes] = set()  # received in network buffer - must process before buf reset
 
         # Done blocks Sets
-        self.done_blocks_raw = set()
-        self.done_blocks_mtree = set()
-        self.done_blocks_preproc = set()
+        self.done_blocks_raw: Set[bytes] = set()
+        self.done_blocks_mtree: Set[bytes] = set()
+        self.done_blocks_preproc: Set[bytes] = set()
 
         # Done blocks Locks
         self.done_blocks_raw_lock = threading.Lock()
@@ -65,11 +66,11 @@ class SyncState:
         self.done_blocks_preproc_event: asyncio.Event = asyncio.Event()
         self.pending_blocks_inv_queue: asyncio.Queue = asyncio.Queue()
 
-    def get_local_tip(self):
+    def get_local_tip(self) -> bitcoinx.Header:
         with self.storage.headers_lock:
             return self.storage.headers.longest_chain().tip
 
-    def get_local_tip_height(self):
+    def get_local_tip_height(self) -> int:
         with self.storage.headers_lock:
             return self.local_tip_height
 
@@ -86,19 +87,20 @@ class SyncState:
             self.local_tip_height = self.storage.headers.longest_chain().tip.height
             return self.local_tip_height
 
-    def set_target_header_height(self, height) -> None:
+    def set_target_header_height(self, height: int) -> None:
         self.target_header_height = height
 
-    def is_synchronized(self):
+    def is_synchronized(self) -> bool:
         return self.get_local_block_tip_height() >= self.get_local_tip_height()
 
-    def reset_msg_counts(self):
+    def reset_msg_counts(self) -> None:
         with self._msg_handled_count_lock:
             self._msg_handled_count = 0
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_next_batched_blocks(self, from_height: int, to_height: int):
+    def get_next_batched_blocks(self, from_height: int, to_height: int) \
+            -> Tuple[int, Set[bytes], int]:
         """Key Variables
         - stop_header_height
         - all_pending_block_hashes
@@ -129,11 +131,11 @@ class SyncState:
 
         return batch_count, self.all_pending_block_hashes, stop_header_height
 
-    def incr_msg_received_count(self):
+    def incr_msg_received_count(self) -> None:
         with self._msg_received_count_lock:
             self._msg_received_count += 1
 
-    def incr_msg_handled_count(self):
+    def incr_msg_handled_count(self) -> None:
         with self._msg_handled_count_lock:
             self._msg_handled_count += 1
 
@@ -168,10 +170,10 @@ class SyncState:
             self.logger.exception("unexpected exception in have_processed_block_msgs")
             raise
 
-    def have_processed_all_msgs_in_buffer(self):
+    def have_processed_all_msgs_in_buffer(self) -> bool:
         return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()
 
-    def readout_sync_state(self):
+    def readout_sync_state(self) -> None:
         self.logger.error(f"A blockage in the pipeline is suspected and needs diagnosing.")
         self.logger.error(f"Controller State:")
         self.logger.error(f"-----------------")

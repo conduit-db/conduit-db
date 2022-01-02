@@ -5,9 +5,8 @@ import stat
 import mmap
 import sys
 import threading
-import time
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Union, Callable
 
 import bitcoinx
 from bitcoinx import Headers
@@ -15,7 +14,7 @@ from bitcoinx import Headers
 from .database.lmdb.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database, mysql_connect
 from .constants import REGTEST
-from .networks import HeadersRegTestMod
+from .networks import HeadersRegTestMod, NetworkConfig
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 MMAP_SIZE = 2_000_000  # count of headers
@@ -27,7 +26,7 @@ class Storage:
     """High-level Interface to database (postgres at present)"""
 
     def __init__(self, headers: Headers, block_headers: Headers,
-            mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database], ):
+            mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database]) -> None:
         self.mysql_database = mysql_database
         self.headers = headers
         self.headers_lock = threading.RLock()
@@ -35,7 +34,7 @@ class Storage:
         self.block_headers_lock = threading.RLock()
         self.lmdb = lmdb
 
-    async def close(self):
+    async def close(self) -> None:
         if self.mysql_database:
             self.mysql_database.close()
 
@@ -47,7 +46,7 @@ class Storage:
             return header
 
 
-def setup_headers_store(net_config, mmap_filename):
+def setup_headers_store(net_config: NetworkConfig, mmap_filename: Union[str, Path]) -> bitcoinx.Headers:
     bitcoinx_chain_logger = logging.getLogger('chain')
     bitcoinx_chain_logger.setLevel(logging.WARNING)
 
@@ -55,14 +54,14 @@ def setup_headers_store(net_config, mmap_filename):
     HeadersRegTestMod.max_cache_size = MMAP_SIZE
 
     if net_config.NET == REGTEST:
-        headers = HeadersRegTestMod(net_config.BITCOINX_COIN, mmap_filename,
+        headers = HeadersRegTestMod(net_config.BITCOINX_COIN, str(mmap_filename),
             net_config.CHECKPOINT)
     else:
-        headers = Headers(net_config.BITCOINX_COIN, mmap_filename, net_config.CHECKPOINT)
+        headers = Headers(net_config.BITCOINX_COIN, str(mmap_filename), net_config.CHECKPOINT)
     return headers
 
 
-def reset_headers(headers_path: Path, block_headers_path: Path):
+def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
     if sys.platform == 'win32':
         if os.path.exists(headers_path):
             with open(headers_path, 'w+') as f:
@@ -86,21 +85,22 @@ def reset_headers(headers_path: Path, block_headers_path: Path):
             pass
 
 
-def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
+def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
     reset_headers(headers_path, block_headers_path)
 
     # remove postgres tables
-    if config['server_type'] == "ConduitIndex":
+    if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = mysql_connect()
         try:
             mysql_database.mysql_drop_tables()
         finally:
             mysql_database.close()
 
-    if config['server_type'] == "ConduitRaw":
-        def remove_readonly(func, path, excinfo):
+    if os.environ['SERVER_TYPE'] == "ConduitRaw":
+        def remove_readonly(func: Callable[[Path], None], path: Path,
+                excinfo: Optional[BaseException]) -> None:
             lmdb_db = LMDB_Database()
             lmdb_db.close()
             os.chmod(path, stat.S_IWRITE)
@@ -132,7 +132,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path, config: Dict):
             shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
 
 
-def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Storage:
+def setup_storage(net_config: NetworkConfig, headers_dir: Optional[Path] = None) -> Storage:
     if not headers_dir:
         headers_dir = MODULE_DIR.parent
         headers_path = headers_dir.joinpath("headers.mmap")
@@ -142,18 +142,18 @@ def setup_storage(config, net_config, headers_dir: Optional[Path] = None) -> Sto
         headers_path = headers_dir.joinpath("headers.mmap")
         block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
-    if config.get('reset'):
-        reset_datastore(headers_path, block_headers_path, config)
+    if int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1:
+        reset_datastore(headers_path, block_headers_path)
 
     headers = setup_headers_store(net_config, headers_path)
     block_headers = setup_headers_store(net_config, block_headers_path)
 
-    if config['server_type'] == "ConduitIndex":
+    if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = load_mysql_database()
     else:
         mysql_database = None
 
-    if config['server_type'] == "ConduitRaw":  # comment out until we have gRPC wrapper
+    if os.environ['SERVER_TYPE'] == "ConduitRaw":  # comment out until we have gRPC wrapper
         lmdb_db = LMDB_Database()
     else:
         lmdb_db = None

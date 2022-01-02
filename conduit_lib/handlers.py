@@ -1,8 +1,9 @@
 import io
+import os
 import typing
 import logging
 import struct
-from typing import Tuple, Union
+from typing import Tuple
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
@@ -10,10 +11,11 @@ from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
 from .constants import MsgType
 from .commands import VERACK, GETDATA, SENDCMPCT, PONG
 from .deserializer import Deserializer
+from .deserializer_types import Inv
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
-from .utils import connect_headers, connect_headers_reorg_safe
+from .utils import connect_headers_reorg_safe
 
 logger = logging.getLogger("handlers")
 
@@ -25,15 +27,15 @@ if typing.TYPE_CHECKING:
 class Handlers:
     def __init__(
         self, controller: 'Controller', net_config: NetworkConfig, storage: Storage
-    ):
+    ) -> None:
         self.net_config = net_config
         self.controller = controller
         self.serializer = Serializer(self.net_config, storage)
         self.deserializer = Deserializer(self.net_config, storage)
         self.storage = storage
-        self.server_type = self.controller.config['server_type']
+        self.server_type = os.environ['SERVER_TYPE']
 
-    async def on_version(self, message):
+    async def on_version(self, message: memoryview) -> None:
         # logger.debug("handling version...")
         version = self.controller.deserializer.version(io.BytesIO(message))
         self.controller.sync_state.set_target_header_height(version["start_height"])
@@ -41,60 +43,60 @@ class Handlers:
         verack_message = self.controller.serializer.verack()
         await self.controller.send_request(VERACK, verack_message)
 
-    async def on_verack(self, message):
+    async def on_verack(self, message: memoryview) -> None:
         # logger.debug("handling verack...")
         # logger.debug("handshake complete")
         # self.controller.handshake_complete_event.set()
         pass
 
-    async def on_protoconf(self, message):
+    async def on_protoconf(self, message: memoryview) -> None:
         logger.debug("handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
         logger.debug(f"protoconf: {protoconf}")
         self.controller.handshake_complete_event.set()
 
-    async def on_sendheaders(self, message):
+    async def on_sendheaders(self, message: memoryview) -> None:
         # logger.debug("handling sendheaders...")
         pass
 
-    async def on_sendcmpct(self, message):
-        message = message.tobytes()
+    async def on_sendcmpct(self, message: memoryview) -> None:
+        message_bytes = message.tobytes()
         # logger.debug("handling sendcmpct...")
-        # logger.debug("received sendcmpct message: %s", message)
+        # logger.debug("received sendcmpct message: %s", message_bytes.decode('utf-8'))
         sendcmpct = self.controller.serializer.sendcmpct()
         # logger.debug("responding with message: %s", sendcmpct)
         await self.controller.send_request(SENDCMPCT, sendcmpct)
 
-    async def on_ping(self, message):
+    async def on_ping(self, message: memoryview) -> None:
         # logger.debug("handling ping...")
         pong_message = self.serializer.pong(message)
         await self.controller.send_request(PONG, pong_message)
 
-    async def on_addr(self, message):
+    async def on_addr(self, message: memoryview) -> None:
         # logger.debug("handling addr...")
         pass
 
-    async def on_feefilter(self, message):
+    async def on_feefilter(self, message: memoryview) -> None:
         # logger.debug("handling feefilter...")
         pass
 
-    async def on_inv(self, message):
+    async def on_inv(self, message: memoryview) -> None:
         """Todo: Optimization
         This could be optimized by staying in bytes. No need to convert the inv_type
         to int to categorise it - rather just match to corresponding byte string.
         payload_len/36 == count and the index in bytearray of each hash is just every 36th byte
         with an block_offset of 4."""
-        inv_vects = self.controller.deserializer.inv(io.BytesIO(message))
+        inv_vect = self.controller.deserializer.inv(io.BytesIO(message))
 
-        def have_header(inv_vect) -> bool:
+        def have_header(inv: Inv) -> bool:
             try:
-                self.storage.headers.lookup(hex_str_to_hash(inv_vect['inv_hash']))
+                self.storage.headers.lookup(hex_str_to_hash(inv['inv_hash']))
                 return True
             except bitcoinx.MissingHeader:
                 return False
 
         tx_inv_vect = []
-        for inv in inv_vects:
+        for inv in inv_vect:
             # TX
             if inv["inv_type"] == 1 and self.server_type == "ConduitIndex":
                 # logger.debug(f"got inv: {inv}")
@@ -121,34 +123,31 @@ class Handlers:
                 # logger.debug(f"sending getdata for tx_inv_vect={tx_inv_vect}")
                 await self.controller.send_request(GETDATA, getdata_msg)
 
-    async def on_getdata(self, message: bytes):
+    async def on_getdata(self, message: memoryview) -> None:
         logger.debug("handling getdata...")
 
-    async def on_headers(self, message: Union[bytearray, memoryview]):
-        if message[0:1].tobytes() == b'\x00':
+    async def on_headers(self, message: memoryview) -> None:
+        message_bytes: bytes = message.tobytes()
+        if message_bytes[0:1] == b'\x00':
             self.controller.sync_state.headers_msg_processed_queue.put_nowait(None)
             return
-
-        if isinstance(message, memoryview):
-            message = message.tobytes()
 
         # message always includes headers far back enough to include common parent in the
         # event of a reorg
         is_reorg, start_header, stop_header, old_hashes, new_hashes = connect_headers_reorg_safe(
-            message, self.storage.headers, headers_lock=self.storage.headers_lock)
+            message_bytes, self.storage.headers, headers_lock=self.storage.headers_lock)
         self.controller.sync_state.headers_msg_processed_queue.put_nowait((is_reorg, start_header, stop_header))
 
     # ----- Special case messages ----- #  # Todo - should probably be registered callbacks
 
-    async def on_tx(self, rawtx: memoryview):
+    async def on_tx(self, rawtx: memoryview) -> None:
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
         if hasattr(self.controller, 'mempool_tx_socket'):  # Only conduit_index has this
-            # dynamic typing here - hence type: ignore
-            await self.controller.mempool_tx_socket.send(packed_message)  # type: ignore
+            await self.controller.mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()
 
-    async def on_block(self, special_message: Tuple[int, int, bytes, int]):
+    async def on_block(self, special_message: Tuple[int, int, bytes, int]) -> None:
         blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message
         blk_hash = double_sha256(raw_block_header)
         self.controller.sync_state.received_blocks.add(blk_hash)

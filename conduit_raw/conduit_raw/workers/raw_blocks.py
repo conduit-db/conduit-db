@@ -11,6 +11,7 @@ import zmq
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
+from conduit_lib.types import MultiprocessingQueue
 
 
 class BlockWriter(multiprocessing.Process):
@@ -25,8 +26,11 @@ class BlockWriter(multiprocessing.Process):
     """
 
     def __init__(
-        self, shm_name, worker_in_queue_blk_writer, worker_ack_queue_blk_writer
-    ):
+            self,
+            shm_name: str,
+            worker_in_queue_blk_writer: MultiprocessingQueue[Tuple[bytes, int, int]],
+            worker_ack_queue_blk_writer: MultiprocessingQueue[bytes]
+    ) -> None:
         super(BlockWriter, self).__init__()
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_blk_writer = worker_in_queue_blk_writer
@@ -40,7 +44,7 @@ class BlockWriter(multiprocessing.Process):
 
         self.BLOCK_BATCHING_RATE = 0.3
 
-    def run(self):
+    def run(self) -> None:
         if sys.platform == "win32":
             setup_tcp_logging(port=54545)
         self.logger = logging.getLogger("raw-block-writer")
@@ -79,7 +83,7 @@ class BlockWriter(multiprocessing.Process):
         finally:
             self.logger.info(f"Process Stopped")
 
-    def flush_thread(self):
+    def flush_thread(self) -> None:
         try:
             lmdb = LMDB_Database()
             while True:
@@ -93,7 +97,7 @@ class BlockWriter(multiprocessing.Process):
             self.logger.exception(e)
             raise
 
-    def main_thread(self):
+    def main_thread(self) -> None:
         try:
             while True:
                 item = self.worker_in_queue_blk_writer.get()
@@ -109,7 +113,7 @@ class BlockWriter(multiprocessing.Process):
         except Exception as e:
             self.logger.exception(e)
 
-    def kill_thread(self):
+    def kill_thread(self) -> None:
         try:
             while True:
                 message = self.kill_worker_socket.recv()
@@ -124,7 +128,7 @@ class BlockWriter(multiprocessing.Process):
             self.logger.info(f"Process Stopped")
             sys.exit(0)
 
-    def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]):
+    def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]) -> None:
         if len(batched_blocks) == 0:
             return
         # Ack for all flushed blocks

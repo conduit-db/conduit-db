@@ -54,7 +54,6 @@ data/**
 *.vs
 **/.classpath
 **/.dockerignore
-**/.env
 ConduitRawAPI/.gitignore
 ConduitRawAPI/.project
 ConduitRawAPI/.settings

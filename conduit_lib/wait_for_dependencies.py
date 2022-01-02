@@ -1,19 +1,18 @@
 import asyncio
 import io
 import logging
+import os
 import socket
-
 import MySQLdb
 
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .utils import cast_to_valid_ipv4
-from .serializer import Serializer
-from .deserializer import Deserializer
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
+from conduit_lib.deserializer import Deserializer
+from conduit_lib.serializer import Serializer
 
 
-async def wait_for_node(node_host: str, deserializer: Deserializer,
-        serializer: Serializer):
+async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializer,
+        serializer: Serializer) -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -21,10 +20,8 @@ async def wait_for_node(node_host: str, deserializer: Deserializer,
     while True:
         is_available = False
         try:
-            host = cast_to_valid_ipv4(node_host.split(":")[0])
-            port = int(node_host.split(":")[1])
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client.connect((host, port))
+            client.connect((node_host, node_port))
 
             # Send version
             request = serializer.version(recv_host="127.0.0.1", send_host="127.0.0.1")
@@ -54,7 +51,7 @@ async def wait_for_node(node_host: str, deserializer: Deserializer,
                 await asyncio.sleep(5)
 
 
-async def wait_for_mysql():
+async def wait_for_mysql() -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -63,7 +60,7 @@ async def wait_for_mysql():
         is_available = False
         try:
             # Attempt to connect
-            mysql_db: 'MySQLDatabase' = load_mysql_database()
+            mysql_db: MySQLDatabase = load_mysql_database()
             _result = mysql_db.tables.get_tables()
             is_available = True
             break
@@ -83,11 +80,13 @@ async def wait_for_mysql():
                 await asyncio.sleep(5)
 
 
-async def wait_for_conduit_raw_api(conduit_raw_api_host):
+async def wait_for_conduit_raw_api() -> None:
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
+    host: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
+    port: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
 
     was_waiting = False
     while True:
@@ -100,13 +99,13 @@ async def wait_for_conduit_raw_api(conduit_raw_api_host):
                 break
         except ServiceUnavailableError:
             was_waiting = True
-            logger.debug(f"ConduitRawAPI server on: {conduit_raw_api_host} currently "
+            logger.debug(f"ConduitRawAPI server on: http://{host}:{port} currently "
                          f"unavailable - waiting...")
             await asyncio.sleep(5)
         except Exception:
             logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
 
-    logger.info(f"ConduitRawAPI on: {conduit_raw_api_host} is available")
+    logger.info(f"ConduitRawAPI on:  http://{host}:{port} is available")
     if was_waiting:
         logger.info(f"Allowing ConduitRaw service to complete initial configuration")
         await asyncio.sleep(3)

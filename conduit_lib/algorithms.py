@@ -10,6 +10,12 @@ from struct import Struct
 
 from conduit_lib.constants import HashXLength
 
+
+MTreeLevel = int
+MTreeNodeArray = list[bytes]
+MTree = Dict[MTreeLevel, MTreeNodeArray]
+
+
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_33 = 33
@@ -33,7 +39,7 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-def unpack_varint(buf: memoryview, offset: int):
+def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple[int, int]:
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -280,11 +286,12 @@ def parse_txs(
 # -------------------- MERKLE TREE -------------------- #
 
 
-def calc_depth(leaves_count):
+def calc_depth(leaves_count: int) -> int:
     return ceil(log(leaves_count, 2)) + 1
 
 
-def calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets):
+def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_block: bytes,
+        tx_offsets: array.ArrayType):
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
@@ -296,7 +303,7 @@ def calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets
     return mtree
 
 
-def build_mtree_from_base(base_level, mtree):
+def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree):
     """if there is an odd number of hashes at a given level -> raise IndexError
     then duplicate the last hash, concatenate and double_sha256 to continue."""
 
@@ -304,6 +311,7 @@ def build_mtree_from_base(base_level, mtree):
         next_level_up = []
         hashes = mtree[current_level]
         for i in range(0, len(hashes), 2):
+            _hash = bytes()
             try:
                 _hash = double_sha256(hashes[i] + hashes[i + 1])
             except IndexError:
@@ -314,10 +322,10 @@ def build_mtree_from_base(base_level, mtree):
         mtree[current_level - 1] = hashes
 
 
-def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType) -> Dict:
+def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType) -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
-    mtree = {}
+    mtree: MTree = {}
     leaves_count = len(tx_offsets)
     base_level = calc_depth(leaves_count) - 1
     mtree = calc_mtree_base_level(base_level, leaves_count, mtree, raw_block, tx_offsets)
@@ -326,7 +334,7 @@ def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType)
     return mtree
 
 
-def get_mtree_node_counts_per_level(base_node_count: int):
+def get_mtree_node_counts_per_level(base_node_count: int) -> list[int]:
     depth = calc_depth(base_node_count)
     counts = []
 

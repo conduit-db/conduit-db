@@ -4,15 +4,16 @@ import os
 import socket
 import time
 from pathlib import Path
-from typing import Generator
+from types import TracebackType
+from typing import Iterator, Optional, Type, List
 
 import cbor2
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
+from conduit_lib.constants import REGTEST
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 from conduit_lib.types import BlockSliceRequestType, ChainHashes
-from conduit_lib.utils import cast_to_valid_ipv4
 
 
 BatchedBlockSlices = bytearray
@@ -30,20 +31,20 @@ class ServiceUnavailableError(Exception):
 
 class IPCSocketClient:
 
-    def __init__(self):
-        CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost:50000')
-        self.HOST = cast_to_valid_ipv4(CONDUIT_RAW_API_HOST.split(":")[0])
-        self.PORT = int(CONDUIT_RAW_API_HOST.split(":")[1])
-        self.logger = logging.getLogger('raw-socket-client')
+    def __init__(self) -> None:
+        self.HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
+        self.PORT: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
+        self.logger: logging.Logger = logging.getLogger('raw-socket-client')
         self.wait_for_connection()
 
-    def __enter__(self):
+    def __enter__(self) -> 'IPCSocketClient':
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[Type[BaseException]],
+            exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
         self.sock.close()
 
-    def wait_for_connection(self):
+    def wait_for_connection(self) -> None:
         while True:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -54,12 +55,16 @@ class IPCSocketClient:
                 self.logger.debug(f"ConduitRaw is currently unavailable. Retrying to connect...")
                 time.sleep(5)
                 self.sock.close()
+            except Exception as e:
+                self.logger.error(f"Unexpected exception in wait_for_connection for "
+                    f"host: {self.HOST}, port: {self.PORT}")
+                time.sleep(1)
 
-    def close(self):
+    def close(self) -> None:
         self.sock.shutdown(socket.SHUT_RDWR)
         self.sock.close()
 
-    def receive_data(self):
+    def receive_data(self) -> bytearray:
         data = recv_msg(self.sock)
         if not data:
             raise SocketServerError("No data in response from server")
@@ -150,33 +155,27 @@ class IPCSocketClient:
     def merkle_tree_row(self, block_hash: bytes, level: int) \
             -> ipc_sock_msg_types.MerkleTreeRowResponse:
         try:
-            # Request
             msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(block_hash, level)
-            # self.logger.debug(f"Sending {ipc_sock_commands.MERKLE_TREE_ROW} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv
             data = self.receive_data()
             command = ipc_sock_commands.MERKLE_TREE_ROW
             msg_resp = ipc_sock_msg_types.MerkleTreeRowResponse(mtree_row=data, command=command)
-            # self.logger.debug(f"Received {ipc_sock_commands.MERKLE_TREE_ROW} response: {msg_resp}")
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
             return self.merkle_tree_row(block_hash, level)  # recurse
 
-    def transaction_offsets_batched(self, block_hashes: list[bytes]) -> Generator:
+    def transaction_offsets_batched(self,
+            block_hashes: List[bytes]) -> Iterator['array.ArrayType[int]']:  # pylint: disable=E1136
         try:
-            # Request
             msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
-            # self.logger.debug(f"Sending {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
-            # Recv
             data = self.receive_data()
             cbor_obj = cbor2.loads(data)
             msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(**cbor_obj)
-            # self.logger.debug(f"Received {ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED} response: {msg_resp}")
             for tx_offsets_array in msg_resp.tx_offsets_batch:
                 yield array.array("Q", tx_offsets_array)
         except ConnectionResetError:
@@ -240,10 +239,12 @@ class IPCSocketClient:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     from conduit_lib.store import setup_headers_store
-    from conduit_lib.networks import RegTestNet
+    from conduit_lib.networks import NetworkConfig
+
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
-    block_headers = setup_headers_store(RegTestNet(),
+    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
+    block_headers = setup_headers_store(net_config,
         "../conduit_raw/conduit_raw/sock_server/test_headers.mmap")
 
 

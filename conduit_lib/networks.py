@@ -1,19 +1,23 @@
 import logging
-
+from collections import namedtuple
 
 from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet, BitcoinRegtest,
-    Headers, MissingHeader, Network, )
-from typing import Optional, List
+    Headers, MissingHeader, Network)
+from typing import Optional, List, cast
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
-from .peers import Peer
 from .utils import cast_to_valid_ipv4
+from bitcoinx.chain import Chain
+from bitcoinx.networks import Header
+from typing import Tuple
 
 logger = logging.getLogger("networks")
 
+Peer = namedtuple("Peer", ["host", "port"])
 
-class HeadersRegTestMod(Headers):
-    def connect(self, raw_header):
+
+class HeadersRegTestMod(Headers):  # type: ignore[misc]
+    def connect(self, raw_header: bytes) -> Tuple[Header, Chain]:
         """overwrite Headers method to skip checking of difficulty target"""
         header = BitcoinRegtest.deserialized_header(raw_header, -1)
         prev_header, chain = self.lookup(header.prev_hash)
@@ -21,7 +25,7 @@ class HeadersRegTestMod(Headers):
         # If the chain tip is the prior header then this header is new.  Otherwise we must check.
         if chain.tip.hash != prev_header.hash:
             try:
-                return self.lookup(header.hash)
+                return cast(Tuple[Header, Chain], self.lookup(header.hash))
             except MissingHeader:
                 pass
         header_index = self._storage.append(raw_header)
@@ -140,9 +144,10 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network_type: str, node_host: Optional[str]=None):
+    def __init__(self, network_type: str, node_host: str, node_port: int) -> None:
         network: AbstractNetwork = NETWORKS[network_type]
         self.node_host = node_host
+        self.node_port = node_port
         self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
@@ -158,7 +163,7 @@ class NetworkConfig:
         self.peers: List[Peer] = []
         self.set_peers(network)
 
-    def get_default_peers(self, network):
+    def get_default_peers(self, network: AbstractNetwork) -> None:
         if isinstance(network, RegTestNet):
             self.peers = [Peer("127.0.0.1", 18444)]
             # self.peers = [Peer("host.docker.internal", 18444)]
@@ -174,17 +179,12 @@ class NetworkConfig:
             # self.peers = [Peer("95.217.108.109", 9333)]  #  stn-server.electrumsv.io
         elif isinstance(network, MainNet):
             self.peers = [Peer("127.0.0.1", 8333)]
-            # self.peers = [
-            #     Peer(host, self.PORT) for host in get_seed_peers(self.DNS_SEEDS)
-            # ]
 
-    def set_peers(self, network):
+    def set_peers(self, network: AbstractNetwork) -> None:
         if self.node_host:
-            host = self.node_host.split(":")[0]
-            host = cast_to_valid_ipv4(host)  # in docker a container name needs dns resolution
-            port = int(self.node_host.split(":")[1])
+            host = cast_to_valid_ipv4(self.node_host)  # in docker a container name needs dns resolution
+            port = int(self.node_port)
             self.peers = [Peer(host, port)]
-
         else:
             self.get_default_peers(network)
 
