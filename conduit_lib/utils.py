@@ -1,4 +1,3 @@
-import hashlib
 import io
 import ipaddress
 import logging
@@ -8,13 +7,11 @@ import socket
 import struct
 import threading
 import time
-from binascii import hexlify
-from typing import Tuple, Optional
+from typing import Tuple, Optional, cast
 
 import bitcoinx
 from bitcoinx import (
-    read_le_uint64, read_be_uint16, double_sha256, int_to_be_bytes, pack_le_uint32, MissingHeader,
-    Headers, Header, Chain
+    read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
 )
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
@@ -51,22 +48,14 @@ def is_docker() -> bool:
 
 
 def payload_to_checksum(payload: Union[bytearray, bytes]) -> bytes:
-    return double_sha256(payload)[:4]
+    return cast(bytes, double_sha256(payload)[:4])
 
 
-def payload_to_message(command, payload):
-    MAGIC = 0xE3E1F3E8
-    magic = int_to_be_bytes(MAGIC)
-    length = pack_le_uint32(len(payload))
-    checksum = payload_to_checksum(payload)
-    return magic + command + length + checksum + payload
-
-
-def is_block_msg(command: bytes):
+def is_block_msg(command: bytes) -> bool:
     return command == BLOCK_BIN.rstrip(b"\0")
 
 
-def pack_null_padded_ascii(string, num_bytes):
+def pack_null_padded_ascii(string: str, num_bytes: int) -> bytes:
     return struct.pack("%s" % num_bytes, string.encode("ASCII"))
 
 
@@ -82,37 +71,6 @@ def mapped_ipv6_to_ipv4(f: BytesIO) -> NodeAddr:
     return NodeAddr(services, ipv4, port)
 
 
-def bytes_to_hex(bytestr: bytes, upper: bool = False) -> str:
-    hexed = hexlify(bytestr).decode()
-    return hexed.upper() if upper else hexed
-
-
-def hex_to_bytes(hexed: str):
-
-    if len(hexed) & 1:
-        hexed = "0" + hexed
-
-    return bytes.fromhex(hexed)
-
-
-def get_block_hash(header_bin):
-    """takes in bytes outputs hex string"""
-    _hash = hashlib.sha256(hashlib.sha256(header_bin).digest()).digest()
-    return bytes(reversed(_hash)).hex()
-
-
-def int_to_hex(num, upper=False):
-    """Ensures that there is an even number of characters in the hex string"""
-    hexed = hex(num)[2:]
-    if len(hexed) % 2 != 0:
-        hexed = "0" + hexed
-    return hexed.upper() if upper else hexed
-
-
-def flip_hex_byte_order(string):
-    return bytes_to_hex(hex_to_bytes(string)[::-1])
-
-
 # NOTE(AustEcon) - This is untested and probably wrong - I've never used it
 def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     """two parameters that need to be chosen. One is the size of the filter in bytes. The other
@@ -123,7 +81,7 @@ def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     return int(filter_size)
 
 
-def unpack_varint_from_mv(buffer) -> Tuple[int, int]:
+def unpack_varint_from_mv(buffer: bytes) -> Tuple[int, int]:
     """buffer argument should be a memory view ideally and returns the value and how many bytes
     were read as a tuple"""
     (n,) = struct.unpack_from("B", buffer)
@@ -156,7 +114,8 @@ def get_log_level(service_name: str) -> int:
         return logging.DEBUG
     if level == 'PROFILING':
         return PROFILING
-
+    else:
+        return logging.DEBUG
 
 def get_conduit_raw_host_and_port() -> tuple[str, int]:
     CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')

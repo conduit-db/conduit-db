@@ -92,13 +92,13 @@ class RestorationFilterRequest(typing.TypedDict):
 
 
 class RestorationFilterJSONResponse(TypedDict):
-    flags: int
-    pushDataHashHex: str
-    transactionId: str
-    index: int
-    spendTransactionId: Optional[str]
-    spendInputIndex: int
-    blockHeight: int
+    Flags: int
+    PushDataHashHex: str
+    TransactionId: str
+    Index: int
+    SpendTransactionId: Optional[str]
+    SpendInputIndex: Optional[int]
+    BlockHeight: int
 
 
 class RestorationFilterResult(NamedTuple):
@@ -118,7 +118,7 @@ assert struct.calcsize(RESULT_UNPACK_FORMAT) == FILTER_RESPONSE_SIZE
 filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
 
 
-def le_int_to_char(le_int) -> bytes:
+def le_int_to_char(le_int: int) -> bytes:
     return struct.pack('<I', le_int)[0:1]
 
 
@@ -156,49 +156,52 @@ def _get_pushdata_match_flag(ref_type: int) -> int:
     raise ValueError("Unrecognised ref_type")
 
 
-def _pack_pushdata_match_response(row: RestorationFilterQueryResult, full_tx_hash,
-        full_pushdata_hash, full_spend_transaction_hash, json):
-    if json:
-        pushdata_hash = full_pushdata_hash
-        tx_hash = full_tx_hash
-        idx = row.transaction_output_index
-        flags = row.ref_type
-        in_tx_hash = full_spend_transaction_hash  # can be null
-        in_idx = MAX_UINT32
-        if row.spend_input_index is not None:
-            in_idx = row.spend_input_index
-        block_height = row.block_height
-        return {
-            "PushDataHashHex": pushdata_hash,
-            "TransactionId": tx_hash,
-            "Index": idx,
-            "Flags": flags,
-            "SpendTransactionId": in_tx_hash,
-            "SpendInputIndex": in_idx,
-            "BlockHeight": block_height
-        }
-    else:
-        pushdata_hash = hex_str_to_hash(full_pushdata_hash)
-        tx_hash = hex_str_to_hash(full_tx_hash)
-        idx = row.transaction_output_index
-        flags_as_char = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
-        in_tx_hash = hex_str_to_hash("00"*32)
-        if full_spend_transaction_hash is not None:
-            in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
-        in_idx = MAX_UINT32
-        if row.spend_input_index is not None:
-            in_idx = row.spend_input_index
-        block_height = row.block_height
+def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,
+        full_pushdata_hash: str, full_spend_transaction_hash: bytes) -> RestorationFilterResult:
+    pushdata_hash = hex_str_to_hash(full_pushdata_hash)
+    tx_hash = hex_str_to_hash(full_tx_hash)
+    idx = row.transaction_output_index
+    flags_as_char = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
+    in_tx_hash = hex_str_to_hash("00"*32)
+    if full_spend_transaction_hash is not None:
+        in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
+    in_idx = MAX_UINT32
+    if row.spend_input_index is not None:
+        in_idx = row.spend_input_index
+    block_height = row.block_height
+    return RestorationFilterResult(
+        flags=flags_as_char,
+        push_data_hash=pushdata_hash,
+        transaction_hash=tx_hash,
+        spend_transaction_hash=in_tx_hash,
+        transaction_output_index=idx,
+        spend_input_index=in_idx,
+        block_height=block_height,
+    )
 
-        return RestorationFilterResult(
-            flags=flags_as_char,
-            push_data_hash=pushdata_hash,
-            transaction_hash=tx_hash,
-            spend_transaction_hash=in_tx_hash,
-            transaction_output_index=idx,
-            spend_input_index=in_idx,
-            block_height=block_height,
-        )
+
+
+def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_tx_hash: str,
+        full_pushdata_hash: str, full_spend_transaction_hash: Optional[str]) \
+            -> RestorationFilterJSONResponse:
+    pushdata_hash = full_pushdata_hash
+    tx_hash = full_tx_hash
+    idx = row.transaction_output_index
+    flags = row.ref_type
+    in_tx_hash = full_spend_transaction_hash  # can be null
+    in_idx = MAX_UINT32
+    if row.spend_input_index is not None:
+        in_idx = row.spend_input_index
+    block_height = row.block_height
+    return RestorationFilterJSONResponse(
+        PushDataHashHex=pushdata_hash,
+        TransactionId=tx_hash,
+        Index=idx,
+        Flags=flags,
+        SpendTransactionId=in_tx_hash,
+        SpendInputIndex=in_idx,
+        BlockHeight=block_height
+    )
 
 
 def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: bool, target_type: str) \

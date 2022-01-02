@@ -9,13 +9,9 @@ from bitcoinx import (
 import socket
 import time
 
-from .deserializer_types import MessageHeader, Inv, Version, Protoconf, NodeAddr, NodeAddrListItem, \
-    SendCmpct, BlockLocator
-from .networks import NetworkConfig
-from .store import Storage
+from .deserializer_types import Inv, NodeAddr, NodeAddrListItem, SendCmpct, BlockLocator
 from .constants import CCODES
 from .utils import mapped_ipv6_to_ipv4
-from . import utils
 from conduit_lib.deserializer_types import MessageHeader, Protoconf, Version
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.store import Storage
@@ -29,10 +25,10 @@ class Deserializer:
         self.storage = storage
 
     def deserialize_message_header(self, stream: BytesIO) -> MessageHeader:
-        magic = utils.bytes_to_hex(stream.read(4))
+        magic = stream.read(4).hex()
         command = stream.read(12).decode("ascii").strip("\x00")
         length = read_le_uint32(stream.read)
-        checksum = utils.bytes_to_hex(stream.read(4))
+        checksum = stream.read(4).hex()
         decoded_header: MessageHeader = {
             "magic": magic,
             "command": command,
@@ -104,7 +100,7 @@ class Deserializer:
         # TODO different ccodes will / won't have "extra data"
         # data = read_varbytes(f.read) # no data
 
-        ccode_translation = CCODES["0x" + utils.bytes_to_hex(ccode)]
+        ccode_translation = CCODES["0x" + ccode.hex()]
         return message, ccode_translation, reason
 
     def inv(self, f: BytesIO) -> list[Inv]:

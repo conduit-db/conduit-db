@@ -15,8 +15,8 @@ try:
     from .constants import SERVER_HOST, SERVER_PORT
     from .server import get_aiohttp_app
 except ImportError:
-    from conduit_lib.constants import SERVER_HOST, SERVER_PORT  # type: ignore[no-redef, attr-defined]
-    from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app
+    from conduit_lib.constants import SERVER_HOST, SERVER_PORT  # type: ignore
+    from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app  # type: ignore
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))

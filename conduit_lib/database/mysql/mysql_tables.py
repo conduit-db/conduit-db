@@ -3,7 +3,7 @@ import logging
 import MySQLdb
 
 from conduit_lib.constants import HashXLength
-from typing import Tuple
+from typing import Tuple, cast, Sequence
 
 
 class MySQLTables:
@@ -12,7 +12,7 @@ class MySQLTables:
         self.logger = logging.getLogger("mysql-tables")
         self.mysql_conn = mysql_conn
 
-    def start_transaction(self):
+    def start_transaction(self) -> None:
         self.mysql_conn.query(
             """START TRANSACTION;"""
         )
@@ -22,13 +22,14 @@ class MySQLTables:
             """COMMIT;"""
         )
 
-    def get_tables(self) -> Tuple[Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str], Tuple[str]]:
+    def get_tables(self) -> Sequence[Tuple[str]]:
         try:
             self.mysql_conn.query("""SHOW TABLES""")
             result = self.mysql_conn.store_result()
-            return result.fetch_row(0)
+            return cast(Sequence[Tuple[str]], result.fetch_row(0))
         except Exception as e:
             self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
+            raise
         finally:
             self.commit_transaction()
 
@@ -47,7 +48,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_mempool_table(self):
+    def mysql_drop_mempool_table(self) -> None:
         try:
             result = self.get_tables()
             for row in result:
@@ -74,7 +75,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str):
+    def mysql_drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
         try:
             self.start_transaction()
             self.mysql_conn.query(f"""
@@ -107,7 +108,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_temp_orphaned_txs(self):
+    def mysql_drop_temp_orphaned_txs(self) -> None:
         try:
             self.start_transaction()
             self.mysql_conn.query(f"""
@@ -118,7 +119,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_drop_mysql_unsafe_txs(self):
+    def mysql_drop_mysql_unsafe_txs(self) -> None:
         try:
             self.mysql_conn.query("""
                 DROP TABLE IF EXISTS temp_unsafe_txs;
@@ -128,7 +129,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_mempool_table(self):
+    def mysql_create_mempool_table(self) -> None:
         try:
             # Note: MEMORY table doesn't support BLOB/TEXT columns - will need to find a different
             # way if we want to cache the mempool full rawtxs.
@@ -146,7 +147,7 @@ class MySQLTables:
 
     # Todo - make all offsets BINARY(5) and tx_position BINARY(5) because this gives enough capacity
     #  for 1 TB block sizes.
-    def mysql_create_permanent_tables(self):
+    def mysql_create_permanent_tables(self) -> None:
         self.mysql_create_mempool_table()
         try:
             # tx_offset_start is relative to start of the raw block
@@ -288,7 +289,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def mysql_create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str):
+    def mysql_create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str) -> None:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
@@ -299,7 +300,7 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def initialise_checkpoint_state(self):
+    def initialise_checkpoint_state(self) -> None:
         self.start_transaction()
         try:
             # Initialise checkpoint_state if needed

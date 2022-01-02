@@ -9,6 +9,9 @@ from math import ceil, log
 from pathlib import Path
 from struct import Struct
 from typing import List, Tuple, Optional, Set, Callable, BinaryIO, cast
+import typing
+if typing.TYPE_CHECKING:
+    import array
 
 import bitcoinx
 import cbor2
@@ -174,9 +177,10 @@ class LMDB_Database:
 
     @functools.lru_cache(maxsize=256)
     def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
-        """Todo: Merkle Tree rows need to be stored in flat files the same way that blocks are"""
         with self.env.begin(db=self.mtree_db) as txn:
             tx_hashes_bytes = self.get_mtree_row(tx_loc.block_hash, level=mtree_base_level)
+            assert tx_hashes_bytes is not None, "If there is a TxLocation, there should be a " \
+                                                "valid tx_hash"
             tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
             return tx_hash
 
@@ -186,10 +190,11 @@ class LMDB_Database:
                           f"{bitcoinx.hash_to_hex_str(tx_loc.block_hash)}")
         with self.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(tx_loc.block_hash)
-            if not val:
+            if val is None:
                 logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(tx_loc.block_hash)} "
                              f"not found")
                 return None
+            assert tx_loc is not None
             read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
 
         # Starting offset of tx
@@ -202,7 +207,9 @@ class LMDB_Database:
         # If it's the last in the block there won't be an offset hence get_block_metadata()
         start_offset = start_offset_in_dat_file + (tx_loc.tx_position+1)*SIZE_UINT64_T
         if start_offset == end_offset_in_dat_file:
-            tx_end_offset = self.get_block_metadata(tx_loc.block_hash).block_size
+            block_metadata = self.get_block_metadata(tx_loc.block_hash)
+            assert block_metadata is not None
+            tx_end_offset = block_metadata.block_size
         else:
             with open(read_path, 'rb') as f:
                 f.seek(start_offset)
@@ -210,11 +217,12 @@ class LMDB_Database:
 
         return tx_start_offset, tx_end_offset
 
-    @functools.lru_cache(maxsize=256)
-    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes:
-        tx_start_offset, tx_end_offset = self.get_single_tx_offset(tx_loc)
-        rawtx = bytes(self.get_block(tx_loc.block_num, tx_start_offset, tx_end_offset))
-        return rawtx
+    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> Optional[bytes]:
+        offsets = self.get_single_tx_offset(tx_loc)
+        if offsets is None:
+            return None
+        tx_start_offset, tx_end_offset = offsets
+        return self.get_block(tx_loc.block_num, tx_start_offset, tx_end_offset)
 
     def _get_merkle_file_offsets_for_level(self, mtree_array_loc: MerkleTreeArrayLocation,
             node_counts: list[int], level: int) -> Tuple[int, int]:
@@ -239,7 +247,8 @@ class LMDB_Database:
         #                   f"to_subtract_from_end={to_subtract_from_end}; to_add_to_start={to_add_to_start}")
         return start_offset, end_offset
 
-    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: Optional[lmdb.Cursor]=None) -> bytes:
+    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: Optional[lmdb.Cursor]=None) \
+            -> Optional[bytes]:
         if cursor:
             val = bytes(cursor.get(blk_hash))
         else:
@@ -249,8 +258,7 @@ class LMDB_Database:
         mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*cbor2.loads(val))
         node_counts = get_mtree_node_counts_per_level(mtree_array_location.base_node_count)
         start, end = self._get_merkle_file_offsets_for_level(mtree_array_location, node_counts, level)
-        mtree_row = self.get_merkle_tree_data(blk_hash, start_offset=start, end_offset=end)
-        return mtree_row
+        return self.get_merkle_tree_data(blk_hash, start_offset=start, end_offset=end)
 
     def get_last_block_num(self) -> int:
         with self.env.begin(db=self.blocks_db, write=False) as txn:
@@ -391,8 +399,9 @@ class LMDB_Database:
         '''Return the length of a merkle branch given the number of hashes.'''
         return ceil(log(tx_count, 2))
 
-    def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str]:
+    def get_merkle_branch(self, tx_metadata: TxMetadata) -> Optional[tuple[list[str], str]]:
         block_metadata = self.get_block_metadata(tx_metadata.block_hash)
+        assert block_metadata is not None, "Null checks should already have been done in the caller"
         base_level = calc_depth(block_metadata.tx_count) - 1
         block_hash = tx_metadata.block_hash
 
@@ -587,7 +596,7 @@ class LMDB_Database:
 
         return self._read_slice(read_path, 0, 0, start_offset_in_dat_file, end_offset_in_dat_file)
 
-    def get_block_metadata(self, block_hash: bytes) -> BlockMetadata:
+    def get_block_metadata(self, block_hash: bytes) -> Optional[BlockMetadata]:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         assert self.env is not None
@@ -599,13 +608,18 @@ class LMDB_Database:
                 block_size = struct_le_Q.unpack(val[0:8])[0]
                 tx_count = struct_le_Q.unpack(val[8:16])[0]
                 return BlockMetadata(block_size, tx_count)
+            return None
 
     def _make_reorg_tx_set(self, chain: ChainHashes) -> Set[bytes]:
         chain_tx_hashes = set()
         for block_hash in chain:
             block_metadata = self.get_block_metadata(block_hash)
+            assert block_metadata is not None, \
+                "all necessary block metadata should always be available for reorg handling"
             base_level = calc_depth(block_metadata.tx_count) - 1
-            stream = BytesIO(self.get_mtree_row(block_hash, level=base_level))
+            mtree_row = self.get_mtree_row(block_hash, level=base_level)
+            assert mtree_row is not None
+            stream = BytesIO(mtree_row)
             for i in range(block_metadata.tx_count):
                 if i == 0:  # skip coinbase txs because they can never be in the mempool
                     _ = stream.read(32)

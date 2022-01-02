@@ -7,12 +7,17 @@ from pathlib import Path
 from typing import List
 
 import MySQLdb
+import typing
 
+from .types import PushdataRow, InputRow, OutputRow, ConfirmedTransactionRow, MempoolTransactionRow
 from ...constants import PROFILING
 from ...types import BlockHeaderRow
 from ...utils import get_log_level
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+if typing.TYPE_CHECKING:
+    from ... import MySQLDatabase
 
 
 class FailedMySQLOperation(Exception):
@@ -21,7 +26,7 @@ class FailedMySQLOperation(Exception):
 
 class MySQLBulkLoads:
 
-    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_db) -> None:
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_db: 'MySQLDatabase') -> None:
         self.mysql_db = mysql_db
         self.worker_id = self.mysql_db.worker_id
         if self.worker_id:
@@ -56,7 +61,8 @@ class MySQLBulkLoads:
         self.mysql_db.commit_transaction()
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
-            column_names: List[str], binary_column_indices: List[int], have_retried=False):
+            column_names: List[str], binary_column_indices: List[int], have_retried: bool=False) \
+                -> None:
         """Todo: If the total query exceeds 1GB I wonder if I may need to cut it up into
             smaller sizes. Have been running into the occasional MySQL error with:
             MySQLdb._exceptions.OperationalError: (2006, '') and logs for mariadb showing:
@@ -128,7 +134,7 @@ class MySQLBulkLoads:
                                        f"(worker_id={self.worker_id if self.worker_id else None})"
                 f"={self.total_rows_flushed_since_startup}")
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows) -> None:
+    def handle_coinbase_dup_tx_hash(self, tx_rows: List[ConfirmedTransactionRow]) -> None:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
@@ -154,7 +160,7 @@ class MySQLBulkLoads:
         self.logger.debug(f"bulk loading new tx rows")
         self.mysql_bulk_load_confirmed_tx_rows(new_tx_rows)  # retry without problematic coinbase tx
 
-    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows) -> None:
+    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows: List[ConfirmedTransactionRow]) -> None:
         t0 = time.time()
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
@@ -169,7 +175,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_confirmed_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    def mysql_bulk_load_mempool_tx_rows(self, tx_rows) -> None:
+    def mysql_bulk_load_mempool_tx_rows(self, tx_rows: List[MempoolTransactionRow]) -> None:
         t0 = time.time()
         string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
         column_names = ['mp_tx_hash', 'mp_tx_timestamp']
@@ -180,7 +186,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    def mysql_bulk_load_output_rows(self, out_rows) -> None:
+    def mysql_bulk_load_output_rows(self, out_rows: List[OutputRow]) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
         column_names = ['out_tx_hash', 'out_idx', 'out_value']
@@ -191,7 +197,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
         )
 
-    def mysql_bulk_load_input_rows(self, in_rows) -> None:
+    def mysql_bulk_load_input_rows(self, in_rows: List[InputRow]) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
         column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
@@ -202,7 +208,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_input_rows = {t1} seconds for {len(in_rows)}"
         )
 
-    def mysql_bulk_load_pushdata_rows(self, pd_rows) -> None:
+    def mysql_bulk_load_pushdata_rows(self, pd_rows: List[PushdataRow]) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
         column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
@@ -213,7 +219,7 @@ class MySQLBulkLoads:
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
         )
 
-    def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows) -> None:
+    def mysql_bulk_load_temp_unsafe_txs(self, unsafe_tx_rows: List[str]) -> None:
         t0 = time.time()
         string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
         column_names = ['tx_hash']

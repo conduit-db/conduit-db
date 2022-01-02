@@ -1,4 +1,4 @@
-from typing import NamedTuple
+from typing import NamedTuple, List, Union
 
 
 class PushdataRow(NamedTuple):
@@ -43,7 +43,7 @@ class InputRow(NamedTuple):
 
 
 class MempoolTransactionRow(NamedTuple):
-    mp_tx_hash: bytes
+    mp_tx_hash: str
     mp_tx_timestamp: str
 
 
@@ -56,3 +56,28 @@ class OutputRow(NamedTuple):
 class MinedTxHashes(NamedTuple):
     txid: str
     block_number: int
+
+
+class BlockAck(NamedTuple):
+    work_item_id: int
+    blk_hash: bytes
+    num_txs: int
+
+
+class MempoolTxAck(NamedTuple):
+    num_mempool_txs_processed: int
+
+
+class MySQLFlushBatch(NamedTuple):
+    tx_rows: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]]
+    in_rows: List[InputRow]
+    out_rows: List[OutputRow]
+    pd_rows: List[PushdataRow]
+
+
+class MySQLFlushBatchWithAcks(NamedTuple):
+    tx_rows: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]]
+    in_rows: List[InputRow]
+    out_rows: List[OutputRow]
+    pd_rows: List[PushdataRow]
+    acks: List[Union[MempoolTxAck, BlockAck]]

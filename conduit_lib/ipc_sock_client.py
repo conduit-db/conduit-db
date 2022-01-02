@@ -167,8 +167,9 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.merkle_tree_row(block_hash, level)  # recurse
 
+    # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
     def transaction_offsets_batched(self,
-            block_hashes: List[bytes]) -> Iterator['array.ArrayType[int]']:  # pylint: disable=E1136
+            block_hashes: List[bytes]) -> Iterator[array.ArrayType]:  # type: ignore
         try:
             msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
             send_msg(self.sock, msg_req.to_cbor())

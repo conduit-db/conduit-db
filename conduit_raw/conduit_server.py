@@ -6,8 +6,10 @@ import logging.handlers
 import logging
 import os
 import sys
+from asyncio import AbstractEventLoop
 from pathlib import Path
 
+from typing import Dict, Any
 import typing
 
 if typing.TYPE_CHECKING:
@@ -51,16 +53,10 @@ def configure() -> None:
     setup_tcp_logging(port=54545)
 
 
-def loop_exception_handler(loop, context) -> None:
+def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) -> None:
     logger = logging.getLogger("loop-exception-handler")
     logger.debug("Exception handler called")
     logger.debug(context)
-
-
-def print_config():
-    logger = logging.getLogger("print-config")  # Not logged to file or remote TCPLoggingServer
-    logger.debug(f"MYSQL_HOST: {os.environ['MYSQL_HOST']}")
-    logger.debug(f"MYSQL_PORT: {os.environ['MYSQL_PORT']}")
 
 
 async def main() -> None:

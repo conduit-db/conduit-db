@@ -124,7 +124,7 @@ class MySQLQueries:
         self.mysql_conn.query(query)
         self.mysql_conn.commit()
 
-    def mysql_load_temp_mempool_removals(self, removals_from_mempool: List[bytes]) -> None:
+    def mysql_load_temp_mempool_removals(self, removals_from_mempool: Set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
         self.mysql_tables.mysql_create_temp_mempool_removals_table()
 
@@ -138,7 +138,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_load_temp_mempool_additions(self, additions_to_mempool: List[bytes]) -> None:
+    def mysql_load_temp_mempool_additions(self, additions_to_mempool: Set[bytes]) -> None:
         self.mysql_tables.mysql_create_temp_mempool_additions_table()
 
         dt = datetime.utcnow()
@@ -152,7 +152,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: List[bytes]) -> None:
+    def mysql_load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: Set[bytes]) -> None:
         self.mysql_tables.mysql_create_temp_orphaned_txs_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")

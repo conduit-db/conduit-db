@@ -5,19 +5,19 @@ import threading
 import time
 import typing
 from datetime import datetime, timedelta
-from typing import Set, List, Tuple, Dict
+from typing import Set, List, Tuple, Dict, Union
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import Optional
+from typing import Optional, cast
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str, unpack_header, double_sha256
+from bitcoinx import unpack_header, double_sha256
 
+from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch
-from array import array
 from bitcoinx.networks import Header
 
 if typing.TYPE_CHECKING:
@@ -58,7 +58,8 @@ class SyncState:
         self.initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[Tuple[bytes, memoryview]] = asyncio.Queue()
+        self.incoming_msg_queue: \
+            asyncio.Queue[Tuple[bytes, Union[memoryview, BlockCallback]]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
@@ -90,11 +91,11 @@ class SyncState:
         self.conduit_best_tip: Optional[bitcoinx.Header] = None
 
     @property
-    def message_received_count(self):
+    def message_received_count(self) -> int:
         return self._msg_received_count
 
     @property
-    def message_handled_count(self):
+    def message_handled_count(self) -> int:
         return self._msg_handled_count
 
     # Conduit Best Tip
@@ -121,7 +122,7 @@ class SyncState:
     # Block Headers
     def get_local_block_tip_height(self) -> int:
         with self.storage.block_headers_lock:
-            return self.storage.block_headers.longest_chain().tip.height
+            return cast(int, self.storage.block_headers.longest_chain().tip.height)
 
     def get_local_block_tip(self) -> bitcoinx.Header:
         with self.storage.block_headers_lock:
@@ -161,10 +162,10 @@ class SyncState:
 
         return True
 
-    def have_processed_all_msgs_in_buffer(self):
+    def have_processed_all_msgs_in_buffer(self) -> bool:
         return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()
 
-    def reset_msg_counts(self):
+    def reset_msg_counts(self) -> None:
         with self._msg_handled_count_lock:
             self._msg_handled_count = 0
         with self._msg_received_count_lock:
@@ -284,22 +285,6 @@ class SyncState:
         with self._msg_handled_count_lock:
             self._msg_handled_count += 1
 
-    def readout_sync_state(self):
-        self.logger.error(f"A blockage in the pipeline is suspected and needs diagnosing.")
-        self.logger.error(f"Controller State:")
-        self.logger.error(f"-----------------")
-        self.logger.error(f"msg_received_count={self._msg_handled_count}")
-        self.logger.error(f"msg_handled_count={self._msg_handled_count}")
-
-        self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
-        self.logger.debug(f"len(self.done_blocks_tx_parser)={len(self.done_blocks_tx_parser)}")
-
-        for blk_hash in self.received_blocks:
-            self.logger.error(f"received blk_hash={hash_to_hex_str(blk_hash)}")
-
-        for blk_hash in self.done_blocks_tx_parser:
-            self.logger.error(f"done_blocks blk_hash={hash_to_hex_str(blk_hash)}")
-
     # ----- SUPERVISE BATCH COMPLETION ----- #
     # Maximum number of blocks in this batch is 'MAIN_BATCH_HEADERS_COUNT_LIMIT'
 
@@ -311,7 +296,7 @@ class SyncState:
         self.expected_blocks_tx_counts[blk_hash] = total_tx_count
         self._blocks_progress_counter[blk_hash] = 0
 
-    def reset_pending_blocks(self):
+    def reset_pending_blocks(self) -> None:
         self._blocks_progress_counter = {}
         self.expected_work_item_tx_counts = {}
         self.expected_blocks_tx_counts = {}
@@ -325,7 +310,7 @@ class SyncState:
 
 
     def add_pending_chip_away_work_item(self, work_item_id: int, work_item_tx_count: int) -> None:
-        def init_counters_if_needed():
+        def init_counters_if_needed() -> None:
             if not self.expected_work_item_tx_counts.get(work_item_id):
                 self.expected_work_item_tx_counts[work_item_id] = 0
             if not self._work_item_progress_counter.get(work_item_id):
@@ -341,11 +326,11 @@ class SyncState:
 
     # ----- AVOID MEMPOOL-INDUCED THRASHING DURING IBD ----- #
 
-    def is_post_IBD(self):
+    def is_post_IBD(self) -> bool:
         """has initial block download been completed?
         (to syncronize all blocks with all initially fetched headers)"""
         return self.initial_block_download_event.is_set()
 
-    def set_post_IBD_mode(self):
+    def set_post_IBD_mode(self) -> None:
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()

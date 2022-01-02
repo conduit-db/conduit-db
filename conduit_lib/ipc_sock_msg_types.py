@@ -4,7 +4,7 @@ to primitive types supported by cbor by default for simplicity sake (although I 
 could extend it if we wanted)."""
 import abc
 import json
-from typing import Optional, cast, Any, Dict, Sequence
+from typing import Optional, cast, Any, Dict, Sequence, Set
 
 import cbor2
 from bitcoinx import hash_to_hex_str
@@ -321,8 +321,8 @@ class ReorgDifferentialRequest(BaseMsg):
 class ReorgDifferentialResponse(BaseMsg):
     command = ipc_sock_commands.REORG_DIFFERENTIAL
 
-    def __init__(self, removals_from_mempool: set[bytes], additions_to_mempool: set[bytes],
-            orphaned_tx_hashes:set[bytes], command: Optional[str]=None) -> None:
+    def __init__(self, removals_from_mempool: Set[bytes], additions_to_mempool: Set[bytes],
+            orphaned_tx_hashes: Set[bytes], command: Optional[str]=None) -> None:
         super().__init__()
         self.removals_from_mempool = removals_from_mempool
         self.additions_to_mempool = additions_to_mempool

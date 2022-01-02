@@ -8,7 +8,7 @@ import bitcoinx
 import cbor2
 import struct
 import socketserver
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, cast, Type
 
 from bitcoinx import hash_to_hex_str
 
@@ -16,38 +16,31 @@ from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.ipc_sock_msg_types import REQUEST_MAP, BaseMsg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
+from conduit_lib.types import BlockMetadata
 
 struct_be_Q = struct.Struct(">Q")
 logger = logging.getLogger('rs-server')
-
-
-class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-
-    def __init__(self, addr: tuple[str, int], handler, storage_path: Path,
-            block_headers: bitcoinx.Headers, block_headers_lock: threading.RLock) -> None:
-        super(ThreadedTCPServer, self).__init__(addr, handler)
-
-        self.lmdb = LMDB_Database(storage_path=str(storage_path))
-        self.block_headers = block_headers
-        self.block_headers_lock = block_headers_lock
 
 
 HandlerType = Callable[[BaseMsg], None]
 
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
-    """This uses a very simple messaging protocol - namely every message is prefixed with an 8 byte
-    uint64 to indicate the length of the message. Beyond that any binary message matching this
-    length can follow. We use CBOR for serializing for convenience and efficiency.
+    """This uses a very simple messaging protocol
+        - Every message is prefixed with an uint64 length of the message.
+        - Any binary message matching this length can follow.
+        - CBOR is used for most messages except where performance is critical (e.g. raw blocks).
 
-    NOTE: There is a very strict 1:1 relationship between the handler name and the rs_msg_types for
-    the request and response. The naming convention is:
+    There is a very strict 1:1 relationship between the handler name and the rs_msg_types for
+    the request and response.
+
+    The naming convention is:
         - handler_name -> HandlerNameRequest / HandlerNameResponse
 
-    This provides type safety in lieu of something akin to protobufs.
+    This provides type safety without bringing in a heavy-weight dependency like protobufs.
     """
 
-    server: ThreadedTCPServer
+    server: 'ThreadedTCPServer'
 
     def recvall(self, n: int) -> Optional[bytearray]:
         try:
@@ -97,7 +90,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return
 
                 msg: Dict[str, Any] = cbor2.loads(data)
-                command: str = msg['command']
+                command = cast(str, msg['command'])
                 logger.debug(f"Socket server: command {command} received")
 
                 request_type = REQUEST_MAP[command]
@@ -114,7 +107,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def ping(self, msg_req: ipc_sock_msg_types.PingRequest) -> None:
         msg_resp = ipc_sock_msg_types.PingResponse()
-        return self.send_msg(msg_resp.to_cbor())
+        self.send_msg(msg_resp.to_cbor())
 
     def stop(self, msg_req: ipc_sock_msg_types.StopRequest) -> None:
         logger.debug(f"Got {ipc_sock_commands.STOP} request: {msg_req}")
@@ -122,7 +115,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
         msg_resp = ipc_sock_msg_types.StopResponse()
         logger.debug(f"Sending {ipc_sock_commands.STOP} response: {msg_resp}")
-        return self.send_msg(msg_resp.to_cbor())
+        self.send_msg(msg_resp.to_cbor())
 
     def chain_tip(self, msg_req: ipc_sock_msg_types.ChainTipRequest) -> None:
         try:
@@ -138,7 +131,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             block_numbers = []
             for block_hash in msg_req.block_hashes:
                 block_number = self.server.lmdb.get_block_num(block_hash)
-                block_numbers.append(block_number)
+                # NOTE(AustEcon): should the client handle errors / null results?
+                block_numbers.append(cast(int, block_number))
 
             msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(block_numbers=block_numbers)
             self.send_msg(msg_resp.to_cbor())
@@ -153,7 +147,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 raw_block_slice = self.server.lmdb.get_block(block_number,
                     start_offset, end_offset)
 
-                len_slice = len(raw_block_slice)
+                # NOTE(AustEcon): should the client handle errors / null results?
+                len_slice = len(cast(bytes, raw_block_slice))
                 raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
                     block_number, len_slice, raw_block_slice)
 
@@ -182,11 +177,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             logger.exception("Exception in ThreadedTCPRequestHandler.merkle_tree_row")
 
     def transaction_offsets_batched(self,
-            msg_req: ipc_sock_msg_types.TransactionOffsetsBatchedRequest):
+            msg_req: ipc_sock_msg_types.TransactionOffsetsBatchedRequest) -> None:
         try:
             tx_offsets_batch = []
             for block_hash in msg_req.block_hashes:
-                tx_offsets_binary = self.server.lmdb.get_tx_offsets(block_hash)
+                # NOTE(AustEcon): should the client handle errors / null results?
+                tx_offsets_binary = cast(bytes, self.server.lmdb.get_tx_offsets(block_hash))
                 tx_offsets_batch.append(tx_offsets_binary)
 
             msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(tx_offsets_batch=tx_offsets_batch)
@@ -199,9 +195,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             block_metadata_batch = []
             for block_hash in msg_req.block_hashes:
-                block_metadata = self.server.lmdb.get_block_metadata(block_hash)
+                # NOTE(AustEcon): should the client handle errors / null results?
+                block_metadata = cast(BlockMetadata,
+                    self.server.lmdb.get_block_metadata(block_hash))
                 block_metadata_batch.append(block_metadata)
-            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(block_metadata_batch=block_metadata_batch)
+
+            msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
+                block_metadata_batch=block_metadata_batch)
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.block_metadata_batched")
@@ -267,6 +267,18 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.reorg_differential")
+
+
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+
+    def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
+            storage_path: Path, block_headers: bitcoinx.Headers,
+            block_headers_lock: threading.RLock) -> None:
+        super(ThreadedTCPServer, self).__init__(addr, handler)
+
+        self.lmdb = LMDB_Database(storage_path=str(storage_path))
+        self.block_headers = block_headers
+        self.block_headers_lock = block_headers_lock
 
 
 if __name__ == "__main__":

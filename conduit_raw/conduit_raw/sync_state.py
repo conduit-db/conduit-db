@@ -3,12 +3,13 @@ import logging
 import math
 import threading
 import typing
-from typing import Optional, Set, Tuple
+from typing import Optional, Set, Tuple, cast, Union
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str
 
+from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
+from conduit_lib.deserializer_types import Inv
 from conduit_lib.store import Storage
 from bitcoinx.networks import Header
 
@@ -29,8 +30,8 @@ class SyncState:
         self.storage = storage
         self.controller = controller
 
-        self.headers_msg_processed_queue: asyncio.Queue = asyncio.Queue()
-        self.headers_new_tip_queue: asyncio.Queue = asyncio.Queue()
+        self.headers_msg_processed_queue: asyncio.Queue[Tuple[bool, Header, Header]] = asyncio.Queue()
+        self.headers_new_tip_queue: asyncio.Queue[Inv] = asyncio.Queue()
         self.headers_event_initial_sync: asyncio.Event = asyncio.Event()
         self.blocks_event_new_tip: asyncio.Event = asyncio.Event()
         self.target_header_height: Optional[int] = None
@@ -39,7 +40,7 @@ class SyncState:
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = asyncio.Queue()
+        self.incoming_msg_queue: asyncio.Queue[Tuple[bytes, Union[BlockCallback, memoryview]]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
@@ -64,7 +65,7 @@ class SyncState:
         self.done_blocks_raw_event: asyncio.Event = asyncio.Event()
         self.done_blocks_mtree_event: asyncio.Event = asyncio.Event()
         self.done_blocks_preproc_event: asyncio.Event = asyncio.Event()
-        self.pending_blocks_inv_queue: asyncio.Queue = asyncio.Queue()
+        self.pending_blocks_inv_queue: asyncio.Queue[Inv] = asyncio.Queue()
 
     def get_local_tip(self) -> bitcoinx.Header:
         with self.storage.headers_lock:
@@ -76,7 +77,7 @@ class SyncState:
 
     def get_local_block_tip_height(self) -> int:
         with self.storage.block_headers_lock:
-            return self.storage.block_headers.longest_chain().tip.height
+            return cast(int, self.storage.block_headers.longest_chain().tip.height)
 
     def get_local_block_tip(self) -> bitcoinx.Header:
         with self.storage.block_headers_lock:
@@ -172,18 +173,3 @@ class SyncState:
 
     def have_processed_all_msgs_in_buffer(self) -> bool:
         return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()
-
-    def readout_sync_state(self) -> None:
-        self.logger.error(f"A blockage in the pipeline is suspected and needs diagnosing.")
-        self.logger.error(f"Controller State:")
-        self.logger.error(f"-----------------")
-        self.logger.error(f"msg_received_count={self._msg_handled_count_lock}")
-        self.logger.error(f"msg_handled_count={self._msg_received_count}")
-
-        self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
-        self.logger.debug(f"len(self.done_blocks_raw)={len(self.done_blocks_raw)}")
-        self.logger.debug(f"len(self.done_blocks_mtree)={len(self.done_blocks_mtree)}")
-        self.logger.debug(f"len(self.done_blocks_preproc)={len(self.done_blocks_preproc)}")
-
-        for blk_hash in self.received_blocks:
-            self.logger.error(f"blk_hash={hash_to_hex_str(blk_hash)}")

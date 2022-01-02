@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 import aiohttp
 import bitcoinx
 from aiohttp import web
+from aiohttp.web_response import StreamResponse
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib.algorithms import calc_depth
@@ -14,8 +15,8 @@ from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.types import TxMetadata, TxLocation, RestorationFilterRequest, \
-    FILTER_RESPONSE_SIZE, filter_response_struct, _pack_pushdata_match_response, \
-    tsc_merkle_proof_json_to_binary, BlockHeaderRow, TSCMerkleProof
+    FILTER_RESPONSE_SIZE, filter_response_struct, tsc_merkle_proof_json_to_binary, BlockHeaderRow, \
+    TSCMerkleProof, _pack_pushdata_match_response_bin, _pack_pushdata_match_response_json
 
 if TYPE_CHECKING:
     from .server import ApplicationState
@@ -33,19 +34,19 @@ async def error(request: web.Request) -> web.Response:
 
 
 # @functools.lru_cache(maxsize=256)  # on reorg need to call _get_tx_metadata.cache_clear()
-def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) \
-        -> Optional[TxMetadata]:
+def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> Optional[TxMetadata]:
     """Truncates full hash -> hashX length"""
-    tx_metadata: TxMetadata = \
-        mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
+    tx_metadata = mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
-        return
+        return None
     return tx_metadata
 
 
-def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database):
+def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> Optional[bytes]:
     # get base level of merkle tree with the tx hashes array
     block_metadata = lmdb.get_block_metadata(tx_location.block_hash)
+    if block_metadata is None:
+        return None
     base_level = calc_depth(block_metadata.tx_count) - 1
 
     tx_loc = TxLocation(tx_location.block_hash, tx_location.block_num,
@@ -64,19 +65,23 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
         nodes - the nodes in the merkle branch excluding the "target
     """
     # Merkle Branch + Root
-    merkle_branch, merkle_root = lmdb.get_merkle_branch(tx_metadata)
+    result = lmdb.get_merkle_branch(tx_metadata)
+    assert result is not None
+    merkle_branch, merkle_root = result
 
     # Txid or Raw Transaction
     tx_location = TxLocation(tx_metadata.block_hash, tx_metadata.block_num, tx_metadata.tx_position)
     if include_full_tx:
-        txid_or_tx_field = lmdb.get_rawtx_by_loc(tx_location).hex()
+        rawtx = lmdb.get_rawtx_by_loc(tx_location)
+        assert rawtx is not None
+        txid_or_tx_field = rawtx.hex()
     else:
         txid_or_tx_field = hash_to_hex_str(_get_full_tx_hash(tx_location, lmdb))
 
     # Target Type
     if target_type == 'header':
-        header_row: BlockHeaderRow = mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
-            raw_header_data=True)
+        header_row: BlockHeaderRow = cast(BlockHeaderRow,
+            mysql_db.api_queries.get_header_data(tx_metadata.block_hash, raw_header_data=True))
         target = header_row.block_header  # as hex
     elif target_type == 'merkleroot':
         target = merkle_root
@@ -84,8 +89,8 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
         target = hash_to_hex_str(tx_metadata.block_hash)
 
     # Sanity check - Todo: remove when satisfied
-    header_row = mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
-        raw_header_data=True)
+    header_row = cast(BlockHeaderRow, mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
+        raw_header_data=True))
     root_from_header: bytes = bytes.fromhex(header_row.block_header)[36:36 + 32]
     if target_type == 'merkleroot' and merkle_root != hash_to_hex_str(root_from_header):
         logger.debug(f"merkleroot: {merkle_root}; "
@@ -101,7 +106,7 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
     )
 
 
-async def get_pushdata_filter_matches(request: web.Request):
+async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
     """This the main endpoint for the rapid restoration API"""
     app_state: 'ApplicationState' = request.app['app_state']
     mysql_db: MySQLDatabase = app_state.mysql_db
@@ -124,19 +129,23 @@ async def get_pushdata_filter_matches(request: web.Request):
 
         count = 0
         result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+        response: Optional[StreamResponse] = None
         for match in result_generator:
             if count == 0:
-                response = aiohttp.web.StreamResponse(status=200, reason='OK', headers=headers)
+                response = StreamResponse(status=200, reason='OK', headers=headers)
                 await response.prepare(request)
+            assert response is not None
 
             # logger.debug(f"Sending {match}")
 
             # Get Full tx hashes and pushdata hashes for response object
 
             full_tx_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
+            assert full_tx_hash is not None
             full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
             if match.spend_transaction_hash is not None:
                 tx_metadata = _get_tx_metadata(match.spend_transaction_hash, mysql_db)
+                assert tx_metadata is not None
                 spend_tx_loc = TxLocation(
                     block_hash=tx_metadata.block_hash,
                     block_num=tx_metadata.block_num,
@@ -146,16 +155,16 @@ async def get_pushdata_filter_matches(request: web.Request):
                 full_spend_transaction_hash = None
 
             if accept_type == 'application/octet-stream':
-                response_obj = _pack_pushdata_match_response(
+                response_obj = _pack_pushdata_match_response_bin(
                     match, full_tx_hash, full_pushdata_hash,
-                    full_spend_transaction_hash, json=False)
+                    full_spend_transaction_hash)
                 packed_match = filter_response_struct.pack(*response_obj)
                 await response.write(packed_match)
             else:  # application/json
-                response_obj = _pack_pushdata_match_response(
+                response_json = _pack_pushdata_match_response_json(
                     match, full_tx_hash, full_pushdata_hash,
-                    full_spend_transaction_hash, json=True)
-                row = (json.dumps(response_obj) + "\n").encode('utf-8')
+                    full_spend_transaction_hash)
+                row = (json.dumps(response_json) + "\n").encode('utf-8')
                 await response.write(row)
             count += 1
 
@@ -167,6 +176,8 @@ async def get_pushdata_filter_matches(request: web.Request):
             logger.debug(
                 f"Total pushdata filter match response size: {total_size} for count: {count}")
         finalization_flag = b'\x00'
+
+        assert response is not None
         await response.write(finalization_flag)
         return response
     except Exception:
@@ -196,7 +207,7 @@ async def get_transaction(request: web.Request) -> web.Response:
 
     rawtx = lmdb.get_rawtx_by_loc(tx_location)
     # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(rawtx))}")
-
+    assert rawtx is not None
     if accept_type == 'application/octet-stream':
         return web.Response(body=rawtx)
     else:

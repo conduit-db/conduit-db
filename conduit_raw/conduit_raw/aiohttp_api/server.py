@@ -7,15 +7,13 @@ import asyncio
 from pathlib import Path
 import os
 import logging
-from typing import AsyncGenerator
+from typing import AsyncIterator
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
-from aiohttp.web_app import Application
-from asyncio.events import AbstractEventLoop
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -40,8 +38,8 @@ class ApplicationState(object):
         self.lmdb = lmdb
 
         context6 = AsyncZMQContext.instance()
-        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)
-        self.reorg_event_socket.bind("tcp://127.0.0.1:51495")
+        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)  # type: ignore
+        self.reorg_event_socket.bind("tcp://127.0.0.1:51495")  # type: ignore
 
     def start_threads(self) -> None:
         pass
@@ -59,8 +57,8 @@ class ApplicationState(object):
         parallel without corrupting the APIs responses.
         """
 
-        while self.app.is_alive:
-            cbor_msg = await self.reorg_event_socket.recv()
+        while self.app.is_alive:  # type: ignore
+            cbor_msg = await self.reorg_event_socket.recv()  # type: ignore
             reorg_handling_complete, start_hash, stop_hash = cbor2.loads(cbor_msg)
             self.logger.debug(f"Reorg event received. "
                               f"reorg_handling_complete: {reorg_handling_complete} "
@@ -68,7 +66,7 @@ class ApplicationState(object):
                               f"stop_hash: {bitcoinx.hash_to_hex_str(stop_hash)}")
 
 
-async def client_session_ctx(app: web.Application) -> AsyncGenerator:
+async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
     """
     Cleanup context async generator to create and properly close aiohttp ClientSession
     Ref.:

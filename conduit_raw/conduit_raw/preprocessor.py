@@ -7,6 +7,7 @@ from multiprocessing import shared_memory
 
 import cbor2
 import zmq
+from typing import Tuple
 
 from conduit_lib.algorithms import preprocessor
 
@@ -22,23 +23,23 @@ class BlockPreProcessor(threading.Thread):
     def __init__(
             self,
             shm_name: str,
-            worker_in_queue_preproc: queue.Queue,
-            worker_ack_queue_preproc: queue.Queue,
+            worker_in_queue_preproc: queue.Queue[Tuple[bytes, int, int, int]],
+            worker_ack_queue_preproc: queue.Queue[bytes],
             daemon: bool=True
     ) -> None:
         super(BlockPreProcessor, self).__init__(daemon=daemon)
 
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
-        self.worker_in_queue_preproc: queue.Queue = worker_in_queue_preproc
-        self.worker_ack_queue_preproc: queue.Queue = worker_ack_queue_preproc
+        self.worker_in_queue_preproc = worker_in_queue_preproc
+        self.worker_ack_queue_preproc = worker_ack_queue_preproc
         self.tx_offsets_array = array.array("Q", [i for i in range(4_000_000)])
         self.logger = logging.getLogger("pre-processor")
 
-    def run(self):
+    def run(self) -> None:
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
-        context1 = zmq.Context()
-        merkle_tree_socket = context1.socket(zmq.PUSH)
+        context1 = zmq.Context()  # type: ignore
+        merkle_tree_socket = context1.socket(zmq.PUSH)  # type: ignore
         merkle_tree_socket.bind("tcp://127.0.0.1:41835")
 
         try:

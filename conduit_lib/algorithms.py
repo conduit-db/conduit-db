@@ -4,12 +4,13 @@ import logging
 import struct
 from hashlib import sha256
 from math import ceil, log
-from typing import Dict, Union, Tuple, List
+from typing import Dict, Union, Tuple, List, cast
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
-
+from conduit_lib.database.mysql.types import ConfirmedTransactionRow, InputRow, OutputRow, \
+    PushdataRow, MempoolTransactionRow
 
 MTreeLevel = int
 MTreeNodeArray = list[bytes]
@@ -39,7 +40,8 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple[int, int]:
+# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
+def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple[int, int]:  # type: ignore
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -52,7 +54,9 @@ def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType, block_offset: int=0):
+# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
+def preprocessor(block_view: memoryview,
+        tx_offsets_array: array.ArrayType, block_offset: int=0) -> Tuple[int, array.ArrayType]:  # type: ignore
     block_offset += HEADER_OFFSET
     count, block_offset = unpack_varint(block_view, block_offset)
     cur_idx = 0
@@ -86,15 +90,17 @@ def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType, bloc
         logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
                      f"count of txs in block={count}")
         logger.exception(f"cur_idx={cur_idx}; block_offset={block_offset}")
+        raise
 
 
 # -------------------- PARSE BLOCK TXS -------------------- #
 
 
-def get_pk_and_pkh_from_script(script: array.array):
+# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
+def get_pk_and_pkh_from_script(script: 'array.ArrayType') -> List[bytes]:  # type: ignore
     i = 0
     pks, pkhs = set(), set()
-    pd_hashXes = []
+    pd_hashXes: List[bytes] = []
     len_script = len(script)
     # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
     #  as we do not want to track pubkeys or pkhs etc. from inside of unspendable outputs at this
@@ -148,9 +154,15 @@ def get_pk_and_pkh_from_script(script: array.array):
         raise
 
 
-def parse_txs(
-    buffer: array.ArrayType, tx_offsets: array.ArrayType, height_or_timestamp: Union[int, str],
-        confirmed: bool, first_tx_pos_batch=0) -> Tuple[List, List, List, List]:
+# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
+def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayType],  # type: ignore
+        height_or_timestamp: Union[int, str], confirmed: bool, first_tx_pos_batch=0) \
+            -> Tuple[
+                List[Union[ConfirmedTransactionRow, MempoolTransactionRow]],
+                List[InputRow],
+                List[OutputRow],
+                List[PushdataRow]
+            ]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -212,8 +224,7 @@ def parse_txs(
                 # in_offset_end = offset + adjustment
 
                 in_rows.add(
-                    (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx,),
-                )
+                    InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
@@ -246,7 +257,7 @@ def parse_txs(
                 if len(pushdata_hashXes):
                     for out_pushdata_hashX in pushdata_hashXes:
                         set_pd_rows.add(
-                            (
+                            PushdataRow(
                                 out_pushdata_hashX.hex(),
                                 tx_hashX.hex(),
                                 out_idx,
@@ -255,25 +266,25 @@ def parse_txs(
                         )
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
-                out_rows.add((tx_hashX.hex(), out_idx, out_value,))
+                out_rows.add(OutputRow(tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
             offset += 4
 
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
-                tx_rows.append(
-                    (
-                        tx_hashX.hex(),
-                        height_or_timestamp,
-                        tx_pos,
-                    )
-                )
+                height_or_timestamp = cast(int, height_or_timestamp)
+                tx_rows.append(ConfirmedTransactionRow(tx_hashX.hex(), height_or_timestamp, tx_pos))
             else:
                 # Note mempool uses full length tx_hash
-                tx_rows.append((tx_hash.hex(), height_or_timestamp, rawtx.hex()))
+                height_or_timestamp = cast(str, height_or_timestamp)
+                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), height_or_timestamp))  # type: ignore
         assert len(tx_rows) == count_txs
-        return tx_rows, list(in_rows), list(out_rows), list(set_pd_rows)
+        return \
+            cast(List[Union[ConfirmedTransactionRow, MempoolTransactionRow]], tx_rows), \
+            cast(List[InputRow], list(in_rows)), \
+            cast(List[OutputRow], list(out_rows)), \
+            cast(List[PushdataRow], list(set_pd_rows))
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -291,7 +302,7 @@ def calc_depth(leaves_count: int) -> int:
 
 
 def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_block: bytes,
-        tx_offsets: array.ArrayType):
+        tx_offsets: 'array.ArrayType[int]') -> MTree:
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
@@ -303,7 +314,7 @@ def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_
     return mtree
 
 
-def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree):
+def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> None:
     """if there is an odd number of hashes at a given level -> raise IndexError
     then duplicate the last hash, concatenate and double_sha256 to continue."""
 
@@ -322,7 +333,7 @@ def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree):
         mtree[current_level - 1] = hashes
 
 
-def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: array.ArrayType) -> MTree:
+def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: 'array.ArrayType[int]') -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree: MTree = {}

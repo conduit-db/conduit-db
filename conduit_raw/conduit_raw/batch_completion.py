@@ -4,6 +4,7 @@ import queue
 import threading
 import typing
 
+import bitcoinx
 from bitcoinx import hash_to_hex_str
 from queue import Queue
 from typing import Set
@@ -28,14 +29,14 @@ class BatchCompletionRaw(threading.Thread):
     """Only Processes ACK messages from the BlockWriter worker"""
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_blk_writer: MultiprocessingQueue,
+            worker_ack_queue_blk_writer: Queue[bytes],
             blocks_batch_set_queue_raw: Queue[Set[bytes]], daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-raw")
         self.controller: Controller = controller
         self.sync_state = sync_state
         self.get_header_for_hash = self.controller.get_header_for_hash
-        self.worker_ack_queue_blk_writer: Queue = worker_ack_queue_blk_writer
+        self.worker_ack_queue_blk_writer: Queue[bytes] = worker_ack_queue_blk_writer
         self.blocks_batch_set_queue_raw = blocks_batch_set_queue_raw
         self.loop = asyncio.get_running_loop()
 
@@ -56,7 +57,7 @@ class BatchCompletionRaw(threading.Thread):
                 self.loop.call_soon_threadsafe(self.sync_state.done_blocks_raw_event.set)
                 break
 
-    def run(self):
+    def run(self) -> None:
         batch_id = 0
         while True:
             try:
@@ -76,7 +77,7 @@ class BatchCompletionMtree(threading.Thread):
             controller: 'Controller',
             sync_state: 'SyncState',
             worker_ack_queue_mtree: Queue[bytes],
-            blocks_batch_set_queue_mtree: Queue,
+            blocks_batch_set_queue_mtree: Queue[Set[bytes]],
             daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
 
@@ -105,7 +106,7 @@ class BatchCompletionMtree(threading.Thread):
                 self.loop.call_soon_threadsafe(self.sync_state.done_blocks_mtree_event.set)
                 break
 
-    def run(self):
+    def run(self) -> None:
         batch_id = 0
         while True:
             try:
@@ -121,13 +122,14 @@ class BatchCompletionPreprocessor(threading.Thread):
     """Only Processes ACK messages from the Preprocessor worker"""
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_preproc: Queue, blocks_batch_set_queue_preproc: Queue, daemon: bool=True) -> None:
+            worker_ack_queue_preproc: Queue[bytes],
+            blocks_batch_set_queue_preproc: Queue[Set[bytes]], daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-preproc")
         self.controller: Controller = controller
         self.sync_state = sync_state
-        self.get_header_for_hash = self.controller.get_header_for_hash
-        self.worker_ack_queue_preproc: queue.Queue = worker_ack_queue_preproc
+        self.get_header_for_hash: typing.Callable[[bytes], bitcoinx.Header] = self.controller.get_header_for_hash
+        self.worker_ack_queue_preproc = worker_ack_queue_preproc
         self.blocks_batch_set_queue_preproc = blocks_batch_set_queue_preproc
         self.loop = asyncio.get_running_loop()
 
@@ -148,7 +150,7 @@ class BatchCompletionPreprocessor(threading.Thread):
                 self.loop.call_soon_threadsafe(self.sync_state.done_blocks_preproc_event.set)
                 break
 
-    def run(self):
+    def run(self) -> None:
         batch_id = 0
         while True:
             try:

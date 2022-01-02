@@ -1,14 +1,13 @@
 import array
+import bitcoinx
 from typing import List, Tuple, Dict
 
-import bitcoinx
-
 WorkUnit = Tuple[bool, int, int, bytes, int, int, int, array.ArrayType]
-MainBatch = List[Tuple[int, array.ArrayType, bitcoinx.Header, int]]
+MainBatch = List[Tuple[int, 'array.ArrayType[int]', bitcoinx.Header, int]]
 WorkPart = Tuple[int, bytes, int, int, int, array.ArrayType]
-BatchedRawBlockSlices = List[tuple[array.ArrayType, int, int, int, int]]
+BatchedRawBlockSlices = List[tuple['array.ArrayType[int]', int, int, int, int]]
 ProcessedBlockAcks = List[tuple[int, int, bytes, list[bytes]]]
-TxHashRows = List[Tuple[bytes]]
+TxHashRows = List[Tuple[str]]
 TxHashes = List[bytes]
 TxHashToWorkIdMap = Dict[bytes, int]
 TxHashToOffsetMap = Dict[bytes, int]

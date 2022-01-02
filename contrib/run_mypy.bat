@@ -7,6 +7,6 @@ SET ScriptDir=%~dp0
 SET TLD=%ScriptDir%\..
 echo %ScriptDir%
 cd %ScriptDir%
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_raw
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_index
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_lib
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_raw --python-version 3.10
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_index --python-version 3.10
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_lib --python-version 3.10

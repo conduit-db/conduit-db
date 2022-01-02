@@ -10,7 +10,8 @@ import os
 import queue
 import threading
 import time
-from typing import Optional, List, Set, Coroutine, Any, Callable, TypeVar, Sequence, Dict, Tuple
+from typing import Optional, List, Set, Coroutine, Any, Callable, TypeVar, Sequence, Dict, Tuple, \
+    cast, Union
 import multiprocessing
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -19,6 +20,7 @@ import zmq
 
 from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
     BitcoinNetIO, wait_for_node, NetworkConfig, Peer)
+from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
     WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
@@ -147,7 +149,7 @@ class Controller:
         self.batch_completion_mtree.start()
         self.batch_completion_preprocessor.start()
 
-    async def connect_session(self) -> Tuple[Transport, BaseProtocol]:
+    async def connect_session(self) -> tuple[BaseTransport, BaseProtocol]:
         peer = self.get_peer()
         self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
         self.transport, self.session = await self.bitcoin_net_io.connect(peer.host, peer.port)
@@ -223,7 +225,7 @@ class Controller:
         coro = self._on_buffer_full()
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-    def on_msg(self, command: bytes, message: memoryview) -> None:
+    def on_msg(self, command: bytes, message: Union[BlockCallback, memoryview]) -> None:
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
@@ -414,7 +416,7 @@ class Controller:
             except MissingHeader as e:
                 if self.sync_state.pending_blocks_inv_queue.empty() and count_requested != 0:
                     self.logger.exception(f"Fatal error. An unsolicited block "
-                        f"({inv.get('inv_hash')}) was pushed to the "
+                        f"({hash_to_hex_str(inv['inv_hash'])}) was pushed to the "
                         f"pending_blocks_inv_queue - this should never happen.")
                 else:
                     continue

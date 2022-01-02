@@ -28,7 +28,6 @@ from .utils import (
     payload_to_checksum,
     ipv4_to_mapped_ipv6,
     calc_bloom_filter_size,
-    hex_to_bytes,
 )
 from .constants import ZERO_HASH
 
@@ -92,10 +91,10 @@ class Serializer:
         return self.payload_to_message(VERACK_BIN, b"")
 
     def tx(self, rawtx: str) -> bytes:
-        payload = hex_to_bytes(rawtx)
+        payload = bytes.fromhex(rawtx)
         return self.payload_to_message(TX_BIN, payload)
 
-    def inv(self, inv_vects: List[Inv]) -> bytes:
+    async def inv(self, inv_vects: List[Inv]) -> bytes:
         payload = bytearray()
         payload += pack_varint(len(inv_vects))
         for inv_vect in inv_vects:

@@ -2,6 +2,7 @@ import logging
 from typing import Generator, Optional
 
 import MySQLdb
+import typing
 from bitcoinx import hash_to_hex_str
 
 from .mysql_tables import MySQLTables
@@ -9,11 +10,14 @@ from ...constants import MAX_UINT32
 from ...types import TxMetadata, TxLocation, RestorationFilterQueryResult, \
     _get_pushdata_match_flag, BlockHeaderRow
 
+if typing.TYPE_CHECKING:
+    from ... import MySQLDatabase
+
 
 class MySQLAPIQueries:
 
-    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables, mysql_db) \
-            -> None:
+    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables,
+            mysql_db: 'MySQLDatabase') -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn
@@ -37,18 +41,21 @@ class MySQLAPIQueries:
             self.mysql_conn.commit()
 
             if len(rows) == 0:
-                return
+                return None
             elif len(rows) == 1:  # no reorgs
                 tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
                 return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
                     block_height)
-            else:  # has been reorged
-                raise NotImplementedError()
+            else:
+                raise ValueError("More than a single tx_hashX was returned from the MySQL query. "
+                    "This should never happen. It should always give a materialized view of the "
+                    "longest chain")  # i.e. WHERE HD.is_orphaned = 0
 
         finally:
             self.mysql_db.commit_transaction()
 
-    def get_header_data(self, block_hash: bytes, raw_header_data=True) -> Optional[BlockHeaderRow]:
+    def get_header_data(self, block_hash: bytes, raw_header_data: bool=True) \
+            -> Optional[BlockHeaderRow]:
         try:
             if raw_header_data:
                 sql = f"""
@@ -83,31 +90,6 @@ class MySQLAPIQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def _make_restoration_query_result(self, row):
-        pushdata_hashX = row[0]
-        tx_hash = row[1]
-        idx = row[2]
-        ref_type = _get_pushdata_match_flag(row[3])
-        in_tx_hash = row[4]  # Can be null
-        in_idx = MAX_UINT32
-        if row[5] is not None:
-            in_idx = row[5]
-        block_height = row[6]
-        block_hash = row[7]
-        block_num = row[8]
-        tx_position = row[9]
-        tx_location = TxLocation(block_hash, block_num, tx_position)
-        return RestorationFilterQueryResult(
-            ref_type=ref_type,
-            pushdata_hashX=pushdata_hashX,
-            transaction_hash=tx_hash,
-            spend_transaction_hash=in_tx_hash,
-            transaction_output_index=idx,
-            spend_input_index=in_idx,
-            block_height=block_height,
-            tx_location=tx_location
-        )
-
     def get_pushdata_filter_matches(self, pushdata_hashXes: list[str]) \
             -> Generator[RestorationFilterQueryResult, None, None]:
         try:
@@ -124,6 +106,28 @@ class MySQLAPIQueries:
             self.mysql_conn.query(sql)
             result = self.mysql_conn.store_result()
             for row in result.fetch_row(0):
-                yield self._make_restoration_query_result(row)
+                pushdata_hashX: bytes = row[0]
+                tx_hash: bytes = row[1]
+                idx: int = row[2]
+                ref_type: int = _get_pushdata_match_flag(row[3])
+                in_tx_hash: bytes = row[4]  # Can be null
+                in_idx: int = MAX_UINT32
+                if row[5] is not None:
+                    in_idx = row[5]
+                block_height: int = row[6]
+                block_hash: bytes = row[7]
+                block_num: int = row[8]
+                tx_position: int = row[9]
+                tx_location = TxLocation(block_hash, block_num, tx_position)
+                yield RestorationFilterQueryResult(
+                    ref_type=ref_type,
+                    pushdata_hashX=pushdata_hashX,
+                    transaction_hash=tx_hash,
+                    spend_transaction_hash=in_tx_hash,
+                    transaction_output_index=idx,
+                    spend_input_index=in_idx,
+                    block_height=block_height,
+                    tx_location=tx_location
+                )
         finally:
             self.mysql_db.commit_transaction()

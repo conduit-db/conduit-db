@@ -3,7 +3,7 @@ import argparse
 from conduit_lib.constants import SCALINGTESTNET, REGTEST, MAINNET, TESTNET
 
 
-def get_parser():
+def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="run conduit_index chain-indexer")
     parser.add_argument(
         "--host",

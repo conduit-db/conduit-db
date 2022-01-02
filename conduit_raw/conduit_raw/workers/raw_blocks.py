@@ -35,10 +35,9 @@ class BlockWriter(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_blk_writer = worker_in_queue_blk_writer
         self.worker_ack_queue_blk_writer = worker_ack_queue_blk_writer
-        self.worker_asyncio_block_writer_in_queue = None
         self.logger = logging.getLogger("raw-block-writer")
 
-        self.batched_blocks = None
+        self.batched_blocks: Optional[List[Tuple[bytes, int, int]]] = None
         self.batched_blocks_lock: Optional[threading.Lock] = None
         self.lmdb = None
 
@@ -56,11 +55,10 @@ class BlockWriter(multiprocessing.Process):
 
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.worker_asyncio_block_writer_in_queue = asyncio.Queue()
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()
-        self.kill_worker_socket = context3.socket(zmq.SUB)
+        context3 = zmq.Context()  # type: ignore
+        self.kill_worker_socket = context3.socket(zmq.SUB)  # type: ignore
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
@@ -84,6 +82,8 @@ class BlockWriter(multiprocessing.Process):
             self.logger.info(f"Process Stopped")
 
     def flush_thread(self) -> None:
+        assert self.batched_blocks is not None
+        assert self.batched_blocks_lock is not None
         try:
             lmdb = LMDB_Database()
             while True:
@@ -98,6 +98,8 @@ class BlockWriter(multiprocessing.Process):
             raise
 
     def main_thread(self) -> None:
+        assert self.batched_blocks is not None
+        assert self.batched_blocks_lock is not None
         try:
             while True:
                 item = self.worker_in_queue_blk_writer.get()
@@ -108,7 +110,6 @@ class BlockWriter(multiprocessing.Process):
                 with self.batched_blocks_lock:
                     blk_hash, blk_start_pos, blk_end_pos = item
                     self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
-                    block_bytes = blk_end_pos - blk_start_pos
 
         except Exception as e:
             self.logger.exception(e)
@@ -130,10 +131,10 @@ class BlockWriter(multiprocessing.Process):
 
     def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]) -> None:
         if len(batched_blocks) == 0:
-            return
+            return None
         # Ack for all flushed blocks
         total_batch_size = 0
-        for blk_hash, start_position, stop_position in self.batched_blocks:
+        for blk_hash, start_position, stop_position in batched_blocks:
             total_batch_size += stop_position - start_position
             # self.logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
             #       f"size={stop_position-start_position} bytes")

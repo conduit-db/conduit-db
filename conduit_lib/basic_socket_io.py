@@ -1,6 +1,7 @@
 import logging
 import struct
 from socket import socket
+from typing import Optional
 
 logger = logging.getLogger(f"basic-socket-io")
 logger.setLevel(logging.DEBUG)
@@ -15,7 +16,7 @@ def send_msg(sock: socket, msg: bytes) -> bool:
     return True
 
 
-def recv_msg(sock: socket) -> bytearray:
+def recv_msg(sock: socket) -> Optional[bytearray]:
     # Read message length and unpack it into an integer
     raw_msglen = recvall(sock, 8)
     if not raw_msglen:
@@ -25,7 +26,7 @@ def recv_msg(sock: socket) -> bytearray:
     return recvall(sock, msglen)
 
 
-def recvall(sock: socket, n: int) -> bytearray:
+def recvall(sock: socket, n: int) -> Optional[bytearray]:
     # Helper function to recv n bytes or return None if EOF is hit
     data = bytearray()
     while len(data) < n:

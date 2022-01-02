@@ -6,9 +6,11 @@ import logging.handlers
 import logging
 import os
 import sys
+from asyncio import AbstractEventLoop
 from pathlib import Path
 
 import typing
+from typing import Dict, Any
 
 if typing.TYPE_CHECKING:
     from conduit_index.conduit_index.controller import Controller
@@ -54,13 +56,13 @@ def configure() -> None:
     setup_tcp_logging(port=65421)
 
 
-def loop_exception_handler(loop, context) -> None:
+def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) -> None:
     logger = logging.getLogger("loop-exception-handler")
     logger.debug("Exception handler called")
     logger.debug(context)
 
 
-async def main():
+async def main() -> None:
     loop = asyncio.get_running_loop()
     try:
         logging_server_proc = TCPLoggingServer(port=65421, service_name=CONDUIT_INDEX_SERVICE_NAME,
