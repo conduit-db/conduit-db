@@ -1,11 +1,19 @@
 ## ConduitIndex
 
-Horizontally scalable and shardable transaction parser (depends on ConduitRaw)
+Horizontally scalable and shardable transaction parser
+(depends on ConduitRaw's preprocessed blockchain data)
 
-Writes to mmap header files and MyRocks SQL database for indexed transaction data
-(Which is structured in a highly shardable way so as to allow for migration to
-a distributed SQL or similar db backend in future).
+Maintains an index of:
+- Confirmed Transactions
+- Mempool Transactions
+- Inputs
+- Outputs
+- Pushdata hashes
+- Headers and block metadata
 
-Only reads from ConduitRaw's LMDB database tables (later this will require a 
-network API abstraction to move beyond a single machine). But for now can benefit 
-from low latency, direct access.
+MyRocks SQL database for indexed transaction data
+(Which is structured in a highly shardable way so as to allow
+for migration to a distributed SQL or similar db backend in future).
+
+The full raw block, transaction data and merkle proof data is stored
+with ConduitRaw and can be requested over a lightweight TCP socket server.
