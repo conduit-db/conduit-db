@@ -10,7 +10,7 @@ from struct import Struct
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.mysql.types import ConfirmedTransactionRow, InputRow, OutputRow, \
-    PushdataRow, MempoolTransactionRow
+    PushdataRow, MempoolTransactionRow, MySQLFlushBatch
 
 MTreeLevel = int
 MTreeNodeArray = list[bytes]
@@ -157,12 +157,7 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType') -> List[bytes]:  # typ
 # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
 def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayType],  # type: ignore
         height_or_timestamp: Union[int, str], confirmed: bool, first_tx_pos_batch=0) \
-            -> Tuple[
-                List[Union[ConfirmedTransactionRow, MempoolTransactionRow]],
-                List[InputRow],
-                List[OutputRow],
-                List[PushdataRow]
-            ]:
+            -> MySQLFlushBatch:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -280,11 +275,11 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 height_or_timestamp = cast(str, height_or_timestamp)
                 tx_rows.append(MempoolTransactionRow(tx_hash.hex(), height_or_timestamp))  # type: ignore
         assert len(tx_rows) == count_txs
-        return \
-            cast(List[Union[ConfirmedTransactionRow, MempoolTransactionRow]], tx_rows), \
-            cast(List[InputRow], list(in_rows)), \
-            cast(List[OutputRow], list(out_rows)), \
-            cast(List[PushdataRow], list(set_pd_rows))
+        return MySQLFlushBatch(
+            cast(List[Union[ConfirmedTransactionRow, MempoolTransactionRow]], tx_rows),
+            cast(List[InputRow], list(in_rows)),
+            cast(List[OutputRow], list(out_rows)),
+            cast(List[PushdataRow], list(set_pd_rows)))
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "

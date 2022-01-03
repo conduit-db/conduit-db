@@ -30,7 +30,7 @@ from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
-from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, MsgType, NULL_HASH, \
+from conduit_lib.constants import MsgType, NULL_HASH, \
     MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
@@ -319,6 +319,7 @@ class Controller:
 
     # Multiprocessing Workers
     def start_workers(self) -> None:
+        WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '4'))
         for worker_id in range(WORKER_COUNT_TX_PARSERS):
             p: multiprocessing.Process = TxParser(worker_id+1)
             p.start()

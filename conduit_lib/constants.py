@@ -1,6 +1,5 @@
 # Object types
 import enum
-import os
 
 ERROR = 0
 MSG_TX = 1
@@ -35,18 +34,12 @@ TESTNET = "testnet"
 SCALINGTESTNET = "scaling-testnet"
 REGTEST = "regtest"
 LOGGING_LEVEL_VARNAME = 'logging_level'
-WORKER_COUNT_PREPROCESSORS = int(os.getenv('WORKER_COUNT_PREPROCESSORS', '1'))
-WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '1'))
-WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
-WORKER_COUNT_BLK_WRITER = int(os.getenv('WORKER_COUNT_BLK_WRITER', '1'))
-WORKER_COUNT_LOGGING_SERVERS = int(os.getenv('WORKER_COUNT_LOGGING_SERVERS', '1'))
 
 # For small blocks with less than this number of txs, do not divide into partitions
 # It's (probably) more efficient for a single worker process to consume it as a single batch
 # The only exception would be if these 1000 txs have an extreme amount of inputs, outputs and
 # pushdata matches and are very very large txs.
 SMALL_BLOCK_SIZE = 10_000
-
 
 # CHIP_AWAY_BYTE_SIZE_LIMIT must be larger than the largest transaction we expect otherwise
 # the server would likely crash.

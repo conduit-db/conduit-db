@@ -24,15 +24,13 @@ from conduit_lib.database.mysql.types import MempoolTransactionRow, InputRow, Ou
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
+from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.types import BlockSliceRequestType
 
 from ..types import ProcessedBlockAcks, TxHashRows, TxHashes, TxHashToWorkIdMap, TxHashToOffsetMap, \
     BlockSliceOffsets, WorkPart, BatchedRawBlockSlices
 
-try:
-    from conduit_lib._algorithms import calc_mtree_base_level, parse_txs
-except ImportError:
-    from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
+
 
 
 def extend_batched_rows(

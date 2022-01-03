@@ -1,12 +1,12 @@
 import array
 import logging
 import math
+import os
 import time
 from os import urandom
 from typing import List
 
-from conduit_lib.constants import WORKER_COUNT_TX_PARSERS, CHIP_AWAY_BYTE_SIZE_LIMIT, \
-    SMALL_BLOCK_SIZE
+from conduit_lib.constants import CHIP_AWAY_BYTE_SIZE_LIMIT, SMALL_BLOCK_SIZE
 
 
 from .types import WorkPart
@@ -26,6 +26,7 @@ def distribute_load(blk_hash: bytes, blk_height: int, count_added: int, block_si
     # If MAX_WORK_ITEM_SIZE is very small (smaller than the average tx size then it will lead
     # to most of the txs 'piling up' in the last work item...
     # Also - if MAX_WORK_ITEM_SIZE is smaller than even a single tx then it would error!
+    WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '4'))
     WORK_ITEM_SIZE = CHIP_AWAY_BYTE_SIZE_LIMIT / WORKER_COUNT_TX_PARSERS
     BATCH_COUNT = math.ceil(block_size / WORK_ITEM_SIZE)
     BATCH_SIZE = math.floor(count_added / BATCH_COUNT)

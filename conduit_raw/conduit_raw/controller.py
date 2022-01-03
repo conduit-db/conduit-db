@@ -22,8 +22,7 @@ from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserialize
     BitcoinNetIO, wait_for_node, NetworkConfig, Peer)
 from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
-from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, WORKER_COUNT_MTREE_CALCULATORS, \
-    WORKER_COUNT_BLK_WRITER, REGTEST, ZERO_HASH
+from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.types import HeaderSpan, MultiprocessingQueue
 from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
@@ -285,12 +284,15 @@ class Controller:
         t.start()
 
         # Processes
+        WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
         for i in range(WORKER_COUNT_MTREE_CALCULATORS):
             worker_id = i+1
             mtree_proc = MTreeCalculator(worker_id, self.shm_buffer.name, self.worker_ack_queue_mtree)
             mtree_proc.start()
             self.processes.append(mtree_proc)
-        for i in range(WORKER_COUNT_BLK_WRITER):
+
+        WORKER_COUNT_BLOCK_WRITER = int(os.getenv('WORKER_COUNT_BLOCK_WRITER', '1'))
+        for i in range(WORKER_COUNT_BLOCK_WRITER):
             block_writer_proc = BlockWriter(self.shm_buffer.name, self.worker_in_queue_blk_writer,
                 self.worker_ack_queue_blk_writer)
             block_writer_proc.start()

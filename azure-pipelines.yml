@@ -45,23 +45,23 @@ steps:
   displayName: 'Mypy static analysis'
 
 - script: |
-    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml build --parallel
-    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml up --detach
+    docker-compose -f docker-compose.yml build --parallel
+    docker-compose -f docker-compose.yml up --detach
     sleep 15
-    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml logs
+    docker-compose -f docker-compose.yml logs
   timeoutInMinutes: 10
   continueOnError: true
-  displayName: 'Run dockerized services & Import blockchain_115_3677f4'
+  displayName: 'Run dockerized services'
 
 - script: |
     pytest tests --verbose
-    pytest tests_functional --verbose
+    pytest tests_functional --verbose || docker-compose -f docker-compose.yml logs
   timeoutInMinutes: 10
   continueOnError: true
   displayName: 'Pytest'
 
 - script: |
-    docker-compose -f docker-compose.yml -f docker-compose.indexing.yml down
+    docker-compose -f docker-compose.yml down
   timeoutInMinutes: 10
   continueOnError: true
   displayName: 'Docker Down'
