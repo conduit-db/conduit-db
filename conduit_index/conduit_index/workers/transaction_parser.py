@@ -434,8 +434,7 @@ class TxParser(multiprocessing.Process):
             response = ipc_sock_client.block_number_batched(block_hashes)
 
             # Ordering of both of these arrays must be guaranteed
-            block_requests = cast(List[BlockSliceRequestType],
-                list(zip(response.block_numbers, block_slice_offsets)))
+            block_requests = list(zip(response.block_numbers, block_slice_offsets))
 
             raw_blocks_array = ipc_sock_client.block_batched(block_requests)
             # len_bytearray = struct.unpack_from("<Q", response)
