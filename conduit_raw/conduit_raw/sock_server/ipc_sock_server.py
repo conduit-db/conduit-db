@@ -16,7 +16,7 @@ from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.ipc_sock_msg_types import REQUEST_MAP, BaseMsg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
-from conduit_lib.types import BlockMetadata
+from conduit_lib.types import BlockMetadata, Slice
 
 struct_be_Q = struct.Struct(">Q")
 logger = logging.getLogger('rs-server')
@@ -111,6 +111,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def stop(self, msg_req: ipc_sock_msg_types.StopRequest) -> None:
         logger.debug(f"Got {ipc_sock_commands.STOP} request: {msg_req}")
+        self.server.lmdb.close()
         self.server.shutdown()
 
         msg_resp = ipc_sock_msg_types.StopResponse()
@@ -145,7 +146,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             for block_request in msg_req.block_requests:
                 block_number, (start_offset, end_offset) = block_request
                 raw_block_slice = self.server.lmdb.get_block(block_number,
-                    start_offset, end_offset)
+                    Slice(start_offset, end_offset))
 
                 # NOTE(AustEcon): should the client handle errors / null results?
                 len_slice = len(cast(bytes, raw_block_slice))
