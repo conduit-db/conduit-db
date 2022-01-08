@@ -4,10 +4,11 @@ import shutil
 from pathlib import Path
 
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
+from conduit_lib.types import Slice
 from tests.conftest import remove_readonly
 
 
-def test_flat_file_db():
+def test_general_read_and_write_db():
     rand_dir = os.urandom(4).hex()
     try:
         ffdb = FlatFileDb(Path(rand_dir))
@@ -37,6 +38,22 @@ def test_flat_file_db():
         data_cc = ffdb.read_from_db(data_location_cc)
         assert data_cc == b"cc" * 10
         print(data_cc)
+    finally:
+        if os.path.exists(rand_dir):
+            shutil.rmtree(rand_dir, onerror=remove_readonly)
+
+
+def test_slicing():
+    rand_dir = os.urandom(4).hex()
+    try:
+        ffdb = FlatFileDb(Path(rand_dir))
+        data_location_mixed = ffdb.write_from_bytes(b"aaaaabbbbbccccc")
+        print(data_location_mixed)
+
+        slice = Slice(start_offset=5, end_offset=10)
+        data_bb_slice = ffdb.read_from_db(data_location_mixed, slice)
+        assert data_bb_slice == b"bbbbb"
+        print(data_bb_slice)
     finally:
         if os.path.exists(rand_dir):
             shutil.rmtree(rand_dir, onerror=remove_readonly)

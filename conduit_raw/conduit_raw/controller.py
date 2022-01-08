@@ -500,7 +500,7 @@ class Controller:
                 header: bitcoinx.Header = self.storage.headers.header_at_height(node_longest_chain,
                     stop_height)
                 hash_stop = header.hash
-            return cast(bytes, hash_stop)
+            return hash_stop
 
     async def wait_for_batched_blocks_completion(self, batch_id: int,
             all_pending_block_hashes: Set[bytes], stop_header_height: int) -> None:

@@ -52,7 +52,7 @@ def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> Optional[
     tx_loc = TxLocation(tx_location.block_hash, tx_location.block_num,
         tx_location.tx_position)
     tx_hash = lmdb.get_tx_hash_by_loc(tx_loc, base_level)
-    return cast(bytes, tx_hash)
+    return tx_hash
 
 
 def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb: LMDB_Database,
