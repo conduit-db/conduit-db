@@ -374,20 +374,14 @@ class Controller:
 
     async def undo_blocks_above_height(self, height: int) -> None:
         assert self.sync_state is not None
-        unsafe_blocks = []
         tip_header = self.sync_state.get_local_block_tip()
-        for height in range(height+1, tip_header.height+1):
-            header = self.get_header_for_height(height)
-            unsafe_blocks.append((header.hash, height))
-
+        unsafe_blocks = [(self.get_header_for_height(height).hash, height)
+            for height in range(height+1, tip_header.height+1)]
         await self._undo_blocks(unsafe_blocks)
 
     async def undo_specific_block_hashes(self, block_hashes: list[bytes]) -> None:
-        unsafe_blocks = []
-        for block_hash in block_hashes:
-            header = self.get_header_for_hash(block_hash)
-            unsafe_blocks.append((block_hash, header.height))
-
+        unsafe_blocks = [(block_hash, self.get_header_for_hash(block_hash).height)
+            for block_hash in block_hashes]
         await self._undo_blocks(unsafe_blocks)
 
     async def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:

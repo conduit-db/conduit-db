@@ -42,7 +42,7 @@ services:
       - LMDB_READONLY=0
       - LMDB_DATABASE_PATH=/opt/lmdb_data
     working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_raw/conduit_server.py'
+    command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 
   conduit-index:
     build:
@@ -56,8 +56,8 @@ services:
       - CONDUIT_RAW_API_HOST=conduit-raw:50000
       - CONDUIT_INDEX_HOST=conduit-index
     working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_index/conduit_server.py'
-#    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/conduit_server.py'
+    command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
+#    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/run_conduit_index.py'
 
 
 volumes:

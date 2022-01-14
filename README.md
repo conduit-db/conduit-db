@@ -44,12 +44,12 @@ Windows cmd.exe:
 Now install packages and run ConduitRaw (in one terminal)
     
     py -m pip install -r .\conduit_raw\requirements.txt
-    py .\conduit_raw\conduit_server.py
+    py .\conduit_raw\run_conduit_raw.py
 
 And ConduitIndex (in another terminal)
     
     py -m pip install -r .\conduit_index\requirements.txt
-    py .\conduit_index\conduit_server.py
+    py .\conduit_index\run_conduit_index.py
 
 ## Unix - Running ConduitRaw & ConduitIndex
 

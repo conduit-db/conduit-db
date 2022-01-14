@@ -8,8 +8,10 @@ from multiprocessing import shared_memory
 
 import cbor2
 import zmq
+from typing import List
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.logging_client import setup_tcp_logging
 
 from conduit_lib.algorithms import calc_mtree
@@ -38,7 +40,7 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
 
     def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
-        batched_merkle_trees = []
+        batched_merkle_trees: List[MerkleTreeRow] = []
         batched_tx_offsets = []
         batched_acks = []
 
@@ -48,7 +50,7 @@ class MTreeCalculator(multiprocessing.Process):
             tx_offsets = array.array("Q", tx_offsets_bytes)
 
             mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
-            batched_merkle_trees.append((blk_hash, mtree, len(tx_offsets)))
+            batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, len(tx_offsets)))
             batched_tx_offsets.append((blk_hash, tx_offsets))
             batched_acks.append(blk_hash)
 

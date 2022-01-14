@@ -29,18 +29,24 @@ steps:
     python3 -m pylint --rcfile ./.pylintrc ./conduit_raw ./conduit_index ./conduit_lib
     if [ $? -gt 0 ]
     then
-      # https://docs.pylint.org/en/1.6.0/run.html#exit-codes
       echo "##vso[task.complete result=Failed;]DONE"
     fi
   continueOnError: true
   displayName: 'Pylint'
 
 - script: |
+    set -e
+    error_exit()
+    {
+        echo "Error: $1"
+        echo "##vso[task.complete result=Failed;]DONE"
+        exit 1
+    }
     python3 -m pip install mypy
     yes | python3 -m mypy --install-types
-    python3 -m mypy --config-file mypy.ini ./conduit_raw --python-version 3.10
-    python3 -m mypy --config-file mypy.ini ./conduit_lib --python-version 3.10
-    python3 -m mypy --config-file mypy.ini ./conduit_index --python-version 3.10
+    python3 -m mypy --config-file mypy.ini ./conduit_raw --python-version 3.10 || error_exit "mypy failed"
+    python3 -m mypy --config-file mypy.ini ./conduit_lib --python-version 3.10 || error_exit "mypy failed"
+    python3 -m mypy --config-file mypy.ini ./conduit_index --python-version 3.10 || error_exit "mypy failed"
   continueOnError: true
   displayName: 'Mypy static analysis'
 

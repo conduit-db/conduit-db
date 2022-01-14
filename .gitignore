@@ -19,6 +19,7 @@ ConduitRaw/npm-debug.log
 ConduitRaw/secrets.dev.yaml
 ConduitRaw/values.dev.yaml
 
+*.lock
 *.mmap
 *.pyd
 *.lib

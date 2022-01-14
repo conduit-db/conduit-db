@@ -45,6 +45,11 @@ class TxOffsetsArrayLocation(NamedTuple):
     end_offset: int
 
 
+class RawBlockLocation(NamedTuple):
+    write_path: str
+    start_offset: int
+    end_offset: int
+
 
 class Slice(NamedTuple):
     start_offset: int

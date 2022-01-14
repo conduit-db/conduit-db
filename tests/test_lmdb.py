@@ -1,5 +1,4 @@
 import array
-import asyncio
 import os
 import shutil
 import struct
@@ -10,7 +9,9 @@ from pathlib import Path
 import bitcoinx
 from bitcoinx import double_sha256
 
-
+from conduit_lib import NetworkConfig
+from conduit_lib.constants import REGTEST
+from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
@@ -24,9 +25,9 @@ LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
 
 def ipc_sock_server_thread():
     from conduit_lib.store import setup_headers_store
-    from conduit_lib.networks import RegTestNet
     HOST, PORT = "127.0.0.1", 34586
-    block_headers = setup_headers_store(RegTestNet(), "test_headers.mmap")
+    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
+    block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()
     ipc_sock_server = ThreadedTCPServer(addr=(HOST, PORT),
         handler=ThreadedTCPRequestHandler, storage_path=LMDB_STORAGE_PATH,
@@ -49,7 +50,6 @@ class TestLMDBDatabase:
         time.sleep(5)  # allow time for server to stop (and close lmdb handle)
         self.ipc_sock_client.close()  # closes client channel
         self.lmdb.close()
-
         if os.path.exists(LMDB_STORAGE_PATH):
             shutil.rmtree(LMDB_STORAGE_PATH)
 
@@ -68,16 +68,16 @@ class TestLMDBDatabase:
         self.lmdb.put_blocks(batched_blocks, memoryview(expected_raw_block.tobytes()))
 
         actual_block_num = self.lmdb.get_block_num(block_hash)
-        actual_block_num = self.ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
+        actual_block_num_ipc = self.ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
         assert expected_block_num == actual_block_num
-        assert expected_block_num == actual_block_num
+        assert expected_block_num == actual_block_num_ipc
 
         actual_block_size = self.lmdb.get_block_metadata(block_hash).block_size
-        actual_grpc_block_size = self.ipc_sock_client \
+        actual_block_size_ipc = self.ipc_sock_client \
                                      .block_metadata_batched([block_hash]) \
                                      .block_metadata_batch[0].block_size
         assert expected_block_size == actual_block_size
-        assert expected_block_size == actual_grpc_block_size
+        assert expected_block_size == actual_block_size_ipc
 
         actual_raw_block = self.lmdb.get_block(expected_block_num)
         block_requests: list[BlockSliceRequestType] = list([BlockSliceRequestType(expected_block_num, Slice(0, 0))])
@@ -85,10 +85,10 @@ class TestLMDBDatabase:
 
         block_num, len_slice = struct.unpack_from(f"<IQ", batched_block_slices, 0)
         _block_num, _len_slice, raw_block_slice = struct.unpack_from(f"<IQ{len_slice}s", batched_block_slices, 0)
-        actual_grpc_raw_block = raw_block_slice
+        actual_raw_block_ipc = raw_block_slice
 
         assert expected_raw_block.tobytes() == actual_raw_block
-        assert expected_raw_block.tobytes() == actual_grpc_raw_block
+        assert expected_raw_block.tobytes() == actual_raw_block_ipc
 
         # TODO - test writing multiple blocks in the batch
         #  (which will be added to the same .dat file) - this complicates the offset calculations
@@ -104,7 +104,7 @@ class TestLMDBDatabase:
         merkle_root = double_sha256(middle_level[0] + middle_level[1])
         merkle_tree = {2: base_level, 1: middle_level, 0: [merkle_root]}
 
-        write_batch = [(block_hash, merkle_tree, len(base_level))]
+        write_batch = [MerkleTreeRow(block_hash, merkle_tree, len(base_level))]
         self.lmdb.put_merkle_trees(write_batch)
 
         expected_base_level = tx1 + tx2 + tx3 + tx3
@@ -126,15 +126,17 @@ class TestLMDBDatabase:
         assert expected_merkle_root == actual_merkle_root
         assert expected_merkle_root == actual_ipc_merkle_root
 
-        array = self.lmdb.get_merkle_tree_data(block_hash, start_offset=0, end_offset=0)
+        array = self.lmdb.merkle_tree._get_merkle_tree_data(block_hash, None)
         assert array == expected_base_level + expected_mid_level + expected_merkle_root
 
-        merkle_root = self.lmdb.get_merkle_tree_data(block_hash,
+        slice = Slice(
             start_offset=len(expected_base_level + expected_mid_level),
-            end_offset=len(expected_base_level + expected_mid_level + expected_merkle_root))
+            end_offset=len(expected_base_level + expected_mid_level + expected_merkle_root)
+        )
+        merkle_root = self.lmdb.merkle_tree._get_merkle_tree_data(block_hash, slice)
         assert expected_merkle_root == merkle_root
 
-        with self.lmdb.env.begin(db=self.lmdb.mtree_db, write=False, buffers=True) as txn:
+        with self.lmdb.env.begin(db=self.lmdb.merkle_tree.mtree_db, write=False, buffers=True) as txn:
             cursor = txn.cursor()
             mtree_merkle_root_node = self.lmdb.get_mtree_node(block_hash, 0, position=0, cursor=cursor)
             assert expected_merkle_root == mtree_merkle_root_node
@@ -181,16 +183,16 @@ class TestLMDBDatabase:
         self.lmdb.put_tx_offsets([(block_hash, tx_offsets)])
         block_num = self.lmdb.get_block_num(block_hash)
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=0)
-        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_slice(tx_loc)
         assert coinbase_start_offset == 83
         assert coinbase_end_offset == 268
 
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=1)
-        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_slice(tx_loc)
         assert coinbase_start_offset == 268
         assert coinbase_end_offset == 494
 
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=2)
-        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_offset(tx_loc)
+        coinbase_start_offset, coinbase_end_offset = self.lmdb.get_single_tx_slice(tx_loc)
         assert coinbase_start_offset == 494
         assert coinbase_end_offset == 720
