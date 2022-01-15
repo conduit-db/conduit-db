@@ -39,7 +39,7 @@ class Handlers:
         # logger.debug("handling version...")
         version = self.controller.deserializer.version(io.BytesIO(message))
         self.controller.sync_state.set_target_header_height(version["start_height"])
-        logger.debug("received version message: %s", version)
+        logger.debug("Received version message: %s", version)
         verack_message = self.controller.serializer.verack()
         await self.controller.send_request(VERACK, verack_message)
 
@@ -50,9 +50,9 @@ class Handlers:
         pass
 
     async def on_protoconf(self, message: memoryview) -> None:
-        logger.debug("handling protoconf...")
+        logger.debug("Handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
-        logger.debug(f"protoconf: {protoconf}")
+        logger.debug(f"Protoconf: {protoconf}")
         self.controller.handshake_complete_event.set()
 
     async def on_sendheaders(self, message: memoryview) -> None:

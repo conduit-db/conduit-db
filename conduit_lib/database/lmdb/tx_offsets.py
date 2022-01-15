@@ -37,8 +37,6 @@ class LmdbTxOffsets:
 
     def _get_single_tx_slice(self, tx_loc: TxLocation) -> Optional[Slice]:
         """If end_offset=0 then it goes to the end of the block"""
-        self.logger.debug(f"_get_single_tx_slice: block_hash: "
-                          f"{bitcoinx.hash_to_hex_str(tx_loc.block_hash)}")
         with self.db.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(tx_loc.block_hash)
             if val is None:
@@ -76,22 +74,27 @@ class LmdbTxOffsets:
             return None
         return self.db.get_block(tx_loc.block_num, slice)
 
-    def get_tx_offsets(self, block_hash: bytes) -> Optional[bytes]:
-        """If end_offset=0 then it goes to the end of the block"""
+    def get_data_location(self,  block_hash: bytes) -> Optional[DataLocation]:
         with self.db.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(block_hash)
             if not val:
                 self.logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(block_hash)} "
                                   f"not found")
                 return None
+        read_path, start_offset, end_offset = cbor2.loads(val)
+        return DataLocation(read_path, start_offset, end_offset)
 
-            with self.ffdb:
-                read_path, start_offset, end_offset = cbor2.loads(val)
-                data_location = DataLocation(read_path, start_offset, end_offset)
-                try:
-                    return self.ffdb.get(data_location, lock_free_access=True)
-                except FileNotFoundError:
-                    return None
+    def get_tx_offsets(self, block_hash: bytes) -> Optional[bytes]:
+        """If end_offset=0 then it goes to the end of the block"""
+        data_location = self.get_data_location(block_hash)
+        if not data_location:
+            return None
+
+        with self.ffdb:
+            try:
+                return self.ffdb.get(data_location, lock_free_access=True)
+            except FileNotFoundError:
+                return None
 
     def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) \
             -> None:

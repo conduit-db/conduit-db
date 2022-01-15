@@ -136,33 +136,30 @@ class TestLMDBDatabase:
         merkle_root = self.lmdb.merkle_tree._get_merkle_tree_data(block_hash, slice)
         assert expected_merkle_root == merkle_root
 
-        with self.lmdb.env.begin(db=self.lmdb.merkle_tree.mtree_db, write=False, buffers=True) as txn:
-            cursor = txn.cursor()
-            mtree_merkle_root_node = self.lmdb.get_mtree_node(block_hash, 0, position=0, cursor=cursor)
-            assert expected_merkle_root == mtree_merkle_root_node
+        mtree_merkle_root_node = self.lmdb.get_mtree_node(block_hash, 0, position=0)
+        assert expected_merkle_root == mtree_merkle_root_node
 
-            left_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=0, cursor=cursor)
-            assert expected_mid_level[0:32] == left_mid_node
+        left_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=0)
+        assert expected_mid_level[0:32] == left_mid_node
 
-            right_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=1, cursor=cursor)
-            assert expected_mid_level[32:64] == right_mid_node
+        right_mid_node = self.lmdb.get_mtree_node(block_hash, 1, position=1)
+        assert expected_mid_level[32:64] == right_mid_node
 
-            zeroth_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=0, cursor=cursor)
-            assert expected_base_level[0:32] == zeroth_base_node
+        zeroth_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=0)
+        assert expected_base_level[0:32] == zeroth_base_node
 
-            first_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=1, cursor=cursor)
-            assert expected_base_level[32:64] == first_index_base_node
+        first_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=1)
+        assert expected_base_level[32:64] == first_index_base_node
 
-            second_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=2, cursor=cursor)
-            assert expected_base_level[64:96] == second_index_base_node
+        second_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=2)
+        assert expected_base_level[64:96] == second_index_base_node
 
-            third_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=3, cursor=cursor)
-            assert expected_base_level[96:128] == third_index_base_node
+        third_index_base_node = self.lmdb.get_mtree_node(block_hash, 2, position=3)
+        assert expected_base_level[96:128] == third_index_base_node
 
-            # TODO - test writing multiple merkle trees in the batch
-            #  (to be added to the same .dat file) - this complicates the offset calculations
-            #  So needs tests to ensure no regressions
-
+        # TODO - test writing multiple merkle trees in the batch
+        #  (to be added to the same .dat file) - this complicates the offset calculations
+        #  So needs tests to ensure no regressions
 
     def test_tx_offset_storage(self):
         block_hash = bytes.fromhex("ff" * 64)

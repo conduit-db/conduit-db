@@ -321,8 +321,34 @@ class Controller:
             block_headers_lock=self.storage.block_headers_lock)
         self.ipc_sock_server.serve_forever()
 
+    def undo_blocks_above_height(self, height: int) -> None:
+        assert self.sync_state is not None
+        tip_header = self.sync_state.get_local_block_tip()
+        unsafe_blocks = [(self.get_header_for_height(height).hash, height)
+            for height in range(height+1, tip_header.height+1)]
+        self._undo_blocks(unsafe_blocks)
+
+    def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:
+        assert self.lmdb is not None
+        for block_hash, height in blocks_to_undo:
+            self.lmdb.purge_block_data(block_hash)
+
+    def database_integrity_check(self) -> None:
+        """Check the last flushed block"""
+        assert self.lmdb is not None
+        UNDO_SAFETY_MARGIN = 100
+        tip = self.sync_state.get_local_tip()
+        try:
+            self.logger.info(f"Checking database integrity...")
+            self.lmdb.check_block(tip.hash)
+            self.logger.info(f"Database integrity check passed.")
+        except AssertionError:
+            self.logger.debug("Previous tip was not flushed to disc. Repairing...")
+            self.undo_blocks_above_height(tip.height - UNDO_SAFETY_MARGIN)
+
     async def start_jobs(self) -> None:
         try:
+            self.database_integrity_check()
             thread = threading.Thread(target=self.ipc_sock_server_thread)
             thread.start()
             await self.spawn_aiohttp_api()

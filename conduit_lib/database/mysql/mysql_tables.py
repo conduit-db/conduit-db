@@ -197,8 +197,9 @@ class MySQLTables:
 
             # I think I can get away with not storing full pushdata hashes
             # unless they collide because the client provides the full pushdata_hash
-            # Todo: Maybe I need an autoincrement PK for uniqueness (append-only) + the secondary index on
-            #  Pushdata_hash... maybe this is why the db size is so huge?
+            # TODO: If rocksdb were used directly could have all of this as the key, value as null
+            #  and use the fixed slice length prefix extractor to get all of the entries for a given
+            #  pushdata_hash.
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS pushdata (
                     pushdata_hash BINARY({HashXLength}),

@@ -75,20 +75,12 @@ class LmdbMerkleTree:
         start_offset = to_add_to_start
         return Slice(start_offset, end_offset)
 
-    def _get_merkle_tree_data(self, block_hash: bytes, slice: Optional[Slice]) \
-            -> Optional[bytes]:
+    def _get_merkle_tree_data(self, block_hash: bytes, slice: Optional[Slice]) -> Optional[bytes]:
         """If end_offset=0 then it goes to the end of the block"""
-        with self.db.env.begin(db=self.mtree_db, buffers=False) as txn:
-            mtree_location_bytes: bytes = txn.get(block_hash)
-            if not mtree_location_bytes:
-                self.logger.error(f"Merkle tree for block_hash: "
-                                  f"{hash_to_hex_str(block_hash)} not found")
-                return None
-
+        data_location = self.get_data_location(block_hash)
+        if not data_location:
+            return None
         with self.ffdb:
-            read_path, start_offset_in_dat_file, end_offset_in_dat_file, \
-                base_node_count = cbor2.loads(mtree_location_bytes)
-            data_location = DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
             return self.ffdb.get(data_location, slice, lock_free_access=True)
 
     # -------------------- EXTERNAL API -------------------- #
@@ -101,8 +93,20 @@ class LmdbMerkleTree:
             tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
             return tx_hash
 
-    def get_mtree_node(self, block_hash: bytes, level: int,
-            position: int, cursor: lmdb.Cursor) -> bytes:
+    def get_data_location(self,  block_hash: bytes) -> Optional[DataLocation]:
+        with self.db.env.begin(db=self.mtree_db, buffers=False) as txn:
+            mtree_location_bytes: bytes = txn.get(block_hash)
+            if not mtree_location_bytes:
+                self.logger.error(f"Merkle tree for block_hash: "
+                                  f"{hash_to_hex_str(block_hash)} not found")
+                return None
+        read_path, start_offset_in_dat_file, end_offset_in_dat_file, base_node_count = cbor2.loads(
+            mtree_location_bytes)
+        return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
+
+    def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
+            -> bytes:
+        """level zero is the merkle root node"""
         if cursor:
             val = bytes(cursor.get(block_hash))
         else:
@@ -126,6 +130,7 @@ class LmdbMerkleTree:
 
     def get_mtree_row(self, block_hash: bytes, level: int,
             cursor: Optional[lmdb.Cursor]=None) -> Optional[bytes]:
+        """level zero is the merkle root node"""
         if cursor:
             val = bytes(cursor.get(block_hash))
         else:
@@ -160,7 +165,6 @@ class LmdbMerkleTree:
                 pair_index = index ^ 1
                 if level == 0:
                     merkle_root = self.get_mtree_node(block_hash, level, 0, cur)
-
                     break
 
                 if odd_node_count_for_level(current_level_node_count):

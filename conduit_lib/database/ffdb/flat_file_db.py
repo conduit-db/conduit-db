@@ -243,7 +243,12 @@ class FlatFileDb:
 
     def delete_file(self, file_path: Path) -> None:
         """It is critically important that no reads are being attempted when deleting a file.
-        It is not safe."""
+        It is not safe.
+
+        NOTE This does not raise in case of OSError and so there's a theoretical risk of
+        leaking disc space if this goes unnoticed. But I'd rather leak some disc space and log the
+        error to allow the server to remain operational.
+        """
         with self.mutable_file_rwlock.write_lock():
             try:
                 os.remove(file_path)

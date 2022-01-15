@@ -7,8 +7,10 @@ import lmdb
 from typing import List, Tuple, Optional, Set
 import typing
 
+from bitcoinx import hex_str_to_hash, double_sha256
 
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
+from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
 
@@ -59,7 +61,7 @@ class LMDB_Database:
         self.blocks = LmdbBlocks(self)
         self.merkle_tree = LmdbMerkleTree(self)
         self.tx_offsets = LmdbTxOffsets(self)
-        self.logger.debug(f"opened LMDB database at {storage_path}")
+        self.logger.debug(f"Opened LMDB database at {storage_path}")
 
     def close(self) -> None:
         if not self._opened:
@@ -97,9 +99,10 @@ class LMDB_Database:
     def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
         return self.merkle_tree.get_tx_hash_by_loc(tx_loc, mtree_base_level)
 
-    def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
-            -> bytes:
-        return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
+    def get_mtree_node(self, block_hash: bytes, level: int, position: int) -> bytes:
+        with self.env.begin(db=self.merkle_tree.mtree_db, write=False, buffers=False) as txn:
+            cursor = txn.cursor()
+            return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
 
     def get_mtree_row(self, blk_hash: bytes, level: int, cursor: Optional[lmdb.Cursor]=None) \
             -> Optional[bytes]:
@@ -126,6 +129,56 @@ class LMDB_Database:
 
     def get_block_num(self, block_hash: bytes) -> Optional[int]:
         return self.blocks.get_block_num(block_hash)
+
+    def check_block(self, block_hash: bytes) -> None:
+        if block_hash == hex_str_to_hash(GENESIS_HASH_HEX):
+            return None
+
+        block_num = self.blocks.get_block_num(block_hash)
+        assert block_num is not None
+        data_location = self.blocks.get_data_location(block_num)
+        assert data_location is not None
+        file_size = os.path.getsize(data_location.file_path)
+        assert data_location.end_offset <= file_size, \
+            f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
+
+        # Ensure that the merkle tree table and tx offsets table are aligned to return the
+        # correct coinbase transaction from the raw block data.
+        block_metadata = self.get_block_metadata(block_hash)
+        assert block_metadata is not None
+        base_level = calc_depth(block_metadata.tx_count) - 1
+        with self.env.begin(write=False, buffers=False) as txn:
+            coinbase_tx_hash = self.get_mtree_node(block_hash, level=base_level, position=0)
+
+        coinbase_tx_location = TxLocation(block_hash, block_num, tx_position=0)
+        rawtx = self.get_rawtx_by_loc(coinbase_tx_location)
+        assert double_sha256(rawtx) == coinbase_tx_hash
+
+    def purge_block_data(self, block_hash: bytes) -> None:
+        """Scrubs all records for this block hash.
+
+        raises `AssertionError` if any of the checks fail"""
+        block_num = self.get_block_num(block_hash)
+        assert block_num is not None
+        with self.env.begin(write=True, buffers=False) as txn:
+            data_location_block = self.blocks.get_data_location(block_num)
+            assert data_location_block is not None
+            txn.delete(block_num, db=self.blocks.blocks_db)
+            txn.delete(block_hash, db=self.blocks.block_nums_db)
+            txn.delete(block_hash, db=self.blocks.block_metadata_db)
+
+            data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
+            assert data_location_tx_offsets is not None
+            txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
+
+            data_location_merkle_tree = self.merkle_tree.get_data_location(block_hash)
+            assert data_location_merkle_tree is not None
+            txn.delete(block_hash, db=self.merkle_tree.mtree_db)
+
+        # These calls are irreversible. There is no rollback
+        self.blocks.ffdb.delete_file(Path(data_location_block.file_path))
+        self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
+        self.merkle_tree.ffdb.delete_file(Path(data_location_merkle_tree.file_path))
 
     def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
         return self.blocks.get_block(block_num, slice)

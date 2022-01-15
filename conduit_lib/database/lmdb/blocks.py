@@ -62,19 +62,23 @@ class LmdbBlocks:
                               f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
             return None
 
-    def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
-        """If end_offset=0 then it goes to the end of the block"""
+    def get_data_location(self,  block_num: int) -> Optional[DataLocation]:
         with self.db.env.begin(db=self.blocks_db, buffers=False) as txn:
             val: bytes = txn.get(struct_be_I.pack(block_num))
             if not val:
                 self.logger.error(f"Block for block_num: {block_num} not found")
                 return None
+        read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
+        return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
 
-            with self.ffdb:
-                read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
-                data_location = DataLocation(read_path, start_offset_in_dat_file,
-                    end_offset_in_dat_file)
-                return self.ffdb.get(data_location, slice, lock_free_access=True)
+    def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
+        """If end_offset=0 then it goes to the end of the block"""
+        data_location = self.get_data_location(block_num)
+        if not data_location:
+            return None
+
+        with self.ffdb:
+            return self.ffdb.get(data_location, slice, lock_free_access=True)
 
     def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]],
             shared_mem_buffer: memoryview) -> None:

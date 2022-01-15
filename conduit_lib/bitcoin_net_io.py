@@ -83,7 +83,7 @@ class BitcoinNetIO(BufferedProtocol):
 
     def connection_made(self, transport: BaseTransport) -> None:
         self.transport = transport
-        self.logger.info("connection made")
+        self.logger.info("Connection made")
         self.on_connection_made_callback()
 
     def connection_lost(self, exc: Optional[BaseException]) -> None:
