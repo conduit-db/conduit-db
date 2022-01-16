@@ -305,7 +305,9 @@ def load_dotenv(dotenv_path: Path) -> None:
             split_line = line.strip().split("=")
             key = split_line[0]
             val = split_line[1] + "".join(["=" + part for part in split_line[2:]])
-            os.environ[key] = val
+            # Does not override pre-existing environment variables
+            if not os.environ.get(key):
+                os.environ[key] = val
 
 
 class InvalidNetworkException(Exception):
