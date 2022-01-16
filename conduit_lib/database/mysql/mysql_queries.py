@@ -405,7 +405,8 @@ class MySQLQueries:
     def update_allocated_state(self, reorg_was_allocated: bool, first_allocated: bitcoinx.Header,
             last_allocated: bitcoinx.Header, old_hashes: Optional[ChainHashes],
             new_hashes: Optional[ChainHashes]) -> None:
-
+        # old_hashes and new_hashes are null unless there there was a reorg in which case we
+        # need to be precise about how we do the db repair / rollback (if ever needed)
         if old_hashes is not None:
             old_hashes_array = bytearray()
             for block_hash in old_hashes:

@@ -345,10 +345,9 @@ class Controller:
         needs_repair = best_flushed_block_hash != last_allocated_block_hash
         if not needs_repair:
             return
+
         self.logger.debug(f"ConduitDB did not shut down cleanly last session. "
                           f"Performing automated database repair...")
-        old_hashes: List[bytes] = [old_hashes_array[i:i+32] for i in range(len(old_hashes_array))]
-        new_hashes: List[bytes] = [new_hashes_array[i:i+32] for i in range(len(new_hashes_array))]
 
         # Drop and re-create mempool table
         self.mysql_db.tables.mysql_drop_mempool_table()
@@ -356,8 +355,15 @@ class Controller:
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
+            old_hashes: List[bytes] | None = [old_hashes_array[i:i + 32] for i in
+                range(len(old_hashes_array))]
+            new_hashes: List[bytes] | None = [new_hashes_array[i:i + 32] for i in
+                range(len(new_hashes_array))]
+            assert new_hashes is not None
             await self.undo_specific_block_hashes(new_hashes)
         else:
+            old_hashes = None
+            new_hashes = None
             best_header = self.get_header_for_hash(best_flushed_block_hash)
             await self.undo_blocks_above_height(best_header.height)
 
@@ -366,8 +372,8 @@ class Controller:
         first_allocated_header = self.get_header_for_hash(first_allocated_block_hash)
         last_allocated_header = self.get_header_for_hash(last_allocated_block_hash)
 
-        best_flushed_tip_height = await self.index_blocks(reorg_was_allocated, first_allocated_header,
-            last_allocated_header, old_hashes, new_hashes)
+        best_flushed_tip_height = await self.index_blocks(reorg_was_allocated,
+            first_allocated_header, last_allocated_header, old_hashes, new_hashes)
         self.logger.debug(f"Database repair complete. "
                           f"New chain tip: {best_flushed_tip_height}")
 
