@@ -496,7 +496,7 @@ class Controller:
                 if not self.global_tx_hashes_dict.get(blk_num):
                     self.global_tx_hashes_dict[blk_num] = []
                 self.global_tx_hashes_dict[blk_num].extend(new_hashes)
-            if len(self.global_tx_hashes_dict) == len(self.sync_state.expected_blocks_tx_counts):
+            if len(self.global_tx_hashes_dict) >= len(self.sync_state.expected_blocks_tx_counts):
                 all_blocks_processed = self.all_blocks_processed(self.global_tx_hashes_dict)
 
         # 2) Transfer from dict -> Temp Table for Table join with Mempool table
