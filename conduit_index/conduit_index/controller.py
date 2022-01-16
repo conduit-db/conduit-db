@@ -392,7 +392,14 @@ class Controller:
     async def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:
         assert self.mysql_db is not None
         ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
+        batched_tx_rows = []
+        batched_in_rows = []
+        batched_out_rows = []
+        batched_pd_rows = []
+        batched_header_hashes = []
         for block_hash, height in blocks_to_undo:
+            self.logger.debug(f"Undoing block hash: {hash_to_hex_str(block_hash)}, "
+                              f"height: {height}")
             tx_offsets = next(ipc_sock_client.transaction_offsets_batched([block_hash]))
             block_num = ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
             slice = Slice(start_offset=0, end_offset=0)
@@ -403,13 +410,19 @@ class Controller:
                 raw_blocks_array, 0)
             tx_rows, in_rows, out_rows, pd_rows = parse_txs(array.array('B', raw_block), tx_offsets,
                 height, confirmed=True, first_tx_pos_batch=0)
+            batched_tx_rows.extend(tx_rows)
+            batched_in_rows.extend(in_rows)
+            batched_out_rows.extend(out_rows)
+            batched_pd_rows.extend(pd_rows)
+            batched_header_hashes.append(block_hash)
 
-            # Delete
-            tx_hashes = [row[0] for row in tx_rows]
-            self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-            self.mysql_db.queries.mysql_delete_pushdata_rows(pd_rows)
-            self.mysql_db.queries.mysql_delete_output_rows(out_rows)
-            self.mysql_db.queries.mysql_delete_input_rows(in_rows)
+        # Delete All
+        tx_hashes = [row[0] for row in batched_tx_rows]
+        self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
+        self.mysql_db.queries.mysql_delete_pushdata_rows(batched_pd_rows)
+        self.mysql_db.queries.mysql_delete_output_rows(batched_out_rows)
+        self.mysql_db.queries.mysql_delete_input_rows(batched_in_rows)
+        for block_hash in batched_header_hashes:
             self.mysql_db.queries.mysql_delete_header_row(block_hash)
 
     async def request_mempool(self) -> None:
