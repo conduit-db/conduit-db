@@ -5,9 +5,9 @@
 REM Get current folder with no trailing slash
 set ScriptDir=%~dp0
 set TLD=%ScriptDir%
-set CONDUIT_RAW_DIR=%~dp0..\conduit_raw
-set CONDUIT_INDEX_DIR=%~dp0..\conduit_index
-set CONDUIT_LIB_DIR=%~dp0..\conduit_lib
+set CONDUIT_RAW_DIR=%~dp0\conduit_raw
+set CONDUIT_INDEX_DIR=%~dp0\conduit_index
+set CONDUIT_LIB_DIR=%~dp0\conduit_lib
 
 cd %ScriptDir%
 
@@ -19,4 +19,6 @@ mypy --config=%TLD%\mypy.ini %TLD%\conduit_index --python-version 3.10
 mypy --config=%TLD%\mypy.ini %TLD%\conduit_lib --python-version 3.10
 
 REM Run pylint
-py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_RAW_DIR% %CONDUIT_INDEX_DIR% %CONDUIT_LIB_DIR%
+py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_LIB_DIR%
+py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_RAW_DIR%
+py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_INDEX_DIR%

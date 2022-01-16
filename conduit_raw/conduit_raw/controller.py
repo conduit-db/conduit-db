@@ -24,7 +24,7 @@ from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.deserializer_types import Inv
-from conduit_lib.types import HeaderSpan, MultiprocessingQueue
+from conduit_lib.types import HeaderSpan, MultiprocessingQueue, BlockMetadata
 from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
     get_header_for_height
 from conduit_lib.wait_for_dependencies import wait_for_mysql
@@ -522,8 +522,12 @@ class Controller:
             header = self.get_header_for_height(height)
             block_hashes.append(header.hash)
 
-        with IPCSocketClient() as ipc_sock_client:
-            block_metadata_batch = ipc_sock_client.block_metadata_batched(block_hashes).block_metadata_batch
+        assert self.lmdb is not None
+        block_metadata_batch = []
+        for block_hash in block_hashes:
+            block_metadata = self.lmdb.get_block_metadata(block_hash)
+            assert block_metadata is not None
+            block_metadata_batch.append(block_metadata)
 
         block_sizes = [m.block_size for m in block_metadata_batch]
         self.estimated_moving_av_block_size = math.ceil(sum(block_sizes) / len(block_metadata_batch))

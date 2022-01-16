@@ -14,7 +14,7 @@ import bitcoinx
 
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_tables import MySQLTables
-from .types import PushdataRow, OutputRow, InputRow, ConfirmedTransactionRow, MinedTxHashes
+from .types import ConfirmedTransactionRow, MinedTxHashes
 from ...constants import PROFILING
 from ...types import ChainHashes
 
