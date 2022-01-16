@@ -344,7 +344,7 @@ class Controller:
             self.logger.info(f"Database integrity check passed.")
         except AssertionError:
             self.logger.debug("Previous tip was not flushed to disc. Repairing...")
-            self.undo_blocks_above_height(tip.height - UNDO_SAFETY_MARGIN)
+            self.undo_blocks_above_height(max(tip.height - UNDO_SAFETY_MARGIN, 0))
 
     async def start_jobs(self) -> None:
         try:

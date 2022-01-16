@@ -38,7 +38,6 @@ from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header
     connect_headers_reorg_safe, get_header_for_hash
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
     wait_for_node
-from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 
 from .sync_state import SyncState
 from .types import WorkUnit
@@ -571,7 +570,8 @@ class Controller:
             self.storage.headers.flush()
             return True
         except MissingHeader as e:
-            if str(e).find(GENESIS_HASH_HEX) != -1 or str(e).find(NULL_HASH) != -1:
+            GENESIS_BLOCK_HASH = os.environ["GENESIS_BLOCK_HASH"]
+            if str(e).find(GENESIS_BLOCK_HASH) != -1 or str(e).find(NULL_HASH) != -1:
                 self.logger.debug("skipping - prev_out == genesis block")
                 return True
             else:

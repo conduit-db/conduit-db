@@ -45,6 +45,7 @@ class AbstractNetwork:
     DNS_SEEDS = [""]
     BITCOINX_COIN: Optional[Network] = None
     CHECKPOINT: Optional[CheckPoint] = None
+    GENESIS_BLOCK_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
 
 
 class MainNet(AbstractNetwork):
@@ -58,7 +59,7 @@ class MainNet(AbstractNetwork):
     PORT = 8333
     DNS_SEEDS = ["seed.bitcoinsv.io"]
     BITCOINX_COIN = Bitcoin
-
+    GENESIS_BLOCK_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
     # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
@@ -82,7 +83,7 @@ class TestNet(AbstractNetwork):
     PORT = 18333
     DNS_SEEDS = ["testnet-seed.bitcoinsv.io"]
     BITCOINX_COIN = BitcoinTestnet
-
+    GENESIS_BLOCK_HASH = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
     # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
@@ -106,7 +107,7 @@ class ScalingTestNet(AbstractNetwork):
     PORT = 9333
     DNS_SEEDS = ["stn-seed.bitcoinsv.io"]
     BITCOINX_COIN = BitcoinScalingTestnet
-
+    GENESIS_BLOCK_HASH = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
     # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
@@ -131,6 +132,7 @@ class RegTestNet(AbstractNetwork):
     PORT = 18444
     DNS_SEEDS = ["127.0.0.1"]
     BITCOINX_COIN = BitcoinRegtest
+    GENESIS_BLOCK_HASH = "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
     # i.e. Genesis block
     CHECKPOINT = CheckPoint(
         bytes.fromhex(
@@ -158,6 +160,7 @@ class NetworkConfig:
         self.PORT = network.PORT
         self.DNS_SEEDS = network.DNS_SEEDS
         self.BITCOINX_COIN: Network = network.BITCOINX_COIN
+        self.GENESIS_BLOCK_HASH: str = network.GENESIS_BLOCK_HASH
         self.CHECKPOINT: CheckPoint = network.CHECKPOINT
 
         self.peers: List[Peer] = []

@@ -10,7 +10,6 @@ import typing
 from bitcoinx import hex_str_to_hash, double_sha256
 
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
-from contrib.scripts.export_blocks import GENESIS_HASH_HEX
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
 
@@ -131,7 +130,7 @@ class LMDB_Database:
         return self.blocks.get_block_num(block_hash)
 
     def check_block(self, block_hash: bytes) -> None:
-        if block_hash == hex_str_to_hash(GENESIS_HASH_HEX):
+        if block_hash == hex_str_to_hash(os.environ["GENESIS_BLOCK_HASH"]):
             return None
 
         block_num = self.blocks.get_block_num(block_hash)
