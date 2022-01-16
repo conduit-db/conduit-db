@@ -150,16 +150,12 @@ class SyncState:
         return self._msg_received_count == self._msg_handled_count
 
     def have_processed_block_msgs(self) -> bool:
-        self.logger.debug(f"len(self.done_blocks_raw)={len(self.done_blocks_tx_parser)}")
-        self.logger.debug(f"len(self.received_blocks)={len(self.received_blocks)}")
-
         with self.done_blocks_tx_parser_lock:
             for blk_hash in self.done_blocks_tx_parser:
                 if not blk_hash in self.received_blocks:
                     return False
             if len(self.done_blocks_tx_parser) != len(self.received_blocks):
                 return False
-
         return True
 
     def have_processed_all_msgs_in_buffer(self) -> bool:

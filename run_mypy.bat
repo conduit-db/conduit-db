@@ -9,7 +9,6 @@ set CONDUIT_RAW_DIR=%~dp0..\conduit_raw
 set CONDUIT_INDEX_DIR=%~dp0..\conduit_index
 set CONDUIT_LIB_DIR=%~dp0..\conduit_lib
 
-echo %ScriptDir%
 cd %ScriptDir%
 
 py -3.10 -m pip install pylint -U

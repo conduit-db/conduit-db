@@ -7,7 +7,7 @@ import lmdb
 from typing import List, Tuple, Optional, Set
 import typing
 
-from bitcoinx import hex_str_to_hash, double_sha256
+from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
 from .blocks import LmdbBlocks
@@ -153,31 +153,41 @@ class LMDB_Database:
         rawtx = self.get_rawtx_by_loc(coinbase_tx_location)
         assert double_sha256(rawtx) == coinbase_tx_hash
 
-    def purge_block_data(self, block_hash: bytes) -> None:
+    def try_purge_block_data(self, block_hash: bytes) -> None:
         """Scrubs all records for this block hash.
 
         raises `AssertionError` if any of the checks fail"""
-        block_num = self.get_block_num(block_hash)
-        assert block_num is not None
-        with self.env.begin(write=True, buffers=False) as txn:
-            data_location_block = self.blocks.get_data_location(block_num)
-            assert data_location_block is not None
-            txn.delete(block_num, db=self.blocks.blocks_db)
-            txn.delete(block_hash, db=self.blocks.block_nums_db)
-            txn.delete(block_hash, db=self.blocks.block_metadata_db)
+        try:
+            block_num = self.get_block_num(block_hash)
+            assert block_num is not None
+            with self.env.begin(write=True, buffers=False) as txn:
+                data_location_block = self.blocks.get_data_location(block_num)
+                assert data_location_block is not None
+                txn.delete(block_num, db=self.blocks.blocks_db)
+                txn.delete(block_hash, db=self.blocks.block_nums_db)
+                txn.delete(block_hash, db=self.blocks.block_metadata_db)
 
-            data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
-            assert data_location_tx_offsets is not None
-            txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
+                data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
+                assert data_location_tx_offsets is not None
+                txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
 
-            data_location_merkle_tree = self.merkle_tree.get_data_location(block_hash)
-            assert data_location_merkle_tree is not None
-            txn.delete(block_hash, db=self.merkle_tree.mtree_db)
+                data_location_merkle_tree = self.merkle_tree.get_data_location(block_hash)
+                assert data_location_merkle_tree is not None
+                txn.delete(block_hash, db=self.merkle_tree.mtree_db)
 
-        # These calls are irreversible. There is no rollback
-        self.blocks.ffdb.delete_file(Path(data_location_block.file_path))
-        self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
-        self.merkle_tree.ffdb.delete_file(Path(data_location_merkle_tree.file_path))
+            # These calls are irreversible. There is no rollback
+            self.blocks.ffdb.delete_file(Path(data_location_block.file_path))
+            self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
+            self.merkle_tree.ffdb.delete_file(Path(data_location_merkle_tree.file_path))
+
+        # NOTE If this situation is ever encountered. E.g. maybe some tables have data but the
+        # metadata needed to do a full purge is incomplete. The only realistic solution is start
+        # syncing the blockchain from the last good height and overwrite the records. There will
+        # be some wasted / dead disc usage that will never be reclaimed but at least the server
+        # can remain operational.
+        except Exception:
+            self.logger.exception(f"Failed to complete full purge of block data for block hash: "
+                                  f"{hash_to_hex_str(block_hash)}")
 
     def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
         return self.blocks.get_block(block_num, slice)

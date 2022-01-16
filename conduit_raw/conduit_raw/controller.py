@@ -321,30 +321,36 @@ class Controller:
             block_headers_lock=self.storage.block_headers_lock)
         self.ipc_sock_server.serve_forever()
 
-    def undo_blocks_above_height(self, height: int) -> None:
-        assert self.sync_state is not None
-        tip_header = self.sync_state.get_local_block_tip()
-        unsafe_blocks = [(self.get_header_for_height(height).hash, height)
-            for height in range(height+1, tip_header.height+1)]
-        self._undo_blocks(unsafe_blocks)
-
-    def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:
-        assert self.lmdb is not None
-        for block_hash, height in blocks_to_undo:
-            self.lmdb.purge_block_data(block_hash)
-
     def database_integrity_check(self) -> None:
         """Check the last flushed block"""
         assert self.lmdb is not None
-        UNDO_SAFETY_MARGIN = 100
-        tip = self.sync_state.get_local_tip()
-        try:
-            self.logger.info(f"Checking database integrity...")
-            self.lmdb.check_block(tip.hash)
-            self.logger.info(f"Database integrity check passed.")
-        except AssertionError:
-            self.logger.debug("Previous tip was not flushed to disc. Repairing...")
-            self.undo_blocks_above_height(max(tip.height - UNDO_SAFETY_MARGIN, 0))
+        tip_height = self.sync_state.get_local_block_tip_height()
+        height = tip_height
+        while True:
+            header = self.get_header_for_height(height)
+            try:
+                self.logger.info(f"Checking database integrity...")
+                self.lmdb.check_block(header.hash)
+                self.logger.info(f"Database integrity check passed.")
+
+                # Some blocks failed integrity checks
+                # Re-synchronizing them will overwrite the old records
+                # There is no strict guarantee that the block num for these
+                # blocks will not change which could invalidate ConduitIndex
+                # records.
+                if height < tip_height:
+                    self.logger.debug(f"Re-synchronising blocks from from: "
+                                      f"{height} to {tip_height}")
+                    start_header = self.get_header_for_height(height)
+                    stop_header = self.get_header_for_height(tip_height)
+                    self.new_headers_queue.put_nowait(HeaderSpan(is_reorg=False,
+                        start_header=start_header, stop_header=stop_header))
+                return None
+            except AssertionError:
+                self.logger.debug(f"Block {hash_to_hex_str(header.hash)} failed integrity check. "
+                                  f"Repairing...")
+                self.lmdb.try_purge_block_data(header.hash)
+                height -= 1
 
     async def start_jobs(self) -> None:
         try:
@@ -402,6 +408,14 @@ class Controller:
         """supervises completion of syncing all headers to target height"""
         try:
             self.logger.debug("Starting sync_headers_job...")
+
+            blocks_tip = self.sync_state.get_local_block_tip()
+            headers_tip = self.sync_state.get_local_tip()
+            if headers_tip.height != 0:
+                self.logger.debug(f"Allocating headers to sync from: {blocks_tip.height} to "
+                                  f"{headers_tip.height}")
+                self.new_headers_queue.put_nowait(
+                    HeaderSpan(is_reorg=False, start_header=blocks_tip, stop_header=headers_tip))
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             assert self.sync_state.target_header_height is not None
             while True:
@@ -456,12 +470,14 @@ class Controller:
                     break
                 else:
                     continue
+
             await self.send_request(
                 GETDATA, self.serializer.getdata([inv]),
             )
 
             count_requested += 1
             count_pending -= 1
+
             if count_pending == 0:
                 break
 
@@ -484,14 +500,14 @@ class Controller:
         assert sorted_heights == expected_block_heights
 
         block_headers: bitcoinx.Headers = self.storage.block_headers
-        try:
-            for height, _hash in sorted_headers:
-                header = self.get_header_for_hash(_hash)
+
+        for height, _hash in sorted_headers:
+            header = self.get_header_for_hash(_hash)
+            try:
                 block_headers.connect(header.raw)
-        except bitcoinx.errors.MissingHeader as e:
-            # This should indicate a reorg but we will confirm it
-            self.logger.error(e)
-            raise
+            except bitcoinx.errors.MissingHeader as e:
+                # This should indicate a reorg but we will confirm it
+                self.logger.error(e)
 
         self.storage.block_headers.flush()
 
@@ -515,7 +531,7 @@ class Controller:
                           f"{int(self.estimated_moving_av_block_size / (1024**2))} MB")
 
     def get_hash_stop(self, stop_header_height: int) -> bytes:
-        # We should only really request enough blocks at at time to keep our
+        # We should only really request enough blocks at a time to keep our
         # recv buffer filling at the max rate. No point requesting 500 x 4GB blocks!!!
         with self.storage.headers_lock:
             node_longest_chain = self.storage.headers.longest_chain()
@@ -567,6 +583,58 @@ class Controller:
         stop_header = self.get_header_for_height(stop_header_height)
         return HeaderSpan(is_reorg, start_header, stop_header)
 
+    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
+            -> None:
+        original_stop_height = stop_header.height
+        while True:
+            first_locator = self.get_header_for_height(start_header.height - 1)
+
+            if batch_id == 0:
+                self.logger.info(f"Starting Initial Block Download")
+            else:
+                self.logger.debug(f"Controller Batch {batch_id} Start")
+
+            with self.storage.block_headers_lock:
+                chain = self.storage.block_headers.longest_chain()
+
+                block_locator_hashes = [first_locator.hash]
+                hash_count = len(block_locator_hashes)
+                hash_stop = ZERO_HASH  # get max
+
+                # Allocate next batch of blocks
+                # reassigns new global sync_state.blocks_batch_set
+                if chain.tip.height > 2016:
+                    self.update_moving_average(chain.tip.height)
+
+                from_height = self.get_header_for_hash(start_header.hash).height - 1
+                to_height = stop_header.height
+
+            next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
+            batch_count, all_pending_block_hashes, stop_header_height = next_batch
+
+            if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
+                hash_stop = self.get_hash_stop(stop_header_height)
+
+            await self.send_request(GETBLOCKS,
+                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
+
+            # Workers are loaded by Handlers.on_block handler as messages are received
+            await self.wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes,
+                stop_header_height)
+
+            # ------------------------- Batch complete ------------------------- #
+            if batch_id == 0:
+                self.logger.debug(f"Initial Block Download Complete. New block tip height: "
+                                  f"{self.sync_state.get_local_block_tip_height()}")
+            else:
+                self.logger.debug(f"Controller Batch {batch_id} Complete."
+                                  f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+            batch_id += 1
+            if self.sync_state.get_local_block_tip_height() == original_stop_height:
+                break
+            else:
+                start_header = self.get_header_for_height(start_header.height + batch_count)
+
     async def sync_all_blocks_job(self) -> None:
         """supervises completion of syncing all blocks to target height"""
         BATCH_INTERVAL = 0.5
@@ -600,59 +668,24 @@ class Controller:
                 if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
                     continue
 
-                original_stop_height = stop_header.height
-                while True:
-                    first_locator = self.get_header_for_height(start_header.height - 1)
-
-                    if batch_id == 0:
-                        self.logger.info(f"Starting Initial Block Download")
-                    else:
-                        self.logger.debug(f"Controller Batch {batch_id} Start")
-
-                    with self.storage.block_headers_lock:
-                        chain = self.storage.block_headers.longest_chain()
-
-                        block_locator_hashes = [first_locator.hash]
-                        hash_count = len(block_locator_hashes)
-                        hash_stop = ZERO_HASH  # get max
-
-                        # Allocate next batch of blocks - reassigns new global sync_state.blocks_batch_set
-                        if chain.tip.height > 2016:
-                            self.update_moving_average(chain.tip.height)
-
-                        from_height = self.get_header_for_hash(start_header.hash).height - 1
-                        to_height = stop_header.height
-
-                    next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
-                    batch_count, all_pending_block_hashes, stop_header_height = next_batch
-
-                    if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
-                        hash_stop = self.get_hash_stop(stop_header_height)
-
-                    await self.send_request(GETBLOCKS,
-                        self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
-
-                    # Workers are loaded by Handlers.on_block handler as messages are received
-                    await self.wait_for_batched_blocks_completion(batch_id,
-                        all_pending_block_hashes, stop_header_height)
-
-                    # ------------------------- Batch complete ------------------------- #
-                    if batch_id == 0:
-                        self.logger.debug(f"Initial Block Download Complete. New block tip height: "
-                            f"{self.sync_state.get_local_block_tip_height()}")
-                    else:
-                        self.logger.debug(f"Controller Batch {batch_id} Complete."
-                            f" New tip height: {self.sync_state.get_local_block_tip_height()}")
-                    batch_id += 1
-                    start_header = self.get_header_for_height((start_header.height - 1) + batch_count)
-                    if self.sync_state.get_local_block_tip_height() == original_stop_height:
-                        break
+                asyncio.create_task(self.lagging_batch_monitor())
+                await self.sync_blocks_batch(batch_id, start_header, stop_header)
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception")
             raise
+
+    async def lagging_batch_monitor(self) -> None:
+        """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the
+         batch of blocks, it will begin logging the state of progress"""
+        while True:
+            await asyncio.sleep(30)
+            if self.sync_state.have_processed_block_msgs():
+                return
+            else:
+                self.sync_state.print_progress_info()
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \

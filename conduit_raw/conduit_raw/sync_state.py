@@ -124,7 +124,7 @@ class SyncState:
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count} "
                           f"(max_batch_size={max_batch_size / (1024**2)} MB)")
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
-        stop_header_height = from_height + batch_count
+        stop_header_height = from_height + batch_count + 1
 
         for i in range(1, batch_count + 1):
             block_header = self.controller.get_header_for_height(from_height + i)
@@ -142,6 +142,12 @@ class SyncState:
 
     def have_processed_non_block_msgs(self) -> bool:
         return self._msg_received_count == self._msg_handled_count
+
+    def print_progress_info(self) -> None:
+        self.logger.debug(f"Count of received_blocks: {len(self.received_blocks)}")
+        self.logger.debug(f"Count of done_blocks_raw: {len(self.done_blocks_raw)}")
+        self.logger.debug(f"Count of done_blocks_mtree: {len(self.done_blocks_mtree)}")
+        self.logger.debug(f"Count of done_blocks_preproc: {len(self.done_blocks_preproc)}")
 
     def have_processed_block_msgs(self) -> bool:
         try:
