@@ -142,7 +142,8 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Optional[Path] = None)
         headers_path = headers_dir.joinpath("headers.mmap")
         block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
-    if int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1:
+    if int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1 or \
+            int(os.environ.get('RESET_CONDUIT_INDEX', 0)) == 1:
         reset_datastore(headers_path, block_headers_path)
 
     headers = setup_headers_store(net_config, headers_path)

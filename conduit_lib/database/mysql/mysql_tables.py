@@ -44,7 +44,7 @@ class MySQLTables:
             for query in queries:
                 self.mysql_conn.query(query)
         except Exception as e:
-            self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
+            self.logger.exception("mysql_drop_tables failed unexpectedly")
         finally:
             self.commit_transaction()
 
@@ -223,7 +223,7 @@ class MySQLTables:
                     last_allocated_block_hash BINARY(32),
                     old_hashes_array BLOB,
                     new_hashes_array BLOB
-                );
+                ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """)
 
             self.mysql_conn.query(f"""

@@ -419,11 +419,14 @@ class Controller:
         # Delete All
         tx_hashes = [row[0] for row in batched_tx_rows]
         self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-        self.mysql_db.queries.mysql_delete_pushdata_rows(batched_pd_rows)
-        self.mysql_db.queries.mysql_delete_output_rows(batched_out_rows)
-        self.mysql_db.queries.mysql_delete_input_rows(batched_in_rows)
-        for block_hash in batched_header_hashes:
-            self.mysql_db.queries.mysql_delete_header_row(block_hash)
+
+        # Commented out because way too slow... Need to rely on overwriting these records instead
+        # ScyllaDB will be a different story because of merge operator under the hood
+        # self.mysql_db.queries.mysql_delete_pushdata_rows(batched_pd_rows)
+        # self.mysql_db.queries.mysql_delete_output_rows(batched_out_rows)
+        # self.mysql_db.queries.mysql_delete_input_rows(batched_in_rows)
+        # for block_hash in batched_header_hashes:
+        #     self.mysql_db.queries.mysql_delete_header_row(block_hash)
 
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
@@ -614,10 +617,12 @@ class Controller:
 
     async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bool, Header, Header,
             Optional[ChainHashes], Optional[ChainHashes]]:
-        OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         assert self.storage is not None
         assert self.sync_state is not None
 
+        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+
+        OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         old_hashes = None
         new_hashes = None
         ipc_sock_client = None
@@ -655,7 +660,7 @@ class Controller:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {stop_header.height}")
 
-                    await self.check_for_ibd_status(stop_header)
+                    await self.check_for_ibd_status(conduit_best_tip=conduit_best_tip)
                     return is_reorg, start_header, stop_header, old_hashes, new_hashes
                 else:
                     continue
@@ -734,7 +739,7 @@ class Controller:
             self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
 
         deficit = stop_header.height - (start_header.height - 1)
-        local_tip_height = self.sync_state.get_local_block_tip_height()
+        local_tip_height = self.sync_state.get_local_tip()
         self.logger.debug(f"Allocated {deficit} headers in main batch to from height: "
                           f"{start_header.height} to height: {stop_header.height}")
         self.logger.debug(f"ConduitRaw tip height: {local_tip_height}. "

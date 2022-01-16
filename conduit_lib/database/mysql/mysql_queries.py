@@ -281,79 +281,80 @@ class MySQLQueries:
             f"{len(tx_hash_hexes)}"
         )
 
-    def mysql_delete_pushdata_rows(self, pushdata_rows: List[PushdataRow]) -> None:
-        t0 = time.time()
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
-        cursor.execute("START TRANSACTION;")
-        try:
-            for pushdata_hash, tx_hash, idx, ref_type in pushdata_rows:
-                query = f"""
-                    DELETE FROM pushdata
-                    WHERE pushdata_hash = X'{pushdata_hash}'
-                        AND tx_hash = X'{tx_hash}'
-                        AND idx = {idx}
-                        AND ref_type = {ref_type}"""
-                cursor.execute(query)
-        finally:
-            cursor.execute("COMMIT;")
-        t1 = time.time() - t0
-        self.logger.log(PROFILING,
-            f"elapsed time for bulk delete of pushdata rows = {t1} seconds for "
-            f"{len(pushdata_rows)}"
-        )
-
-    def mysql_delete_output_rows(self, output_rows: List[OutputRow]) -> None:
-        t0 = time.time()
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
-        cursor.execute("START TRANSACTION;")
-        try:
-            for out_tx_hash, out_idx, out_value in output_rows:
-                query = f"""
-                    DELETE FROM txo_table
-                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}"""
-                cursor.execute(query)
-        finally:
-            cursor.execute("COMMIT;")
-        t1 = time.time() - t0
-        self.logger.log(PROFILING,
-            f"elapsed time for bulk delete of output rows = {t1} seconds for "
-            f"{len(output_rows)}"
-        )
-
-    def mysql_delete_input_rows(self, input_rows: List[InputRow]) -> None:
-        t0 = time.time()
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
-        cursor.execute("START TRANSACTION;")
-        try:
-            for out_tx_hash, out_idx, in_tx_hash, in_idx in input_rows:
-                query = f"""
-                    DELETE FROM inputs_table
-                    WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}
-                        AND in_tx_hash=X'{in_tx_hash}' and in_idx={in_idx}"""
-                cursor.execute(query)
-        finally:
-            cursor.execute("COMMIT;")
-        t1 = time.time() - t0
-
-        self.logger.log(PROFILING,
-            f"elapsed time for bulk delete of input rows = {t1} seconds for "
-            f"{len(input_rows)}"
-        )
-
-    def mysql_delete_header_row(self, block_hash: bytes) -> None:
-        t0 = time.time()
-        self.mysql_db.start_transaction()
-        try:
-            query = f"""
-                DELETE FROM headers
-                WHERE block_hash = %s"""
-            cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
-            cursor.execute(query, (block_hash,))
-        finally:
-            self.mysql_db.commit_transaction()
-        t1 = time.time() - t0
-        self.logger.log(PROFILING,
-            f"elapsed time for delete of header row = {t1} seconds")
+    # TODO Double check that rows are indeed overwritten then delete all of this
+    # def mysql_delete_pushdata_rows(self, pushdata_rows: List[PushdataRow]) -> None:
+    #     t0 = time.time()
+    #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+    #     cursor.execute("START TRANSACTION;")
+    #     try:
+    #         for pushdata_hash, tx_hash, idx, ref_type in pushdata_rows:
+    #             query = f"""
+    #                 DELETE FROM pushdata
+    #                 WHERE pushdata_hash = X'{pushdata_hash}'
+    #                     AND tx_hash = X'{tx_hash}'
+    #                     AND idx = {idx}
+    #                     AND ref_type = {ref_type}"""
+    #             cursor.execute(query)
+    #     finally:
+    #         cursor.execute("COMMIT;")
+    #     t1 = time.time() - t0
+    #     self.logger.log(PROFILING,
+    #         f"elapsed time for bulk delete of pushdata rows = {t1} seconds for "
+    #         f"{len(pushdata_rows)}"
+    #     )
+    #
+    # def mysql_delete_output_rows(self, output_rows: List[OutputRow]) -> None:
+    #     t0 = time.time()
+    #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+    #     cursor.execute("START TRANSACTION;")
+    #     try:
+    #         for out_tx_hash, out_idx, out_value in output_rows:
+    #             query = f"""
+    #                 DELETE FROM txo_table
+    #                 WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}"""
+    #             cursor.execute(query)
+    #     finally:
+    #         cursor.execute("COMMIT;")
+    #     t1 = time.time() - t0
+    #     self.logger.log(PROFILING,
+    #         f"elapsed time for bulk delete of output rows = {t1} seconds for "
+    #         f"{len(output_rows)}"
+    #     )
+    #
+    # def mysql_delete_input_rows(self, input_rows: List[InputRow]) -> None:
+    #     t0 = time.time()
+    #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+    #     cursor.execute("START TRANSACTION;")
+    #     try:
+    #         for out_tx_hash, out_idx, in_tx_hash, in_idx in input_rows:
+    #             query = f"""
+    #                 DELETE FROM inputs_table
+    #                 WHERE out_tx_hash = X'{out_tx_hash}' AND out_idx = {out_idx}
+    #                     AND in_tx_hash=X'{in_tx_hash}' and in_idx={in_idx}"""
+    #             cursor.execute(query)
+    #     finally:
+    #         cursor.execute("COMMIT;")
+    #     t1 = time.time() - t0
+    #
+    #     self.logger.log(PROFILING,
+    #         f"elapsed time for bulk delete of input rows = {t1} seconds for "
+    #         f"{len(input_rows)}"
+    #     )
+    #
+    # def mysql_delete_header_row(self, block_hash: bytes) -> None:
+    #     t0 = time.time()
+    #     self.mysql_db.start_transaction()
+    #     try:
+    #         query = f"""
+    #             DELETE FROM headers
+    #             WHERE block_hash = %s"""
+    #         cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+    #         cursor.execute(query, (block_hash,))
+    #     finally:
+    #         self.mysql_db.commit_transaction()
+    #     t1 = time.time() - t0
+    #     self.logger.log(PROFILING,
+    #         f"elapsed time for delete of header row = {t1} seconds")
 
     def mysql_get_duplicate_tx_hashes(self, tx_rows: List[ConfirmedTransactionRow]) \
             -> List[ConfirmedTransactionRow]:
