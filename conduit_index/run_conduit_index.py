@@ -26,6 +26,7 @@ from conduit_lib.logging_client import setup_tcp_logging, set_logging_level
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.utils import get_log_level, resolve_hosts_and_update_env_vars, load_dotenv, \
     is_docker
+from conduit_lib.stack_tracer import trace_start, trace_stop
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -84,7 +85,6 @@ async def main() -> None:
         loop.stop()
         loop.run_forever()
         print("ConduitDB Stopped")
-
 
 if __name__ == "__main__":
     try:

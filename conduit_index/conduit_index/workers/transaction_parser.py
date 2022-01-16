@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 from typing import Tuple, List, Dict, cast, Union, Optional
 
@@ -25,12 +26,14 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, mysql_connect
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
+from conduit_lib.stack_tracer import trace_start, trace_stop
 from conduit_lib.types import BlockSliceRequestType
 
 from ..types import ProcessedBlockAcks, TxHashRows, TxHashes, TxHashToWorkIdMap, TxHashToOffsetMap, \
     BlockSliceOffsets, WorkPart, BatchedRawBlockSlices
 
 
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def extend_batched_rows(
@@ -141,6 +144,7 @@ class TxParser(multiprocessing.Process):
         self.confirmed_tx_flush_ack_queue: queue.Queue[BlockAck] = queue.Queue()
         self.mempool_tx_flush_ack_queue: queue.Queue[MempoolTxAck] = queue.Queue()
         try:
+            trace_start(str(MODULE_DIR / f"stack_tracing_{os.urandom(4).hex()}.html"))
             main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
 
@@ -149,6 +153,8 @@ class TxParser(multiprocessing.Process):
         except Exception as e:
             self.logger.exception(e)
             raise
+        finally:
+            trace_stop()
 
     def start_flush_threads(self) -> None:
         threads = [threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread, daemon=True),

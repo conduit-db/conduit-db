@@ -149,17 +149,8 @@ class SyncState:
     def have_processed_non_block_msgs(self) -> bool:
         return self._msg_received_count == self._msg_handled_count
 
-    def have_processed_block_msgs(self) -> bool:
-        with self.done_blocks_tx_parser_lock:
-            for blk_hash in self.done_blocks_tx_parser:
-                if not blk_hash in self.received_blocks:
-                    return False
-            if len(self.done_blocks_tx_parser) != len(self.received_blocks):
-                return False
-        return True
-
     def have_processed_all_msgs_in_buffer(self) -> bool:
-        return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()
+        return self.have_processed_non_block_msgs()
 
     def reset_msg_counts(self) -> None:
         with self._msg_handled_count_lock:
@@ -330,3 +321,8 @@ class SyncState:
     def set_post_IBD_mode(self) -> None:
         self.initial_block_download_event.set()  # once set the first time will stay set
         self.initial_block_download_event_mp.set()
+
+    def print_progress_info(self) -> None:
+        self.logger.debug(f"Count of all_pending_chip_away_work_item_ids: "
+                          f"{len(self.all_pending_chip_away_work_item_ids)}")
+

@@ -442,6 +442,7 @@ class Controller:
             self.start_workers()
             await self.spawn_batch_completion_job()
             await self.maybe_do_db_repair()
+            await self.spawn_lagging_batch_monitor()
             await self.spawn_sync_all_blocks_job()
         except Exception as e:
             self.logger.exception("unexpected exception in start jobs")
@@ -863,8 +864,6 @@ class Controller:
                         continue
 
                     blocks_batch_set.remove(block_hash)
-                    with self.sync_state.done_blocks_tx_parser_lock:
-                        self.sync_state.done_blocks_tx_parser.add(block_hash)
             except KeyError:
                 header = self.get_header_for_hash(block_hash)
                 self.logger.debug(f"also parsed block: {header.height}")
@@ -911,3 +910,20 @@ class Controller:
             self.mysql_db.mysql_update_checkpoint_tip(best_flushed_block_tip)
         finally:
             self.mysql_db.commit_transaction()
+
+    async def lagging_batch_monitor(self) -> None:
+        """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the
+         batch of blocks, it will begin logging the state of progress"""
+        assert self.sync_state is not None
+        timeout = 10
+        last_check = time.time()
+        while True:
+            await asyncio.sleep(1)
+            diff = time.time() - last_check
+            if diff > timeout:
+                if len(self.sync_state.all_pending_chip_away_work_item_ids) != 0:
+                    self.sync_state.print_progress_info()
+                    last_check = time.time()
+
+    async def spawn_lagging_batch_monitor(self) -> None:
+        self.tasks.append(asyncio.create_task(self.lagging_batch_monitor()))
