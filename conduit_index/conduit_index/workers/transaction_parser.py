@@ -403,9 +403,6 @@ class TxParser(multiprocessing.Process):
                     f"Starting mempool tx parsing thread.")
                 break
 
-        batch = []
-        prev_time_check = time.time()
-
         context2 = zmq.Context()  # type: ignore
         mempool_tx_socket = context2.socket(zmq.PULL)  # type: ignore
         mempool_tx_socket.connect("tcp://127.0.0.1:55556")

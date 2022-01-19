@@ -64,7 +64,7 @@ def setup_headers_store(net_config: NetworkConfig, mmap_filename: Union[str, Pat
 def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
     if sys.platform == 'win32':
         if os.path.exists(headers_path):
-            with open(headers_path, 'w+') as f:
+            with open(str(headers_path), 'w+') as f:
                 mm = mmap.mmap(f.fileno(), MMAP_SIZE)
                 mm.seek(0)
                 mm.write(b'\00' * mm.size())
@@ -110,11 +110,11 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
         if os.path.exists(lmdb_path):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
-        LMDB_DATABASE_PATH_DEFAULT = Path(MODULE_DIR).parent.parent / 'lmdb_data'
-        LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH",
-            str(LMDB_DATABASE_PATH_DEFAULT))
-        if os.path.exists(LMDB_DATABASE_PATH):
-            shutil.rmtree(LMDB_DATABASE_PATH, onerror=remove_readonly)
+        LMDB_DATABASE_DIR_DEFAULT = Path(MODULE_DIR).parent.parent / 'lmdb_data'
+        LMDB_DATABASE_DIR: str = os.environ.get("LMDB_DATABASE_DIR",
+            str(LMDB_DATABASE_DIR_DEFAULT))
+        if os.path.exists(LMDB_DATABASE_DIR):
+            shutil.rmtree(LMDB_DATABASE_DIR, onerror=remove_readonly)
 
         RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent / 'raw_blocks'
         RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
@@ -132,15 +132,12 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
             shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
 
 
-def setup_storage(net_config: NetworkConfig, headers_dir: Optional[Path] = None) -> Storage:
-    if not headers_dir:
-        headers_dir = MODULE_DIR.parent
-        headers_path = headers_dir.joinpath("headers.mmap")
-        block_headers_path = headers_dir.joinpath("block_headers.mmap")
-    else:
-        headers_dir = headers_dir
-        headers_path = headers_dir.joinpath("headers.mmap")
-        block_headers_path = headers_dir.joinpath("block_headers.mmap")
+def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
+    if not headers_dir.exists():
+        os.makedirs(headers_dir, exist_ok=True)
+    headers_dir = headers_dir
+    headers_path = headers_dir.joinpath("headers.mmap")
+    block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
     if int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1 or \
             int(os.environ.get('RESET_CONDUIT_INDEX', 0)) == 1:

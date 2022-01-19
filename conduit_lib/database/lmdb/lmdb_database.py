@@ -32,15 +32,15 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 class LMDB_Database:
     """simple interface to LMDB"""
 
-    LMDB_DATABASE_PATH_DEFAULT = Path(MODULE_DIR).parent.parent.parent.parent / 'lmdb_data'
-    LMDB_DATABASE_PATH: str = os.environ.get("LMDB_DATABASE_PATH", str(LMDB_DATABASE_PATH_DEFAULT))
+    LMDB_DATABASE_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent.parent / 'lmdb_data'
+    LMDB_DATABASE_DIR: str = os.environ.get("LMDB_DATABASE_DIR", str(LMDB_DATABASE_DIR_DEFAULT))
 
     def __init__(self, storage_path: Optional[str]=None) -> None:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
         if not storage_path:
-            storage_path = self.LMDB_DATABASE_PATH
+            storage_path = self.LMDB_DATABASE_DIR
 
         if not Path(storage_path).exists():
             os.makedirs(Path(storage_path), exist_ok=True)

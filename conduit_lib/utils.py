@@ -7,7 +7,7 @@ import socket
 import struct
 import threading
 import time
-from typing import Tuple, Optional, cast, Callable, TypeVar, List
+from typing import Tuple, Optional, cast, Callable, List
 
 import bitcoinx
 import zmq
@@ -22,6 +22,8 @@ from .types import ChainHashes
 from typing import Union
 from _io import BytesIO
 from pathlib import Path
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger("conduit-lib-utils")
 logger.setLevel(logging.DEBUG)
@@ -363,7 +365,7 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
         process_batch_func: Callable[[List[bytes]], None], on_blocked_msg: Optional[str]=None,
         batching_rate: float=0.3, poll_timeout_ms: int=1000) -> None:
     work_items: List[bytes] = []
-    prev_time_check = time.time()
+    prev_time_check: float = time.time()
     try:
         while True:
             try:
@@ -387,4 +389,8 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
                 continue
     finally:
         logger.info("Closing thread")
-        sock.close()
+        sock.close()  # type: ignore
+
+
+def get_headers_dir_conduit_index() -> Path:
+    return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))

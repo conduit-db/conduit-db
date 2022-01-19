@@ -24,7 +24,7 @@ from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.deserializer_types import Inv
-from conduit_lib.types import HeaderSpan, MultiprocessingQueue, BlockMetadata
+from conduit_lib.types import HeaderSpan, MultiprocessingQueue
 from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
     get_header_for_height
 from conduit_lib.wait_for_dependencies import wait_for_mysql
@@ -40,6 +40,10 @@ from .workers import MTreeCalculator, BlockWriter  # multiprocessing.Process
 T2 = TypeVar("T2")
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_headers_dir_conduit_raw() -> Path:
+    return Path(os.getenv("HEADERS_DIR_CONDUIT_RAW", str(MODULE_DIR.parent)))
 
 
 class Controller:
@@ -75,8 +79,7 @@ class Controller:
         self.host = host  # bind address
         self.port = port  # bind port
 
-        # Defined in async method at startup (self.run)
-        headers_dir = MODULE_DIR.parent
+        headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
@@ -164,7 +167,7 @@ class Controller:
             await wait_for_node(node_host=os.environ['NODE_HOST'],
                 node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
                 deserializer=self.deserializer)
-            await wait_for_mysql()
+            wait_for_mysql()
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))

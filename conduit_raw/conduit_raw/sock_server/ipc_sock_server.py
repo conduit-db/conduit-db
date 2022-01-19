@@ -91,7 +91,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
                 msg: Dict[str, Any] = cbor2.loads(data)
                 command = cast(str, msg['command'])
-                logger.debug(f"Socket server: command {command} received")
+                # logger.debug(f"Socket server: command {command} received")
 
                 request_type = REQUEST_MAP[command]
                 handler: HandlerType = getattr(self, command)
@@ -153,7 +153,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
                     block_number, len_slice, raw_block_slice)
 
-            logger.debug(f"Sending block_batched response: len(raw_blocks_array): {len(raw_blocks_array)}")
+            # logger.debug(f"Sending block_batched response: len(raw_blocks_array): {len(raw_blocks_array)}")
 
             # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if raw_blocks_array:
