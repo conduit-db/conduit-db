@@ -3,6 +3,8 @@ import io
 import logging
 import os
 import socket
+import time
+
 import MySQLdb
 
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
@@ -51,7 +53,7 @@ async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializ
                 await asyncio.sleep(5)
 
 
-async def wait_for_mysql() -> None:
+def wait_for_mysql() -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -77,10 +79,10 @@ async def wait_for_mysql() -> None:
                     client.close()
             else:
                 logger.debug(f"MySQL server currently unavailable - waiting...")
-                await asyncio.sleep(5)
+                asyncio.sleep(5)
 
 
-async def wait_for_conduit_raw_api() -> None:
+def wait_for_conduit_raw_api() -> None:
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
@@ -101,12 +103,12 @@ async def wait_for_conduit_raw_api() -> None:
             was_waiting = True
             logger.debug(f"ConduitRawAPI server on: http://{host}:{port} currently "
                          f"unavailable - waiting...")
-            await asyncio.sleep(5)
+            time.sleep(5)
         except Exception:
             logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
 
     logger.info(f"ConduitRawAPI on:  http://{host}:{port} is available")
     if was_waiting:
         logger.info(f"Allowing ConduitRaw service to complete initial configuration")
-        await asyncio.sleep(3)
+        time.sleep(3)
         logger.info(f"ConduitRaw service online")

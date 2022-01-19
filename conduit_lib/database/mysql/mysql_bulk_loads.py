@@ -40,6 +40,10 @@ class MySQLBulkLoads:
         self.total_rows_flushed_since_startup = 0  # for current controller
         self.newline_symbol = r"'\r\n'" if sys.platform == 'win32' else r"'\n'"
 
+        TEMP_FILES_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / "temp_files" / \
+                  (str(uuid.uuid4()) + ".csv")
+        self.TEMP_FILES_DIR = Path(os.getenv("TEMP_FILES_DIR", TEMP_FILES_DIR_DEFAULT))
+
     def set_local_infile_on(self) -> None:
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"
         self.mysql_conn.query(extra_settings)
@@ -76,10 +80,7 @@ class MySQLBulkLoads:
         """
 
         t0 = time.time()
-
-        MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
-        outfile = Path(MODULE_DIR).parent.parent.parent / "temp_files" / \
-                  (str(uuid.uuid4()) + ".csv")
+        outfile = self.TEMP_FILES_DIR / (str(uuid.uuid4()) + ".csv")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:
             string_rows.sort()

@@ -7,9 +7,10 @@ import socket
 import struct
 import threading
 import time
-from typing import Tuple, Optional, cast
+from typing import Tuple, Optional, cast, Callable, List
 
 import bitcoinx
+import zmq
 from bitcoinx import (
     read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
 )
@@ -22,7 +23,10 @@ from typing import Union
 from _io import BytesIO
 from pathlib import Path
 
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
 logger = logging.getLogger("conduit-lib-utils")
+logger.setLevel(logging.DEBUG)
 
 
 def cast_to_valid_ipv4(ipv4: str) -> str:
@@ -333,3 +337,60 @@ def resolve_hosts_and_update_env_vars() -> None:
             host = cast_to_valid_ipv4(os.environ[key].split(":")[0])
             os.environ[key] = host
             logger.debug(f"os.environ[key] after: {os.environ[key]}")
+
+
+def zmq_send_no_block(sock: zmq.Socket, msg: bytes, on_blocked_msg: str) -> None:
+    while True:
+        try:
+            sock.send(msg, zmq.NOBLOCK)  # type: ignore
+            break
+        except zmq.error.Again:
+            logger.debug(on_blocked_msg)
+            time.sleep(0.1)
+
+
+def maybe_process_batch(process_batch_func: Callable[[List[bytes]], None],
+        work_items: List[bytes], prev_time_check: float, batching_rate: float=0.3) \
+            -> Tuple[List[bytes], float]:
+    time_diff = time.time() - prev_time_check
+    if time_diff > batching_rate:
+        prev_time_check = time.time()
+        if work_items:
+            process_batch_func(work_items)
+        work_items = []
+    return work_items, prev_time_check
+
+
+def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
+        process_batch_func: Callable[[List[bytes]], None], on_blocked_msg: Optional[str]=None,
+        batching_rate: float=0.3, poll_timeout_ms: int=1000) -> None:
+    work_items: List[bytes] = []
+    prev_time_check: float = time.time()
+    try:
+        while True:
+            try:
+                if sock.poll(poll_timeout_ms, zmq.POLLIN):  # type: ignore
+                    msg: bytes = cast(bytes, sock.recv(zmq.NOBLOCK))
+                    if not msg:
+                        return  # poison pill
+                    work_items.append(bytes(msg))
+
+                    time_diff = time.time() - prev_time_check
+                    if time_diff > batching_rate:
+                        work_items, prev_time_check = maybe_process_batch(process_batch_func,
+                            work_items, prev_time_check, batching_rate)
+                else:
+                    if on_blocked_msg:
+                        logger.debug(on_blocked_msg)
+                    work_items, prev_time_check = maybe_process_batch(process_batch_func,
+                        work_items, prev_time_check, batching_rate)
+            except zmq.error.Again:
+                logger.debug(f"zmq.error.Again")
+                continue
+    finally:
+        logger.info("Closing thread")
+        sock.close()  # type: ignore
+
+
+def get_headers_dir_conduit_index() -> Path:
+    return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))

@@ -24,7 +24,7 @@ from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.deserializer_types import Inv
-from conduit_lib.types import HeaderSpan, MultiprocessingQueue, BlockMetadata
+from conduit_lib.types import HeaderSpan, MultiprocessingQueue
 from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
     get_header_for_height
 from conduit_lib.wait_for_dependencies import wait_for_mysql
@@ -40,6 +40,10 @@ from .workers import MTreeCalculator, BlockWriter  # multiprocessing.Process
 T2 = TypeVar("T2")
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+
+
+def get_headers_dir_conduit_raw() -> Path:
+    return Path(os.getenv("HEADERS_DIR_CONDUIT_RAW", str(MODULE_DIR.parent)))
 
 
 class Controller:
@@ -75,8 +79,7 @@ class Controller:
         self.host = host  # bind address
         self.port = port  # bind port
 
-        # Defined in async method at startup (self.run)
-        headers_dir = MODULE_DIR.parent
+        headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config, self.storage)
@@ -164,7 +167,7 @@ class Controller:
             await wait_for_node(node_host=os.environ['NODE_HOST'],
                 node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
                 deserializer=self.deserializer)
-            await wait_for_mysql()
+            wait_for_mysql()
             await self.connect_session()  # on_connection_made callback -> starts jobs
             init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
                 self.host, self.port))
@@ -371,6 +374,7 @@ class Controller:
             await self.spawn_sync_headers_task()
             await self.sync_state.headers_event_initial_sync.wait()  # one-off
             await self.spawn_initial_block_download()
+            await self.spawn_lagging_batch_monitor()
             # await self.sync_state.initial_block_download_event.wait()
             # await self.request_mempool()
         except Exception as e:
@@ -672,7 +676,6 @@ class Controller:
                 if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
                     continue
 
-                asyncio.create_task(self.lagging_batch_monitor())
                 await self.sync_blocks_batch(batch_id, start_header, stop_header)
 
         except asyncio.CancelledError:
@@ -684,12 +687,19 @@ class Controller:
     async def lagging_batch_monitor(self) -> None:
         """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the
          batch of blocks, it will begin logging the state of progress"""
+        assert self.sync_state is not None
+        timeout = 10
+        last_check = time.time()
         while True:
-            await asyncio.sleep(30)
-            if self.sync_state.have_processed_block_msgs():
-                return
-            else:
-                self.sync_state.print_progress_info()
+            await asyncio.sleep(1)
+            diff = time.time() - last_check
+            if diff > timeout:
+                if not self.sync_state.have_processed_block_msgs():
+                    self.sync_state.print_progress_info()
+                    last_check = time.time()
+
+    async def spawn_lagging_batch_monitor(self) -> None:
+        self.tasks.append(asyncio.create_task(self.lagging_batch_monitor()))
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \

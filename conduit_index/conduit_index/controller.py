@@ -52,6 +52,10 @@ if typing.TYPE_CHECKING:
     from conduit_lib import Peer
 
 
+def get_headers_dir_conduit_index() -> Path:
+    return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
+
+
 class Controller:
     """Designed to sync the blockchain as fast as possible.
 
@@ -82,12 +86,6 @@ class Controller:
         elif not loop_type:
             self.logger.debug(f"Using default asyncio event loop")
 
-        # Defined in async method at startup (self.run)
-        self.storage: Optional[Storage] = None
-        self.handlers: Optional[Handlers] = None  # Handlers(self, self.net_config, self.storage)
-        self.serializer: Optional[Serializer] = None  # Serializer(self.net_config, self.storage)
-        self.deserializer: Optional[Deserializer] = None  # Deserializer(self.net_config, self.storage)
-
         # Bitcoin network/peer net_config
         self.net_config = net_config
         self.peers = self.net_config.peers
@@ -97,6 +95,15 @@ class Controller:
         self.protocol: Optional[BaseProtocol] = None
         self.protocol_factory = None
         self.transport: Optional[BaseTransport]
+
+        wait_for_conduit_raw_api()
+        wait_for_mysql()
+        headers_dir = get_headers_dir_conduit_index()
+        self.storage: Storage = setup_storage(self.net_config, headers_dir)
+        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
+        self.serializer: Serializer = Serializer(self.net_config, self.storage)
+        self.deserializer: Deserializer = Deserializer(self.net_config, self.storage)
+        self.sync_state: SyncState = SyncState(self.storage, self)
 
         # Bitcoin Network IO + callbacks
         self.transport = None
@@ -155,21 +162,12 @@ class Controller:
 
         # Database Interfaces
         self.mysql_db: Optional[MySQLDatabase] = None
-        self.ipc_sock_client: Optional[IPCSocketClient] = None
+        self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.
-        self.sync_state: Optional[SyncState] = None
         self.general_executor = ThreadPoolExecutor(max_workers=1)
 
-    async def setup(self) -> None:
-        headers_dir = MODULE_DIR.parent
-        self.storage = setup_storage(self.net_config, headers_dir)
-        assert self.storage is not None
-        self.handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer = Serializer(self.net_config, self.storage)
-        self.deserializer = Deserializer(self.net_config, self.storage)
-        self.sync_state = SyncState(self.storage, self)
+    def setup(self) -> None:
         self.mysql_db = load_mysql_database()
-        self.ipc_sock_client = IPCSocketClient()
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.mysql_db.tables.mysql_drop_mempool_table()
@@ -178,9 +176,7 @@ class Controller:
     async def run(self) -> None:
         self.running = True
         try:
-            await wait_for_conduit_raw_api()
-            await wait_for_mysql()
-            await self.setup()
+            self.setup()
             self.tasks.append(asyncio.create_task(self.start_jobs()))
             while True:
                 await asyncio.sleep(5)
@@ -193,8 +189,6 @@ class Controller:
     async def maintain_node_connection(self) -> None:
         first_loop = True
         while True:
-            assert self.deserializer is not None
-            assert self.serializer is not None
             await wait_for_node(node_host=os.environ['NODE_HOST'],
                 node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
                 deserializer=self.deserializer)
@@ -213,7 +207,6 @@ class Controller:
             first_loop = False
 
     async def stop(self) -> None:
-        assert self.sync_state is not None
         self.running = False
         try:
             if self.transport:
@@ -257,7 +250,6 @@ class Controller:
     async def _on_buffer_full(self) -> None:
         """Waits until all mempool txs in the shared memory buffer have been processed before
         resuming (and therefore resetting the buffer) BitcoinNetIO."""
-        assert self.sync_state is not None
         while not self.sync_state.have_processed_all_msgs_in_buffer():
             await asyncio.sleep(0.05)
 
@@ -265,7 +257,6 @@ class Controller:
         self.bitcoin_net_io.resume()
 
     def on_msg(self, command: bytes, message: Union[memoryview, BlockCallback]) -> None:
-        assert self.sync_state is not None
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         if command == MEMPOOL_BIN:
@@ -293,7 +284,6 @@ class Controller:
         return self.transport, self.session
 
     async def handle(self) -> None:
-        assert self.sync_state is not None
         while True:
             command, message = await self.sync_state.incoming_msg_queue.get()
             try:
@@ -378,7 +368,6 @@ class Controller:
                           f"New chain tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
-        assert self.sync_state is not None
         tip_header = self.sync_state.get_local_block_tip()
         unsafe_blocks = [(self.get_header_for_height(height).hash, height)
             for height in range(height+1, tip_header.height+1)]
@@ -431,11 +420,9 @@ class Controller:
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
         self.logger.debug(f"Requesting mempool...")
-        assert self.serializer is not None
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def start_jobs(self) -> None:
-        assert self.storage is not None
         try:
             self.mysql_db = self.storage.mysql_database
             await self.spawn_handler_tasks()
@@ -452,16 +439,12 @@ class Controller:
         asyncio.create_task(self.batch_completion_job())
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        assert self.storage is not None
         return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        assert self.storage is not None
         return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
 
     def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]) -> bool:
-        assert self.sync_state is not None
-        assert self.ipc_sock_client is not None
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
         expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes).block_numbers
         block_hash_to_num_map = dict(zip(expected_block_hashes, expected_block_nums))
@@ -483,7 +466,6 @@ class Controller:
             2) update api chain tip
         """
         assert self.mysql_db is not None
-        assert self.sync_state is not None
 
         # 1) Drain queue & Update dictionary of block_num -> tx hashes processed
         all_blocks_processed = False
@@ -519,7 +501,6 @@ class Controller:
 
     async def sanity_checks_and_update_best_flushed_tip(self, is_reorg: bool) -> int:
         assert self.mysql_db is not None
-        assert self.sync_state is not None
         t0 = time.time()
         checkpoint_tip: bitcoinx.Header = self.sync_state.get_local_block_tip()
         best_flushed_block_height: int = checkpoint_tip.height
@@ -537,8 +518,6 @@ class Controller:
         return best_flushed_block_height
 
     async def connect_done_block_headers(self, blocks_batch_set: Set[bytes]) -> None:
-        assert self.sync_state is not None
-        assert self.storage is not None
         assert self.mysql_db is not None
         ipc_socket_client = IPCSocketClient()
         t0 = time.perf_counter()
@@ -587,7 +566,6 @@ class Controller:
     def connect_conduit_headers(self, raw_header: bytes) -> bool:
         """Two mmap files - one for "headers-first download" and the other for the
         blocks we then download."""
-        assert self.storage is not None
         try:
             self.storage.headers.connect(raw_header)
             self.storage.headers.flush()
@@ -602,8 +580,6 @@ class Controller:
                 raise
 
     async def check_for_ibd_status(self, conduit_best_tip: Header) -> None:
-        assert self.sync_state is not None
-        assert self.storage is not None
         with self.storage.headers_lock:
             local_tip = self.storage.headers.longest_chain().tip
         if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
@@ -618,9 +594,6 @@ class Controller:
 
     async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bool, Header, Header,
             Optional[ChainHashes], Optional[ChainHashes]]:
-        assert self.storage is not None
-        assert self.sync_state is not None
-
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
@@ -685,7 +658,6 @@ class Controller:
     async def chip_away(self, remaining_work_units: List[WorkUnit]) -> List[WorkUnit]:
         """This breaks up blocks into smaller 'WorkUnits'. This allows tailoring workloads and
         max memory allocations to be safe with available system resources)"""
-        assert self.sync_state is not None
         remaining_work, work_for_this_batch = \
             self.sync_state.get_work_units_chip_away(remaining_work_units)
 
@@ -710,7 +682,6 @@ class Controller:
 
     async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: Set[bytes]) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
-        assert self.sync_state is not None
         try:
             self.logger.debug(f"Waiting for main batch to complete")
             await self.sync_state.done_blocks_tx_parser_event.wait()
@@ -725,7 +696,6 @@ class Controller:
     async def index_blocks(self, is_reorg: bool, start_header: bitcoinx.Header,
             stop_header: bitcoinx.Header, old_hashes: Optional[ChainHashes],
             new_hashes: Optional[ChainHashes]) -> int:
-        assert self.sync_state is not None
         assert self.mysql_db is not None
 
         if is_reorg:
@@ -739,12 +709,12 @@ class Controller:
             self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
             self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
 
-        deficit = stop_header.height - (start_header.height - 1)
-        local_tip_height = self.sync_state.get_local_tip()
-        self.logger.debug(f"Allocated {deficit} headers in main batch to from height: "
+        conduit_tip = await self.sync_state.get_conduit_best_tip()
+        remaining = conduit_tip.height - (start_header.height - 1)
+        allocated_count = stop_header.height - start_header.height + 1
+        self.logger.debug(f"Allocated {allocated_count} headers in main batch from height: "
                           f"{start_header.height} to height: {stop_header.height}")
-        self.logger.debug(f"ConduitRaw tip height: {local_tip_height}. "
-                          f"(remaining={deficit})")
+        self.logger.debug(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
         main_batch = await self.loop.run_in_executor(self.general_executor,
@@ -793,11 +763,9 @@ class Controller:
         return best_flushed_tip_height
 
     async def sync_all_blocks_job(self) -> None:
-        assert self.sync_state is not None
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""
 
         async def maintain_chain_tip() -> None:
-            assert self.sync_state is not None
             # Now wait on the queue for notifications
 
             batch_id = 0
@@ -831,7 +799,6 @@ class Controller:
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \
             -> None:
-        assert self.serializer is not None
         message = self.serializer.version(
             recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
         )
@@ -840,7 +807,6 @@ class Controller:
     async def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch
         is done"""
-        assert self.sync_state is not None
         while True:
             msg = await self.tx_parse_ack_socket.recv()  # type: ignore
             worker_id, work_item_id, block_hash, txs_done_count = cbor2.loads(msg)
@@ -914,7 +880,6 @@ class Controller:
     async def lagging_batch_monitor(self) -> None:
         """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the
          batch of blocks, it will begin logging the state of progress"""
-        assert self.sync_state is not None
         timeout = 10
         last_check = time.time()
         while True:
