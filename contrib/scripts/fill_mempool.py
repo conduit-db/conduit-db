@@ -11,9 +11,7 @@ regressions when I migrate to the compact block protocol (namely performance reg
 The node's rpcthreads need to be set higher than the number of threads used here.
 
 Fixes as a result of this script's usage:
-1) With > 20000 txs in mempool the gRPC StatusCode.RESOURCE_EXHAUSTED error occurs
-- Lifted default gRPC message size from 4MB -> 50MB
-2) Mempool tx deletion when mining a new block was painfully slow with RocksDB engine (3mins25sec
+- Mempool tx deletion when mining a new block was painfully slow with RocksDB engine (3mins25sec
 for 40,000 transactions)... With ENGINE=MEMORY and a HASH index it is now basically instantaneous.
 """
 import concurrent
@@ -90,6 +88,7 @@ def create_txs():
                 tx.inputs[0].script_sig = Script(script_sig)
                 rawtxs.append(tx.to_hex())
     return rawtxs
+
 
 def main():
     while True:

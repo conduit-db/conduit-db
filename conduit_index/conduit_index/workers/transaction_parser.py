@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from typing import Tuple, List, Dict, cast, Union, Optional
@@ -28,6 +29,7 @@ from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.stack_tracer import trace_start, trace_stop
 from conduit_lib.types import BlockSliceRequestType
+from conduit_lib.utils import zmq_send_no_block, zmq_recv_and_process_batchwise_no_block
 
 from ..types import ProcessedBlockAcks, TxHashRows, TxHashes, TxHashToWorkIdMap, TxHashToOffsetMap, \
     BlockSliceOffsets, WorkPart, BatchedRawBlockSlices
@@ -95,8 +97,8 @@ class TxParser(multiprocessing.Process):
 
         self.total_unprocessed_tx_sorting_time = 0.
         self.last_time = 0.
-        self.grpc_time = 0.
-        self.last_grpc_time = 0.
+        self.ipc_sock_time = 0.
+        self.last_ipc_sock_time = 0.
 
     def run(self) -> None:
         # PUB-SUB from Controller to worker to kill the worker
@@ -112,6 +114,7 @@ class TxParser(multiprocessing.Process):
 
         context6 = zmq.Context()  # type: ignore
         self.tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PUSH)  # type: ignore
+        self.tx_parse_ack_socket.setsockopt(zmq.SNDHWM, 10000)
         self.tx_parse_ack_socket.connect("tcp://127.0.0.1:53213")  # type: ignore
 
         # Todo - these should all be local to the thread's state only - not global to
@@ -144,7 +147,8 @@ class TxParser(multiprocessing.Process):
         self.confirmed_tx_flush_ack_queue: queue.Queue[BlockAck] = queue.Queue()
         self.mempool_tx_flush_ack_queue: queue.Queue[MempoolTxAck] = queue.Queue()
         try:
-            trace_start(str(MODULE_DIR / f"stack_tracing_{os.urandom(4).hex()}.html"))
+            if int(os.environ.get('RUN_STACK_TRACER', '0')):
+                trace_start(str(MODULE_DIR / f"stack_tracing_{os.urandom(4).hex()}.html"))
             main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
 
@@ -154,13 +158,13 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
             raise
         finally:
-            trace_stop()
+            if int(os.environ.get('RUN_STACK_TRACER', '0')):
+                trace_stop()
 
     def start_flush_threads(self) -> None:
         threads = [threading.Thread(target=self.mysql_insert_confirmed_tx_rows_thread, daemon=True),
             threading.Thread(target=self.mysql_insert_mempool_tx_rows_thread, daemon=True), ]
         for t in threads:
-            t.setDaemon(True)
             t.start()
         for t in threads:
             t.join()
@@ -185,8 +189,10 @@ class TxParser(multiprocessing.Process):
                     for ack in acks:
                         ack = cast(BlockAck, ack)
                         work_item_id, blk_hash, tx_count = ack
-                        self.tx_parse_ack_socket.send(  # type: ignore
-                            cbor2.dumps((self.worker_id, work_item_id, blk_hash, tx_count)))
+
+                        msg = cbor2.dumps((self.worker_id, work_item_id, blk_hash, tx_count))
+                        zmq_send_no_block(self.tx_parse_ack_socket, msg,
+                            on_blocked_msg="Tx parse ACK receiver is busy")
                 else:
                     mysql_db.mysql_bulk_load_mempool_tx_rows(cast(List[MempoolTransactionRow], tx_rows))
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows,
@@ -404,25 +410,15 @@ class TxParser(multiprocessing.Process):
         mempool_tx_socket = context2.socket(zmq.PULL)  # type: ignore
         mempool_tx_socket.connect("tcp://127.0.0.1:55556")
         try:
-            while True:
-                try:
-                    if mempool_tx_socket.poll(1000, zmq.POLLIN):
-                        packed_msg = mempool_tx_socket.recv(zmq.NOBLOCK)
-                        if not packed_msg:
-                            return  # poison pill stop command
-                        batch.append(bytes(packed_msg))
-                    else:
-                        time_diff = time.time() - prev_time_check
-                        # Todo: This might be redundant with poll(1000)
-                        #  1 second is longer than self.BLOCK_BATCHING_RATE
-                        if time_diff > self.BLOCK_BATCHING_RATE:
-                            prev_time_check = time.time()
-                            if batch:
-                                self.process_mempool_batch(batch)
-                            batch = []
-                except zmq.error.Again:
-                    self.logger.debug(f"zmq.error.Again")
-                    continue
+            process_batch_func = partial(self.process_mempool_batch)
+
+            zmq_recv_and_process_batchwise_no_block(
+                sock=mempool_tx_socket,
+                process_batch_func=process_batch_func,
+                on_blocked_msg=None,
+                batching_rate=0.3,
+                poll_timeout_ms=100
+            )
         except KeyboardInterrupt:
             raise
         except Exception as e:
@@ -445,16 +441,16 @@ class TxParser(multiprocessing.Process):
             raw_blocks_array = ipc_sock_client.block_batched(block_requests)
             # len_bytearray = struct.unpack_from("<Q", response)
             # self.logger.debug(f"len_bytearray={len_bytearray}")
-            self.logger.debug(f"received batched raw blocks payload "
-                              f"with total size: {len(raw_blocks_array)}")
+            # self.logger.debug(f"received batched raw blocks payload "
+            #                   f"with total size: {len(raw_blocks_array)}")
 
             return cast(bytes, raw_blocks_array)
         finally:
             tdiff = time.time() - t0
-            self.grpc_time += tdiff
-            if self.grpc_time - self.last_grpc_time > 0.5:  # show every 1 cumulative sec
-                self.last_grpc_time = self.grpc_time
-                self.logger.debug(f"total time for grpc calls={self.grpc_time}")
+            self.ipc_sock_time += tdiff
+            if self.ipc_sock_time - self.last_ipc_sock_time > 0.5:  # show every 1 cumulative sec
+                self.last_ipc_sock_time = self.ipc_sock_time
+                self.logger.debug(f"total time for ipc socket calls={self.ipc_sock_time}")
 
     def unpack_batched_msgs(self, work_items: List[bytes]) \
             -> Tuple[TxHashes, List[BlockSliceOffsets], List[WorkPart], bool]:
@@ -619,41 +615,35 @@ class TxParser(multiprocessing.Process):
             num_txs = len(part_tx_hashes)
             self.confirmed_tx_flush_ack_queue.put(BlockAck(work_item_id, blk_hash, num_txs))
             msg = cbor2.dumps({blk_num: part_tx_hashes})
-            ack_for_mined_tx_socket.send(msg)  # type: ignore
+            zmq_send_no_block(ack_for_mined_tx_socket, msg,
+                on_blocked_msg="Mined Transaction ACK receiver is busy")
 
     def mined_blocks_thread(self) -> None:
-        work_items = []
-        prev_time_check = time.time()
-
         context: zmq.Context = zmq.Context()  # type: ignore
         mined_tx_socket: zmq.Socket = context.socket(zmq.PULL)  # type: ignore
+        mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
         mined_tx_socket.connect("tcp://127.0.0.1:55555")  # type: ignore
 
         context2 = zmq.Context()  # type: ignore
         ack_for_mined_tx_socket: zmq.Socket = context2.socket(zmq.PUSH)  # type: ignore
+        ack_for_mined_tx_socket.setsockopt(zmq.SNDHWM, 10000)
         ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")  # type: ignore
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             ipc_socket_client = IPCSocketClient()
-            while True:
-                try:
-                    if mined_tx_socket.poll(100, zmq.POLLIN):  # type: ignore
-                        packed_work_item: bytes = cast(bytes, mined_tx_socket.recv(zmq.NOBLOCK))
-                        if not packed_work_item:
-                            return  # poison pill stop command
-                        work_items.append(bytes(packed_work_item))
-                    else:
-                        time_diff = time.time() - prev_time_check
-                        if time_diff > self.BLOCK_BATCHING_RATE:
-                            prev_time_check = time.time()
-                            if work_items:
-                                self.process_work_items(work_items, ipc_socket_client, mysql_db,
-                                    ack_for_mined_tx_socket)
-                            work_items = []
-                except zmq.error.Again:
-                    self.logger.debug(f"zmq.error.Again")
-                    continue
+
+            process_batch_func = partial(self.process_work_items,
+                ipc_socket_client=ipc_socket_client, mysql_db=mysql_db,
+                ack_for_mined_tx_socket=ack_for_mined_tx_socket)
+
+            zmq_recv_and_process_batchwise_no_block(
+                sock=mined_tx_socket,
+                process_batch_func=process_batch_func,
+                on_blocked_msg=None,
+                batching_rate=0.3,
+                poll_timeout_ms=100
+            )
         except KeyboardInterrupt:
             raise
         except Exception as e:

@@ -739,12 +739,12 @@ class Controller:
             self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
             self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
 
-        deficit = stop_header.height - (start_header.height - 1)
-        local_tip_height = self.sync_state.get_local_tip()
-        self.logger.debug(f"Allocated {deficit} headers in main batch to from height: "
+        conduit_tip = await self.sync_state.get_conduit_best_tip()
+        remaining = conduit_tip.height - (start_header.height - 1)
+        allocated = stop_header.height - start_header.height
+        self.logger.debug(f"Allocated {allocated} headers in main batch from height: "
                           f"{start_header.height} to height: {stop_header.height}")
-        self.logger.debug(f"ConduitRaw tip height: {local_tip_height}. "
-                          f"(remaining={deficit})")
+        self.logger.debug(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
         main_batch = await self.loop.run_in_executor(self.general_executor,
