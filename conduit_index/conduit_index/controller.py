@@ -144,6 +144,7 @@ class Controller:
 
         context5 = AsyncZMQContext.instance()
         self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)  # type: ignore
+        self.ack_for_mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
         self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
 
         context6 = AsyncZMQContext.instance()
@@ -426,6 +427,7 @@ class Controller:
         try:
             self.mysql_db = self.storage.mysql_database
             await self.spawn_handler_tasks()
+            await self.spawn_wait_for_mined_tx_acks_task()
             self.start_workers()
             await self.spawn_batch_completion_job()
             await self.maybe_do_db_repair()
@@ -457,6 +459,19 @@ class Controller:
                 return False
         return True
 
+    async def spawn_wait_for_mined_tx_acks_task(self) -> None:
+        asyncio.create_task(self.wait_for_mined_tx_acks_task())
+
+    async def wait_for_mined_tx_acks_task(self) -> None:
+        while True:
+            message = await self.ack_for_mined_tx_socket.recv()
+            new_mined_tx_hashes = cbor2.loads(message)
+
+            for blk_num, new_hashes in new_mined_tx_hashes.items():
+                if not self.global_tx_hashes_dict.get(blk_num):
+                    self.global_tx_hashes_dict[blk_num] = []
+                self.global_tx_hashes_dict[blk_num].extend(new_hashes)
+
     async def update_mempool_and_checkpoint_tip_atomic(self,
             best_flushed_block_tip: bitcoinx.Header, is_reorg: bool) -> None:
         """
@@ -467,20 +482,13 @@ class Controller:
         """
         assert self.mysql_db is not None
 
-        # 1) Drain queue & Update dictionary of block_num -> tx hashes processed
-        all_blocks_processed = False
-        while not all_blocks_processed:
-            # Todo - in theory this ack_for_mined_tx_socket buffer could overflow as it waits
-            #  until the batch is done... may need a background task to store the acks
-            message = await self.ack_for_mined_tx_socket.recv()
-            new_mined_tx_hashes = cbor2.loads(message)
-
-            for blk_num, new_hashes in new_mined_tx_hashes.items():
-                if not self.global_tx_hashes_dict.get(blk_num):
-                    self.global_tx_hashes_dict[blk_num] = []
-                self.global_tx_hashes_dict[blk_num].extend(new_hashes)
-            if len(self.global_tx_hashes_dict) >= len(self.sync_state.expected_blocks_tx_counts):
-                all_blocks_processed = self.all_blocks_processed(self.global_tx_hashes_dict)
+        # 1) Check if we have received all ACKs for mined tx hashes
+        while True:
+            if len(self.global_tx_hashes_dict) >= len(self.sync_state.expected_blocks_tx_counts)\
+                    and self.all_blocks_processed(self.global_tx_hashes_dict):
+                break
+            else:
+                await asyncio.sleep(0.2)
 
         # 2) Transfer from dict -> Temp Table for Table join with Mempool table
         mined_tx_hashes = []

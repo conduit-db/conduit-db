@@ -209,32 +209,32 @@ def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_t
     )
 
 
-def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: bool, target_type: str) \
-        -> bytearray:
+def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: bool,
+        target_type: str) -> bytearray:
     """{'index': 0, 'txOrId': txOrId, 'target': target, 'nodes': []}"""
     response = bytearray()
 
     flags = 0
     if include_full_tx:
-        flags = flags & TxOrId.FULL_TRANSACTION
+        flags = flags | TxOrId.FULL_TRANSACTION
 
     if target_type == 'hash':
-        flags = flags & TargetType.HASH
+        flags = flags | TargetType.HASH
     elif target_type == 'header':
-        flags = flags & TargetType.HEADER
+        flags = flags | TargetType.HEADER
     elif target_type == 'merkleroot':
-        flags = flags & TargetType.MERKLE_ROOT
+        flags = flags | TargetType.MERKLE_ROOT
     else:
-        flags = flags & TargetType.HASH
+        raise NotImplementedError("Caller should have ensured `target_type` is valid.")
 
-    flags = flags & ProofType.MERKLE_BRANCH  # ProofType.MERKLE_TREE not supported
-    flags = flags & CompositeProof.SINGLE_PROOF  # CompositeProof.COMPOSITE_PROOF not supported
+    flags = flags | ProofType.MERKLE_BRANCH  # ProofType.MERKLE_TREE not supported
+    flags = flags | CompositeProof.SINGLE_PROOF  # CompositeProof.COMPOSITE_PROOF not supported
 
     response += le_int_to_char(flags)
     response += bitcoinx.pack_varint(tsc_json['index'])
 
     if include_full_tx:
-        txLength = len(tsc_json['txOrId'])
+        txLength = len(tsc_json['txOrId']) // 2
         response += bitcoinx.pack_varint(txLength)
         response += bytes.fromhex(tsc_json['txOrId'])
     else:

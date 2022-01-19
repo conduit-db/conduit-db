@@ -79,7 +79,7 @@ def wait_for_mysql() -> None:
                     client.close()
             else:
                 logger.debug(f"MySQL server currently unavailable - waiting...")
-                asyncio.sleep(5)
+                time.sleep(5)
 
 
 def wait_for_conduit_raw_api() -> None:
