@@ -126,7 +126,10 @@ class FlatFileDb:
                 immutable_files = os.listdir(self.datadir)
                 immutable_files.sort()
                 # Pop the single mutable file (which always has the highest number)
-                immutable_files.remove(self.mutable_file_lock_path.parts[-1])
+                try:
+                    immutable_files.remove(self.mutable_file_lock_path.parts[-1])
+                except ValueError:
+                    pass  # The lock file is in a different directory
                 mutable_filename = immutable_files.pop()
                 self.mutable_file_num = self._mutable_filename_to_num(mutable_filename)
                 self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
