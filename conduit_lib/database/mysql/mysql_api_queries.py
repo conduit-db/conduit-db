@@ -47,6 +47,15 @@ class MySQLAPIQueries:
                 return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
                     block_height)
             else:
+                # TODO Investigate why this is happening
+                # If it's a duplicate entry let it return
+                block_nums = [row[3] for row in rows]
+                if all([block_nums[0] == block_num for block_num in block_nums]):
+                    self.logger.debug(f"Got duplicate tx row for transaction: {tx_hashX.hex()}")
+                    tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
+                    return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
+                        block_height)
+
                 raise ValueError(f"More than a single tx_hashX was returned for: {tx_hashX.hex()} "
                     f"from the MySQL query. This should never happen. It should always give a "
                     f"materialized view of the longest chain")  # i.e. WHERE HD.is_orphaned = 0
