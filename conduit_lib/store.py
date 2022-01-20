@@ -151,8 +151,9 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     else:
         mysql_database = None
 
-    if os.environ['SERVER_TYPE'] == "ConduitRaw":  # comment out until we have gRPC wrapper
-        lmdb_db = LMDB_Database()
+    if os.environ['SERVER_TYPE'] == "ConduitRaw":
+        # NOTE: The controller process must never mutate LMDB. It must only ever read.
+        lmdb_db = LMDB_Database(lock=False)
     else:
         lmdb_db = None
 

@@ -35,7 +35,7 @@ class LMDB_Database:
     LMDB_DATABASE_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent.parent / 'lmdb_data'
     LMDB_DATABASE_DIR: str = os.environ.get("LMDB_DATABASE_DIR", str(LMDB_DATABASE_DIR_DEFAULT))
 
-    def __init__(self, storage_path: Optional[str]=None) -> None:
+    def __init__(self, storage_path: Optional[str]=None, lock: bool=True) -> None:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
@@ -54,7 +54,7 @@ class LMDB_Database:
             self._map_size = pow(1024, 3) * 5
         self._storage_path = storage_path
         self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
-            readahead=False, sync=False, map_size=self._map_size)
+            readahead=False, sync=False, map_size=self._map_size, lock=lock)
         self._opened = True
 
         self.blocks = LmdbBlocks(self)
