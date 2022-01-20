@@ -1,17 +1,24 @@
 import asyncio
 import logging
 import multiprocessing
+import os
 import sys
 import threading
 import time
 from multiprocessing import shared_memory
+from pathlib import Path
 from typing import List, Tuple, Optional
 
 import zmq
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging
+from conduit_lib.stack_tracer import trace_start, trace_stop
 from conduit_lib.types import MultiprocessingQueue
+
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 class BlockWriter(multiprocessing.Process):
@@ -63,6 +70,8 @@ class BlockWriter(multiprocessing.Process):
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         try:
+            if int(os.environ.get('RUN_STACK_TRACER', '0')):
+                trace_start(str(MODULE_DIR / f"stack_tracing_{os.urandom(4).hex()}.html"))
             threads = [
                 threading.Thread(target=self.main_thread, daemon=True),
                 threading.Thread(target=self.flush_thread, daemon=True),
@@ -79,6 +88,8 @@ class BlockWriter(multiprocessing.Process):
         except KeyboardInterrupt:
             self.logger.debug("BlockWriter stopping...")
         finally:
+            if int(os.environ.get('RUN_STACK_TRACER', '0')):
+                trace_stop()
             self.logger.info(f"Process Stopped")
 
     def flush_thread(self) -> None:
@@ -110,7 +121,6 @@ class BlockWriter(multiprocessing.Process):
                 with self.batched_blocks_lock:
                     blk_hash, blk_start_pos, blk_end_pos = item
                     self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
-
         except Exception as e:
             self.logger.exception(e)
 
@@ -136,8 +146,6 @@ class BlockWriter(multiprocessing.Process):
         total_batch_size = 0
         for blk_hash, start_position, stop_position in batched_blocks:
             total_batch_size += stop_position - start_position
-            # self.logger.debug(f"flushed raw block data for block hash={hash_to_hex_str(blk_hash)}, "
-            #       f"size={stop_position-start_position} bytes")
             self.worker_ack_queue_blk_writer.put(blk_hash)
         if total_batch_size > 0:
             self.logger.debug(f"total batch size for raw blocks="
