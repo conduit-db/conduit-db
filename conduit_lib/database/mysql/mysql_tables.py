@@ -160,7 +160,7 @@ class MySQLTables:
                 """)
 
             self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash, tx_block_num);
+                CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash);
                 """)
 
             # block_offset is relative to start of rawtx
@@ -210,7 +210,7 @@ class MySQLTables:
                 """)
 
             self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, tx_hash, idx, ref_type);
+                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
             """)
 
             self.mysql_conn.query("""
@@ -240,6 +240,9 @@ class MySQLTables:
 
             self.mysql_conn.query("""
                 CREATE INDEX IF NOT EXISTS headers_idx ON headers (block_hash);
+            """)
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS headers_idx_height ON headers (block_height);
             """)
         finally:
             self.commit_transaction()
