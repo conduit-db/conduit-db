@@ -47,9 +47,9 @@ class MySQLAPIQueries:
                 return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
                     block_height)
             else:
-                raise ValueError("More than a single tx_hashX was returned from the MySQL query. "
-                    "This should never happen. It should always give a materialized view of the "
-                    "longest chain")  # i.e. WHERE HD.is_orphaned = 0
+                raise ValueError(f"More than a single tx_hashX was returned for: {tx_hashX.hex()} "
+                    f"from the MySQL query. This should never happen. It should always give a "
+                    f"materialized view of the longest chain")  # i.e. WHERE HD.is_orphaned = 0
 
         finally:
             self.mysql_db.commit_transaction()
