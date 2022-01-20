@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import aiohttp
 import bitcoinx
 import cbor2
@@ -41,11 +43,26 @@ class ApplicationState(object):
         self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)  # type: ignore
         self.reorg_event_socket.bind("tcp://127.0.0.1:51495")  # type: ignore
 
+        self.executor = ThreadPoolExecutor(max_workers=1)
+
+    async def mysql_connect(self) -> None:
+        self.logger.debug(f"Refreshing mysql connection")
+        self.mysql_db.close()
+        self.mysql_db = await asyncio.get_event_loop().run_in_executor(
+            self.executor, load_mysql_database)
+
+    async def refresh_mysql_connection_task(self) -> None:
+        REFRESH_TIMEOUT = 300
+        while True:
+            await asyncio.sleep(REFRESH_TIMEOUT)
+            await self.mysql_connect()
+
     def start_threads(self) -> None:
         pass
 
     def start_tasks(self) -> None:
         asyncio.create_task(self.listen_for_reorg_event_job())
+        asyncio.create_task(self.refresh_mysql_connection_task())
 
     async def listen_for_reorg_event_job(self) -> None:
         """This may not actually be needed for the most part because db entries are immutable.

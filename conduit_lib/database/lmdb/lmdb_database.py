@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 import lmdb
@@ -115,6 +117,11 @@ class LMDB_Database:
 
     def get_rawtx_by_loc(self, tx_loc: TxLocation) -> Optional[bytes]:
         return self.tx_offsets.get_rawtx_by_loc(tx_loc)
+
+    async def get_rawtx_by_loc_async(self, executor: ThreadPoolExecutor, tx_loc: TxLocation) \
+            -> Optional[bytes]:
+        return await asyncio.get_running_loop().run_in_executor(executor,
+            self.get_rawtx_by_loc, tx_loc)
 
     def get_single_tx_slice(self, tx_loc: TxLocation) -> Optional[Slice]:
         return self.tx_offsets._get_single_tx_slice(tx_loc)
