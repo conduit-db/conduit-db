@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Optional, cast
 
-import aiohttp
 import bitcoinx
 from aiohttp import web
 from aiohttp.web_response import StreamResponse
@@ -33,12 +34,18 @@ async def error(request: web.Request) -> web.Response:
     raise web.HTTPBadRequest(reason="This is a test of raising an exception in the handler")
 
 
-# @functools.lru_cache(maxsize=256)  # on reorg need to call _get_tx_metadata.cache_clear()
 def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> Optional[TxMetadata]:
     """Truncates full hash -> hashX length"""
     tx_metadata = mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
         return None
+    return tx_metadata
+
+
+async def _get_tx_metadata_async(tx_hash: bytes, mysql_db: MySQLDatabase,
+        executor: ThreadPoolExecutor) -> Optional[TxMetadata]:
+    tx_metadata = await asyncio.get_running_loop().run_in_executor(executor,
+        _get_tx_metadata, tx_hash, mysql_db)
     return tx_metadata
 
 
@@ -106,6 +113,14 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
     )
 
 
+async def _get_tsc_merkle_proof_async(executor: ThreadPoolExecutor,
+        tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb: LMDB_Database,
+        include_full_tx: bool = True, target_type: str = "hash") -> TSCMerkleProof:
+    tsc_merkle_proof = await asyncio.get_running_loop().run_in_executor(executor,
+        _get_tsc_merkle_proof, tx_metadata, mysql_db, lmdb, include_full_tx, target_type)
+    return tsc_merkle_proof
+
+
 async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
     """This the main endpoint for the rapid restoration API"""
     app_state: 'ApplicationState' = request.app['app_state']
@@ -144,7 +159,8 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
             assert full_tx_hash is not None
             full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
             if match.spend_transaction_hash is not None:
-                tx_metadata = _get_tx_metadata(match.spend_transaction_hash, mysql_db)
+                tx_metadata = await _get_tx_metadata_async(
+                    match.spend_transaction_hash, mysql_db, app_state.executor)
                 assert tx_metadata is not None
                 spend_tx_loc = TxLocation(
                     block_hash=tx_metadata.block_hash,
@@ -195,7 +211,7 @@ async def get_transaction(request: web.Request) -> web.Response:
     if not txid:
         raise web.HTTPBadRequest(reason='no txid submitted')
 
-    tx_metadata = _get_tx_metadata(hex_str_to_hash(txid), mysql_db)
+    tx_metadata = await _get_tx_metadata_async(hex_str_to_hash(txid), mysql_db, app_state.executor)
     if not tx_metadata:
         raise web.HTTPNotFound(reason="tx_metadata not found")
 
@@ -205,7 +221,7 @@ async def get_transaction(request: web.Request) -> web.Response:
     if not tx_location:
         raise web.HTTPNotFound(reason="tx location not found")
 
-    rawtx = lmdb.get_rawtx_by_loc(tx_location)
+    rawtx = await lmdb.get_rawtx_by_loc_async(app_state.executor, tx_location)
     # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(rawtx))}")
     assert rawtx is not None
     if accept_type == 'application/octet-stream':
@@ -237,11 +253,11 @@ async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
 
     # Construct JSON format TSC merkle proof
     tx_hash = bitcoinx.hex_str_to_hash(txid)
-    tx_metadata = _get_tx_metadata(tx_hash, mysql_db)
+    tx_metadata = await _get_tx_metadata_async(tx_hash, mysql_db, app_state.executor)
     if not tx_metadata:
         raise web.HTTPNotFound(reason="transaction metadata not found")
-    tsc_merkle_proof = _get_tsc_merkle_proof(tx_metadata, mysql_db, lmdb,
-        include_full_tx, target_type)
+    tsc_merkle_proof = await _get_tsc_merkle_proof_async(app_state.executor, tx_metadata, mysql_db,
+        lmdb, include_full_tx, target_type)
 
     if accept_type == 'application/octet-stream':
         binary_response = tsc_merkle_proof_json_to_binary(tsc_merkle_proof,
