@@ -15,13 +15,17 @@ from tests.conftest import remove_readonly
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger("test-flat-file-db")
 TEST_DATADIR = str(MODULE_DIR / "test_path")
+os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
 
 
 def _do_general_read_and_write_ops():
     logging.basicConfig(level=logging.DEBUG)
     # NOTE The use case of a chain indexer does not require fsync because we can always
     # re-sync from the node if we crash...
-    with FlatFileDb(Path(TEST_DATADIR), fsync=True) as ffdb:
+    with FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+            fsync=True) as ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
         # print(data_location_aa)
         data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))
@@ -47,7 +51,10 @@ def test_general_read_and_write_db():
 
 
 def test_delete():
-    with FlatFileDb(Path(TEST_DATADIR), fsync=True) as ffdb:
+    with FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+            fsync=True) as ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
         ffdb.delete_file(Path(data_location_aa.file_path))
         with pytest.raises(FileNotFoundError):
@@ -55,14 +62,17 @@ def test_delete():
 
 
 def test_slicing():
-    ffdb = FlatFileDb(Path(TEST_DATADIR))
-    data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
-    # print(data_location_mixed)
+    with FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+            fsync=True) as ffdb:
+        data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
+        # print(data_location_mixed)
 
-    slice = Slice(start_offset=5, end_offset=10)
-    data_bb_slice = ffdb.get(data_location_mixed, slice)
-    assert data_bb_slice == b"bbbbb"
-    # print(data_bb_slice)
+        slice = Slice(start_offset=5, end_offset=10)
+        data_bb_slice = ffdb.get(data_location_mixed, slice)
+        assert data_bb_slice == b"bbbbb"
+        # print(data_bb_slice)
 
 
 def _task(x):

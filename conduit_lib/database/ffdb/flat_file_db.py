@@ -9,7 +9,7 @@ import os
 import threading
 from pathlib import Path
 from types import TracebackType
-from typing import NamedTuple, Optional, Set, Type
+from typing import NamedTuple, Optional, Set, Type, List
 from fasteners import InterProcessReaderWriterLock
 
 from conduit_lib.types import Slice
@@ -63,55 +63,30 @@ class FlatFileDb:
     the key value store for recording the DataLocation of each BLOB.
 
     NOTE: InterProcessReaderWriterLock is not re-entrant.
+    NOTE: FlatFileDB is thread-safe
     """
 
-    # The thread lock is a class attribute for a reason. It must be shared across all instances
-    # for all threads of the current process. Inter-process locking is via the lock file.
-    threading_lock = threading.RLock()
-    mutable_file_num: int = 0
-    mutable_file_lock_path: Optional[Path] = None
-    mutable_file_path: Optional[Path] = None
-    immutable_files: Set[str] = set()  # Reading immutable files does not require any locking
-    datadir: Optional[Path] = None
-
-    def __init__(self, datadir: Path, mutable_file_lock_path: Optional[Path]=None,
-            fsync: bool = False) -> None:
+    def __init__(self, datadir: Path, mutable_file_lock_path: Path, fsync: bool = False) -> None:
+        self.threading_lock = threading.RLock()
         self.fsync: bool = fsync
-
-        if self.datadir is not None:
-            assert datadir == self.datadir, "Cannot open FlatFileDb for a different datadir " \
-                                            "within the same process"
-            assert self.mutable_file_lock_path is not None
-            assert mutable_file_lock_path == self.mutable_file_lock_path, \
-                "Cannot open FlatFileDb for a different datadir within the same process"
-        else:
-            self.datadir = datadir
+        self.datadir = datadir
+        self.mutable_file_lock_path = mutable_file_lock_path
+        assert str(self.mutable_file_lock_path).endswith(
+            ".lock"), "mutable_file_lock_path must end with '.lock'"
 
         if not self.datadir.exists():
             os.makedirs(self.datadir, exist_ok=True)
 
-        with self.threading_lock:
-            # If a subsequent thread gives a different mutable_file_lock_path it will be ignored
-            if not self.mutable_file_lock_path:
-                if mutable_file_lock_path:
-                    assert str(mutable_file_lock_path).endswith(".lock"), \
-                        "mutable_file_lock_path must end with '.lock'"
-                    self.mutable_file_lock_path = mutable_file_lock_path
-                else:
-                    self.mutable_file_lock_path = self.datadir / "ffdb.lock"
+        # Inter-process synchronization of access to the mutable file
+        # WARNING mutable_file_lock_path needs to exactly match across threads and processes
+        self.mutable_file_rwlock = InterProcessReaderWriterLock(
+            str(self.mutable_file_lock_path))
 
-            # Inter-process synchronization of access to the mutable file
-            # WARNING mutable_file_lock_path needs to exactly match across threads and processes
-            self.mutable_file_rwlock = InterProcessReaderWriterLock(
-                str(self.mutable_file_lock_path))
-
-            # Initialization
-            self.mutable_file_rwlock.acquire_write_lock()
-            if self.mutable_file_path is None:
-                # TODO if earlier files are pruned there needs to be a metadata file to record it
-                self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
-
+        # Initialization
+        with self.mutable_file_rwlock.write_lock():
+            # TODO if earlier files are pruned there needs to be a metadata file to record it
             # Create file data_00000000.dat if it's the first time opening the datadir
+            self.mutable_file_path = self._file_num_to_mutable_file_path(file_num=0)
             if not self.mutable_file_path.exists():
                 logger.debug(f"Initializing datadir {self.datadir} by creating"
                              f" {self.mutable_file_path}")
@@ -119,21 +94,17 @@ class FlatFileDb:
                     f.flush()
                     os.fsync(f.fileno())
 
-            self.mutable_file_rwlock.release_write_lock()
-
             # Scans datadir to get the correct mutable_file_file cached properties
-            with self.mutable_file_rwlock.read_lock():
-                immutable_files = os.listdir(self.datadir)
-                immutable_files.sort()
-                # Pop the single mutable file (which always has the highest number)
-                try:
-                    immutable_files.remove(self.mutable_file_lock_path.parts[-1])
-                except ValueError:
-                    pass  # The lock file is in a different directory
-                mutable_filename = immutable_files.pop()
-                self.mutable_file_num = self._mutable_filename_to_num(mutable_filename)
-                self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
-                self.immutable_files = set(immutable_files)
+            _immutable_files: List[str] = os.listdir(self.datadir)
+            _immutable_files.sort()
+            # Pop the single mutable file (which always has the highest number)
+            for file in _immutable_files:
+                if file.endswith(".lock"):
+                    _immutable_files.remove(file)
+            mutable_filename = _immutable_files.pop()
+            self.mutable_file_num = self._mutable_filename_to_num(mutable_filename)
+            self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
+            self.immutable_files: Set[str] = set(_immutable_files)
 
     def __enter__(self) -> 'FlatFileDb':
         self.threading_lock.acquire()
@@ -217,7 +188,9 @@ class FlatFileDb:
         advantage is unfettered lock-free read access to all immutable files. A lock must ALWAYS
         be acquired for reading the mutable file - this can never be disabled.
         """
-        is_accessing_mutable_file = data_location.file_path not in self.immutable_files
+        with self.threading_lock:
+            is_accessing_mutable_file = data_location.file_path not in self.immutable_files
+
         if is_accessing_mutable_file or not lock_free_access:
             self.mutable_file_rwlock.acquire_read_lock()
 

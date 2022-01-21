@@ -33,13 +33,9 @@ class LmdbBlocks:
     RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'raw_blocks'
     RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
 
-    RAW_BLOCKS_LOCKFILE: Optional[Path] = None
-    if os.getenv("RAW_BLOCKS_LOCKFILE"):
-        RAW_BLOCKS_LOCKFILE = Path(os.environ['RAW_BLOCKS_LOCKFILE'])
-
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
-        self.ffdb = FlatFileDb(Path(self.RAW_BLOCKS_DIR), self.RAW_BLOCKS_LOCKFILE)
+        self.ffdb = FlatFileDb(Path(self.RAW_BLOCKS_DIR), Path(os.environ['RAW_BLOCKS_LOCKFILE']))
         self.blocks_db = self.db.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.db.env.open_db(self.BLOCK_NUMS_DB)
         self.block_metadata_db = self.db.env.open_db(self.BLOCK_METADATA_DB)

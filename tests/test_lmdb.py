@@ -21,6 +21,9 @@ from tests.data.offsets import TX_OFFSETS
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
+os.environ['RAW_BLOCKS_LOCKFILE'] = "raw_blocks_ffdb.lock"
+os.environ['MERKLE_TREES_LOCKFILE'] = "merkle_trees_ffdb.lock"
+os.environ['TX_OFFSETS_LOCKFILE'] = "tx_offsets_ffdb.lock"
 
 
 def ipc_sock_server_thread():

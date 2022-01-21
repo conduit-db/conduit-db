@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
@@ -47,13 +46,8 @@ class LMDB_Database:
         if not Path(storage_path).exists():
             os.makedirs(Path(storage_path), exist_ok=True)
 
-        if sys.platform == 'linux':
-            self._map_size = pow(1024, 4) * 32  # 64 terabytes
-        else:
-            # on windows there is a bug where this requires the disc space to be free
-            # on linux can set this to a very large number (e.g. 10 terabytes)
-            # windows is for development use only...
-            self._map_size = pow(1024, 3) * 5
+        self._map_size = pow(1024, 3) * 5
+
         self._storage_path = storage_path
         self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
             readahead=False, sync=False, map_size=self._map_size, lock=lock)
