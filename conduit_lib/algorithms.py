@@ -97,14 +97,12 @@ def preprocessor(block_view: memoryview,
 
 
 # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def get_pk_and_pkh_from_script(script: 'array.ArrayType') -> List[bytes]:  # type: ignore
+def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: int,  # type: ignore
+        ref_type: int) -> List[bytes]:
     i = 0
     pks, pkhs = set(), set()
     pd_hashXes: List[bytes] = []
     len_script = len(script)
-    # Todo catch OP_FALSE OP_RETURN (and OP_RETURN pre-genesis) and skip the entire output
-    #  as we do not want to track pubkeys or pkhs etc. from inside of unspendable outputs at this
-    #  stage...
     try:
         while i < len_script:
             try:
@@ -137,10 +135,12 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType') -> List[bytes]:  # typ
                 else:  # slow search byte by byte...
                     i += 1
             except (IndexError, struct.error) as e:
-                # This can legitimately happen (bad output scripts...) e.g. see:
+                # This can legitimately happen (bad output scripts that have not packed the
+                # pushdatas correctly) e.g. see:
                 # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
                 # especially on testnet - lots of bad output scripts...
-                logger.error(f"script={script}, len(script)={len(script)}, i={i}")
+                logger.error(f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s",
+                    hash_to_hex_str(tx_hash), idx, ref_type)
         # hash pushdata
         for pk in pks:
             pd_hashXes.append(sha256(pk).digest()[0:HashXLength])
@@ -149,8 +149,8 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType') -> List[bytes]:  # typ
             pd_hashXes.append(sha256(pkh).digest()[0:HashXLength])
         return pd_hashXes
     except Exception as e:
-        logger.debug(f"script={script}, len(script)={len(script)}, i={i}")
-        logger.exception(e)
+        logger.exception(f"Bad script for tx_hash: %s, idx: %s, ref_type: %s",
+            hash_to_hex_str(tx_hash), idx, ref_type)
         raise
 
 
@@ -226,7 +226,8 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 # mempool txs will appear to have a tx_pos=0
                 if (not tx_pos == 0 and confirmed) or not confirmed:
 
-                    pushdata_hashXes = get_pk_and_pkh_from_script(script_sig)
+                    pushdata_hashXes = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
+                        idx=in_idx, ref_type=ref_type)
                     if len(pushdata_hashXes):
                         for in_pushdata_hashX in pushdata_hashXes:
                             set_pd_rows.add(
@@ -248,7 +249,8 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_hashXes = get_pk_and_pkh_from_script(scriptpubkey)
+                pushdata_hashXes = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
+                    idx=out_idx, ref_type=ref_type)
                 if len(pushdata_hashXes):
                     for out_pushdata_hashX in pushdata_hashXes:
                         set_pd_rows.add(
