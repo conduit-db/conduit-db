@@ -98,7 +98,7 @@ def preprocessor(block_view: memoryview,
 
 # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
 def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: int,  # type: ignore
-        ref_type: int) -> List[bytes]:
+        ref_type: int, tx_pos: int) -> List[bytes]:
     i = 0
     pks, pkhs = set(), set()
     pd_hashXes: List[bytes] = []
@@ -139,8 +139,8 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: i
                 # pushdatas correctly) e.g. see:
                 # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
                 # especially on testnet - lots of bad output scripts...
-                logger.error(f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s",
-                    hash_to_hex_str(tx_hash), idx, ref_type)
+                logger.error(f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s, "
+                    f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, ref_type, tx_pos)
         # hash pushdata
         for pk in pks:
             pd_hashXes.append(sha256(pk).digest()[0:HashXLength])
@@ -149,8 +149,8 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: i
             pd_hashXes.append(sha256(pkh).digest()[0:HashXLength])
         return pd_hashXes
     except Exception as e:
-        logger.exception(f"Bad script for tx_hash: %s, idx: %s, ref_type: %s",
-            hash_to_hex_str(tx_hash), idx, ref_type)
+        logger.exception(f"Bad script for tx_hash: %s, idx: %s, ref_type: %s, tx_pos: %s",
+            hash_to_hex_str(tx_hash), idx, ref_type, tx_pos)
         raise
 
 
@@ -227,7 +227,7 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 if (not tx_pos == 0 and confirmed) or not confirmed:
 
                     pushdata_hashXes = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
-                        idx=in_idx, ref_type=ref_type)
+                        idx=in_idx, ref_type=ref_type, tx_pos=tx_pos)
                     if len(pushdata_hashXes):
                         for in_pushdata_hashX in pushdata_hashXes:
                             set_pd_rows.add(
@@ -250,7 +250,7 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
                 pushdata_hashXes = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
-                    idx=out_idx, ref_type=ref_type)
+                    idx=out_idx, ref_type=ref_type, tx_pos=tx_pos)
                 if len(pushdata_hashXes):
                     for out_pushdata_hashX in pushdata_hashXes:
                         set_pd_rows.add(

@@ -396,8 +396,6 @@ class TxParser(multiprocessing.Process):
             msg_type, size_tx = struct.unpack_from(f"<II", msg)
             msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", msg)
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
-
-            # Todo only does 1 mempool tx at a time at present
             dt = datetime.utcnow()
             tx_offsets = [0]
             rawtx = array.array('B', rawtx)
@@ -410,7 +408,7 @@ class TxParser(multiprocessing.Process):
             set_pd_rows_batched.extend(set_pd_rows)
 
         num_mempool_txs_processed = len(tx_rows_batched)
-        self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
+        # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
         self.mempool_tx_flush_queue.put(
             MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched))
