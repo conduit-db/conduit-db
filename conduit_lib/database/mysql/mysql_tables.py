@@ -1,4 +1,5 @@
 import logging
+import os
 
 import MySQLdb
 
@@ -43,6 +44,25 @@ class MySQLTables:
                 queries.append(f"DROP TABLE {table};")
             for query in queries:
                 self.mysql_conn.query(query)
+        except Exception as e:
+            self.logger.exception("mysql_drop_tables failed unexpectedly")
+        finally:
+            self.commit_transaction()
+
+    def mysql_drop_indices(self) -> None:
+        try:
+            tables = [row[0] for row in self.get_tables()]
+            if "confirmed_transactions" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS tx_idx ON confirmed_transactions")
+            if "headers" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx ON headers;")
+                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx_height ON headers;")
+            if "txo_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS txo_idx ON txo_table;")
+            if "inputs_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS input_idx ON inputs_table;")
+            if "pushdata" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS pushdata_idx ON pushdata;")
         except Exception as e:
             self.logger.exception("mysql_drop_tables failed unexpectedly")
         finally:
@@ -172,10 +192,6 @@ class MySQLTables:
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """)
 
-            self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx);
-                """)
-
             # block_offset is relative to start of rawtx
             # this table may look wasteful (due to repetition of the out_tx_hash but the
             # write throughput advantage is considerable (as it avoids the random io burden of
@@ -191,10 +207,6 @@ class MySQLTables:
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """)
 
-            self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
-                """)
-
             # I think I can get away with not storing full pushdata hashes
             # unless they collide because the client provides the full pushdata_hash
             # TODO: If rocksdb were used directly could have all of this as the key, value as null
@@ -208,10 +220,6 @@ class MySQLTables:
                     ref_type SMALLINT
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """)
-
-            self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
-            """)
 
             self.mysql_conn.query("""
                 CREATE TABLE IF NOT EXISTS checkpoint_state (
@@ -243,6 +251,23 @@ class MySQLTables:
             """)
             self.mysql_conn.query("""
                 CREATE INDEX IF NOT EXISTS headers_idx_height ON headers (block_height);
+            """)
+
+            if os.getenv("CREATE_INDEXES") == "1":
+                self.mysql_create_indexes()
+        finally:
+            self.commit_transaction()
+
+    def mysql_create_indexes(self) -> None:
+        try:
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx);
+                """)
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
+                """)
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
             """)
         finally:
             self.commit_transaction()
