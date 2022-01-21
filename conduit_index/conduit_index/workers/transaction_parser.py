@@ -13,7 +13,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 
-from typing import Tuple, List, Dict, cast, Union, Optional
+from typing import Tuple, List, Dict, cast, Union, Optional, Callable
 
 import cbor2
 import zmq
@@ -72,6 +72,8 @@ class TxParser(multiprocessing.Process):
 
     def __init__(self, worker_id: int) -> None:
         super(TxParser, self).__init__()
+        self.last_mysql_activity_confirmed: float = time.time()
+        self.last_mysql_activity_mempool: float = time.time()
         self.worker_id = worker_id
 
         # A dedicated in-memory only table exclusive to this worker
@@ -205,7 +207,6 @@ class TxParser(multiprocessing.Process):
     def mysql_insert_confirmed_tx_rows_thread(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
         txs, ins, outs, pds, acks = reset_rows()
-        last_mysql_connect_time = time.time()
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
@@ -222,20 +223,20 @@ class TxParser(multiprocessing.Process):
                     acks.append(block_ack)
 
                     if len(txs) > self.BLOCKS_MAX_TX_BATCH_LIMIT:
-                        mysql_db, last_mysql_connect_time = \
-                            self.maybe_refresh_mysql_connection(mysql_db, last_mysql_connect_time)
+                        mysql_db = self.maybe_refresh_mysql_connection_mined(mysql_db)
                         self.mysql_flush_rows(MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
                             confirmed=True, mysql_db=mysql_db)
                         txs, ins, outs, pds, acks = reset_rows()
+                        self.last_mysql_activity_confirmed = time.time()
 
                 # Post-IBD
                 except queue.Empty:
                     if len(txs) != 0:
-                        mysql_db, last_mysql_connect_time = self.maybe_refresh_mysql_connection(
-                            mysql_db, last_mysql_connect_time)
+                        mysql_db = self.maybe_refresh_mysql_connection_mined(mysql_db)
                         self.mysql_flush_rows(MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
                             confirmed=True, mysql_db=mysql_db)
                         txs, ins, outs, pds, acks = reset_rows()
+                        self.last_mysql_activity_confirmed = time.time()
                     continue
 
         except Exception as e:
@@ -244,23 +245,33 @@ class TxParser(multiprocessing.Process):
         finally:
             mysql_db.close()
 
-    def maybe_refresh_mysql_connection(self, mysql_db: MySQLDatabase,
-            last_mysql_connect_time: float) -> Tuple[MySQLDatabase, float]:
+    def maybe_refresh_mysql_connection_mined(self, mysql_db: MySQLDatabase) -> MySQLDatabase:
         REFRESH_TIMEOUT = 600
-        if time.time() - last_mysql_connect_time > REFRESH_TIMEOUT:
+        if time.time() - self.last_mysql_activity_confirmed > REFRESH_TIMEOUT:
             self.logger.info(f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} "
                 f"second refresh timeout")
             mysql_db.close()
             mysql_db = mysql_connect(worker_id=self.worker_id)
-            last_mysql_connect_time = time.time()
-            return mysql_db, last_mysql_connect_time
+            self.last_mysql_activity_confirmed = time.time()
+            return mysql_db
         else:
-            return mysql_db, last_mysql_connect_time
+            return mysql_db
+
+    def maybe_refresh_mysql_connection_mempool(self, mysql_db: MySQLDatabase) -> MySQLDatabase:
+        REFRESH_TIMEOUT = 600
+        if time.time() - self.last_mysql_activity_confirmed > REFRESH_TIMEOUT:
+            self.logger.info(f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} "
+                f"second refresh timeout")
+            mysql_db.close()
+            mysql_db = mysql_connect(worker_id=self.worker_id)
+            self.last_mysql_activity_confirmed = time.time()
+            return mysql_db
+        else:
+            return mysql_db
 
     def mysql_insert_mempool_tx_rows_thread(self) -> None:
         assert self.mempool_tx_flush_queue is not None
         txs, ins, outs, pds, acks = reset_rows()
-        last_mysql_connect_time = time.time()
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
@@ -275,20 +286,20 @@ class TxParser(multiprocessing.Process):
 
                     if len(txs) > self.MEMPOOL_MAX_TX_BATCH_LIMIT - 1:
                         self.logger.debug(f"hit max mempool batch size ({len(txs)})")
-                        mysql_db, last_mysql_connect_time = \
-                            self.maybe_refresh_mysql_connection(mysql_db, last_mysql_connect_time)
+                        mysql_db = self.maybe_refresh_mysql_connection_mempool(mysql_db)
                         self.mysql_flush_rows(MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
                             confirmed=False, mysql_db=mysql_db)
+                        self.last_mysql_activity_mempool = time.time()
                         txs, ins, outs, pds, acks = reset_rows()
 
                 except queue.Empty:
                     # self.logger.debug("mempool batch timer triggered")
                     if len(txs) != 0:
-                        mysql_db, last_mysql_connect_time = \
-                            self.maybe_refresh_mysql_connection(mysql_db, last_mysql_connect_time)
+                        mysql_db = self.maybe_refresh_mysql_connection_mempool(mysql_db)
                         self.mysql_flush_rows(MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
                             confirmed=False, mysql_db=mysql_db)
                         txs, ins, outs, pds, acks = reset_rows()
+                        self.last_mysql_activity_mempool = time.time()
                     continue
 
         except Exception as e:
@@ -610,8 +621,7 @@ class TxParser(multiprocessing.Process):
             self.confirmed_tx_flush_queue.put(MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows))
 
     def process_work_items(self, work_items: List[bytes], ipc_socket_client: IPCSocketClient,
-            mysql_db: MySQLDatabase, last_mysql_connect_time: float,
-            ack_for_mined_tx_socket: zmq.Socket) -> None:
+            mysql_db: MySQLDatabase, ack_for_mined_tx_socket: zmq.Socket) -> None:
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
         iteratively.
@@ -619,8 +629,7 @@ class TxParser(multiprocessing.Process):
         NOTE: For a very large block the work_items can arrive out of sequential order
         (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10)
         """
-        mysql_db, last_mysql_connect_time = \
-            self.maybe_refresh_mysql_connection(mysql_db, last_mysql_connect_time)
+        mysql_db = self.maybe_refresh_mysql_connection_mined(mysql_db)
 
         merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
             batched_raw_block_slices, acks, is_reorg = \
@@ -628,6 +637,7 @@ class TxParser(multiprocessing.Process):
 
         new_tx_offsets, not_new_tx_offsets = self.get_processed_vs_unprocessed_tx_offsets(is_reorg,
             merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, mysql_db)
+        self.last_mysql_activity_confirmed = time.time()
 
         self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets,
             batched_raw_block_slices)
@@ -651,13 +661,11 @@ class TxParser(multiprocessing.Process):
         ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")  # type: ignore
 
         try:
-            last_mysql_connect_time = time.time()
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             ipc_socket_client = IPCSocketClient()
 
-            process_batch_func = partial(self.process_work_items,
+            process_batch_func: Callable[[List[bytes]], None] = partial(self.process_work_items,
                 ipc_socket_client=ipc_socket_client, mysql_db=mysql_db,
-                last_mysql_connect_time=last_mysql_connect_time,
                 ack_for_mined_tx_socket=ack_for_mined_tx_socket)
 
             zmq_recv_and_process_batchwise_no_block(
