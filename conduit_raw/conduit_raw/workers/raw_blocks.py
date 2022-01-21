@@ -42,7 +42,6 @@ class BlockWriter(multiprocessing.Process):
         self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_in_queue_blk_writer = worker_in_queue_blk_writer
         self.worker_ack_queue_blk_writer = worker_ack_queue_blk_writer
-        self.logger = logging.getLogger("raw-block-writer")
 
         self.batched_blocks: Optional[List[Tuple[bytes, int, int]]] = None
         self.batched_blocks_lock: Optional[threading.Lock] = None

@@ -43,13 +43,10 @@ class LmdbMerkleTree:
     MERKLE_TREES_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'merkle_trees'
     MERKLE_TREES_DIR = os.environ.get("MERKLE_TREES_DIR", str(MERKLE_TREES_DIR_DEFAULT))
 
-    MERKLE_TREES_LOCKFILE: Optional[Path] = None
-    if os.getenv("MERKLE_TREES_LOCKFILE"):
-        MERKLE_TREES_LOCKFILE = Path(os.environ['MERKLE_TREES_LOCKFILE'])
-
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
-        self.ffdb = FlatFileDb(Path(self.MERKLE_TREES_DIR), self.MERKLE_TREES_LOCKFILE)
+        self.ffdb = FlatFileDb(Path(self.MERKLE_TREES_DIR),
+            Path(os.environ['MERKLE_TREES_LOCKFILE']))
         self.mtree_db = self.db.env.open_db(self.MTREE_DB)
 
     def _pack_mtree_to_array(self, mtree: MerkleTree) -> bytes:

@@ -30,13 +30,9 @@ class LmdbTxOffsets:
     TX_OFFSETS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'tx_offsets'
     TX_OFFSETS_DIR = os.environ.get("TX_OFFSETS_DIR", str(TX_OFFSETS_DIR_DEFAULT))
 
-    TX_OFFSETS_LOCKFILE: Optional[Path] = None
-    if os.getenv("TX_OFFSETS_LOCKFILE"):
-        TX_OFFSETS_LOCKFILE = Path(os.environ['TX_OFFSETS_LOCKFILE'])
-
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
-        self.ffdb = FlatFileDb(Path(self.TX_OFFSETS_DIR), self.TX_OFFSETS_LOCKFILE)
+        self.ffdb = FlatFileDb(Path(self.TX_OFFSETS_DIR), Path(os.environ['TX_OFFSETS_LOCKFILE']))
         self.tx_offsets_db = self.db.env.open_db(self.TX_OFFSETS_DB)
 
     def _get_single_tx_slice(self, tx_loc: TxLocation) -> Optional[Slice]:
