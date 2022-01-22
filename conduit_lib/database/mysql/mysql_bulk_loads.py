@@ -48,22 +48,6 @@ class MySQLBulkLoads:
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"
         self.mysql_conn.query(extra_settings)
 
-    def set_rocks_db_bulk_load_on(self) -> None:
-        self.mysql_db.start_transaction()
-        settings = f"""SET global rocksdb_bulk_load_allow_unsorted=0;
-            SET global rocksdb_bulk_load=1;"""
-        for sql in settings.splitlines(keepends=False):
-            self.mysql_conn.query(sql)
-        self.mysql_db.commit_transaction()
-
-    def set_rocks_db_bulk_load_off(self) -> None:
-        self.mysql_db.start_transaction()
-        settings = f"""SET global rocksdb_bulk_load=0;
-            SET global rocksdb_bulk_load_allow_unsorted=0;"""
-        for sql in settings.splitlines(keepends=False):
-            self.mysql_conn.query(sql)
-        self.mysql_db.commit_transaction()
-
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int], have_retried: bool=False) \
                 -> None:

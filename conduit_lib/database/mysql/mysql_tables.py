@@ -1,5 +1,4 @@
 import logging
-
 import MySQLdb
 
 from conduit_lib.constants import HashXLength
@@ -43,6 +42,25 @@ class MySQLTables:
                 queries.append(f"DROP TABLE {table};")
             for query in queries:
                 self.mysql_conn.query(query)
+        except Exception as e:
+            self.logger.exception("mysql_drop_tables failed unexpectedly")
+        finally:
+            self.commit_transaction()
+
+    def mysql_drop_indices(self) -> None:
+        try:
+            tables = [row[0] for row in self.get_tables()]
+            if "confirmed_transactions" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS tx_idx ON confirmed_transactions")
+            if "headers" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx ON headers;")
+                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx_height ON headers;")
+            if "txo_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS txo_idx ON txo_table;")
+            if "inputs_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS input_idx ON inputs_table;")
+            if "pushdata" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS pushdata_idx ON pushdata;")
         except Exception as e:
             self.logger.exception("mysql_drop_tables failed unexpectedly")
         finally:
