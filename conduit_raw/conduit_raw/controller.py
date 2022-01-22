@@ -23,6 +23,7 @@ from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserialize
 from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
+from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.types import HeaderSpan, MultiprocessingQueue
 from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
@@ -46,7 +47,7 @@ def get_headers_dir_conduit_raw() -> Path:
     return Path(os.getenv("HEADERS_DIR_CONDUIT_RAW", str(MODULE_DIR.parent)))
 
 
-class Controller:
+class Controller(ControllerBase):
     """Designed to sync the blockchain as fast as possible.
 
     Coordinates:
@@ -519,25 +520,6 @@ class Controller:
         self.logger.debug(f"Connected up to header height: {tip.height}, "
                           f"hash: {hash_to_hex_str(tip.hash)}")
 
-    def update_moving_average(self, current_tip_height: int) -> None:
-        # sample every 72nd block for its size over the last 2 weeks (two samples per day)
-        block_hashes = []
-        for height in range(current_tip_height-2016, current_tip_height, 72):
-            header = self.get_header_for_height(height)
-            block_hashes.append(header.hash)
-
-        assert self.lmdb is not None
-        block_metadata_batch = []
-        for block_hash in block_hashes:
-            block_metadata = self.lmdb.get_block_metadata(block_hash)
-            assert block_metadata is not None
-            block_metadata_batch.append(block_metadata)
-
-        block_sizes = [m.block_size for m in block_metadata_batch]
-        self.estimated_moving_av_block_size = math.ceil(sum(block_sizes) / len(block_metadata_batch))
-        self.logger.debug(f"Updated estimated_moving_av_block_size: "
-                          f"{int(self.estimated_moving_av_block_size / (1024**2))} MB")
-
     def get_hash_stop(self, stop_header_height: int) -> bytes:
         # We should only really request enough blocks at a time to keep our
         # recv buffer filling at the max rate. No point requesting 500 x 4GB blocks!!!
@@ -612,7 +594,7 @@ class Controller:
                 # Allocate next batch of blocks
                 # reassigns new global sync_state.blocks_batch_set
                 if chain.tip.height > 2016:
-                    self.update_moving_average(chain.tip.height)
+                    await self.update_moving_average(chain.tip.height)
 
                 from_height = self.get_header_for_hash(start_header.hash).height - 1
                 to_height = stop_header.height
