@@ -29,12 +29,11 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.handlers import Handlers
-from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse, \
-    BlockMetadataBatchedResponse
+from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
-from conduit_lib.constants import MsgType, NULL_HASH, \
-    MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
+from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
+    CONDUIT_INDEX_SERVICE_NAME, TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
@@ -622,7 +621,8 @@ class Controller(ControllerBase):
                 if tip_height > 2016:
                     await self.update_moving_average(tip_height)
 
-                estimated_ideal_block_count = self.get_ideal_block_batch_count()
+                estimated_ideal_block_count = self.get_ideal_block_batch_count(
+                    target_mb=TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)

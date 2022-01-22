@@ -1,4 +1,3 @@
-import asyncio
 import io
 import ipaddress
 import logging
@@ -8,7 +7,6 @@ import socket
 import struct
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple, Optional, cast, Callable, List
 
 import bitcoinx
@@ -123,6 +121,7 @@ def get_log_level(service_name: str) -> int:
         return PROFILING
     else:
         return logging.DEBUG
+
 
 def get_conduit_raw_host_and_port() -> tuple[str, int]:
     CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')

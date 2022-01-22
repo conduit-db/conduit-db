@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import math
 import threading
 import typing
 from typing import Optional, Set, Tuple, cast, Union
@@ -8,7 +7,7 @@ from typing import Optional, Set, Tuple, cast, Union
 import bitcoinx
 
 from conduit_lib.bitcoin_net_io import BlockCallback
-from conduit_lib.constants import MAX_RAW_BLOCK_BATCH_REQUEST_SIZE
+from conduit_lib.constants import TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.store import Storage
 from bitcoinx.networks import Header
@@ -109,7 +108,8 @@ class SyncState:
         self.all_pending_block_hashes = set()
         block_height_deficit = to_height - from_height
 
-        estimated_ideal_block_count = self.controller.get_ideal_block_batch_count()
+        estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
+            target_mb=TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count + 1
