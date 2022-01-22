@@ -54,6 +54,7 @@ class MySQLBulkLoads:
                 -> None:
         t0 = time.time()
         try:
+            string_rows.sort()
             BATCH_SIZE = BULK_LOADING_BATCH_SIZE_ROW_COUNT
             BATCHES_COUNT = math.ceil(len(string_rows)/BATCH_SIZE)
             for i in range(BATCHES_COUNT):
@@ -89,7 +90,6 @@ class MySQLBulkLoads:
         outfile = self.TEMP_FILES_DIR / (str(uuid.uuid4()) + ".csv")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:
-            string_rows.sort()
             with open(outfile, 'w') as csvfile:
                 csvfile.writelines(string_rows)
 
