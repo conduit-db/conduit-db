@@ -1,5 +1,4 @@
 import array
-import math
 import multiprocessing
 import typing
 from asyncio import BaseTransport, BaseProtocol
@@ -33,7 +32,7 @@ from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferen
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
-    CONDUIT_INDEX_SERVICE_NAME, TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
+    CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
@@ -169,7 +168,8 @@ class Controller(ControllerBase):
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.
         self.general_executor = ThreadPoolExecutor(max_workers=1)
-        self.estimated_moving_av_block_size = 181  # bytes
+        self.estimated_moving_av_block_size_mb = 0.1 if \
+            self.sync_state.get_local_block_tip_height() < 2016 else 500
 
     def setup(self) -> None:
         self.mysql_db = load_mysql_database()
@@ -622,7 +622,7 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    target_mb=TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
+                    target_bytes=TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)

@@ -123,7 +123,8 @@ class Controller(ControllerBase):
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
-        self.estimated_moving_av_block_size = 181  # bytes
+        self.estimated_moving_av_block_size_mb = 0.1 if \
+            self.sync_state.get_local_block_tip_height() < 2016 else 500
         self.aiohttp_client_session: Optional[aiohttp.ClientSession] = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
