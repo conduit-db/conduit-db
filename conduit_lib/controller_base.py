@@ -50,7 +50,6 @@ class ControllerBase:
         block_metadata_batch = response.block_metadata_batch
 
         block_sizes = [m.block_size for m in block_metadata_batch]
-        self.estimated_moving_av_block_size = math.ceil(
-            sum(block_sizes) / len(block_metadata_batch))
+        self.estimated_moving_av_block_size = math.ceil(sum(block_sizes) / len(block_metadata_batch))
         self.logger.debug(f"Updated estimated_moving_av_block_size: "
-                                f"{int(self.estimated_moving_av_block_size / (1024 ** 2))} MB")
+                          f"{(self.estimated_moving_av_block_size / (1024 ** 2)):.3f} MB")

@@ -50,9 +50,17 @@ class MySQLTables:
     def mysql_drop_indices(self) -> None:
         try:
             tables = [row[0] for row in self.get_tables()]
+            if "confirmed_transactions" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS tx_idx ON confirmed_transactions")
             if "headers" in tables:
                 self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx ON headers;")
                 self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx_height ON headers;")
+            if "txo_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS txo_idx ON txo_table;")
+            if "inputs_table" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS input_idx ON inputs_table;")
+            if "pushdata" in tables:
+                self.mysql_conn.query("DROP INDEX IF EXISTS pushdata_idx ON pushdata;")
         except Exception as e:
             self.logger.exception("mysql_drop_tables failed unexpectedly")
         finally:
@@ -165,9 +173,12 @@ class MySQLTables:
                 CREATE TABLE IF NOT EXISTS confirmed_transactions (
                     tx_hash BINARY({HashXLength}),
                     tx_block_num INT UNSIGNED,
-                    tx_position BIGINT UNSIGNED,
-                    PRIMARY KEY (tx_hash, tx_block_num)
+                    tx_position BIGINT UNSIGNED
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+                """)
+
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash);
                 """)
 
             # block_offset is relative to start of rawtx
@@ -175,9 +186,12 @@ class MySQLTables:
                 CREATE TABLE IF NOT EXISTS txo_table (
                     out_tx_hash BINARY({HashXLength}),
                     out_idx INT UNSIGNED,
-                    out_value BIGINT UNSIGNED,
-                    PRIMARY KEY (out_tx_hash, out_idx)
+                    out_value BIGINT UNSIGNED
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+                """)
+
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx);
                 """)
 
             # block_offset is relative to start of rawtx
@@ -191,9 +205,12 @@ class MySQLTables:
                     out_tx_hash BINARY({HashXLength}),
                     out_idx INT UNSIGNED,
                     in_tx_hash BINARY({HashXLength}),
-                    in_idx INT UNSIGNED,
-                    PRIMARY KEY (out_tx_hash, out_idx)
+                    in_idx INT UNSIGNED
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
+                """)
+
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
                 """)
 
             # I think I can get away with not storing full pushdata hashes
@@ -206,10 +223,13 @@ class MySQLTables:
                     pushdata_hash BINARY({HashXLength}),
                     tx_hash BINARY ({HashXLength}),
                     idx INT,
-                    ref_type SMALLINT,
-                    PRIMARY KEY (pushdata_hash, tx_hash, idx, ref_type)
+                    ref_type SMALLINT
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """)
+
+            self.mysql_conn.query("""
+                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
+            """)
 
             self.mysql_conn.query("""
                 CREATE TABLE IF NOT EXISTS checkpoint_state (
