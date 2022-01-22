@@ -111,7 +111,8 @@ class MySQLAPIQueries:
                 LEFT JOIN confirmed_transactions CT ON CT.tx_hash=PD.tx_hash
                 INNER JOIN headers HD ON CT.tx_block_num = HD.block_num
                 WHERE PD.pushdata_hash IN ({",".join(query_format_pushdata_hashes)}) 
-                AND HD.is_orphaned = 0"""
+                AND HD.is_orphaned = 0
+                LIMIT 1000;"""
             self.mysql_conn.query(sql)
             result = self.mysql_conn.store_result()
             for row in result.fetch_row(0):
