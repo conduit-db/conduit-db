@@ -45,9 +45,11 @@ SMALL_BLOCK_SIZE = 10_000
 # the server would likely crash.
 CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
 MAIN_BATCH_HEADERS_COUNT_LIMIT = 100  # Number of headers to request (long poll) from conduit raw
-
 RECV_BUFFER_HIGH_WATER = int((1024 ** 3) * 2)  # At the moment this constrains the largest block size
-MAX_RAW_BLOCK_BATCH_REQUEST_SIZE = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
+TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
+TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = (1024 ** 2) * 256  # smaller because of random io
+
+BULK_LOADING_BATCH_SIZE_ROW_COUNT = 100000
 
 
 class MsgType(enum.IntEnum):

@@ -14,6 +14,7 @@ import zmq
 from bitcoinx import (
     read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
 )
+
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
@@ -120,6 +121,7 @@ def get_log_level(service_name: str) -> int:
         return PROFILING
     else:
         return logging.DEBUG
+
 
 def get_conduit_raw_host_and_port() -> tuple[str, int]:
     CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')

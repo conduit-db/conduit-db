@@ -94,6 +94,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = mysql_connect()
         try:
+            mysql_database.tables.mysql_drop_indices()
             mysql_database.mysql_drop_tables()
         finally:
             mysql_database.close()

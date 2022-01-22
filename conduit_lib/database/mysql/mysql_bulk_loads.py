@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import sys
 import time
@@ -10,7 +11,7 @@ import MySQLdb
 import typing
 
 from .types import PushdataRow, InputRow, OutputRow, ConfirmedTransactionRow, MempoolTransactionRow
-from ...constants import PROFILING
+from ...constants import PROFILING, BULK_LOADING_BATCH_SIZE_ROW_COUNT
 from ...types import BlockHeaderRow
 from ...utils import get_log_level
 
@@ -48,21 +49,29 @@ class MySQLBulkLoads:
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"
         self.mysql_conn.query(extra_settings)
 
-    def set_rocks_db_bulk_load_on(self) -> None:
-        self.mysql_db.start_transaction()
-        settings = f"""SET global rocksdb_bulk_load_allow_unsorted=0;
-            SET global rocksdb_bulk_load=1;"""
-        for sql in settings.splitlines(keepends=False):
-            self.mysql_conn.query(sql)
-        self.mysql_db.commit_transaction()
-
-    def set_rocks_db_bulk_load_off(self) -> None:
-        self.mysql_db.start_transaction()
-        settings = f"""SET global rocksdb_bulk_load=0;
-            SET global rocksdb_bulk_load_allow_unsorted=0;"""
-        for sql in settings.splitlines(keepends=False):
-            self.mysql_conn.query(sql)
-        self.mysql_db.commit_transaction()
+    def _load_data_infile_batched(self, table_name: str, string_rows: List[str],
+            column_names: List[str], binary_column_indices: List[int]) \
+                -> None:
+        t0 = time.time()
+        try:
+            string_rows.sort()
+            BATCH_SIZE = BULK_LOADING_BATCH_SIZE_ROW_COUNT
+            BATCHES_COUNT = math.ceil(len(string_rows)/BATCH_SIZE)
+            for i in range(BATCHES_COUNT):
+                if i == BATCHES_COUNT - 1:
+                    string_rows_batch = string_rows[i*BATCH_SIZE:]
+                else:
+                    string_rows_batch = string_rows[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+                self._load_data_infile(table_name, string_rows_batch, column_names,
+                    binary_column_indices)
+        finally:
+            t1 = time.time() - t0
+            self.total_db_time += t1
+            self.total_rows_flushed_since_startup += len(string_rows)
+            self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
+            self.logger.log(PROFILING, f"total rows flushed since startup "
+                                       f"(worker_id={self.worker_id if self.worker_id else None})"
+                f"={self.total_rows_flushed_since_startup}")
 
     def _load_data_infile(self, table_name: str, string_rows: List[str],
             column_names: List[str], binary_column_indices: List[int], have_retried: bool=False) \
@@ -78,12 +87,9 @@ class MySQLBulkLoads:
 
             But I am not 100% sure and so batching into smaller chunks may be required.
         """
-
-        t0 = time.time()
         outfile = self.TEMP_FILES_DIR / (str(uuid.uuid4()) + ".csv")
         os.makedirs(os.path.dirname(outfile), exist_ok=True)
         try:
-            string_rows.sort()
             with open(outfile, 'w') as csvfile:
                 csvfile.writelines(string_rows)
 
@@ -114,6 +120,7 @@ class MySQLBulkLoads:
             if not have_retried:
                 self.logger.error(f"MySQLdb.OperationalError: {e}; "
                     f"Retrying bulk insert for column_names: {column_names}")
+                time.sleep(10)  # give MariaDB a rest
                 self._load_data_infile(table_name, string_rows, column_names,
                     binary_column_indices, True)
             if have_retried:
@@ -127,13 +134,6 @@ class MySQLBulkLoads:
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
-            t1 = time.time() - t0
-            self.total_db_time += t1
-            self.total_rows_flushed_since_startup += len(string_rows)
-            self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
-            self.logger.log(PROFILING, f"total rows flushed since startup "
-                                       f"(worker_id={self.worker_id if self.worker_id else None})"
-                f"={self.total_rows_flushed_since_startup}")
 
     def handle_coinbase_dup_tx_hash(self, tx_rows: List[ConfirmedTransactionRow]) -> None:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
@@ -166,7 +166,7 @@ class MySQLBulkLoads:
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
             column_names = ['tx_hash', 'tx_block_num', 'tx_position']
-            self._load_data_infile("confirmed_transactions", string_rows, column_names,
+            self._load_data_infile_batched("confirmed_transactions", string_rows, column_names,
                 binary_column_indices=[0])
         except MySQLdb._exceptions.IntegrityError as e:
             self.logger.error(f"{e}")
@@ -180,7 +180,7 @@ class MySQLBulkLoads:
         t0 = time.time()
         string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
         column_names = ['mp_tx_hash', 'mp_tx_timestamp']
-        self._load_data_infile("mempool_transactions", string_rows, column_names,
+        self._load_data_infile_batched("mempool_transactions", string_rows, column_names,
             binary_column_indices=[0])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
@@ -191,7 +191,7 @@ class MySQLBulkLoads:
         t0 = time.time()
         string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
         column_names = ['out_tx_hash', 'out_idx', 'out_value']
-        self._load_data_infile("txo_table", string_rows, column_names,
+        self._load_data_infile_batched("txo_table", string_rows, column_names,
             binary_column_indices=[0])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
@@ -202,7 +202,7 @@ class MySQLBulkLoads:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
         column_names = ['out_tx_hash', 'out_idx', 'in_tx_hash', 'in_idx']
-        self._load_data_infile("inputs_table", string_rows, column_names,
+        self._load_data_infile_batched("inputs_table", string_rows, column_names,
             binary_column_indices=[0, 2])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
@@ -213,7 +213,7 @@ class MySQLBulkLoads:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
         column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
-        self._load_data_infile("pushdata", string_rows, column_names,
+        self._load_data_infile_batched("pushdata", string_rows, column_names,
             binary_column_indices=[0, 1])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
@@ -224,7 +224,7 @@ class MySQLBulkLoads:
         t0 = time.time()
         string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
         column_names = ['tx_hash']
-        self._load_data_infile("temp_unsafe_txs", string_rows, column_names,
+        self._load_data_infile_batched("temp_unsafe_txs", string_rows, column_names,
             binary_column_indices=[0])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
@@ -237,5 +237,5 @@ class MySQLBulkLoads:
         string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
         column_names = ['block_num', 'block_hash', 'block_height', 'block_header', 'block_tx_count',
             'block_size', 'is_orphaned']
-        self._load_data_infile(f'headers', string_rows, column_names,
+        self._load_data_infile_batched(f'headers', string_rows, column_names,
             binary_column_indices=[1, 3])

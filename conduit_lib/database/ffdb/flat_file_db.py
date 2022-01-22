@@ -63,7 +63,7 @@ class FlatFileDb:
     the key value store for recording the DataLocation of each BLOB.
 
     NOTE: InterProcessReaderWriterLock is not re-entrant.
-    NOTE: FlatFileDB is thread-safe
+    NOTE: FlatFileDB is thread-safe but __init__ method is not. Must instantiate in parent thread
     """
 
     def __init__(self, datadir: Path, mutable_file_lock_path: Path, fsync: bool = False) -> None:
@@ -94,6 +94,7 @@ class FlatFileDb:
                     f.flush()
                     os.fsync(f.fileno())
 
+        with self.mutable_file_rwlock.read_lock():
             # Scans datadir to get the correct mutable_file_file cached properties
             _immutable_files: List[str] = os.listdir(self.datadir)
             _immutable_files.sort()
@@ -128,55 +129,52 @@ class FlatFileDb:
     def _maybe_get_new_mutable_file(self) -> tuple[Path, int]:
         """This function is idempotent. Caller must use a Write lock"""
         assert self.mutable_file_path is not None
-        with self.threading_lock:
-            def _mutable_file_is_full() -> bool:
-                assert self.mutable_file_path is not None
-                file_size = os.path.getsize(self.mutable_file_path)
-                is_full = file_size >= MAX_DAT_FILE_SIZE
-                return is_full
+        def _mutable_file_is_full() -> bool:
+            assert self.mutable_file_path is not None
+            file_size = os.path.getsize(self.mutable_file_path)
+            is_full = file_size >= MAX_DAT_FILE_SIZE
+            return is_full
 
-            if _mutable_file_is_full():
-                # If deletes and updates are allowed this needs to be more sophisticated
-                # To ensure that the mutable file always has the highest number (no reuse of
-                # lower mutable_file_num even if they get deleted)
-                while True:
-                    logger.debug(f"Scanning forward... self.mutable_file_num={self.mutable_file_num}")
-                    self.mutable_file_num += 1
-                    self.mutable_file_path = self._file_num_to_mutable_file_path(
-                        self.mutable_file_num)
-                    self.immutable_files.add(str(self.mutable_file_path))
+        if _mutable_file_is_full():
+            # If deletes and updates are allowed this needs to be more sophisticated
+            # To ensure that the mutable file always has the highest number (no reuse of
+            # lower mutable_file_num even if they get deleted)
+            while True:
+                logger.debug(f"Scanning forward... self.mutable_file_num={self.mutable_file_num}")
+                self.mutable_file_num += 1
+                self.mutable_file_path = self._file_num_to_mutable_file_path(
+                    self.mutable_file_num)
+                self.immutable_files.add(str(self.mutable_file_path))
 
-                    if os.path.exists(self.mutable_file_path):
-                        if _mutable_file_is_full():
-                            continue
-                        else:
-                            self.mutable_file_path = self.mutable_file_path
-                            break
+                if os.path.exists(self.mutable_file_path):
+                    if _mutable_file_is_full():
+                        continue
                     else:
-                        logger.debug(f"Creating a new mutable file at: {self.mutable_file_path}")
-                        with open(self.mutable_file_path, 'ab') as f:
-                            f.flush()
-                            os.fsync(f.fileno())
                         self.mutable_file_path = self.mutable_file_path
                         break
+                else:
+                    logger.debug(f"Creating a new mutable file at: {self.mutable_file_path}")
+                    with open(self.mutable_file_path, 'ab') as f:
+                        f.flush()
+                        os.fsync(f.fileno())
+                    self.mutable_file_path = self.mutable_file_path
+                    break
 
-
-            return self.mutable_file_path, self.mutable_file_num
+        return self.mutable_file_path, self.mutable_file_num
 
     def put(self, data: bytes) -> DataLocation:
         assert self.mutable_file_path is not None
-        with self.threading_lock:
-            with self.mutable_file_rwlock.write_lock():
-                self._maybe_get_new_mutable_file()
-                with open(self.mutable_file_path, 'ab') as file:
-                    start_offset = file.tell()
-                    file.write(data)
-                    end_offset = file.tell()
-                    if self.fsync:
-                        file.flush()
-                        os.fsync(file.fileno())
+        with self.mutable_file_rwlock.write_lock():
+            self._maybe_get_new_mutable_file()
+            with open(self.mutable_file_path, 'ab') as file:
+                start_offset = file.tell()
+                file.write(data)
+                end_offset = file.tell()
+                if self.fsync:
+                    file.flush()
+                    os.fsync(file.fileno())
 
-                return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
+            return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
 
     def get(self, data_location: DataLocation, slice: Optional[Slice] = None,
             lock_free_access: bool=False) -> bytes:
@@ -188,8 +186,7 @@ class FlatFileDb:
         advantage is unfettered lock-free read access to all immutable files. A lock must ALWAYS
         be acquired for reading the mutable file - this can never be disabled.
         """
-        with self.threading_lock:
-            is_accessing_mutable_file = data_location.file_path not in self.immutable_files
+        is_accessing_mutable_file = data_location.file_path not in self.immutable_files
 
         if is_accessing_mutable_file or not lock_free_access:
             self.mutable_file_rwlock.acquire_read_lock()

@@ -1,3 +1,4 @@
+import functools
 import logging
 import multiprocessing
 import os
@@ -18,14 +19,11 @@ TEST_DATADIR = str(MODULE_DIR / "test_path")
 os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
 
 
-def _do_general_read_and_write_ops():
+def _do_general_read_and_write_ops(ffdb: FlatFileDb):
     logging.basicConfig(level=logging.DEBUG)
     # NOTE The use case of a chain indexer does not require fsync because we can always
     # re-sync from the node if we crash...
-    with FlatFileDb(
-            datadir=Path(TEST_DATADIR),
-            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-            fsync=True) as ffdb:
+    with ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
         # print(data_location_aa)
         data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))
@@ -47,7 +45,12 @@ def _do_general_read_and_write_ops():
 
 
 def test_general_read_and_write_db():
-    _do_general_read_and_write_ops()
+    ffdb = FlatFileDb(
+        datadir=Path(TEST_DATADIR),
+        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+        fsync=True
+    )
+    _do_general_read_and_write_ops(ffdb)
 
 
 def test_delete():
@@ -75,14 +78,32 @@ def test_slicing():
         # print(data_bb_slice)
 
 
+def _task_multithreaded(ffdb: FlatFileDb, x: int) -> None:
+    """Need to instantiate and pass into threads"""
+    _do_general_read_and_write_ops(ffdb)
+
+
 def _task(x):
-    _do_general_read_and_write_ops()
+    """Create each FlatFileDb instance anew within each process"""
+    ffdb = FlatFileDb(
+        datadir=Path(TEST_DATADIR),
+        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+        fsync=True
+    )
+    print("hi", flush=True)
+    _do_general_read_and_write_ops(ffdb)
 
 
 def test_multithreading_access():
     starttime = time.time()
+    ffdb = FlatFileDb(
+        datadir=Path(TEST_DATADIR),
+        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
+        fsync=True
+    )
+    func = functools.partial(_task_multithreaded, ffdb)
     with ThreadPoolExecutor(4) as pool:
-        for result in pool.map(_task, range(0, 32)):
+        for result in pool.map(func, range(0, 32)):
             if result:
                 logger.debug(result)
     endtime = time.time()

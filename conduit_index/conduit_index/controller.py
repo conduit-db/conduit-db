@@ -1,4 +1,5 @@
 import array
+import math
 import multiprocessing
 import typing
 from asyncio import BaseTransport, BaseProtocol
@@ -22,6 +23,7 @@ import asyncio
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_net_io import BitcoinNetIO, BlockCallback
 from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION, MEMPOOL_BIN
+from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
@@ -30,8 +32,8 @@ from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
-from conduit_lib.constants import MsgType, NULL_HASH, \
-    MAIN_BATCH_HEADERS_COUNT_LIMIT, CONDUIT_INDEX_SERVICE_NAME
+from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
+    CONDUIT_INDEX_SERVICE_NAME, TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
@@ -56,7 +58,7 @@ def get_headers_dir_conduit_index() -> Path:
     return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
 
 
-class Controller:
+class Controller(ControllerBase):
     """Designed to sync the blockchain as fast as possible.
 
     Coordinates:
@@ -68,6 +70,7 @@ class Controller:
 
     def __init__(self, net_config: 'NetworkConfig', host: str="127.0.0.1", port: int=8000,
             logging_server_proc: Optional[TCPLoggingServer]=None, loop_type: None=None) -> None:
+
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.logging_server_proc = logging_server_proc
@@ -166,6 +169,7 @@ class Controller:
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.
         self.general_executor = ThreadPoolExecutor(max_workers=1)
+        self.estimated_moving_av_block_size = 181  # bytes
 
     def setup(self) -> None:
         self.mysql_db = load_mysql_database()
@@ -611,12 +615,19 @@ class Controller:
         while True:
             is_reorg = False
             try:
-                start_height = self.sync_state.get_local_block_tip_height() + 1
+                tip_height = self.sync_state.get_local_block_tip_height()
+                start_height = tip_height + 1
+
+                if tip_height > 2016:
+                    await self.update_moving_average(tip_height)
+
+                estimated_ideal_block_count = self.get_ideal_block_batch_count(
+                    target_mb=TARGET_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
                 result: HeadersBatchedResponse = await self.loop.run_in_executor(self.general_executor,
-                    ipc_sock_client.headers_batched, start_height, MAIN_BATCH_HEADERS_COUNT_LIMIT)
+                    ipc_sock_client.headers_batched, start_height, estimated_ideal_block_count)
 
                 headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
                 first_header_of_batch, success = connect_headers(BytesIO(headers_p2p_msg), self.storage.headers)
