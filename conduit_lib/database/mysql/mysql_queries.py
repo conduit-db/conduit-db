@@ -47,10 +47,6 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-        # self.mysql_conn.copy_records_to_table(
-        #     "temp_mined_tx_hashes", columns=["mined_tx_hash"], records=mined_tx_hashes,
-        # )
-
     def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes: list[tuple[str]],
             inbound_tx_table_name: str) -> None:
         """columns: tx_hashes, blk_height"""
@@ -103,15 +99,18 @@ class MySQLQueries:
 
     # # Debugging
     # def get_temp_mined_tx_hashes(self):
-    #     result: List[Record] = self.mysql_conn.fetch(
+    #     self.mysql_conn.query(
     #         """
     #         SELECT *
     #         FROM temp_mined_tx_hashes;"""
     #     )
-    #     self.logger.debug(f"get_temp_mined_tx_hashes: {result}")
+    #     result = self.mysql_conn.store_result()
+    #     self.logger.debug(f"get_temp_mined_tx_hashes: "
+    #                       f"{[hash_to_hex_str(x[0]) for x in result.fetch_row(0)]}")
 
     def mysql_invalidate_mempool_rows(self) -> None:
         self.logger.debug(f"Deleting mined mempool txs")
+        # self.get_temp_mined_tx_hashes()
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (

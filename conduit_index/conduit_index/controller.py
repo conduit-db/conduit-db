@@ -203,10 +203,6 @@ class Controller(ControllerBase):
             await self.connect_session()  # on_connection_made callback -> starts jobs
             await self.send_version(self.peer.host, self.peer.port, self.host, self.port)
             await self.handshake_complete_event.wait()
-            await asyncio.sleep(2)
-            if self.ibd_signal_sent:
-                await self.request_mempool()
-
             await self.con_lost_event.wait()
             self.con_lost_event.clear()
             first_loop = False

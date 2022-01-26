@@ -153,9 +153,8 @@ class MySQLTables:
             # way if we want to cache the mempool full rawtxs.
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS mempool_transactions (
-                    mp_tx_hash BINARY(32),
-                    mp_tx_timestamp TIMESTAMP,
-                    INDEX USING HASH (mp_tx_hash)
+                    mp_tx_hash BINARY(32) PRIMARY KEY,
+                    mp_tx_timestamp TIMESTAMP
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;"""
             )
         except Exception:
@@ -269,7 +268,7 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
-                    mined_tx_hash BINARY({HashXLength}),
+                    mined_tx_hash BINARY(32),
                     blk_num BIGINT,
                     INDEX USING HASH (mined_tx_hash)
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
