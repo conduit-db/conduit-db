@@ -1,0 +1,227 @@
+openapi: "3.0.3"
+info:
+  description: |
+    As the unadulterated bitcoin protocol scales there are
+    new challenges for peripheral infrastructure, namely chain
+    indexing and notification services.
+
+    The existing chain indexer APIs are also limited in the granularity
+    of the queries.
+
+    ConduitDB is a horizontally scalable chain indexer that maintains a
+    fine-grained index of all pushdatas in all input and output scripts.
+    Therefore, given a public key, pubkey hash or any arbitrary pushdata,
+    ConduitDB can find the key history, the utxos and spends. This should
+    cater to a very wide range of potential use cases including tokens,
+    regular payments, smart contracts, etc.
+
+    As the total blockchain size extends to 50 Terabytes and beyond, some
+    adjustments will be made with support for real-time processing / filtering
+    and forwarding and/or storing transactions meeting certain criteria.
+
+    At least the first 16 Terabytes of the blockchain will be fully archived
+    to safeguard seed-based restoration of old wallets. How long a full archive
+    can be sustained is not yet decided. 32 - 64 terrabytes are definitely
+    possible but 128 terrabytes is unlikely if there is insufficient economic
+    incentive to do so.
+
+    To begin, there will only be a minimalist set of "Core APIs", but in
+    time, further "Experimental APIs" will be added to solicit feedback as
+    candidates for longer term committed support.
+
+  version: 1.0.0
+  title: ConduitDB
+  x-logo:
+    url: './images/light/logo-nobackground-500-cropped.png'
+    altText: Petstore logo
+
+paths:
+
+  /api/v1/transaction/{hash}:
+    get:
+      parameters:
+        - name: hash
+          in: path
+          description: transaction hash
+          required: true
+          schema:
+            type: string
+            format: binary
+          example: 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098
+      operationId: get_transaction
+      summary: Fetch a raw transaction
+      description: |
+        Returns a raw transaction as either hex or serialized binary.
+
+        `Accept: application/octet-stream` header for binary response format is encouraged.
+      tags:
+        - Core APIs
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: string
+                format: hex
+              example: 01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0704ffff001d0104ffffffff0100f2052a0100000043410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac00000000
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+              example: 01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff0704ffff001d0104ffffffff0100f2052a0100000043410496b538e853519c726a2c91e61ec11600ae1390813a627c66fb8be7947be63c52da7589379515d4e0a604f8141781e62294721166bf621e73a82cbf2342c858eeac00000000
+        '400':
+          description: No txid submitted
+        '404':
+          description: Transaction not found
+
+  /api/v1/merkle-proof/{hash}:
+    get:
+      parameters:
+        - name: hash
+          in: path
+          description: transaction hash
+          required: true
+          schema:
+            type: string
+            format: binary
+          example: 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098
+      operationId: get_tsc_merkle_proof
+      summary: Fetch a TSC merkle proof
+      description: |
+        Returns a TSC merkle proof as either JSON or serialized binary - see
+        https://tsc.bitcoinassociation.net/standards/merkle-proof-standardised-format/ for the
+        specification.
+
+        `Accept: application/octet-stream` header for binary response format is encouraged.
+      tags:
+        - Core APIs
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  index:
+                    type: integer
+                  txOrId:
+                    type: string
+                  target:
+                    type: string
+                  nodes:
+                    type: array
+                    items:
+                      type: string
+                  targetType:
+                    type: string
+              example:
+                index: 0
+                txOrId: 0e3e2357e806b6cdb1f70b54c3a3a17b6714ee1f0e68bebb44a74b1efd512098
+                target: 00000000839a8e6886ab5951d76f411475428afc90947ee320161bbf18eb6048
+                nodes: []
+                targetType: hash
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+              example: 0000982051fd1e4ba744bbbe680e1fee14677ba1a3c3540bf7b1cdb606e857233e0e4860eb18bf1b1620e37e9490fc8a427514416fd75159ab86688e9a830000000000
+        '400':
+          description: No txid submitted
+        '404':
+          description: Transaction not found
+
+  /api/v1/restoration/search:
+    post:
+      summary: Pushdata history search
+      description: |
+        To search for pushdatas in the blockchain you must first sha256 the pushdata.
+        Common use cases might include:
+          - Public key search (compressed=33 bytes, uncompressed=65 bytes) for P2PK transaction activity, tokens, smart contract activity etc.
+          - Public key hash search (20 bytes) for "addresses", P2PKH transaction activity, Bitcom protocol etc.
+        
+        In either case, the procedure is always the same. You take the 20, 33, 65 or however many bytes there are in the pushdata of interest
+        and perform a sha256 hash digest. This is used as the lookup key.
+
+        POST a JSON array of hex encoded pushdata hashes in the request body for the search.
+
+        The result can optionally be streamed.  
+
+        - For application/json format: Each JSON match is separated by a newline character.
+        - For application/octet-stream: Each binary struct is a fixed length of 116 bytes (32 + 32 + 8 + 4 + 32 + 4 + 4)
+          following the order seen below. All integers are unsigned. If there is no spend, the
+          hash will be 32 null bytes.
+
+        Search results will include:  
+
+        - All locking and unlocking scripts where this pushdata pattern is found  
+        - Any associated spends (unlocking scripts) for locking script matches  
+        - Any associated utxos (locking scripts) for unlocking script matches
+
+        The example below is for:
+        - Address           1GNCM5ATfaZZ8mcy61M19roTR8phrvAYcu
+        - PKH               a88c17da2632395915394fdeb47a264b10a913b6
+        - SHA256 of PKH     4ec0549e43c0161c3709d64df747bd2fe776a455ab45e3b68e20d09cba94cdab
+
+        `Accept: application/octet-stream` header for binary response format is encouraged.
+      tags:
+        - Core APIs
+      requestBody:
+        description: The array of pushdata hashes you wish to search for
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filterKeys:
+                  type: array
+                  items:
+                    type: string
+            example:
+                filterKeys: ["4ec0549e43c0161c3709d64df747bd2fe776a455ab45e3b68e20d09cba94cdab"]
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  PushDataHashHex:
+                    type: string
+                  TransactionId:
+                    type: string
+                  Index:
+                    type: integer
+                  Flags:
+                    type: integer
+                  SpendTransactionId:
+                    type: string
+                  SpendInputIndex:
+                    type: integer
+                  BlockHeight: 
+                    type: integer
+            application/octet-stream:
+              schema:
+                type: object
+                properties:
+                  PushDataHashHex:
+                    type: string
+                  TransactionId:
+                    type: string
+                  Index:
+                    type: integer
+                  Flags:
+                    type: integer
+                  SpendTransactionId:
+                    type: string
+                  SpendInputIndex:
+                    type: integer
+                  BlockHeight: 
+                    type: integer
+        '400':
+          description: Bad request
+        '404':
+          description: Not found

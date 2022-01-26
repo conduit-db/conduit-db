@@ -34,7 +34,8 @@ ConduitRaw/values.dev.yaml
 tests/logs/*
 *.cpp*
 *.obj*
-*.html*
+#*.html*
+stack_tracing*
 *.log
 *.mdb
 *.ldb

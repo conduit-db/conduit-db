@@ -1,0 +1,28 @@
+apiDefinitions:
+  conduitdb: ./openapi.yaml
+
+lint:
+# The lint command options
+
+region: eu
+# Configuration for optional AWS region selection when logging into Redocly services.
+
+resolve:
+# Configuration for resolving external links in your definition that are not publicly accessible.
+# Not required for Redocly API registry links.
+
+referenceDocs:
+  theme:
+    sidebar:
+      backgroundColor: '#212121'
+      textColor: white
+    spacing:
+      sectionVertical: 10
+    typography:
+      fontFamily: Montserrat
+
+  menuToggle: true
+  expandResponses: "200"
+
+registry:
+# The API registry options
