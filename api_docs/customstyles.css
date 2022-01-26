@@ -1,0 +1,21 @@
+.cTueGk{
+    font-weight: 900;
+    color: #212121;
+}
+.eONCmm{
+    color: #434343;
+    font-weight: bold;
+}
+.juinod{
+    padding: 10px 40px;
+}
+@media print, screen and (max-width:75rem) {
+    .juinod{
+        width: 100%;
+        padding: 10px 40px;
+    }
+}
+
+/*.liLqNm{*/
+/*    padding: 40px 40px;*/
+/*}*/

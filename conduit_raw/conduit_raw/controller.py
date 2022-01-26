@@ -1,8 +1,6 @@
-import math
-
 import aiohttp
 import asyncio
-from asyncio import BaseTransport, BaseProtocol, Transport
+from asyncio import BaseTransport, BaseProtocol
 import bitcoinx
 from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -11,7 +9,7 @@ import queue
 import threading
 import time
 from typing import Optional, List, Set, Coroutine, Any, Callable, TypeVar, Sequence, Dict, Tuple, \
-    cast, Union
+    Union
 import multiprocessing
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -463,7 +461,7 @@ class Controller(ControllerBase):
                 header = self.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
                 if self.sync_state.pending_blocks_inv_queue.empty() and count_requested != 0:
-                    self.logger.exception(f"Fatal error. An unsolicited block "
+                    self.logger.exception(f"An unsolicited block "
                         f"({hash_to_hex_str(inv['inv_hash'])}) was pushed to the "
                         f"pending_blocks_inv_queue - this should never happen.")
                 else:
