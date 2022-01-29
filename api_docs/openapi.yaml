@@ -37,12 +37,12 @@ info:
 
 paths:
 
-  /api/v1/transaction/{hash}:
+  /api/v1/transaction/{txid}:
     get:
       parameters:
-        - name: hash
+        - name: txid
           in: path
-          description: transaction hash
+          description: transaction id (hex encoded transaction hash with reversed byte order)
           required: true
           schema:
             type: string
@@ -75,12 +75,12 @@ paths:
         '404':
           description: Transaction not found
 
-  /api/v1/merkle-proof/{hash}:
+  /api/v1/merkle-proof/{txid}:
     get:
       parameters:
-        - name: hash
+        - name: txid
           in: path
-          description: transaction hash
+          description: transaction id (hex encoded transaction hash with reversed byte order)
           required: true
           schema:
             type: string
@@ -160,9 +160,18 @@ paths:
         - Any associated utxos (locking scripts) for unlocking script matches
 
         The example below is for:
-        - Address           1GNCM5ATfaZZ8mcy61M19roTR8phrvAYcu
-        - PKH               a88c17da2632395915394fdeb47a264b10a913b6
-        - SHA256 of PKH     4ec0549e43c0161c3709d64df747bd2fe776a455ab45e3b68e20d09cba94cdab
+        - Address           `1GNCM5ATfaZZ8mcy61M19roTR8phrvAYcu`
+        - PKH               `a88c17da2632395915394fdeb47a264b10a913b6`
+        - SHA256 of PKH     `4ec0549e43c0161c3709d64df747bd2fe776a455ab45e3b68e20d09cba94cdab`
+
+        NOTE: The byte order is NOT reversed for pushdata hashes (like how it is for txids).
+        Reversing the byte order of hashes for display in block explorers etc. is a bitcoin
+        protocol quirk which is not applicable in other domains.
+
+        There is currently a limit of 1000 matches for a given pushdata's history but the hope is
+        to make this unbounded with paging in future.
+
+        Pushdatas less than 20 bytes in size are not indexed.
 
         `Accept: application/octet-stream` header for binary response format is encouraged.
       tags:
