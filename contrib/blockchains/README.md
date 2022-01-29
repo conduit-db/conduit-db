@@ -59,9 +59,39 @@ blockchain_115_3677f4
   * Receive P2MS (see the 1/2 entry):
     * Pushdata = sha256(mpk.child(0).child_safe(0).to_bytes()).hex(): e6221c70e0f3c686255b548789c63d0e2c6aa795ad87324dfd71d0b53d90d59d
 
+blockchain_116_7c9cd2
+---------------------
+This is `blockchain_115_3677f4` but with an additional block (height 116) containing
+two data carrier transactions.
+
+The first transaction `4723501d7ec5488d32e19a59cbdb11eed7b9bb99b681303614a6e8b763ba1ea6`
+has `OP_FALSE OP_RETURN` outputs containing these:
+
+    LESS_THAN_20_BYTES = bytes.fromhex("aa")
+    MORE_THAN_20_BYTES = bytes.fromhex("bb"*21)
+    JUST_SHY_OF_PUSHDATA1 = bytes.fromhex("cc"*76)
+    PUSHDATA1_BYTES = bytes.fromhex("dd"*0xff)
+    PUSHDATA2_BYTES = bytes.fromhex("ee"*0xffff)
+
+The second transaction `5be1d965952227b5ee45af715fc21bcc1723c37411a7dfd340845a23d73dd884`
+has an `OP_FALSE OP_RETURN` output containing this data:
+
+    PUSHDATA4_BYTES = bytes.fromhex("ff"*0x010000)
+
+This is to test parsing of pushdatas in data carrier transactions which is relevant
+for many token protocols and historic unwriter protocols etc. and makes the indexer
+much more general-purpose.
+
 blockchain_117_28c2d3
 ---------------------
 This represents a reorging of the ElectrumSV transactions 
 in blockchain_115_3677f4 (from heights 111-115) to a new block height of 116 
 (block hash 685adce71612e34553bed7166e2cfaa3eed6df8ff1c030b7a4977627d8515eab)
 another random block (height 117 is added ontop)
+
+blockchain_118_0ebc17
+---------------------
+This is `blockchain_117_28c2d3` but with an additional block (height 118) containing
+two data carrier transactions identical to `blockchain_116_7c9cd2`. 
+See `blockchain_116_7c9cd2` for details.
+
