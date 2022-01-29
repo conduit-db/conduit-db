@@ -303,8 +303,7 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_orphaned_txs (
-                    tx_hash BINARY({HashXLength}),
-                    INDEX USING HASH (tx_hash)
+                    tx_hash BINARY(32) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)
         finally:
@@ -314,7 +313,7 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                    inbound_tx_hashes BINARY({HashXLength}),
+                    inbound_tx_hashes BINARY(32),
                     INDEX USING HASH (inbound_tx_hashes)
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)

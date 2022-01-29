@@ -8,7 +8,7 @@ from bitcoinx import hash_to_hex_str
 from .mysql_tables import MySQLTables
 from ...constants import MAX_UINT32
 from ...types import TxMetadata, TxLocation, RestorationFilterQueryResult, \
-    _get_pushdata_match_flag, BlockHeaderRow
+    BlockHeaderRow, PushdataMatchFlags
 
 if typing.TYPE_CHECKING:
     from ... import MySQLDatabase
@@ -107,7 +107,10 @@ class MySQLAPIQueries:
                 SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx, 
                     HD.block_height, HD.block_hash, HD.block_num, CT.tx_position
                 FROM pushdata PD
-                LEFT JOIN inputs_table IT ON PD.tx_hash=IT.out_tx_hash AND PD.idx=IT.out_idx AND PD.ref_type=0
+                LEFT JOIN inputs_table IT 
+                    ON PD.tx_hash=IT.out_tx_hash 
+                    AND PD.idx=IT.out_idx 
+                    AND PD.ref_type & {PushdataMatchFlags.OUTPUT} = {PushdataMatchFlags.OUTPUT}
                 LEFT JOIN confirmed_transactions CT ON CT.tx_hash=PD.tx_hash
                 INNER JOIN headers HD ON CT.tx_block_num = HD.block_num
                 WHERE PD.pushdata_hash IN ({",".join(query_format_pushdata_hashes)}) 
@@ -119,7 +122,7 @@ class MySQLAPIQueries:
                 pushdata_hashX: bytes = row[0]
                 tx_hash: bytes = row[1]
                 idx: int = row[2]
-                ref_type: int = _get_pushdata_match_flag(row[3])
+                ref_type: int = row[3]
                 in_tx_hash: bytes = row[4]  # Can be null
                 in_idx: int = MAX_UINT32
                 if row[5] is not None:

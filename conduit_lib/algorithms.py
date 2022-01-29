@@ -1,16 +1,19 @@
 """slower pure python alternative"""
+from __future__ import annotations
 import array
 import logging
+import os
 import struct
 from hashlib import sha256
 from math import ceil, log
-from typing import Dict, Union, Tuple, List, cast
+from typing import Dict, Union, Tuple, List, cast, NamedTuple, Set
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.mysql.types import ConfirmedTransactionRow, InputRow, OutputRow, \
     PushdataRow, MempoolTransactionRow, MySQLFlushBatch
+from conduit_lib.types import PushdataMatchFlags
 
 MTreeLevel = int
 MTreeNodeArray = list[bytes]
@@ -21,6 +24,9 @@ HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_33 = 33
 OP_PUSH_65 = 65
+OP_RETURN = 0x6a
+OP_DROP = 0x75
+OP_ELSE = 0x67
 SET_OTHER_PUSH_OPS = set(range(1, 76))
 
 struct_le_H = Struct("<H")
@@ -35,6 +41,7 @@ struct_OP_65 = Struct("<65s")
 OP_PUSHDATA1 = 0x4C
 OP_PUSHDATA2 = 0x4D
 OP_PUSHDATA4 = 0x4E
+
 
 logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
@@ -94,43 +101,71 @@ def preprocessor(block_view: memoryview,
 
 
 # -------------------- PARSE BLOCK TXS -------------------- #
+class PushdataMatch(NamedTuple):
+    pushdata_hash: bytes
+    flags: PushdataMatchFlags
 
 
+# Todo - unittest coverage
 # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
 def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: int,  # type: ignore
-        ref_type: int, tx_pos: int) -> List[bytes]:
+        flags: PushdataMatchFlags, tx_pos: int, genesis_height: int) -> List[PushdataMatch]:
     i = 0
-    pks, pkhs = set(), set()
-    pd_hashXes: List[bytes] = []
+    all_pushdata: Set[Tuple[bytes, PushdataMatchFlags]] = set()
+    pd_matches: List[PushdataMatch] = []
     len_script = len(script)
+    unreachable_code = False
     try:
         while i < len_script:
             try:
-                if script[i] == 20:
+                # Todo - this should ideally check for OP_FALSE OP_RETURN post genesis activation
+                if script[i] == OP_RETURN:
+                    unreachable_code = True
                     i += 1
-                    pkhs.add(struct_OP_20.unpack_from(script, i)[0])
-                    i += 20
-                elif script[i] == 33:
+                # Todo - unittest; I have not given this enough scrutiny to have confidence in it
+                elif script[i] == OP_ELSE:
+                    unreachable_code = False
                     i += 1
-                    pks.add(struct_OP_33.unpack_from(script, i)[0])
-                    i += 33
-                elif script[i] == 65:
+                elif script[i] in {OP_PUSH_20, OP_PUSH_33, OP_PUSH_65}:
+                    length = script[i]
                     i += 1
-                    pks.add(struct_OP_65.unpack_from(script, i)[0])
-                    i += 65
-                elif script[i] in SET_OTHER_PUSH_OPS:  # signature -> skip
-                    i += script[i] + 1
-                elif script[i] == 0x4C:
+                    if unreachable_code:
+                        flags |= PushdataMatchFlags.DATA
+                    all_pushdata.add((script[i: i + length].tobytes(), flags))
+                    i += length
+                elif script[i] in SET_OTHER_PUSH_OPS:
+                    length = script[i]
+                    i += 1
+                    # ECDSA signatures and other input pushdata are not indexed (only pkh and pks)
+                    if length >= 20 and unreachable_code:
+                        pd = script[i: i + length].tobytes()
+                        flags |= PushdataMatchFlags.DATA
+                        all_pushdata.add((pd, flags))
+                    i += length
+                elif script[i] == OP_PUSHDATA1:
                     i += 1
                     length = script[i]
-                    i += 1 + length
+                    i += 1
+                    # ECDSA signatures are excluded
+                    if length > 20 and unreachable_code:
+                        pd = script[i: i + length].tobytes()
+                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
+                    i += length
                 elif script[i] == OP_PUSHDATA2:
                     i += 1
                     length = int.from_bytes(script[i : i + 2], byteorder="little", signed=False)
+                    # ECDSA signatures are excluded
+                    if length > 20 and unreachable_code:
+                        pd = script[2 + i: 2 + i + length].tobytes()
+                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
                     i += 2 + length
                 elif script[i] == OP_PUSHDATA4:
                     i += 1
                     length = int.from_bytes(script[i : i + 4], byteorder="little", signed=False)
+                    # ECDSA signatures are excluded
+                    if length > 20 and unreachable_code:
+                        pd = script[4 + i: 4 + i + length].tobytes()
+                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
                     i += 4 + length
                 else:  # slow search byte by byte...
                     i += 1
@@ -140,17 +175,15 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: i
                 # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
                 # especially on testnet - lots of bad output scripts...
                 logger.error(f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s, "
-                    f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, ref_type, tx_pos)
-        # hash pushdata
-        for pk in pks:
-            pd_hashXes.append(sha256(pk).digest()[0:HashXLength])
+                    f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, flags, tx_pos)
 
-        for pkh in pkhs:
-            pd_hashXes.append(sha256(pkh).digest()[0:HashXLength])
-        return pd_hashXes
+        for pushdata, flags in all_pushdata:
+            pd_matches.append(PushdataMatch(sha256(pushdata).digest()[0:HashXLength], flags))
+
+        return pd_matches
     except Exception as e:
         logger.exception(f"Bad script for tx_hash: %s, idx: %s, ref_type: %s, tx_pos: %s",
-            hash_to_hex_str(tx_hash), idx, ref_type, tx_pos)
+            hash_to_hex_str(tx_hash), idx, flags, tx_pos)
         raise
 
 
@@ -172,6 +205,7 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
         out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
+    genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
     tx_rows = []
     in_rows = set()
     out_rows = set()
@@ -205,7 +239,6 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
 
             # inputs
             count_tx_in, offset = unpack_varint(buffer, offset)
-            ref_type = 1
             # in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
                 in_prevout_hashX = buffer[offset : offset + 32].tobytes()[0:HashXLength]
@@ -216,7 +249,6 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 script_sig = buffer[offset : offset + script_sig_len]  # keep as array.array
                 offset += script_sig_len
                 offset += 4  # skip sequence
-                # in_offset_end = offset + adjustment
 
                 in_rows.add(
                     InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
@@ -226,39 +258,39 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
                 # mempool txs will appear to have a tx_pos=0
                 if (not tx_pos == 0 and confirmed) or not confirmed:
 
-                    pushdata_hashXes = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
-                        idx=in_idx, ref_type=ref_type, tx_pos=tx_pos)
-                    if len(pushdata_hashXes):
-                        for in_pushdata_hashX in pushdata_hashXes:
+                    pushdata_matches = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
+                        idx=in_idx, flags=PushdataMatchFlags.INPUT, tx_pos=tx_pos,
+                        genesis_height=genesis_height)
+                    if len(pushdata_matches):
+                        for in_pushdata_hashX, flags in pushdata_matches:
                             set_pd_rows.add(
                                 (
                                     in_pushdata_hashX.hex(),
                                     tx_hashX.hex(),
                                     in_idx,
-                                    ref_type,
+                                    int(flags),
                                 )
                             )
 
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
-            ref_type = 0
-            # out_offset_start = offset + adjustment
             for out_idx in range(count_tx_out):
                 out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_hashXes = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
-                    idx=out_idx, ref_type=ref_type, tx_pos=tx_pos)
-                if len(pushdata_hashXes):
-                    for out_pushdata_hashX in pushdata_hashXes:
+                pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
+                    idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
+                    genesis_height=genesis_height)
+                if len(pushdata_matches):
+                    for out_pushdata_hashX, flags in pushdata_matches:
                         set_pd_rows.add(
                             PushdataRow(
                                 out_pushdata_hashX.hex(),
                                 tx_hashX.hex(),
                                 out_idx,
-                                ref_type,
+                                int(flags),
                             )
                         )
                 offset += scriptpubkey_len

@@ -46,6 +46,7 @@ class AbstractNetwork:
     BITCOINX_COIN: Optional[Network] = None
     CHECKPOINT: Optional[CheckPoint] = None
     GENESIS_BLOCK_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+    GENESIS_ACTIVATION_HEIGHT = 0
 
 
 class MainNet(AbstractNetwork):
@@ -70,6 +71,7 @@ class MainNet(AbstractNetwork):
         height=0,
         prev_work=0,
     )
+    GENESIS_ACTIVATION_HEIGHT = 620_538
 
 
 class TestNet(AbstractNetwork):
@@ -94,6 +96,7 @@ class TestNet(AbstractNetwork):
         height=0,
         prev_work=0,
     )
+    GENESIS_ACTIVATION_HEIGHT = 1_344_302
 
 
 class ScalingTestNet(AbstractNetwork):
@@ -119,6 +122,7 @@ class ScalingTestNet(AbstractNetwork):
         prev_work=0,
     )
     VERIFICATION_BLOCK_MERKLE_ROOT = None
+    GENESIS_ACTIVATION_HEIGHT = 100
 
 
 class RegTestNet(AbstractNetwork):
@@ -143,6 +147,7 @@ class RegTestNet(AbstractNetwork):
         height=0,
         prev_work=0,
     )
+    GENESIS_ACTIVATION_HEIGHT = 10_000
 
 
 class NetworkConfig:
@@ -162,6 +167,7 @@ class NetworkConfig:
         self.BITCOINX_COIN: Network = network.BITCOINX_COIN
         self.GENESIS_BLOCK_HASH: str = network.GENESIS_BLOCK_HASH
         self.CHECKPOINT: CheckPoint = network.CHECKPOINT
+        self.GENESIS_ACTIVATION_HEIGHT = network.GENESIS_ACTIVATION_HEIGHT
 
         self.peers: List[Peer] = []
         self.set_peers(network)

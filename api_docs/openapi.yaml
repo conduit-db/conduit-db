@@ -136,15 +136,24 @@ paths:
     post:
       summary: Pushdata history search
       description: |
-        To search for pushdatas in the blockchain you must first sha256 the pushdata.
+        To search for pushdatas in the blockchain, you must first derive the lookup key by
+            obtaining its sha256 hash.
         Common use cases might include:
           - Public key search (compressed=33 bytes, uncompressed=65 bytes) for P2PK transaction activity, tokens, smart contract activity etc.
           - Public key hash search (20 bytes) for "addresses", P2PKH transaction activity, Bitcom protocol etc.
-        
-        In either case, the procedure is always the same. You take the 20, 33, 65 or however many bytes there are in the pushdata of interest
-        and perform a sha256 hash digest. This is used as the lookup key.
 
+        In either case, the procedure is always the same. You take the 20, 33, 65 or
+        however many bytes there are in the pushdata of interest
+        and perform a sha256 hash digest. This is used as the lookup key. You then
         POST a JSON array of hex encoded pushdata hashes in the request body for the search.
+
+        Indexing algorithm:
+          - In output scripts, any arbitrary length pushdata is indexed and
+            if it follows an OP_RETURN (and is therefore an unreachable part of the script), the
+            `DATA` (1 << 2) flag will be set.
+          - In input scripts, only 20, 33, 65 length pushdatas are indexed (i.e. to capture
+            ripemd160 hashes and pubkeys)
+          - **Pushdatas less than 20 bytes in size are not indexed.**
 
         The result can optionally be streamed.  
 
@@ -170,8 +179,6 @@ paths:
 
         There is currently a limit of 1000 matches for a given pushdata's history but the hope is
         to make this unbounded with paging in future.
-
-        Pushdatas less than 20 bytes in size are not indexed.
 
         `Accept: application/octet-stream` header for binary response format is encouraged.
       tags:

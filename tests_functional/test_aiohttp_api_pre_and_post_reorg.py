@@ -17,8 +17,6 @@ GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
 GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
-REF_TYPE_OUTPUT = 0
-REF_TYPE_INPUT = 1
 STREAM_TERMINATION_BYTE = b"\x00"
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -31,8 +29,8 @@ class TestInternalAiohttpRESTAPI:
 
     @classmethod
     def setup_class(klass) -> None:
-        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_115_3677f4"
-        import_blocks(blockchain_dir)
+        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
+        import_blocks(str(blockchain_dir))
         time.sleep(10)
 
     def setup_method(self) -> None:
@@ -97,8 +95,8 @@ class TestInternalAiohttpRESTAPI:
         utils._p2ms2_json(post_reorg=False)
 
     def test_submit_reorg_blocks(self):
-        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_117_28c2d3"
-        import_blocks(blockchain_dir)
+        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_118_0ebc17"
+        import_blocks(str(blockchain_dir))
         time.sleep(10)
         assert True
 

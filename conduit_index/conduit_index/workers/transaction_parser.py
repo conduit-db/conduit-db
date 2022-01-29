@@ -18,7 +18,6 @@ from typing import Tuple, List, Dict, cast, Union, Optional, Callable
 import cbor2
 import zmq
 from MySQLdb import _mysql
-from bitcoinx import hash_to_hex_str, double_sha256
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.mysql.types import MempoolTransactionRow, InputRow, OutputRow, \
@@ -181,6 +180,7 @@ class TxParser(multiprocessing.Process):
     def mysql_flush_rows(self, flush_batch_with_acks: MySQLFlushBatchWithAcks,
             confirmed: bool, mysql_db: MySQLDatabase) -> None:
         tx_rows, in_rows, out_rows, pd_rows, acks = flush_batch_with_acks
+
         with self.flush_lock:
             try:
                 if confirmed:
@@ -358,7 +358,6 @@ class TxParser(multiprocessing.Process):
             unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(is_reorg,
                 merged_part_tx_hash_rows, self.inbound_tx_table_name)
 
-            len_merged_offsets_map_before = len(merged_offsets_map)
             for tx_hash in unprocessed_tx_hashes:
                 tx_offset = merged_offsets_map[tx_hash]  # pop the non-mempool txs out
                 del merged_offsets_map[tx_hash]
@@ -418,7 +417,7 @@ class TxParser(multiprocessing.Process):
             set_pd_rows_batched.extend(set_pd_rows)
 
         num_mempool_txs_processed = len(tx_rows_batched)
-        self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
+        # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
         self.mempool_tx_flush_queue.put(
             MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched))
@@ -563,10 +562,9 @@ class TxParser(multiprocessing.Process):
             # Merge into big data structures
             merged_part_tx_hash_rows.extend(part_tx_hash_rows)
 
-            partition_tx_hashXes = [x[0:HashXLength] for x in part_tx_hashes]
-            merged_offsets_map.update(dict(zip(partition_tx_hashXes, tx_offsets_part)))
-            for tx_hashX in partition_tx_hashXes:
-                merged_tx_to_work_item_id_map[tx_hashX] = work_item_id
+            merged_offsets_map.update(dict(zip(part_tx_hashes, tx_offsets_part)))
+            for tx_hash in part_tx_hashes:
+                merged_tx_to_work_item_id_map[tx_hash] = work_item_id
 
             # Todo - I don't like this re-allocation of raw_block_slice
             raw_block_slice = array.array('B', raw_block_slice)

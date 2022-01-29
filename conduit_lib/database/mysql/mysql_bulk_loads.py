@@ -62,6 +62,7 @@ class MySQLBulkLoads:
                     string_rows_batch = string_rows[i*BATCH_SIZE:]
                 else:
                     string_rows_batch = string_rows[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
+
                 self._load_data_infile(table_name, string_rows_batch, column_names,
                     binary_column_indices)
         finally:
