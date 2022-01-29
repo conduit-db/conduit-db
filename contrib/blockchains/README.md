@@ -67,16 +67,16 @@ two data carrier transactions.
 The first transaction `4723501d7ec5488d32e19a59cbdb11eed7b9bb99b681303614a6e8b763ba1ea6`
 has `OP_FALSE OP_RETURN` outputs containing these:
 
-    LESS_THAN_20_BYTES = bytes.fromhex("aa")
-    MORE_THAN_20_BYTES = bytes.fromhex("bb"*21)
-    JUST_SHY_OF_PUSHDATA1 = bytes.fromhex("cc"*76)
-    PUSHDATA1_BYTES = bytes.fromhex("dd"*0xff)
-    PUSHDATA2_BYTES = bytes.fromhex("ee"*0xffff)
+    LESS_THAN_20_BYTES = bytes.fromhex("aa") --> bceef655b5a034911f1c3718ce056531b45ef03b4c7b1f15629e867294011a7d
+    MORE_THAN_20_BYTES = bytes.fromhex("bb"*21) -> bdd6af32ad29f75d8194247c3e960eea38711776a9ff4182356184fa86a00dd0
+    JUST_SHY_OF_PUSHDATA1 = bytes.fromhex("cc"*76) -> a0920a708fa193ccb674b42e78c9ee20134faa007a83405db7219e916660cbfa
+    PUSHDATA1_BYTES = bytes.fromhex("dd"*0xff) -> 5866ddbc19ad8479a492837f44bc0146537038070990ecad9ea5c6654a0a2d57
+    PUSHDATA2_BYTES = bytes.fromhex("ee"*0xffff) -> 6e851b79242aeb57c37a6ee64afcf6594d0c76c0429e46d6e8f934e180be72a5
 
 The second transaction `5be1d965952227b5ee45af715fc21bcc1723c37411a7dfd340845a23d73dd884`
 has an `OP_FALSE OP_RETURN` output containing this data:
 
-    PUSHDATA4_BYTES = bytes.fromhex("ff"*0x010000)
+    PUSHDATA4_BYTES = bytes.fromhex("ff"*0x010000) -> 71189f7fb6aed638640078fba3a35fda6c39c8962e74dcc75935aac948da9063
 
 This is to test parsing of pushdatas in data carrier transactions which is relevant
 for many token protocols and historic unwriter protocols etc. and makes the indexer
