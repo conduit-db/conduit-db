@@ -86,7 +86,7 @@ class Controller(ControllerBase):
         self.sync_state = SyncState(self.storage, self)
         self.lmdb = self.storage.lmdb
         self.ipc_sock_client: Optional[IPCSocketClient] = None
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.general_executor = ThreadPoolExecutor(max_workers=1)
 
         # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
@@ -701,7 +701,7 @@ class Controller(ControllerBase):
         assert self.lmdb is not None
         t0 = time.perf_counter()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self.executor, self.lmdb.sync)
+        await loop.run_in_executor(self.general_executor, self.lmdb.sync)
         t1 = time.perf_counter() - t0
         self.logger.debug(f"Flush for batch took {t1} seconds")
 
