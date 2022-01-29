@@ -148,17 +148,10 @@ class CompositeProof(enum.IntEnum):
     COMPOSITE_PROOF = 1 << 4
 
 
-class PushdataMatchFlags(enum.IntEnum):
+class PushdataMatchFlags(enum.IntFlag):
     OUTPUT = 1 << 0
     INPUT = 1 << 1
-
-
-def _get_pushdata_match_flag(ref_type: int) -> int:
-    if ref_type == 0:
-        return PushdataMatchFlags.OUTPUT
-    if ref_type == 1:
-        return PushdataMatchFlags.INPUT
-    raise ValueError("Unrecognised ref_type")
+    DATA = 1 << 2
 
 
 def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,
@@ -166,7 +159,7 @@ def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx
     pushdata_hash = hex_str_to_hash(full_pushdata_hash)
     tx_hash = hex_str_to_hash(full_tx_hash)
     idx = row.transaction_output_index
-    flags_as_char = le_int_to_char(_get_pushdata_match_flag(row.ref_type))
+    flags_as_char = le_int_to_char(row.ref_type)
     in_tx_hash = hex_str_to_hash("00"*32)
     if full_spend_transaction_hash is not None:
         in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)

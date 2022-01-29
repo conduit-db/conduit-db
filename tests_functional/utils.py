@@ -8,15 +8,13 @@ from pathlib import Path
 import requests
 import tests_functional._pre_reorg_data as pre_reorg_test_data
 import tests_functional._post_reorg_data as post_reorg_test_data
-from conduit_lib.types import _get_pushdata_match_flag
+from conduit_lib.algorithms import PushdataMatchFlags
 
 BASE_URL = f"http://127.0.0.1:34525"
 GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
 GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
-REF_TYPE_OUTPUT = 0
-REF_TYPE_INPUT = 1
 STREAM_TERMINATION_BYTE = b"\x00"
 
 logger = logging.getLogger("test-internal-aiohttp-api")
@@ -118,26 +116,29 @@ def _mining_txs_json_post_reorg():
             assert match['SpendInputIndex'] == 0xFFFFFFFF
         else:
             actual_spend_transaction_hashes.append(match['TransactionId'])
-    assert len(actual_matches) == 110, len(actual_matches)
+    assert len(actual_matches) == 112, len(actual_matches)
     assert len(actual_unspent_coinbase_transaction_hashes) == 100, len(actual_unspent_coinbase_transaction_hashes)
-    assert len(actual_spend_transaction_hashes) == 10, len(actual_spend_transaction_hashes)
+    assert len(actual_spend_transaction_hashes) == 12, len(actual_spend_transaction_hashes)
+    # No duplicates
     actual_spend_transaction_hashes_set = set(actual_spend_transaction_hashes)
-    assert len(actual_spend_transaction_hashes_set) == 10, len(actual_spend_transaction_hashes_set)
+    assert len(actual_spend_transaction_hashes_set) == 12, len(actual_spend_transaction_hashes_set)
 
     expected_spend_coinbase_transaction_hashes = [ txid.lower() for txid in [
-            "FCD363867BAB384A2CCB4349AEF3EE173D965561CA574B89E9FDB76642DD4D2B",
-            "59D06760245723B17BFFD9D587EC01ACDFCA1B7F1ACA9184112EB615D8D50A70",
-            "32EFB2AFDC5993AA3D63DBE031196B2AC08BFF196B3FF259DD50F5FB7A4F2CE0",
             "F90E0A8B2667BFC9BB19D2EAC8CF48F78F00F8FA5CA168591E3C1B0346203004",
+            "4723501D7EC5488D32E19A59CBDB11EED7B9BB99B681303614A6E8B763BA1EA6",
+            "F22CC55F333E4F3027CFCAEC488CB5472B503A1BE8B1049064AE6A4D00E26921",
             "3D052E3F9DF5073A04298AD87B01E6DC186665E4E4D7F965E210723DEE56E2E0",
-            "19F2B7FFA0D44E15E6568572590A2D4CBCC80B64859CFCBDCB1260DD5E4383F6",
+            "FCD363867BAB384A2CCB4349AEF3EE173D965561CA574B89E9FDB76642DD4D2B",
             "59E863F3BB2F1EC7192529513B95B4A782C80CDC930B028A9D53343866BF5641",
-            "1008FD90BB1055AF8AF5272BB60B0E11FE34B777983156714D7DFD2695393513",
-            "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
             "9E724D5DE860799E909C2B94858741033C2E4201037F860BB583136CBEAB97D8",
+            "1008FD90BB1055AF8AF5272BB60B0E11FE34B777983156714D7DFD2695393513",
+            "19F2B7FFA0D44E15E6568572590A2D4CBCC80B64859CFCBDCB1260DD5E4383F6",
+            "59D06760245723B17BFFD9D587EC01ACDFCA1B7F1ACA9184112EB615D8D50A70",
+            "EE70715C37F23D72803A904A142AE483CE1E776278304DB975846378FFE99437",
+            "32EFB2AFDC5993AA3D63DBE031196B2AC08BFF196B3FF259DD50F5FB7A4F2CE0"
         ]
     ]
-    assert set(actual_spend_transaction_hashes_set) == set(expected_spend_coinbase_transaction_hashes)
+    assert set(actual_spend_transaction_hashes_set) == set(expected_spend_coinbase_transaction_hashes), actual_spend_transaction_hashes_set
 
 
 def _p2pk_json(post_reorg=False):
@@ -160,11 +161,11 @@ def _p2pk_json(post_reorg=False):
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
 
-    assert len(actual_matches) == 1
+    assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
     assert match["TransactionId"] == "88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210"
     assert match["Index"] == 0
-    assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+    assert match["Flags"] == PushdataMatchFlags.OUTPUT
     assert match["SpendTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
     assert match["SpendInputIndex"] == 0
     if post_reorg:
@@ -188,11 +189,11 @@ def _p2pkh_json(post_reorg=False):
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
 
-    assert len(actual_matches) == 1
+    assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
     assert match["TransactionId"] == "d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842"
     assert match["Index"] == 0
-    assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+    assert match["Flags"] == PushdataMatchFlags.OUTPUT
     assert match["SpendTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
     assert match["SpendInputIndex"] == 1
     if post_reorg:
@@ -217,11 +218,11 @@ def _p2sh_json(post_reorg=False):
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
 
-    assert len(actual_matches) == 1
+    assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
     assert match["TransactionId"] == "49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609"
     assert match["Index"] == 1
-    assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+    assert match["Flags"] == PushdataMatchFlags.OUTPUT
     assert match["SpendTransactionId"] == "1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6"
     assert match["SpendInputIndex"] == 0
     if post_reorg:
@@ -244,11 +245,11 @@ def _p2sh_json(post_reorg=False):
             match = json.loads(line.decode('utf-8'))
             actual_matches.append(match)
 
-        assert len(actual_matches) == 1
+        assert len(actual_matches) == 1, len(actual_matches)
         match = actual_matches[0]
         assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
         assert match["Index"] == 2
-        assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+        assert match["Flags"] == PushdataMatchFlags.OUTPUT
         assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
         assert match["SpendInputIndex"] == 0
         if post_reorg:
@@ -273,11 +274,11 @@ def _p2ms_json(post_reorg=False):
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
 
-    assert len(actual_matches) == 1
+    assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
     assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
     assert match["Index"] == 2
-    assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+    assert match["Flags"] == PushdataMatchFlags.OUTPUT
     assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
     assert match["SpendInputIndex"] == 0
     if post_reorg:
@@ -303,11 +304,11 @@ def _p2ms2_json(post_reorg=False):
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
 
-    assert len(actual_matches) == 1
+    assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
     assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
     assert match["Index"] == 2
-    assert match["Flags"] == _get_pushdata_match_flag(ref_type=REF_TYPE_OUTPUT)
+    assert match["Flags"] == PushdataMatchFlags.OUTPUT
     assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
     assert match["SpendInputIndex"] == 0
     if post_reorg:

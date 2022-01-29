@@ -60,8 +60,10 @@ class MySQLQueries:
     def mysql_get_unprocessed_txs(self, is_reorg: bool, new_tx_hashes: list[tuple[str]],
             inbound_tx_table_name: str) -> Set[bytes]:
         """
-        NOTE: usually (if all mempool txs have been processed, this function will only return
-        the coinbase tx)
+        Usually if all mempool txs have been processed, this function will only return
+        the coinbase tx. If a reorg has occurred it will use the temp_orphaned_txs to avoid
+        writing duplicated pushdata, input, output rows for transactions that were already
+        processed for an orphan block
         """
         self.mysql_load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
         try:
@@ -84,7 +86,6 @@ class MySQLQueries:
             self.mysql_tables.mysql_drop_temp_inbound_tx_hashes(inbound_tx_table_name)
             return final_result
         else:
-            # Todo - need the full set of orphaned transactions to be subtracted from end result
             try:
                 self.mysql_conn.query(f"""SELECT * FROM temp_orphaned_txs;""")
                 # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hashes

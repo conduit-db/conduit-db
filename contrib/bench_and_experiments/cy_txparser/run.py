@@ -7,36 +7,25 @@ import bitcoinx
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
+from conduit_lib.types import PushdataMatchFlags
 
 is_cython = False
-try:
-    from conduit_lib._algorithms import parse_txs, unpack_varint_cy, get_pk_and_pkh_from_script  # cython
-    is_cython = True
-except ModuleNotFoundError:
-    from conduit_lib.algorithms import parse_txs, unpack_varint, get_pk_and_pkh_from_script  # pure python
+from conduit_lib.algorithms import parse_txs, unpack_varint, get_pk_and_pkh_from_script
 from contrib.bench_and_experiments.cy_txparser.offsets import TX_OFFSETS
 from contrib.bench_and_experiments.utils import print_results
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
 
 if __name__ == "__main__":
 
     # Check unpack_varint vs unpack_varint_cy if is_cython = True:
-    if is_cython:
-        for i in range(1, 1_000_000):
-            stream = io.BytesIO()
-            varint_buf = array.array('B', bitcoinx.pack_varint(i))
-            parsed_varint = unpack_varint_cy(varint_buf, 0)[0]
-            assert parsed_varint == i, f"parsed_varint: {parsed_varint} != {i}"
-        print("Check for varint parsing (cython): PASSED")
-    else:
-        for i in range(1, 1_000_000):
-            stream = io.BytesIO()
-            varint_buf = array.array('B', bitcoinx.pack_varint(i))
-            parsed_varint = unpack_varint(varint_buf, 0)[0]
-            assert parsed_varint == i, f"parsed_varint: {parsed_varint} != {i}"
-        print("Check for varint parsing (pure python): PASSED")
-
+    for i in range(1, 1_000):
+        stream = io.BytesIO()
+        varint_buf = array.array('B', bitcoinx.pack_varint(i))
+        parsed_varint = unpack_varint(varint_buf, 0)[0]
+        assert parsed_varint == i, f"parsed_varint: {parsed_varint} != {i}"
+    print("Check for varint parsing (pure python): PASSED")
 
     # path_to_test_blockchain = Path(MODULE_DIR).parent.parent \
     #     / 'contrib' / 'blockchains' / 'blockchain_115_3677f4'
@@ -71,27 +60,31 @@ if __name__ == "__main__":
 
     txs = []
     inputs = []
+    pushdata_hashes_per_script = []
     output_total_count = 0
     for i in range(1557):
         tx = bitcoinx.Tx.read(stream.read)
         tx_hash, tx_height, tx_position = tx_rows[i]
         assert tx.hash()[0:HashXLength] == bytes.fromhex(tx_hash)[0:HashXLength]
-        inputs.extend(tx.inputs)
+
+        for idx, input in enumerate(tx.inputs):
+            pd_hashes = get_pk_and_pkh_from_script(array.array('B', input.script_sig.to_bytes()),
+                tx_hash, idx, PushdataMatchFlags.INPUT, tx_pos=i, genesis_height=0)
+            if len(pd_hashes) != 0:
+                pushdata_hashes_per_script.extend(pd_hashes)
+
+        inputs.extend((tx.inputs))
+
         output_total_count += len(tx.outputs)
         txs.append(tx)
 
 
-    pushdata_hashes_per_script = []
-    for input in inputs:
-        pd_hashes = get_pk_and_pkh_from_script(array.array('B', input.script_sig.to_bytes()))
-        pushdata_hashes_per_script.append(pd_hashes)
         # print(len(pd_hashes))
 
 
-    with open('pushdata_hashes_cython', 'w') as f:
-        for pd_hashes in pushdata_hashes_per_script:
-            if pd_hashes:
-                f.write(",".join([hash_to_hex_str(x) for x in pd_hashes]) + "\n")
+    with open('pushdata_hashes', 'w') as f:
+        for pd_hash, flags in pushdata_hashes_per_script:
+            f.write(hash_to_hex_str(pd_hash) + "\n")
 
 
     print(f"Check for all tx hashes matching bitcoinx parsing: PASSED")

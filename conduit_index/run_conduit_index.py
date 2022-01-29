@@ -75,6 +75,7 @@ async def main() -> None:
         loop.set_exception_handler(loop_exception_handler)
         net_config = NetworkConfig(os.environ["NETWORK"], node_host=os.environ['NODE_HOST'],
             node_port=int(os.environ['NODE_PORT']))
+        os.environ['GENESIS_ACTIVATION_HEIGHT'] = str(net_config.GENESIS_ACTIVATION_HEIGHT)
         controller = Controller(
             net_config=net_config, host="127.0.0.1", port=8000,
             logging_server_proc=logging_server_proc,

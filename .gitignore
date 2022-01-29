@@ -55,3 +55,4 @@ LICENSE
 Conduit.sln.DotSettings.user
 temp_files/*
 *metrics.csv
+contrib/bench_and_experiments/cy_txparser/pushdata_hashes
