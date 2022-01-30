@@ -1,10 +1,5 @@
 import json
 import logging
-import os
-import subprocess
-import sys
-import time
-from pathlib import Path
 import requests
 import tests_functional._pre_reorg_data as pre_reorg_test_data
 import tests_functional._post_reorg_data as post_reorg_test_data
@@ -111,11 +106,11 @@ def _mining_txs_json_post_reorg():
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
         # collect coinbase transactions
-        if match['SpendTransactionId'] is None:
-            actual_unspent_coinbase_transaction_hashes.append(match['TransactionId'])
-            assert match['SpendInputIndex'] == 0xFFFFFFFF
+        if match['unlockingTransactionId'] is None:
+            actual_unspent_coinbase_transaction_hashes.append(match['lockingTransactionId'])
+            assert match['unlockingInputIndex'] == 0xFFFFFFFF
         else:
-            actual_spend_transaction_hashes.append(match['TransactionId'])
+            actual_spend_transaction_hashes.append(match['lockingTransactionId'])
     assert len(actual_matches) == 112, len(actual_matches)
     assert len(actual_unspent_coinbase_transaction_hashes) == 100, len(actual_unspent_coinbase_transaction_hashes)
     assert len(actual_spend_transaction_hashes) == 12, len(actual_spend_transaction_hashes)
@@ -163,15 +158,16 @@ def _p2pk_json(post_reorg=False):
 
     assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
-    assert match["TransactionId"] == "88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210"
-    assert match["Index"] == 0
-    assert match["Flags"] == PushdataMatchFlags.OUTPUT
-    assert match["SpendTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
-    assert match["SpendInputIndex"] == 0
-    if post_reorg:
-        assert match["BlockHeight"] == 116
-    else:
-        assert match["BlockHeight"] == 112
+    assert match["lockingTransactionId"] == "88c92bb09626c7d505ed861ae8fa7e7aaab5b816fc517eac7a8a6c7f28b1b210"
+    assert match["lockingTransactionIndex"] == 0
+    assert match["flags"] == PushdataMatchFlags.OUTPUT
+    assert match["unlockingTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
+    assert match["unlockingInputIndex"] == 0
+    # if post_reorg:
+    #     assert match["BlockHeight"] == 116
+    # else:
+    #     assert match["BlockHeight"] == 112
+
 
 def _p2pkh_json(post_reorg=False):
     """
@@ -191,15 +187,15 @@ def _p2pkh_json(post_reorg=False):
 
     assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
-    assert match["TransactionId"] == "d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842"
-    assert match["Index"] == 0
-    assert match["Flags"] == PushdataMatchFlags.OUTPUT
-    assert match["SpendTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
-    assert match["SpendInputIndex"] == 1
-    if post_reorg:
-        assert match["BlockHeight"] == 116
-    else:
-        assert match["BlockHeight"] == 111
+    assert match["lockingTransactionId"] == "d53a9ebfac748561132e49254c42dbe518080c2a5956822d5d3914d47324e842"
+    assert match["lockingTransactionIndex"] == 0
+    assert match["flags"] == PushdataMatchFlags.OUTPUT
+    assert match["unlockingTransactionId"] == "47f3f47a256d70950ff5690ea377c24464310489e3f54d01b817dd0088f0a095"
+    assert match["unlockingInputIndex"] == 1
+    # if post_reorg:
+    #     assert match["BlockHeight"] == 116
+    # else:
+    #     assert match["BlockHeight"] == 111
 
 
 def _p2sh_json(post_reorg=False):
@@ -220,42 +216,15 @@ def _p2sh_json(post_reorg=False):
 
     assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
-    assert match["TransactionId"] == "49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609"
-    assert match["Index"] == 1
-    assert match["Flags"] == PushdataMatchFlags.OUTPUT
-    assert match["SpendTransactionId"] == "1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6"
-    assert match["SpendInputIndex"] == 0
-    if post_reorg:
-        assert match["BlockHeight"] == 116
-    else:
-        assert match["BlockHeight"] == 115
-
-        """
-        Find the funding of a P2MS (bare multi-signature) UTXO, and the subsequent spend information (from cosigner 1 perspective).
-        """
-        actual_matches = []
-        headers = {'Accept': "application/json"}
-        body = {"filterKeys": ["9ed50dfe0d3a28950ee9a2ee41dce7193dd8666c4ff42c974de1bde60332a701"]}
-        result = requests.post(RESTORATION_URL, json=body, headers=headers, stream=True)
-        assert result.status_code == 200, result.reason
-        assert result.text is not None
-        for line in result.iter_lines(delimiter=b"\n"):
-            if not line or line == STREAM_TERMINATION_BYTE:
-                continue
-            match = json.loads(line.decode('utf-8'))
-            actual_matches.append(match)
-
-        assert len(actual_matches) == 1, len(actual_matches)
-        match = actual_matches[0]
-        assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
-        assert match["Index"] == 2
-        assert match["Flags"] == PushdataMatchFlags.OUTPUT
-        assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
-        assert match["SpendInputIndex"] == 0
-        if post_reorg:
-            assert match["BlockHeight"] == 116
-        else:
-            assert match["BlockHeight"] == 113
+    assert match["lockingTransactionId"] == "49250a55f59e2bbf1b0615508c2d586c1336d7c0c6d493f02bc82349fabe6609"
+    assert match["lockingTransactionIndex"] == 1
+    assert match["flags"] == PushdataMatchFlags.OUTPUT
+    assert match["unlockingTransactionId"] == "1afaa1c87ca193480c9aa176f08af78e457e8b8415c71697eded1297ed953db6"
+    assert match["unlockingInputIndex"] == 0
+    # if post_reorg:
+    #     assert match["BlockHeight"] == 116
+    # else:
+    #     assert match["BlockHeight"] == 115
 
 
 def _p2ms_json(post_reorg=False):
@@ -276,15 +245,15 @@ def _p2ms_json(post_reorg=False):
 
     assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
-    assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
-    assert match["Index"] == 2
-    assert match["Flags"] == PushdataMatchFlags.OUTPUT
-    assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
-    assert match["SpendInputIndex"] == 0
-    if post_reorg:
-        assert match["BlockHeight"] == 116
-    else:
-        assert match["BlockHeight"] == 113
+    assert match["lockingTransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
+    assert match["lockingTransactionIndex"] == 2
+    assert match["flags"] == PushdataMatchFlags.OUTPUT
+    assert match["unlockingTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
+    assert match["unlockingInputIndex"] == 0
+    # if post_reorg:
+    #     assert match["BlockHeight"] == 116
+    # else:
+    #     assert match["BlockHeight"] == 113
 
 
 def _p2ms2_json(post_reorg=False):
@@ -306,12 +275,12 @@ def _p2ms2_json(post_reorg=False):
 
     assert len(actual_matches) == 1, len(actual_matches)
     match = actual_matches[0]
-    assert match["TransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
-    assert match["Index"] == 2
-    assert match["Flags"] == PushdataMatchFlags.OUTPUT
-    assert match["SpendTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
-    assert match["SpendInputIndex"] == 0
-    if post_reorg:
-        assert match["BlockHeight"] == 116
-    else:
-        assert match["BlockHeight"] == 113
+    assert match["lockingTransactionId"] == "479833ff49d1000cd6f9d23a88924d22eaeae8b9d543e773d7420c2bbfd73fe2"
+    assert match["lockingTransactionIndex"] == 2
+    assert match["flags"] == PushdataMatchFlags.OUTPUT
+    assert match["unlockingTransactionId"] == "0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721"
+    assert match["unlockingInputIndex"] == 0
+    # if post_reorg:
+    #     assert match["BlockHeight"] == 116
+    # else:
+    #     assert match["BlockHeight"] == 113

@@ -105,7 +105,7 @@ class MySQLAPIQueries:
             query_format_pushdata_hashes = [f"X'{pd_hashX}'" for pd_hashX in pushdata_hashXes]
             sql = f"""
                 SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx, 
-                    HD.block_height, HD.block_hash, HD.block_num, CT.tx_position
+                    HD.block_hash, HD.block_num, CT.tx_position
                 FROM pushdata PD
                 LEFT JOIN inputs_table IT 
                     ON PD.tx_hash=IT.out_tx_hash 
@@ -127,10 +127,9 @@ class MySQLAPIQueries:
                 in_idx: int = MAX_UINT32
                 if row[5] is not None:
                     in_idx = row[5]
-                block_height: int = row[6]
-                block_hash: bytes = row[7]
-                block_num: int = row[8]
-                tx_position: int = row[9]
+                block_hash: bytes = row[6]
+                block_num: int = row[7]
+                tx_position: int = row[8]
                 tx_location = TxLocation(block_hash, block_num, tx_position)
                 yield RestorationFilterQueryResult(
                     ref_type=ref_type,
@@ -139,7 +138,6 @@ class MySQLAPIQueries:
                     spend_transaction_hash=in_tx_hash,
                     transaction_output_index=idx,
                     spend_input_index=in_idx,
-                    block_height=block_height,
                     tx_location=tx_location
                 )
         finally:

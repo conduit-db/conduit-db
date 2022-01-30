@@ -88,7 +88,6 @@ class RestorationFilterQueryResult(NamedTuple):
     spend_transaction_hash: Optional[bytes]
     transaction_output_index: int  # max(uint32) if no spend
     spend_input_index: int
-    block_height: int
     tx_location: TxLocation
 
 
@@ -97,27 +96,25 @@ class RestorationFilterRequest(typing.TypedDict):
 
 
 class RestorationFilterJSONResponse(TypedDict):
-    Flags: int
-    PushDataHashHex: str
-    TransactionId: str
-    Index: int
-    SpendTransactionId: Optional[str]
-    SpendInputIndex: Optional[int]
-    BlockHeight: int
+    flags: int
+    pushDataHashHex: str
+    lockingTransactionId: str
+    lockingTransactionIndex: int
+    unlockingTransactionId: Optional[str]
+    unlockingInputIndex: int
 
 
 class RestorationFilterResult(NamedTuple):
-    flags: bytes
+    flags: int  # one byte integer
     push_data_hash: bytes
-    transaction_hash: bytes
-    spend_transaction_hash: bytes
-    transaction_output_index: int
-    spend_input_index: int
-    block_height: int
+    locking_transaction_hash: bytes
+    locking_output_index: int
+    unlocking_transaction_hash: bytes  # null hash
+    unlocking_input_index: int  # 0
 
 
-RESULT_UNPACK_FORMAT = ">c32s32s32sIII"
-FILTER_RESPONSE_SIZE = 1 + 32 + 32 + 32 + 4 + 4 + 4
+RESULT_UNPACK_FORMAT = ">B32s32sI32sI"
+FILTER_RESPONSE_SIZE = 1 + 32 + 32 + 4 + 32 + 4
 assert struct.calcsize(RESULT_UNPACK_FORMAT) == FILTER_RESPONSE_SIZE
 
 filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
@@ -159,22 +156,20 @@ def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx
     pushdata_hash = hex_str_to_hash(full_pushdata_hash)
     tx_hash = hex_str_to_hash(full_tx_hash)
     idx = row.transaction_output_index
-    flags_as_char = le_int_to_char(row.ref_type)
     in_tx_hash = hex_str_to_hash("00"*32)
     if full_spend_transaction_hash is not None:
         in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
     in_idx = MAX_UINT32
     if row.spend_input_index is not None:
         in_idx = row.spend_input_index
-    block_height = row.block_height
+
     return RestorationFilterResult(
-        flags=flags_as_char,
+        flags=row.ref_type,
         push_data_hash=pushdata_hash,
-        transaction_hash=tx_hash,
-        spend_transaction_hash=in_tx_hash,
-        transaction_output_index=idx,
-        spend_input_index=in_idx,
-        block_height=block_height,
+        locking_transaction_hash=tx_hash,
+        locking_output_index=idx,
+        unlocking_transaction_hash=in_tx_hash,
+        unlocking_input_index=in_idx
     )
 
 
@@ -190,15 +185,13 @@ def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_t
     in_idx = MAX_UINT32
     if row.spend_input_index is not None:
         in_idx = row.spend_input_index
-    block_height = row.block_height
     return RestorationFilterJSONResponse(
-        PushDataHashHex=pushdata_hash,
-        TransactionId=tx_hash,
-        Index=idx,
-        Flags=flags,
-        SpendTransactionId=in_tx_hash,
-        SpendInputIndex=in_idx,
-        BlockHeight=block_height
+        flags=flags,
+        pushDataHashHex=pushdata_hash,
+        lockingTransactionId=tx_hash,
+        lockingTransactionIndex=idx,
+        unlockingTransactionId=in_tx_hash,
+        unlockingInputIndex=in_idx
     )
 
 

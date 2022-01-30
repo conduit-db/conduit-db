@@ -149,7 +149,7 @@ paths:
 
         Indexing algorithm:
           - In output scripts, any arbitrary length pushdata is indexed and
-            if it follows an OP_RETURN (and is therefore an unreachable part of the script), the
+            if it follows an `OP_RETURN` (and is therefore an unreachable part of the script), the
             `DATA` (1 << 2) flag will be set.
           - In input scripts, only 20, 33, 65 length pushdatas are indexed (i.e. to capture
             ripemd160 hashes and pubkeys)
@@ -157,10 +157,10 @@ paths:
 
         The result can optionally be streamed.  
 
-        - For application/json format: Each JSON match is separated by a newline character.
-        - For application/octet-stream: Each binary struct is a fixed length of 116 bytes (32 + 32 + 8 + 4 + 32 + 4 + 4)
-          following the order seen below. All integers are unsigned. If there is no spend, the
-          hash will be 32 null bytes.
+        - For `application/json` format: Each JSON match is separated by a newline character.
+        - For `application/octet-stream`: Each binary struct is a fixed length of 105 bytes
+        (1 + 32 + 32 + 4 + 32 + 4) following the order seen below. All integers are unsigned. If
+        there is no spend, the hash will be 32 null bytes.
 
         Search results will include:  
 
@@ -205,37 +205,33 @@ paths:
               schema:
                 type: object
                 properties:
-                  PushDataHashHex:
-                    type: string
-                  TransactionId:
-                    type: string
-                  Index:
+                  flags:
                     type: integer
-                  Flags:
-                    type: integer
-                  SpendTransactionId:
+                  pushDataHashHex:
                     type: string
-                  SpendInputIndex:
+                  lockingTransactionId:
+                    type: string
+                  lockingTransactionIndex:
                     type: integer
-                  BlockHeight: 
+                  unlockingTransactionId:
+                    type: string
+                  unlockingInputIndex:
                     type: integer
             application/octet-stream:
               schema:
                 type: object
                 properties:
-                  PushDataHashHex:
-                    type: string
-                  TransactionId:
-                    type: string
-                  Index:
+                  flags:
                     type: integer
-                  Flags:
-                    type: integer
-                  SpendTransactionId:
+                  pushDataHashHex:
                     type: string
-                  SpendInputIndex:
+                  lockingTransactionId:
+                    type: string
+                  lockingTransactionIndex:
                     type: integer
-                  BlockHeight: 
+                  unlockingTransactionId:
+                    type: string
+                  unlockingInputIndex:
                     type: integer
         '400':
           description: Bad request
