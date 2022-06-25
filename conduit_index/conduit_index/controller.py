@@ -235,8 +235,6 @@ class Controller(ControllerBase):
 
             self.sync_state._batched_blocks_exec.shutdown(wait=False)
 
-            self.shm_buffer.close()
-            self.shm_buffer.unlink()
             self.mempool_tx_socket.close()  # type: ignore
             self.is_ibd_socket.close()
 
@@ -246,6 +244,10 @@ class Controller(ControllerBase):
                     await task
                 except asyncio.CancelledError:
                     pass
+
+            # There are leaked references to this who knows where. Close it last.
+            self.shm_buffer.close()
+            self.shm_buffer.unlink()
         except Exception:
             # The logging for these does not work. It is discarded due to the log server
             # shutting down before it gets written out one would assume.

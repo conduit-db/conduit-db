@@ -198,9 +198,6 @@ class Controller(ControllerBase):
                 p.terminate()
                 p.join()
 
-            self.shm_buffer.close()
-            self.shm_buffer.unlink()
-
             if self.ipc_sock_client is not None:
                 self.ipc_sock_client.stop()  # stops server
                 time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
@@ -218,6 +215,10 @@ class Controller(ControllerBase):
                     await task
                 except asyncio.CancelledError:
                     pass
+
+            # There are leaked references to this who knows where. Close it last.
+            self.shm_buffer.close()
+            self.shm_buffer.unlink()
         except Exception:
             # The logging for these does not work. It is discarded due to the log server
             # shutting down before it gets written out one would assume.
