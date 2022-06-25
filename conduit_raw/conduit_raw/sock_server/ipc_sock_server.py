@@ -1,12 +1,13 @@
 import logging
 import os
 import threading
+import socket
+import struct
 import time
 from pathlib import Path
 
 import bitcoinx
 import cbor2
-import struct
 import socketserver
 from typing import Optional, Dict, Any, Callable, cast, Type
 
@@ -52,9 +53,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return None
                 data.extend(packet)
             return data
-        except ConnectionResetError:
-            # This path happens when the remote connection is disconnected or disconnects.
-            return None
+        # except ConnectionResetError:
+        #     # This path happens when the remote connection is disconnected or disconnects.
+        #     return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
             return None
@@ -287,9 +288,22 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
 
+        self._active_request_sockets = set[socket.socket]()
+
+    def finish_request(self, request_socket: socket.socket, client_address) -> None:
+        # There are two types of open connection. The listen socket and the connected client
+        # sockets. Closing the listen socket does not close the connected client sockets, and those
+        # threads can hang indefinitely. We keep track of the active client sockets and manually
+        # close them when we shut down the server.
+        self._active_request_sockets.add(request_socket)
+        super().finish_request(request_socket, client_address)
+        self._active_request_sockets.remove(request_socket)
+
     def shutdown(self) -> None:
         self.is_running = False
         super().shutdown()
+        for socket in list(self._active_request_sockets):
+            self.shutdown_request(socket)
 
 
 if __name__ == "__main__":

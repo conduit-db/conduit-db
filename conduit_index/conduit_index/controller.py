@@ -210,7 +210,15 @@ class Controller(ControllerBase):
 
     async def stop(self) -> None:
         self.running = False
+
+        # Do this first while all the stuff below errors unexpectedly so that the manual
+        # cleanup is much less painful.
+        for p in self.processes:
+            p.terminate()
+            p.join()
+
         try:
+            self.ipc_sock_client.close()
             self.general_executor.shutdown(wait=False, cancel_futures=True)
 
             if self.transport:
@@ -222,10 +230,6 @@ class Controller(ControllerBase):
                 await sock.send(b"stop_signal")
 
             await asyncio.sleep(1)
-
-            for p in self.processes:
-                p.terminate()
-                p.join()
 
             self.sync_state._batched_blocks_exec.shutdown(wait=False)
 
@@ -241,7 +245,12 @@ class Controller(ControllerBase):
                 except asyncio.CancelledError:
                     pass
         except Exception:
-            self.logger.exception("suppressing raised exceptions on cleanup")
+            # The logging for these does not work. It is discarded due to the log server
+            # shutting down before it gets written out one would assume.
+            print("Caught exceptions in Controller.stop")
+            import traceback
+            traceback.print_exc()
+            # self.logger.exception("Suppressing raised exceptions on cleanup")
 
     def get_peer(self) -> 'Peer':
         return self.peers[0]

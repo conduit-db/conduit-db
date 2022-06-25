@@ -212,7 +212,6 @@ class Controller(ControllerBase):
             if self.lmdb is not None:
                 self.lmdb.close()
 
-
             for task in self.tasks:
                 task.cancel()
                 try:
@@ -220,7 +219,12 @@ class Controller(ControllerBase):
                 except asyncio.CancelledError:
                     pass
         except Exception:
-            self.logger.exception("Suppressing raised exceptions on cleanup")
+            # The logging for these does not work. It is discarded due to the log server
+            # shutting down before it gets written out one would assume.
+            print("Caught exceptions in Controller.stop")
+            import traceback
+            traceback.print_exc()
+            # self.logger.exception("Suppressing raised exceptions on cleanup")
 
     def get_peer(self) -> Peer:
         return self.peers[0]

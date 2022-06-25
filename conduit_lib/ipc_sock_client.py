@@ -30,6 +30,7 @@ class ServiceUnavailableError(Exception):
 
 
 class IPCSocketClient:
+    is_open = True
 
     def __init__(self) -> None:
         self.HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
@@ -45,10 +46,9 @@ class IPCSocketClient:
         self.sock.close()
 
     def wait_for_connection(self) -> None:
-        while True:
+        while self.is_open:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.settimeout(10)
             try:
                 self.sock.connect((self.HOST, self.PORT))
                 break
@@ -62,6 +62,7 @@ class IPCSocketClient:
                 time.sleep(1)
 
     def close(self) -> None:
+        self.is_open = False
         self.sock.shutdown(socket.SHUT_RDWR)
         self.sock.close()
 
