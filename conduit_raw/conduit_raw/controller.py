@@ -160,24 +160,19 @@ class Controller(ControllerBase):
 
     async def run(self) -> None:
         self.running = True
-        try:
-            await self._get_aiohttp_client_session()
-            await self.setup()
-            await wait_for_node(node_host=os.environ['NODE_HOST'],
-                node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
-                deserializer=self.deserializer)
-            wait_for_mysql()
-            await self.connect_session()  # on_connection_made callback -> starts jobs
-            init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
-                self.host, self.port))
-            self.tasks.append(init_handshake)
-            wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
-            self.tasks.append(wait_until_conn_lost)
-            await asyncio.gather(init_handshake, wait_until_conn_lost)
-        except Exception:
-            self.logger.exception("Unexpected exception")
-        finally:
-            await self.stop()
+        await self._get_aiohttp_client_session()
+        await self.setup()
+        await wait_for_node(node_host=os.environ['NODE_HOST'],
+            node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
+            deserializer=self.deserializer)
+        wait_for_mysql()
+        await self.connect_session()  # on_connection_made callback -> starts jobs
+        init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
+            self.host, self.port))
+        self.tasks.append(init_handshake)
+        wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
+        self.tasks.append(wait_until_conn_lost)
+        await asyncio.gather(init_handshake, wait_until_conn_lost)
 
     async def stop(self) -> None:
         self.running = False

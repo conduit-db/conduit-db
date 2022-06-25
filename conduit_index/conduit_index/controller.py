@@ -177,14 +177,10 @@ class Controller(ControllerBase):
 
     async def run(self) -> None:
         self.running = True
-        try:
-            self.setup()
-            self.tasks.append(asyncio.create_task(self.start_jobs()))
-            while True:
-                await asyncio.sleep(5)
-
-        except Exception:
-            self.logger.exception("unexpected exception in Controller.run")
+        self.setup()
+        self.tasks.append(asyncio.create_task(self.start_jobs()))
+        while True:
+            await asyncio.sleep(5)
 
     async def maintain_node_connection(self) -> None:
         first_loop = True
