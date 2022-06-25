@@ -1,5 +1,6 @@
 # Object types
 import enum
+import os
 
 ERROR = 0
 MSG_TX = 1
@@ -40,16 +41,20 @@ LOGGING_LEVEL_VARNAME = 'logging_level'
 # The only exception would be if these 1000 txs have an extreme amount of inputs, outputs and
 # pushdata matches and are very very large txs.
 SMALL_BLOCK_SIZE = 10_000
-
-# CHIP_AWAY_BYTE_SIZE_LIMIT must be larger than the largest transaction we expect otherwise
-# the server would likely crash.
-CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
-MAIN_BATCH_HEADERS_COUNT_LIMIT = 100  # Number of headers to request (long poll) from conduit raw
-RECV_BUFFER_HIGH_WATER = int((1024 ** 3) * 2)  # At the moment this constrains the largest block size
-TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
-TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = (1024 ** 2) * 256  # smaller because of random io
-
 BULK_LOADING_BATCH_SIZE_ROW_COUNT = 100000
+
+if os.environ.get('NETWORK') == 'regtest':
+    CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 2) * 100
+    MAIN_BATCH_HEADERS_COUNT_LIMIT = 100  # Number of headers to request (long poll) from conduit raw
+    RECV_BUFFER_HIGH_WATER = int((1024 ** 2) * 100)  # At the moment this constrains the largest block size
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = RECV_BUFFER_HIGH_WATER - int(RECV_BUFFER_HIGH_WATER*0.10)
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = (1024 ** 2) * 100  # smaller because of random io
+else:
+    CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
+    MAIN_BATCH_HEADERS_COUNT_LIMIT = 100  # Number of headers to request (long poll) from conduit raw
+    RECV_BUFFER_HIGH_WATER = int((1024 ** 3) * 2)  # At the moment this constrains the largest block size
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = RECV_BUFFER_HIGH_WATER - (1024 ** 2) * 256
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = (1024 ** 2) * 256  # smaller because of random io
 
 
 class MsgType(enum.IntEnum):

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 
 import zmq
-from bitcoinx import hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.logging_client import setup_tcp_logging

@@ -9,23 +9,32 @@ import sys
 from asyncio import AbstractEventLoop
 from pathlib import Path
 
-from typing import Dict, Any
 import typing
+from typing import Dict, Any
+
+# The loading of environment variables must occur before importing any other
+# conduit_lib modules so the `.env` file environment variables are loaded before `constants.py`.
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+from conduit_lib.startup_utils import load_dotenv, is_docker, resolve_hosts_and_update_env_vars
+
+dotenv_path = MODULE_DIR.parent / '.env'
+if is_docker():
+    dotenv_path = MODULE_DIR.parent / '.env.docker'
+load_dotenv(dotenv_path)
+resolve_hosts_and_update_env_vars()
 
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
 else:
     from conduit_raw.controller import Controller
 
-MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(0, str(CONDUIT_ROOT_PATH))
 from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
-from conduit_lib.utils import get_log_level, resolve_hosts_and_update_env_vars, load_dotenv, \
-    is_docker
+from conduit_lib.utils import get_log_level
 
 loop_type = None
 if sys.platform == 'win32':
@@ -44,11 +53,6 @@ elif sys.platform == 'linux':
 
 
 def configure() -> None:
-    dotenv_path = MODULE_DIR.parent / '.env'
-    if is_docker():
-        dotenv_path = MODULE_DIR.parent / '.env.docker'
-    load_dotenv(dotenv_path)
-    resolve_hosts_and_update_env_vars()
     set_logging_level(get_log_level(CONDUIT_RAW_SERVICE_NAME))
     setup_tcp_logging(port=54545)
 
