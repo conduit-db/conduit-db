@@ -289,9 +289,10 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
 
-        self._active_request_sockets = set[socket.socket]()
+        self._active_request_sockets = set[tuple[bytes, socket.socket] | socket.socket]()
 
-    def finish_request(self, request_socket: socket.socket, client_address) -> None:
+    def finish_request(self, request_socket: tuple[bytes, socket.socket] | socket.socket,
+            client_address: tuple[str, int] | str) -> None:
         # There are two types of open connection. The listen socket and the connected client
         # sockets. Closing the listen socket does not close the connected client sockets, and those
         # threads can hang indefinitely. We keep track of the active client sockets and manually

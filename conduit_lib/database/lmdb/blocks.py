@@ -8,7 +8,6 @@ from pathlib import Path
 
 import bitcoinx
 import cbor2
-from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
