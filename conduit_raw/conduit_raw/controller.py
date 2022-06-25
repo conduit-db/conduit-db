@@ -219,7 +219,6 @@ class Controller(ControllerBase):
                     await task
                 except asyncio.CancelledError:
                     pass
-
         except Exception:
             self.logger.exception("Suppressing raised exceptions on cleanup")
 
@@ -362,7 +361,7 @@ class Controller(ControllerBase):
     async def start_jobs(self) -> None:
         try:
             self.database_integrity_check()
-            thread = threading.Thread(target=self.ipc_sock_server_thread)
+            thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
             thread.start()
             await self.spawn_aiohttp_api()
             await self.spawn_handler_tasks()
