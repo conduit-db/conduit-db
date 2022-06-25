@@ -53,8 +53,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return None
                 data.extend(packet)
             return data
-        except ConnectionResetError:
+        except (ConnectionResetError, OSError):
             # This path happens when the remote connection is disconnected or disconnects.
+            # OSError: [WinError 10038] An operation was attempted on something that is not a socket
             return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")

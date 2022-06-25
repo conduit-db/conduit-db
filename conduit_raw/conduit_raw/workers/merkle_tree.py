@@ -107,7 +107,9 @@ class MTreeCalculator(multiprocessing.Process):
                     self.logger.debug(f"zmq.error.Again")
                     continue
         except KeyboardInterrupt:
-                raise
+            # This will get logged by the multi-processing if we raise it. The expected behaviour
+            # is therefore that we catch this and recognise it as an exit condition.
+            return
         except Exception as e:
             self.logger.exception(e)
         finally:

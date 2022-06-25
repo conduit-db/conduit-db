@@ -30,11 +30,15 @@ def set_logging_level(logging_level: int) -> None:
     logging.root.setLevel(logging_level)
 
 
-def setup_tcp_logging(port: int = 54545) -> None:
+def setup_tcp_logging(port: int = 54545) -> logging.handlers.SocketHandler:
     rootLogger = logging.getLogger('')
     logging.addLevelName(PROFILING, 'PROFILING')
 
     # Remote Socket Handler (formatting is done server side after unpickling records)
     socketHandler = logging.handlers.SocketHandler('127.0.0.1', port)
     rootLogger.addHandler(socketHandler)
+    return socketHandler
 
+def teardown_tcp_logging(socket_handler: logging.handlers.SocketHandler) -> None:
+    rootLogger = logging.getLogger('')
+    rootLogger.removeHandler(socket_handler)

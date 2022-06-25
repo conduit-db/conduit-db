@@ -71,17 +71,11 @@ class Controller(ControllerBase):
     """
 
     def __init__(self, net_config: 'NetworkConfig', host: str="127.0.0.1", port: int=8000,
-            logging_server_proc: Optional[TCPLoggingServer]=None, loop_type: None=None) -> None:
+            loop_type: None=None) -> None:
 
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
-        self.logging_server_proc = logging_server_proc
-        self.processes: List[BaseProcess]
-        if logging_server_proc is not None:
-            self.processes = [cast(BaseProcess, self.logging_server_proc)]
-        else:
-            self.processes = []
-
+        self.processes: List[BaseProcess] = []
         self.tasks: List[asyncio.Task[Any]] = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
@@ -191,8 +185,6 @@ class Controller(ControllerBase):
 
         except Exception:
             self.logger.exception("unexpected exception in Controller.run")
-        finally:
-            await self.stop()
 
     async def maintain_node_connection(self) -> None:
         first_loop = True
@@ -219,42 +211,47 @@ class Controller(ControllerBase):
             p.terminate()
             p.join()
 
+        self.ipc_sock_client.close()
+        self.general_executor.shutdown(wait=False, cancel_futures=True)
+
+        if self.transport:
+            self.transport.close()
+        if self.storage:
+            await self.storage.close()
+
+        with self.kill_worker_socket as sock:
+            await sock.send(b"stop_signal")
+
+        await asyncio.sleep(1)
+
+        self.sync_state._batched_blocks_exec.shutdown(wait=False)
+
+        self.mempool_tx_socket.close()  # type: ignore
+        self.is_ibd_socket.close()
+
+        for task in self.tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Traceback (most recent call last):
+        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\run_conduit_index.py",
+        #       line 91, in main
+        #     await controller.stop()
+        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\conduit_index\controller.py",
+        #       line 241, in stop
+        #     self.shm_buffer.close()
+        #   File "C:\Users\R\AppData\Local\Programs\Python\Python310\lib\multiprocessing\"
+        #       "shared_memory.py", line 227, in close
+        #     self._mmap.close()
+        # BufferError: cannot close exported pointers exist
         try:
-            self.ipc_sock_client.close()
-            self.general_executor.shutdown(wait=False, cancel_futures=True)
-
-            if self.transport:
-                self.transport.close()
-            if self.storage:
-                await self.storage.close()
-
-            with self.kill_worker_socket as sock:
-                await sock.send(b"stop_signal")
-
-            await asyncio.sleep(1)
-
-            self.sync_state._batched_blocks_exec.shutdown(wait=False)
-
-            self.mempool_tx_socket.close()  # type: ignore
-            self.is_ibd_socket.close()
-
-            for task in self.tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-            # There are leaked references to this who knows where. Close it last.
             self.shm_buffer.close()
             self.shm_buffer.unlink()
-        except Exception:
-            # The logging for these does not work. It is discarded due to the log server
-            # shutting down before it gets written out one would assume.
-            print("Caught exceptions in Controller.stop")
-            import traceback
-            traceback.print_exc()
-            # self.logger.exception("Suppressing raised exceptions on cleanup")
+        except BufferError:
+            self.logger.error("Unable to clean up shared memory, exported points still exist")
 
     def get_peer(self) -> 'Peer':
         return self.peers[0]
@@ -676,7 +673,13 @@ class Controller(ControllerBase):
                 time.sleep(0.2)
             finally:
                 if ipc_sock_client:
-                    ipc_sock_client.close()
+                    try:
+                        ipc_sock_client.close()
+                    except OSError:
+                        # "OSError: [WinError 10057] A request to send or receive data was
+                        #  disallowed because the socket is not connected and (when sending on a
+                        #  datagram socket using a sendto call) no address was supplied"
+                        pass
 
     async def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
@@ -823,7 +826,7 @@ class Controller(ControllerBase):
             await maintain_chain_tip()
 
         except asyncio.CancelledError:
-            self.logger.exception("asyncio event cancelled")
+            # This is ignored as it is normal.
             raise
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception")

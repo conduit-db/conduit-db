@@ -30,7 +30,7 @@ else:
 
 CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(0, str(CONDUIT_ROOT_PATH))
-from conduit_lib.logging_client import set_logging_level, setup_tcp_logging
+from conduit_lib.logging_client import set_logging_level, setup_tcp_logging, teardown_tcp_logging
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
@@ -52,11 +52,6 @@ elif sys.platform == 'linux':
         pass
 
 
-def configure() -> None:
-    set_logging_level(get_log_level(CONDUIT_RAW_SERVICE_NAME))
-    setup_tcp_logging(port=54545)
-
-
 def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) -> None:
     logger = logging.getLogger("loop-exception-handler")
     logger.debug("Exception handler called")
@@ -66,26 +61,43 @@ def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) ->
 async def main() -> None:
     os.environ['SERVER_TYPE'] = "ConduitRaw"
     loop = asyncio.get_running_loop()
-    try:
-        logging_server_proc = TCPLoggingServer(port=54545, service_name=CONDUIT_RAW_SERVICE_NAME,
-            kill_port=46464)
-        logging_server_proc.start()
-        configure()  # All configuration is via environment variables
+    loop.set_exception_handler(loop_exception_handler)
 
-        loop.set_exception_handler(loop_exception_handler)
+    logging_server_proc = TCPLoggingServer(port=54545, service_name=CONDUIT_RAW_SERVICE_NAME,
+        kill_port=46464)
+    logging_server_proc.start()
+
+    # Logging configuration is via environment variables
+    set_logging_level(get_log_level(CONDUIT_RAW_SERVICE_NAME))
+    tcp_log_handler = setup_tcp_logging(port=54545)
+
+    try:
+        logger = logging.getLogger("main-task")
+
         net_config = NetworkConfig(os.environ["NETWORK"], node_host=os.environ['NODE_HOST'],
             node_port=int(os.environ['NODE_PORT']))
         os.environ['GENESIS_BLOCK_HASH'] = net_config.GENESIS_BLOCK_HASH
         controller = Controller(
-            net_config=net_config, host="127.0.0.1", port=8000,
-            logging_server_proc=logging_server_proc,
-            loop_type=loop_type,
+            net_config=net_config, host="127.0.0.1", port=8000, loop_type=loop_type,
         )
-        await controller.run()
-    except KeyboardInterrupt:
-        loop.stop()
-        loop.run_forever()
-        print("ConduitDB Stopped")
+        try:
+            await controller.run()
+        finally:
+            logger.debug("Stopping controller")
+            try:
+                await controller.stop()
+            except Exception:
+                # Exceptions raised in finally clauses are suppressed by the runtime.
+                import traceback
+                traceback.print_exc()
+                raise
+    finally:
+        teardown_tcp_logging(tcp_log_handler)
+
+        # This definitely would not make it to the log server.
+        print("Shutting down logging server")
+        logging_server_proc.terminate()
+        logging_server_proc.join()
 
 
 if __name__ == "__main__":

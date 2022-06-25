@@ -57,12 +57,10 @@ class Controller(ControllerBase):
     """
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
-            logging_server_proc: Optional[BaseProcess]=None, loop_type: Optional[str]=None) -> None:
+            loop_type: Optional[str]=None) -> None:
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
-        self.logging_server_proc = logging_server_proc
-        assert self.logging_server_proc is not None
-        self.processes: list[BaseProcess] = [self.logging_server_proc]
+        self.processes: list[BaseProcess] = []
         self.tasks: list[asyncio.Task[Any]] = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
@@ -183,49 +181,60 @@ class Controller(ControllerBase):
 
     async def stop(self) -> None:
         self.running = False
-        try:
-            await self._close_aiohttp_client_session()
-            if self.transport:
-                self.transport.close()
-            if self.storage:
-                await self.storage.close()
-            with self.kill_worker_socket as sock:
+        await self._close_aiohttp_client_session()
+        if self.transport:
+            self.transport.close()
+        if self.storage:
+            await self.storage.close()
+        with self.kill_worker_socket as sock:
+            try:
                 sock.send(b"stop_signal")
+            except zmq.error.ZMQError as zmq_error:
+                # We silence the error if this socket is already closed. But other cases we want
+                # to know about them and maybe fix them or add them to this list.
+                if str(zmq_error) != "not a socket":
+                    raise
 
-            await asyncio.sleep(1)
+        await asyncio.sleep(1)
 
-            for p in self.processes:
-                p.terminate()
-                p.join()
+        for p in self.processes:
+            p.terminate()
+            p.join()
 
-            if self.ipc_sock_client is not None:
-                self.ipc_sock_client.stop()  # stops server
-                time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
-                self.ipc_sock_client.close()  # closes client channel
+        if self.ipc_sock_client is not None:
+            self.ipc_sock_client.stop()  # stops server
+            time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
+            self.ipc_sock_client.close()  # closes client channel
 
-            if self.ipc_sock_server is not None:
-                self.ipc_sock_server.shutdown()
+        if self.ipc_sock_server is not None:
+            self.ipc_sock_server.shutdown()
 
-            if self.lmdb is not None:
-                self.lmdb.close()
+        if self.lmdb is not None:
+            self.lmdb.close()
 
-            for task in self.tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        for task in self.tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
-            # There are leaked references to this who knows where. Close it last.
+        # Traceback (most recent call last):
+        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\run_conduit_index.py",
+        #       line 91, in main
+        #     await controller.stop()
+        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\conduit_index\controller.py",
+        #       line 241, in stop
+        #     self.shm_buffer.close()
+        #   File "C:\Users\R\AppData\Local\Programs\Python\Python310\lib\multiprocessing\"
+        #       "shared_memory.py", line 227, in close
+        #     self._mmap.close()
+        # BufferError: cannot close exported pointers exist
+        try:
             self.shm_buffer.close()
             self.shm_buffer.unlink()
-        except Exception:
-            # The logging for these does not work. It is discarded due to the log server
-            # shutting down before it gets written out one would assume.
-            print("Caught exceptions in Controller.stop")
-            import traceback
-            traceback.print_exc()
-            # self.logger.exception("Suppressing raised exceptions on cleanup")
+        except BufferError:
+            self.logger.error("Unable to clean up shared memory, exported points still exist")
 
     def get_peer(self) -> Peer:
         return self.peers[0]
