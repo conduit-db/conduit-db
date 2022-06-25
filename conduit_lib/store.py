@@ -111,24 +111,19 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
         if os.path.exists(lmdb_path):
             shutil.rmtree(lmdb_path, onerror=remove_readonly)
 
-        LMDB_DATABASE_DIR_DEFAULT = Path(MODULE_DIR).parent.parent / 'lmdb_data'
-        LMDB_DATABASE_DIR: str = os.environ.get("LMDB_DATABASE_DIR",
-            str(LMDB_DATABASE_DIR_DEFAULT))
+        LMDB_DATABASE_DIR: str = os.environ["LMDB_DATABASE_DIR"]
         if os.path.exists(LMDB_DATABASE_DIR):
             shutil.rmtree(LMDB_DATABASE_DIR, onerror=remove_readonly)
 
-        RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent / 'raw_blocks'
-        RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
+        RAW_BLOCKS_DIR = os.environ["RAW_BLOCKS_DIR"]
         if os.path.exists(RAW_BLOCKS_DIR):
             shutil.rmtree(RAW_BLOCKS_DIR, onerror=remove_readonly)
 
-        MERKLE_TREES_DIR_DEFAULT = Path(MODULE_DIR).parent / 'merkle_trees'
-        MERKLE_TREES_DIR = os.environ.get("MERKLE_TREES_DIR", str(MERKLE_TREES_DIR_DEFAULT))
+        MERKLE_TREES_DIR = os.environ["MERKLE_TREES_DIR"]
         if os.path.exists(MERKLE_TREES_DIR):
             shutil.rmtree(MERKLE_TREES_DIR, onerror=remove_readonly)
 
-        TX_OFFSETS_DIR_DEFAULT = Path(MODULE_DIR).parent / 'tx_offsets'
-        TX_OFFSETS_DIR = os.environ.get("TX_OFFSETS_DIR", str(TX_OFFSETS_DIR_DEFAULT))
+        TX_OFFSETS_DIR = os.environ["TX_OFFSETS_DIR"]
         if os.path.exists(TX_OFFSETS_DIR):
             shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
 

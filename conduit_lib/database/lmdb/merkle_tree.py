@@ -40,13 +40,13 @@ class LmdbMerkleTree:
     logger = logging.getLogger("lmdb-merkle-tree")
     logger.setLevel(PROFILING)
     MTREE_DB = b"mtree_db"
-    MERKLE_TREES_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'merkle_trees'
-    MERKLE_TREES_DIR = os.environ.get("MERKLE_TREES_DIR", str(MERKLE_TREES_DIR_DEFAULT))
 
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
-        self.ffdb = FlatFileDb(Path(self.MERKLE_TREES_DIR),
-            Path(os.environ['MERKLE_TREES_LOCKFILE']))
+
+        merkle_trees_dir = Path(os.environ["MERKLE_TREES_DIR"])
+        merkle_trees_lockfile = Path(os.environ['MERKLE_TREES_LOCKFILE'])
+        self.ffdb = FlatFileDb(merkle_trees_dir, merkle_trees_lockfile)
         self.mtree_db = self.db.env.open_db(self.MTREE_DB)
 
     def _pack_mtree_to_array(self, mtree: MerkleTree) -> bytes:

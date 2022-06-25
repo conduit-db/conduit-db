@@ -1,5 +1,6 @@
 import array
 import multiprocessing
+import socket
 import typing
 from asyncio import BaseTransport, BaseProtocol
 from io import BytesIO
@@ -655,6 +656,8 @@ class Controller(ControllerBase):
                     return is_reorg, start_header, stop_header, old_hashes, new_hashes
                 else:
                     continue
+            except socket.timeout:
+                time.sleep(0.2)
             except Exception:
                 self.logger.exception("unexpected exception in long_poll_conduit_raw_chain_tip")
                 time.sleep(0.2)

@@ -40,10 +40,7 @@ class MySQLBulkLoads:
         self.total_db_time = 0.
         self.total_rows_flushed_since_startup = 0  # for current controller
         self.newline_symbol = r"'\r\n'" if sys.platform == 'win32' else r"'\n'"
-
-        TEMP_FILES_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / "temp_files" / \
-                  (str(uuid.uuid4()) + ".csv")
-        self.TEMP_FILES_DIR = Path(os.getenv("TEMP_FILES_DIR", TEMP_FILES_DIR_DEFAULT))
+        self.TEMP_FILES_DIR = Path(os.environ["TEMP_FILES_DIR"])
 
     def set_local_infile_on(self) -> None:
         extra_settings = f"SET @@GLOBAL.local_infile = 1;"

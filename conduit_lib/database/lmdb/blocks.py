@@ -8,6 +8,7 @@ from pathlib import Path
 
 import bitcoinx
 import cbor2
+from bitcoinx import hash_to_hex_str
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
@@ -25,17 +26,19 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class LmdbBlocks:
 
-    logger = logging.getLogger("lmdb-tx-offsets")
+    logger = logging.getLogger("lmdb-blocks")
     logger.setLevel(PROFILING)
     BLOCKS_DB = b"blocks_db"
     BLOCK_NUMS_DB = b"block_nums_db"
     BLOCK_METADATA_DB = b"block_metadata_db"
-    RAW_BLOCKS_DIR_DEFAULT = Path(MODULE_DIR).parent.parent.parent / 'raw_blocks'
-    RAW_BLOCKS_DIR = os.environ.get("RAW_BLOCKS_DIR", str(RAW_BLOCKS_DIR_DEFAULT))
 
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
-        self.ffdb = FlatFileDb(Path(self.RAW_BLOCKS_DIR), Path(os.environ['RAW_BLOCKS_LOCKFILE']))
+
+        raw_blocks_dir = Path(os.environ["RAW_BLOCKS_DIR"])
+        raw_blocks_lockfile = Path(os.environ['RAW_BLOCKS_LOCKFILE'])
+
+        self.ffdb = FlatFileDb(raw_blocks_dir, raw_blocks_lockfile)
         self.blocks_db = self.db.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.db.env.open_db(self.BLOCK_NUMS_DB)
         self.block_metadata_db = self.db.env.open_db(self.BLOCK_METADATA_DB)
@@ -107,8 +110,8 @@ class LmdbBlocks:
                         cursor_blocks.put(block_num_bytes, cbor2.dumps(data_location),
                             append=True, overwrite=False)
                         cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
-                        cursor_block_metadata.put(blk_hash,
-                            len_block_bytes + tx_count_bytes)
+                        cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
+
         except Exception as e:
             self.logger.exception(e)
 
@@ -116,7 +119,7 @@ class LmdbBlocks:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         assert self.db.env is not None
-        with self.db.env.begin(db=self.block_metadata_db, write=False, buffers=True) as txn:
+        with self.db.env.begin(db=self.block_metadata_db, write=False, buffers=False) as txn:
             val = txn.get(block_hash)
             if val:
                 # Note: This can return zero - which is a "falsey" type value. Take care

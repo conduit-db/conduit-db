@@ -201,6 +201,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     self.server.lmdb.get_block_metadata(block_hash))
                 block_metadata_batch.append(block_metadata)
 
+                assert block_metadata is not None, "block_metadata is None"
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
                 block_metadata_batch=block_metadata_batch)
             self.send_msg(msg_resp.to_cbor())
@@ -277,6 +278,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             block_headers_lock: threading.RLock) -> None:
         super(ThreadedTCPServer, self).__init__(addr, handler)
 
+        logger.debug(f"ThreadedTCPServer LMDB_Database storage_path={storage_path}")
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
