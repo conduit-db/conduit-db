@@ -155,7 +155,7 @@ class Controller(ControllerBase):
 
         context6 = AsyncZMQContext.instance()
         self.tx_parse_ack_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)  # type: ignore
-        self.tx_parse_ack_socket.bind("tcp://127.0.0.1:53213")  # type: ignore
+        self.tx_parse_ack_socket.bind("tcp://127.0.0.1:54214")  # type: ignore
 
         # Batch Completion
         self.tx_parser_completion_queue: asyncio.Queue[Set[bytes]] = asyncio.Queue()
