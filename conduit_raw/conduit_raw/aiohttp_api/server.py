@@ -9,6 +9,7 @@ import asyncio
 from pathlib import Path
 import os
 import logging
+import threading
 from typing import AsyncIterator
 from zmq.asyncio import Context as AsyncZMQContext
 
@@ -16,6 +17,7 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
+from .server_websocket import ReferenceServerConnection, ReferenceServerWebSocket
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +46,10 @@ class ApplicationState(object):
         self.reorg_event_socket.bind("tcp://127.0.0.1:51495")  # type: ignore
 
         self.executor = ThreadPoolExecutor(max_workers=1)
+
+        self._reference_server_connections = dict[str, ReferenceServerConnection]()
+        self._reference_server_connections_lock: threading.RLock = threading.RLock()
+        self._reference_server_connection_established_event = asyncio.Event()
 
     async def mysql_connect(self) -> None:
         self.logger.debug(f"Refreshing mysql connection")
@@ -82,6 +88,19 @@ class ApplicationState(object):
                               f"start_hash: {bitcoinx.hash_to_hex_str(start_hash)}, "
                               f"stop_hash: {bitcoinx.hash_to_hex_str(stop_hash)}")
 
+    def register_reference_server_connection(self, connection: ReferenceServerConnection) -> None:
+        with self._reference_server_connections_lock:
+            self._reference_server_connections[connection.websocket_id] = connection
+
+        # The reference server is reconnected pre-emptively allow immediate redelivery.
+        self._reference_server_connection_established_event.set()
+        self._reference_server_connection_established_event.clear()
+
+    def unregister_reference_server_connection(self, websocket_id: str) -> None:
+        with self._reference_server_connections_lock:
+            del self._reference_server_connections[websocket_id]
+
+
 
 async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
     """
@@ -113,6 +132,8 @@ def get_aiohttp_app(lmdb: LMDB_Database) -> web.Application:
     app.add_routes([
         web.get("/", handlers.ping),
         web.get("/error", handlers.error),
+
+        web.view("/ws", ReferenceServerWebSocket),
         web.post("/api/v1/restoration/search", handlers.get_pushdata_filter_matches),
         web.get("/api/v1/transaction/{txid}", handlers.get_transaction),
         web.get("/api/v1/merkle-proof/{txid}", handlers.get_tsc_merkle_proof),
