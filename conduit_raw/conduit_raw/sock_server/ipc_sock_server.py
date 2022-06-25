@@ -53,9 +53,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return None
                 data.extend(packet)
             return data
-        # except ConnectionResetError:
-        #     # This path happens when the remote connection is disconnected or disconnects.
-        #     return None
+        except ConnectionResetError:
+            # This path happens when the remote connection is disconnected or disconnects.
+            return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
             return None
