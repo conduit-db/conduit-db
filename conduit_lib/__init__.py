@@ -14,5 +14,5 @@ from .logging_client import setup_tcp_logging
 from .networks import NetworkConfig, Peer
 from .bitcoin_net_io import BitcoinNetIO
 from .store import Storage, setup_storage
-from .utils import cast_to_valid_ipv4
+from .startup_utils import cast_to_valid_ipv4
 from .wait_for_dependencies import wait_for_node

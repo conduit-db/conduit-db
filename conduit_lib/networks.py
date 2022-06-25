@@ -6,7 +6,7 @@ from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet
 from typing import Optional, List, cast
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
-from .utils import cast_to_valid_ipv4
+from .startup_utils import cast_to_valid_ipv4
 from bitcoinx.chain import Chain
 from bitcoinx.networks import Header
 from typing import Tuple

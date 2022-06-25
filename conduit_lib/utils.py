@@ -30,20 +30,6 @@ logger = logging.getLogger("conduit-lib-utils")
 logger.setLevel(logging.DEBUG)
 
 
-def cast_to_valid_ipv4(ipv4: str) -> str:
-    try:
-        ipaddress.ip_address(ipv4)
-        return ipv4
-    except ValueError:
-        # Need to resolve dns name to get ipv4
-        try:
-            ipv4 = socket.gethostbyname(ipv4)
-        except socket.gaierror:
-            logger.error(f"Failed to resolve ip address for hostname: {ipv4}")
-            time.sleep(0.2)
-        return ipv4
-
-
 def is_docker() -> bool:
     path = '/proc/self/cgroup'
     return (
@@ -300,22 +286,6 @@ def connect_headers_reorg_safe(message: bytes, headers_store: Headers,
         return is_reorg, start_header, stop_header, old_chain, new_chain
 
 
-def load_dotenv(dotenv_path: Path) -> None:
-    with open(dotenv_path, 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            if line.startswith("#") or line.strip() == '':
-                continue
-
-            # Split line on "=" symbol but need to take care of base64 encoded string values.
-            split_line = line.strip().split("=")
-            key = split_line[0]
-            val = split_line[1] + "".join(["=" + part for part in split_line[2:]])
-            # Does not override pre-existing environment variables
-            if not os.environ.get(key):
-                os.environ[key] = val
-
-
 class InvalidNetworkException(Exception):
     pass
 
@@ -328,17 +298,6 @@ def get_network_type() -> str:
                 raise InvalidNetworkException(f"Network not found: must be one of: {nets}")
             return val.lower()
     raise ValueError("There is no 'NETWORK' key in os.environ")
-
-
-def resolve_hosts_and_update_env_vars() -> None:
-    for key in os.environ:
-        if key in {"MYSQL_HOST", "NODE_HOST", "CONDUIT_RAW_API_HOST"}:
-            logger.debug(f"Checking environment variable: {key}")
-            logger.debug(f"os.environ[key] before: {os.environ[key]}")
-            # Resolve the IP address (particularly important for docker container names)
-            host = cast_to_valid_ipv4(os.environ[key].split(":")[0])
-            os.environ[key] = host
-            logger.debug(f"os.environ[key] after: {os.environ[key]}")
 
 
 def zmq_send_no_block(sock: zmq.Socket, msg: bytes, on_blocked_msg: str) -> None:

@@ -61,10 +61,15 @@ steps:
 
 - script: |
     pytest tests --verbose
-    pytest tests_functional --verbose
   timeoutInMinutes: 10
   continueOnError: false
   displayName: 'Pytest'
+
+- script: |
+    pytest tests_functional --verbose
+  timeoutInMinutes: 10
+  continueOnError: false
+  displayName: 'Pytest Functional'
 
 - script: |
     docker-compose -f docker-compose.yml down
