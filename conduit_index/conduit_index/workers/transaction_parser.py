@@ -117,7 +117,7 @@ class TxParser(multiprocessing.Process):
         context6 = zmq.Context()  # type: ignore
         self.tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PUSH)  # type: ignore
         self.tx_parse_ack_socket.setsockopt(zmq.SNDHWM, 10000)
-        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:53213")  # type: ignore
+        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:54214")  # type: ignore
 
         # Todo - these should all be local to the thread's state only - not global to
         #  avoid race... Need to refactor to class-based thread module. For now it will
