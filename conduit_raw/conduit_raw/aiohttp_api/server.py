@@ -1,20 +1,21 @@
-from concurrent.futures import ThreadPoolExecutor
-
 import aiohttp
-import bitcoinx
-import cbor2
-import zmq
 from aiohttp import web
 import asyncio
+import bitcoinx
+import cbor2
+from concurrent.futures import ThreadPoolExecutor
+import logging
 from pathlib import Path
 import os
-import logging
 import threading
 from typing import AsyncIterator
+import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
+from conduit_lib.utils import create_task
+
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
 from .server_websocket import ReferenceServerConnection, ReferenceServerWebSocket
@@ -67,8 +68,8 @@ class ApplicationState(object):
         pass
 
     def start_tasks(self) -> None:
-        asyncio.create_task(self.listen_for_reorg_event_job())
-        asyncio.create_task(self.refresh_mysql_connection_task())
+        create_task(self.listen_for_reorg_event_job())
+        create_task(self.refresh_mysql_connection_task())
 
     async def listen_for_reorg_event_job(self) -> None:
         """This may not actually be needed for the most part because db entries are immutable.

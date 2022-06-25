@@ -24,7 +24,7 @@ from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.types import HeaderSpan, MultiprocessingQueue
-from conduit_lib.utils import get_conduit_raw_host_and_port, get_header_for_hash, \
+from conduit_lib.utils import create_task, get_conduit_raw_host_and_port, get_header_for_hash, \
     get_header_for_height
 from conduit_lib.wait_for_dependencies import wait_for_mysql
 
@@ -167,10 +167,10 @@ class Controller(ControllerBase):
             deserializer=self.deserializer)
         wait_for_mysql()
         await self.connect_session()  # on_connection_made callback -> starts jobs
-        init_handshake = asyncio.create_task(self.send_version(self.peer.host, self.peer.port,
+        init_handshake = create_task(self.send_version(self.peer.host, self.peer.port,
             self.host, self.port))
         self.tasks.append(init_handshake)
-        wait_until_conn_lost = asyncio.create_task(self.con_lost_event.wait())
+        wait_until_conn_lost = create_task(self.con_lost_event.wait())
         self.tasks.append(wait_until_conn_lost)
         await asyncio.gather(init_handshake, wait_until_conn_lost)
 
@@ -245,7 +245,7 @@ class Controller(ControllerBase):
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self) -> None:
-        self.tasks.append(asyncio.create_task(self.start_jobs()))
+        self.tasks.append(create_task(self.start_jobs()))
 
     def on_connection_lost(self) -> None:
         self.con_lost_event.set()
@@ -317,15 +317,15 @@ class Controller(ControllerBase):
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
         for i in range(4):
-            self.tasks.append(asyncio.create_task(self.handle()))
+            self.tasks.append(create_task(self.handle()))
 
     async def spawn_sync_headers_task(self) -> None:
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self.tasks.append(asyncio.create_task(self.sync_headers_job()))
+        self.tasks.append(create_task(self.sync_headers_job()))
 
     async def spawn_initial_block_download(self) -> None:
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
+        self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     def ipc_sock_server_thread(self) -> None:
         assert self.lmdb is not None
@@ -368,30 +368,26 @@ class Controller(ControllerBase):
                 height -= 1
 
     async def start_jobs(self) -> None:
-        try:
-            self.database_integrity_check()
-            thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
-            thread.start()
-            await self.spawn_aiohttp_api()
-            await self.spawn_handler_tasks()
-            await self.handshake_complete_event.wait()
+        self.database_integrity_check()
+        thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
+        thread.start()
+        await self.spawn_aiohttp_api()
+        await self.spawn_handler_tasks()
+        await self.handshake_complete_event.wait()
 
-            self.start_workers()
+        self.start_workers()
 
-            # In regtest old block timestamps (submitted to node) will not take the node out of IBD
-            # This works around it by polling the node's RPC. This is never needed in prod.
-            if self.net_config.NET == REGTEST:
-                await self.spawn_poll_node_for_header_job()
+        # In regtest old block timestamps (submitted to node) will not take the node out of IBD
+        # This works around it by polling the node's RPC. This is never needed in prod.
+        if self.net_config.NET == REGTEST:
+            await self.spawn_poll_node_for_header_job()
 
-            await self.spawn_sync_headers_task()
-            await self.sync_state.headers_event_initial_sync.wait()  # one-off
-            await self.spawn_initial_block_download()
-            await self.spawn_lagging_batch_monitor()
-            # await self.sync_state.initial_block_download_event.wait()
-            # await self.request_mempool()
-        except Exception as e:
-            self.logger.exception(e)
-            raise
+        await self.spawn_sync_headers_task()
+        await self.sync_state.headers_event_initial_sync.wait()  # one-off
+        await self.spawn_initial_block_download()
+        await self.spawn_lagging_batch_monitor()
+        # await self.sync_state.initial_block_download_event.wait()
+        # await self.request_mempool()
 
     # async def request_mempool(self):
     #     # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
@@ -692,7 +688,7 @@ class Controller(ControllerBase):
                     last_check = time.time()
 
     async def spawn_lagging_batch_monitor(self) -> None:
-        self.tasks.append(asyncio.create_task(self.lagging_batch_monitor()))
+        self.tasks.append(create_task(self.lagging_batch_monitor()))
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \
@@ -719,7 +715,7 @@ class Controller(ControllerBase):
 
     async def spawn_aiohttp_api(self) -> None:
         assert self.lmdb is not None
-        self.tasks.append(asyncio.create_task(server_main.main(self.lmdb)))
+        self.tasks.append(create_task(server_main.main(self.lmdb)))
 
     async def spawn_poll_node_for_header_job(self) -> None:
-        self.tasks.append(asyncio.create_task(self.regtest_support.regtest_poll_node_for_tip_job()))
+        self.tasks.append(create_task(self.regtest_support.regtest_poll_node_for_tip_job()))

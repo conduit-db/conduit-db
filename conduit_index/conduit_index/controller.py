@@ -15,7 +15,7 @@ import logging
 import os
 import struct
 import time
-from typing import Optional, Dict, List, Tuple, Set, Any, Union, cast
+from typing import Coroutine, Optional, Dict, List, Tuple, Set, Any, TypeVar, Union, cast
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 import zmq
@@ -38,8 +38,8 @@ from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_L
     CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
-from conduit_lib.utils import connect_headers, headers_to_p2p_struct, get_header_for_height, \
-    connect_headers_reorg_safe, get_header_for_hash
+from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
+    get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
     wait_for_node
 
@@ -178,7 +178,7 @@ class Controller(ControllerBase):
     async def run(self) -> None:
         self.running = True
         self.setup()
-        self.tasks.append(asyncio.create_task(self.start_jobs()))
+        self.tasks.append(create_task(self.start_jobs()))
         while True:
             await asyncio.sleep(5)
 
@@ -226,11 +226,12 @@ class Controller(ControllerBase):
         self.is_ibd_socket.close()
 
         for task in self.tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         # Traceback (most recent call last):
         #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\run_conduit_index.py",
@@ -311,7 +312,7 @@ class Controller(ControllerBase):
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
         another handler, progress will continue to be made."""
         for i in range(4):
-            self.tasks.append(asyncio.create_task(self.handle()))
+            self.tasks.append(create_task(self.handle()))
 
     async def send_request(self, command_name: str, message: bytes) -> None:
         self.bitcoin_net_io.send_message(message)
@@ -328,7 +329,7 @@ class Controller(ControllerBase):
 
     async def spawn_sync_all_blocks_job(self) -> None:
         """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self.tasks.append(asyncio.create_task(self.sync_all_blocks_job()))
+        self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     async def maybe_do_db_repair(self) -> None:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
@@ -433,21 +434,17 @@ class Controller(ControllerBase):
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def start_jobs(self) -> None:
-        try:
-            self.mysql_db = self.storage.mysql_database
-            await self.spawn_handler_tasks()
-            await self.spawn_wait_for_mined_tx_acks_task()
-            self.start_workers()
-            await self.spawn_batch_completion_job()
-            await self.maybe_do_db_repair()
-            await self.spawn_lagging_batch_monitor()
-            await self.spawn_sync_all_blocks_job()
-        except Exception as e:
-            self.logger.exception("unexpected exception in start jobs")
-            raise
+        self.mysql_db = self.storage.mysql_database
+        await self.spawn_handler_tasks()
+        await self.spawn_wait_for_mined_tx_acks_task()
+        self.start_workers()
+        await self.spawn_batch_completion_job()
+        await self.maybe_do_db_repair()
+        await self.spawn_lagging_batch_monitor()
+        await self.spawn_sync_all_blocks_job()
 
     async def spawn_batch_completion_job(self) -> None:
-        asyncio.create_task(self.batch_completion_job())
+        create_task(self.batch_completion_job())
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
         return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
@@ -469,7 +466,7 @@ class Controller(ControllerBase):
         return True
 
     async def spawn_wait_for_mined_tx_acks_task(self) -> None:
-        asyncio.create_task(self.wait_for_mined_tx_acks_task())
+        create_task(self.wait_for_mined_tx_acks_task())
 
     async def wait_for_mined_tx_acks_task(self) -> None:
         while True:
@@ -541,7 +538,7 @@ class Controller(ControllerBase):
         unsorted_headers = [self.storage.get_header_for_hash(h) for h in blocks_batch_set]
 
         def get_height(header: Header) -> int:
-            return typing.cast(int, header.height)
+            return cast(int, header.height)
 
         sorted_headers = sorted(unsorted_headers, key=get_height)
         sorted_heights = [h.height for h in sorted_headers]
@@ -605,7 +602,7 @@ class Controller(ControllerBase):
                 f"Activating mempool tx processing...")
             await self.is_ibd_socket.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
-            asyncio.create_task(self.maintain_node_connection())
+            create_task(self.maintain_node_connection())
             await self.handshake_complete_event.wait()
             await self.request_mempool()
 
@@ -883,8 +880,8 @@ class Controller(ControllerBase):
                 await self.wait_for_batch_completion(all_pending_block_hashes)
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
-            except Exception as e:
-                self.logger.exception(e)
+            except Exception:
+                self.logger.exception("Exception in batch_completion_job")
 
     def _invalidate_mempool_rows(self, best_flushed_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction
@@ -923,4 +920,4 @@ class Controller(ControllerBase):
                     last_check = time.time()
 
     async def spawn_lagging_batch_monitor(self) -> None:
-        self.tasks.append(asyncio.create_task(self.lagging_batch_monitor()))
+        self.tasks.append(create_task(self.lagging_batch_monitor()))

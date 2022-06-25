@@ -54,11 +54,13 @@ elif sys.platform == 'linux':
         pass
 
 
-
-def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) -> None:
+def loop_exception_handler(_loop: AbstractEventLoop, context: dict[str, Any]) -> None:
     logger = logging.getLogger("loop-exception-handler")
-    logger.debug("Exception handler called")
-    logger.debug(context)
+    exception = context.get("exception")
+    if exception is not None:
+        logger.exception("Exception raised in asyncio loop", exc_info=exception)
+    else:
+        logger.error("Error in asyncio loop without exception, message: %s", context["message"])
 
 
 async def main() -> None:

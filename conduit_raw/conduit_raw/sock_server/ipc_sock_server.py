@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import os
 import threading
@@ -41,7 +42,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     This provides type safety without bringing in a heavy-weight dependency like protobufs.
     """
 
-    server: 'ThreadedTCPServer'
+    server: ThreadedTCPServer
+    request: socket.socket
 
     def recvall(self, n: int) -> Optional[bytearray]:
         try:
@@ -55,7 +57,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return data
         except (ConnectionResetError, OSError):
             # This path happens when the remote connection is disconnected or disconnects.
-            # OSError: [WinError 10038] An operation was attempted on something that is not a socket
+            # > OSError: [WinError 10038] An operation was attempted on something that is not a
+            # >   socket
             return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
@@ -80,6 +83,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             msg = struct_be_Q.pack(len(msg)) + msg
             self.request.sendall(msg)
             return True
+        except (OSError, ConnectionAbortedError):
+            # This path happens when the remote connection is disconnected or disconnects.
+            # > OSError: [WinError 10038] An operation was attempted on something that is not a
+            #     socket
+            # > ConnectionAbortedError: [WinError 10053] An established connection was aborted by
+            # >   the software in your host machine"
+            return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.send_msg")
             return None

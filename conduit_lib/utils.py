@@ -1,3 +1,4 @@
+import asyncio
 import io
 import ipaddress
 import logging
@@ -7,7 +8,7 @@ import socket
 import struct
 import threading
 import time
-from typing import Tuple, Optional, cast, Callable, List
+from typing import Any, cast, Callable, Coroutine, List, Optional, TypeVar, Tuple
 
 import bitcoinx
 import zmq
@@ -355,3 +356,20 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
 
 def get_headers_dir_conduit_index() -> Path:
     return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
+
+
+T1 = TypeVar("T1")
+
+
+def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
+    if future.cancelled():
+        return
+    future.result()
+
+
+def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
+    task = asyncio.create_task(coro)
+    # Futures catch all exceptions that are raised and store them. A task is a future. By adding
+    # this callback we reraise any encountered exception in the callback and ensure it is visible.
+    task.add_done_callback(asyncio_future_callback)
+    return task
