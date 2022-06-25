@@ -25,7 +25,7 @@ doing a docker compose stop or down will reuse existing state. If a user wants t
 they should take everything down and then prune (Docker speak for delete) all volumes.
 
     docker volume prune
-    
+
 See `contrib/rebuild-and-run.bat` or `contrib/rebuild-and-run.sh`
 for scripts to do a fresh rebuild of all components. This should be
 run before running the functional tests
@@ -41,13 +41,19 @@ Windows cmd.exe:
     cd conduit-db
     set PYTHONPATH=.
 
+This is optional if .env using H: drive letter for the data storage paths, this only needs to be
+done once to setup.
+
+    mkdir localdata
+    subst H: .\localdata
+
 Now install packages and run ConduitRaw (in one terminal)
-    
+
     py -m pip install -r .\conduit_raw\requirements.txt
     py .\conduit_raw\run_conduit_raw.py
 
 And ConduitIndex (in another terminal)
-    
+
     py -m pip install -r .\conduit_index\requirements.txt
     py .\conduit_index\run_conduit_index.py
 
@@ -60,12 +66,12 @@ Bash terminal:
     export PYTHONPATH=.
 
 Now install packages and run ConduitRaw (in one terminal)
-    
+
     python3 -m pip install -r ./conduit_raw/requirements.txt
     python3 ./conduit_raw/conduit_server.py
 
 And ConduitIndex (in another terminal)
-    
+
     python3 -m pip install -r ./conduit_index/requirements.txt
     python3 ./conduit_index/conduit_server.py
 
