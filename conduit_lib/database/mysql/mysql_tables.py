@@ -268,9 +268,8 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
-                    mined_tx_hash BINARY(32),
-                    blk_num BIGINT,
-                    INDEX USING HASH (mined_tx_hash)
+                    mined_tx_hash BINARY(32) PRIMARY KEY,
+                    blk_num BIGINT
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)
         finally:
@@ -280,8 +279,7 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mempool_removals (
-                    tx_hash BINARY({HashXLength}),
-                    INDEX USING HASH (tx_hash)
+                    tx_hash BINARY({HashXLength}) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)
         finally:
@@ -291,9 +289,8 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS temp_mempool_additions (
-                    tx_hash BINARY({HashXLength}),
-                    tx_timestamp TIMESTAMP,
-                    INDEX USING HASH (tx_hash)
+                    tx_hash BINARY({HashXLength}) PRIMARY KEY,
+                    tx_timestamp TIMESTAMP
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)
         finally:
@@ -313,8 +310,7 @@ class MySQLTables:
         try:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                    inbound_tx_hashes BINARY(32),
-                    INDEX USING HASH (inbound_tx_hashes)
+                    inbound_tx_hashes BINARY(32) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """)
         finally:
