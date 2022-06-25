@@ -42,6 +42,8 @@ class ApplicationState(object):
         self.mysql_db = load_mysql_database()
         self.lmdb = lmdb
 
+        self._exit_event = asyncio.Event()
+
         context6 = AsyncZMQContext.instance()
         self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)  # type: ignore
         self.reorg_event_socket.bind("tcp://127.0.0.1:51495")  # type: ignore
@@ -71,6 +73,9 @@ class ApplicationState(object):
         create_task(self.listen_for_reorg_event_job())
         create_task(self.refresh_mysql_connection_task())
 
+    async def wait_for_exit_async(self) -> None:
+        await self._exit_event.wait()
+
     async def listen_for_reorg_event_job(self) -> None:
         """This may not actually be needed for the most part because db entries are immutable.
         In theory this should only be relevant for queries that touch the mempool because
@@ -81,7 +86,7 @@ class ApplicationState(object):
         parallel without corrupting the APIs responses.
         """
 
-        while self.app.is_alive:  # type: ignore
+        while not self._exit_event.is_set():
             cbor_msg = await self.reorg_event_socket.recv()  # type: ignore
             reorg_handling_complete, start_hash, stop_hash = cbor2.loads(cbor_msg)
             self.logger.debug(f"Reorg event received. "
@@ -120,7 +125,7 @@ async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['client_session'].close()
 
 
-def get_aiohttp_app(lmdb: LMDB_Database) -> web.Application:
+def get_aiohttp_app(lmdb: LMDB_Database) -> tuple[web.Application, ApplicationState]:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)
@@ -139,10 +144,10 @@ def get_aiohttp_app(lmdb: LMDB_Database) -> web.Application:
         web.get("/api/v1/transaction/{txid}", handlers.get_transaction),
         web.get("/api/v1/merkle-proof/{txid}", handlers.get_tsc_merkle_proof),
     ])
-    return app
+    return app, app_state
 
 
 if __name__ == "__main__":
     lmdb = LMDB_Database()
-    app = get_aiohttp_app(lmdb)
+    app, app_state = get_aiohttp_app(lmdb)
     web.run_app(app, host=SERVER_HOST, port=SERVER_PORT)

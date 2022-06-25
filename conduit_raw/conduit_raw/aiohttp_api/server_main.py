@@ -42,12 +42,9 @@ class AiohttpServer:
         pass
 
     async def on_shutdown(self, app: web.Application) -> None:
-        self.logger.debug("Cleaning up...")
-        self.app.is_alive = False
-        self.logger.debug("Stopped.")
+        self.logger.debug("Stopped reference server REST API")
 
     async def start(self) -> None:
-        self.app.is_alive = True
         self.logger.debug("Started on http://%s:%s", self.host, self.port)
         self.runner = web.AppRunner(self.app, access_log=None)
         await self.runner.setup()
@@ -55,23 +52,22 @@ class AiohttpServer:
         await site.start()
         self.app_state.start_threads()
         self.app_state.start_tasks()
-        while self.app.is_alive:  # type: ignore
-            await asyncio.sleep(0.5)
 
     async def stop(self) -> None:
+        self.logger.debug("Stopping reference server REST API")
         assert self.runner is not None
         await self.runner.cleanup()
 
 
 async def main(lmdb: LMDB_Database) -> None:
-    app = get_aiohttp_app(lmdb)
+    app, app_state = get_aiohttp_app(lmdb)
     server = AiohttpServer(app)
+    await server.start()
     try:
-        await server.start()
-    except Exception:
-        logger.exception("Unexpected exception in aiohttp server")
+        await app_state.wait_for_exit_async()
     finally:
         await server.stop()
+
 
 if __name__ == "__main__":
     try:
