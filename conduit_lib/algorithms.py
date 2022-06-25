@@ -56,7 +56,7 @@ def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple
         return struct_le_H.unpack_from(buf, offset + 1)[0], offset + 3
     if n == 254:
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
-    return struct_le_Q.unpack_from(buf[offset+1:offset+3].tobytes(), offset + 1)[0], offset + 9
+    return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
 # -------------------- PREPROCESSOR -------------------- #
 
