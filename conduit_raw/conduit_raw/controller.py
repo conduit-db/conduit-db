@@ -86,6 +86,7 @@ class Controller(ControllerBase):
         self.sync_state = SyncState(self.storage, self)
         self.lmdb = self.storage.lmdb
         self.ipc_sock_client: Optional[IPCSocketClient] = None
+        self.ipc_sock_server: Optional[ThreadedTCPServer] = None
         self.general_executor = ThreadPoolExecutor(max_workers=1)
 
         # Connection entry/exit
@@ -204,6 +205,9 @@ class Controller(ControllerBase):
                 self.ipc_sock_client.stop()  # stops server
                 time.sleep(0.5)  # allow time for server to stop (and close lmdb handle)
                 self.ipc_sock_client.close()  # closes client channel
+
+            if self.ipc_sock_server is not None:
+                self.ipc_sock_server.shutdown()
 
             if self.lmdb is not None:
                 self.lmdb.close()
