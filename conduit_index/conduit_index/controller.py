@@ -210,6 +210,8 @@ class Controller(ControllerBase):
     async def stop(self) -> None:
         self.running = False
         try:
+            self.general_executor.shutdown(wait=False, cancel_futures=True)
+
             if self.transport:
                 self.transport.close()
             if self.storage:
