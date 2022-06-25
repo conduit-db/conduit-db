@@ -52,6 +52,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return None
                 data.extend(packet)
             return data
+        except ConnectionResetError:
+            # This path happens when the remote connection is disconnected or disconnects.
+            return None
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
             return None
@@ -221,7 +224,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         try:
             start_height = msg_req.start_height
             batch_size = msg_req.batch_size
-            while True:
+            while self.server.is_running:
                 headers_batch = []
                 for height in range(start_height, start_height + batch_size):
                     try:
@@ -272,6 +275,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    is_running = True
 
     def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
             storage_path: Path, block_headers: bitcoinx.Headers,
@@ -282,6 +286,10 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.lmdb = LMDB_Database(storage_path=str(storage_path))
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
+
+    def shutdown(self) -> None:
+        self.is_running = False
+        super().shutdown()
 
 
 if __name__ == "__main__":
