@@ -6,7 +6,7 @@ import mmap
 import sys
 import threading
 from pathlib import Path
-from typing import Optional, Union, Callable
+from typing import Callable
 
 import bitcoinx
 from bitcoinx import Headers
@@ -26,7 +26,7 @@ class Storage:
     """High-level Interface to database (postgres at present)"""
 
     def __init__(self, headers: Headers, block_headers: Headers,
-            mysql_database: Optional[MySQLDatabase], lmdb: Optional[LMDB_Database]) -> None:
+            mysql_database: MySQLDatabase | None, lmdb: LMDB_Database | None) -> None:
         self.mysql_database = mysql_database
         self.headers = headers
         self.headers_lock = threading.RLock()
@@ -46,7 +46,7 @@ class Storage:
             return header
 
 
-def setup_headers_store(net_config: NetworkConfig, mmap_filename: Union[str, Path]) -> bitcoinx.Headers:
+def setup_headers_store(net_config: NetworkConfig, mmap_filename: str | Path) -> bitcoinx.Headers:
     bitcoinx_chain_logger = logging.getLogger('chain')
     bitcoinx_chain_logger.setLevel(logging.WARNING)
 
@@ -101,7 +101,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
 
     if os.environ['SERVER_TYPE'] == "ConduitRaw":
         def remove_readonly(func: Callable[[Path], None], path: Path,
-                excinfo: Optional[BaseException]) -> None:
+                excinfo: BaseException | None) -> None:
             lmdb_db = LMDB_Database()
             lmdb_db.close()
             os.chmod(path, stat.S_IWRITE)

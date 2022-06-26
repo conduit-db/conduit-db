@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 import typing
-from typing import Optional, Set, Tuple, cast, Union
+from typing import cast
 
 import bitcoinx
 
@@ -29,30 +29,30 @@ class SyncState:
         self.storage = storage
         self.controller = controller
 
-        self.headers_msg_processed_queue: asyncio.Queue[Tuple[bool, Header, Header]] = asyncio.Queue()
+        self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
         self.headers_new_tip_queue: asyncio.Queue[Inv] = asyncio.Queue()
         self.headers_event_initial_sync: asyncio.Event = asyncio.Event()
         self.blocks_event_new_tip: asyncio.Event = asyncio.Event()
-        self.target_header_height: Optional[int] = None
-        self.target_block_header_height: Optional[int] = None
+        self.target_header_height: int | None = None
+        self.target_block_header_height: int | None = None
         self.local_tip_height: int = self.update_local_tip_height()
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[Tuple[bytes, Union[BlockCallback, memoryview]]] = asyncio.Queue()
+        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, BlockCallback | memoryview]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
         self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
-        self.all_pending_block_hashes: Set[bytes] = set()  # usually a set of 500 hashes during IBD
-        self.received_blocks: Set[bytes] = set()  # received in network buffer - must process before buf reset
+        self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
+        self.received_blocks = set[bytes]()  # received in network buffer - must process before buf reset
 
         # Done blocks Sets
-        self.done_blocks_raw: Set[bytes] = set()
-        self.done_blocks_mtree: Set[bytes] = set()
-        self.done_blocks_preproc: Set[bytes] = set()
+        self.done_blocks_raw = set[bytes]()
+        self.done_blocks_mtree = set[bytes]()
+        self.done_blocks_preproc = set[bytes]()
 
         # Done blocks Locks
         self.done_blocks_raw_lock = threading.Lock()
@@ -100,7 +100,7 @@ class SyncState:
             self._msg_received_count = 0
 
     def get_next_batched_blocks(self, from_height: int, to_height: int) \
-            -> Tuple[int, Set[bytes], int]:
+            -> tuple[int, set[bytes], int]:
         """Key Variables
         - stop_header_height
         - all_pending_block_hashes

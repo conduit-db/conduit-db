@@ -8,7 +8,6 @@ from multiprocessing import shared_memory
 
 import cbor2
 import zmq
-from typing import List
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.lmdb.types import MerkleTreeRow
@@ -40,7 +39,7 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
 
     def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
-        batched_merkle_trees: List[MerkleTreeRow] = []
+        batched_merkle_trees: list[MerkleTreeRow] = []
         batched_tx_offsets = []
         batched_acks = []
 

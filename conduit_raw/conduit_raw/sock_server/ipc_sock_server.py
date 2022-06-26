@@ -10,7 +10,7 @@ from pathlib import Path
 import bitcoinx
 import cbor2
 import socketserver
-from typing import Optional, Dict, Any, Callable, cast, Type
+from typing import Any, Callable, cast, Type
 
 from bitcoinx import hash_to_hex_str
 
@@ -45,7 +45,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     server: ThreadedTCPServer
     request: socket.socket
 
-    def recvall(self, n: int) -> Optional[bytearray]:
+    def recvall(self, n: int) -> bytearray | None:
         try:
             # Helper function to recv n bytes or return None if EOF is hit
             data = bytearray()
@@ -64,7 +64,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             logger.exception("Exception in ThreadedTCPRequestHandler.recvall")
             return None
 
-    def recv_msg(self) -> Optional[bytearray]:
+    def recv_msg(self) -> bytearray | None:
         try:
             # Read message length and unpack it into an integer
             raw_msglen = self.recvall(8)
@@ -77,7 +77,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             logger.exception("Exception in ThreadedTCPRequestHandler.recv_msg")
             return None
 
-    def send_msg(self, msg: bytes) -> Optional[bool]:
+    def send_msg(self, msg: bytes) -> bool | None:
         try:
             # Prefix each message with a 8-byte length (network byte order)
             msg = struct_be_Q.pack(len(msg)) + msg
@@ -95,7 +95,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             return None
 
     def handle(self) -> None:
-        command: Optional[str] = None
+        command: str | None = None
         try:
             # This handles a long-lived connection
             while True:
@@ -104,7 +104,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     # logger.debug(f"Client: {self.request.getpeername()} closed connection")
                     return
 
-                msg: Dict[str, Any] = cbor2.loads(data)
+                msg: dict[str, Any] = cbor2.loads(data)
                 command = cast(str, msg['command'])
                 # logger.debug(f"Socket server: command {command} received")
 

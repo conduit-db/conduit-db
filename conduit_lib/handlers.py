@@ -3,7 +3,6 @@ import os
 import typing
 import logging
 import struct
-from typing import Tuple
 
 import bitcoinx
 from bitcoinx import double_sha256, hex_str_to_hash, hash_to_hex_str
@@ -147,7 +146,7 @@ class Handlers:
             await self.controller.mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()
 
-    async def on_block(self, special_message: Tuple[int, int, bytes, int]) -> None:
+    async def on_block(self, special_message: tuple[int, int, bytes, int]) -> None:
         blk_start_pos, blk_end_pos, raw_block_header, tx_count = special_message
         blk_hash = double_sha256(raw_block_header)
         self.controller.sync_state.received_blocks.add(blk_hash)

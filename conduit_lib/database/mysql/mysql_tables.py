@@ -1,8 +1,9 @@
 import logging
+from typing import cast, Sequence
+
 import MySQLdb
 
 from conduit_lib.constants import HashXLength
-from typing import Tuple, cast, Sequence
 
 
 class MySQLTables:
@@ -21,11 +22,11 @@ class MySQLTables:
             """COMMIT;"""
         )
 
-    def get_tables(self) -> Sequence[Tuple[str]]:
+    def get_tables(self) -> Sequence[tuple[str]]:
         try:
             self.mysql_conn.query("""SHOW TABLES""")
             result = self.mysql_conn.store_result()
-            return cast(Sequence[Tuple[str]], result.fetch_row(0))
+            return cast(Sequence[tuple[str]], result.fetch_row(0))
         except Exception as e:
             self.logger.exception("mysql_drop_temp_inputs failed unexpectedly")
             raise
@@ -235,7 +236,7 @@ class MySQLTables:
                     id INT PRIMARY KEY,
                     best_flushed_block_height INT,
                     best_flushed_block_hash BINARY(32),
-                    reorg_was_allocated SMALLINT, 
+                    reorg_was_allocated SMALLINT,
                     first_allocated_block_hash BINARY(32),
                     last_allocated_block_hash BINARY(32),
                     old_hashes_array BLOB,

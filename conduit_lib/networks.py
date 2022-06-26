@@ -1,15 +1,15 @@
 import logging
 from collections import namedtuple
+from typing import cast
 
 from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet, BitcoinRegtest,
     Headers, MissingHeader, Network)
-from typing import Optional, List, cast
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .startup_utils import cast_to_valid_ipv4
 from bitcoinx.chain import Chain
 from bitcoinx.networks import Header
-from typing import Tuple
+
 
 logger = logging.getLogger("networks")
 
@@ -17,7 +17,7 @@ Peer = namedtuple("Peer", ["host", "port"])
 
 
 class HeadersRegTestMod(Headers):  # type: ignore[misc]
-    def connect(self, raw_header: bytes) -> Tuple[Header, Chain]:
+    def connect(self, raw_header: bytes) -> tuple[Header, Chain]:
         """overwrite Headers method to skip checking of difficulty target"""
         header = BitcoinRegtest.deserialized_header(raw_header, -1)
         prev_header, chain = self.lookup(header.prev_hash)
@@ -25,7 +25,7 @@ class HeadersRegTestMod(Headers):  # type: ignore[misc]
         # If the chain tip is the prior header then this header is new.  Otherwise we must check.
         if chain.tip.hash != prev_header.hash:
             try:
-                return cast(Tuple[Header, Chain], self.lookup(header.hash))
+                return cast(tuple[Header, Chain], self.lookup(header.hash))
             except MissingHeader:
                 pass
         header_index = self._storage.append(raw_header)
@@ -43,8 +43,8 @@ class AbstractNetwork:
     MAGIC = 0x00000000
     PORT = 0000
     DNS_SEEDS = [""]
-    BITCOINX_COIN: Optional[Network] = None
-    CHECKPOINT: Optional[CheckPoint] = None
+    BITCOINX_COIN: Network | None = None
+    CHECKPOINT: CheckPoint | None = None
     GENESIS_BLOCK_HASH = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
     GENESIS_ACTIVATION_HEIGHT = 0
 
@@ -169,7 +169,7 @@ class NetworkConfig:
         self.CHECKPOINT: CheckPoint = network.CHECKPOINT
         self.GENESIS_ACTIVATION_HEIGHT = network.GENESIS_ACTIVATION_HEIGHT
 
-        self.peers: List[Peer] = []
+        self.peers: list[Peer] = []
         self.set_peers(network)
 
     def get_default_peers(self, network: AbstractNetwork) -> None:

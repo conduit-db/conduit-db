@@ -1,13 +1,12 @@
+from datetime import datetime
+import logging
 import math
 import os
-import time
-import uuid
-from datetime import datetime
 from pathlib import Path
+import time
 import typing
-from typing import Optional, List, Set, Iterator, Any, cast
-
-import logging
+from typing import Any, cast, Iterator
+import uuid
 
 import MySQLdb
 import bitcoinx
@@ -33,7 +32,7 @@ class MySQLQueries:
         self.bulk_loads = bulk_loads
         self.mysql_db = mysql_db
 
-    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: List[MinedTxHashes]) -> None:
+    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         """columns: tx_hashes, blk_num"""
         self.mysql_tables.mysql_create_temp_mined_tx_hashes_table()
 
@@ -58,7 +57,7 @@ class MySQLQueries:
 
 
     def mysql_get_unprocessed_txs(self, is_reorg: bool, new_tx_hashes: list[tuple[str]],
-            inbound_tx_table_name: str) -> Set[bytes]:
+            inbound_tx_table_name: str) -> set[bytes]:
         """
         Usually if all mempool txs have been processed, this function will only return
         the coinbase tx. If a reorg has occurred it will use the temp_orphaned_txs to avoid
@@ -115,8 +114,8 @@ class MySQLQueries:
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (
-                SELECT mined_tx_hash 
-                FROM temp_mined_tx_hashes 
+                SELECT mined_tx_hash
+                FROM temp_mined_tx_hashes
             );
             """
         # NOTE: It would have been nice to count the rows that were deleted for accounting
@@ -124,7 +123,7 @@ class MySQLQueries:
         self.mysql_conn.query(query)
         self.mysql_conn.commit()
 
-    def mysql_load_temp_mempool_removals(self, removals_from_mempool: Set[bytes]) -> None:
+    def mysql_load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
         self.mysql_tables.mysql_create_temp_mempool_removals_table()
 
@@ -138,7 +137,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_load_temp_mempool_additions(self, additions_to_mempool: Set[bytes]) -> None:
+    def mysql_load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
         self.mysql_tables.mysql_create_temp_mempool_additions_table()
 
         dt = datetime.utcnow()
@@ -152,7 +151,7 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: Set[bytes]) -> None:
+    def mysql_load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
         self.mysql_tables.mysql_create_temp_orphaned_txs_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
@@ -171,8 +170,8 @@ class MySQLQueries:
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mempool_transactions.mp_tx_hash in (
-                SELECT tx_hash 
-                FROM temp_mempool_removals 
+                SELECT tx_hash
+                FROM temp_mempool_removals
             );
             """
         self.mysql_conn.query(query)
@@ -183,7 +182,7 @@ class MySQLQueries:
         self.logger.debug(f"Adding reorg differential to mempool")
         # Note the loading of the temp_mempool_additions is not done here
         query = f"""
-            INSERT INTO mempool_transactions 
+            INSERT INTO mempool_transactions
                 SELECT tx_hash, tx_timestamp
                 FROM temp_mempool_additions;
             """
@@ -197,8 +196,8 @@ class MySQLQueries:
             self.mysql_db.start_transaction()
             query = f"""
                 UPDATE checkpoint_state
-                SET id = 0, 
-                    best_flushed_block_height = {checkpoint_tip.height}, 
+                SET id = 0,
+                    best_flushed_block_height = {checkpoint_tip.height},
                     best_flushed_block_hash = X'{checkpoint_tip.hash.hex()}'
                 WHERE id = 0;
             """
@@ -206,8 +205,8 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_get_checkpoint_state(self) -> Optional[tuple[int, bytes, bool, bytes, bytes, bytes,
-            bytes]]:
+    def mysql_get_checkpoint_state(self) -> tuple[int, bytes, bool, bytes, bytes, bytes,
+            bytes] | None:
         """We 'allocate' work up to a given block hash and then we set the new checkpoint only
         after every block in the batch is successfully flushed"""
         try:
@@ -238,9 +237,9 @@ class MySQLQueries:
         assert isinstance(last_good_block_num, int)
         try:
             query = f"""
-                SELECT tx_hash 
-                FROM confirmed_transactions 
-                WHERE tx_block_num > {last_good_block_num} 
+                SELECT tx_hash
+                FROM confirmed_transactions
+                WHERE tx_block_num > {last_good_block_num}
                 ORDER BY tx_block_num DESC;
                 """
             # self.logger.debug(query)
@@ -254,7 +253,7 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_delete_transaction_rows(self, tx_hash_hexes: List[str]) -> None:
+    def mysql_delete_transaction_rows(self, tx_hash_hexes: list[str]) -> None:
         # Deletion is very slow for large batch sizes
         t0 = time.time()
         BATCH_SIZE = 2000
@@ -282,7 +281,7 @@ class MySQLQueries:
         )
 
     # TODO Double check that rows are indeed overwritten then delete all of this
-    # def mysql_delete_pushdata_rows(self, pushdata_rows: List[PushdataRow]) -> None:
+    # def mysql_delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
     #     t0 = time.time()
     #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
     #     cursor.execute("START TRANSACTION;")
@@ -303,7 +302,7 @@ class MySQLQueries:
     #         f"{len(pushdata_rows)}"
     #     )
     #
-    # def mysql_delete_output_rows(self, output_rows: List[OutputRow]) -> None:
+    # def mysql_delete_output_rows(self, output_rows: list[OutputRow]) -> None:
     #     t0 = time.time()
     #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
     #     cursor.execute("START TRANSACTION;")
@@ -321,7 +320,7 @@ class MySQLQueries:
     #         f"{len(output_rows)}"
     #     )
     #
-    # def mysql_delete_input_rows(self, input_rows: List[InputRow]) -> None:
+    # def mysql_delete_input_rows(self, input_rows: list[InputRow]) -> None:
     #     t0 = time.time()
     #     cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
     #     cursor.execute("START TRANSACTION;")
@@ -356,8 +355,8 @@ class MySQLQueries:
     #     self.logger.log(PROFILING,
     #         f"elapsed time for delete of header row = {t1} seconds")
 
-    def mysql_get_duplicate_tx_hashes(self, tx_rows: List[ConfirmedTransactionRow]) \
-            -> List[ConfirmedTransactionRow]:
+    def mysql_get_duplicate_tx_hashes(self, tx_rows: list[ConfirmedTransactionRow]) \
+            -> list[ConfirmedTransactionRow]:
         try:
             candidate_tx_hashes = [(row[0],) for row in tx_rows]
 
@@ -389,7 +388,7 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_update_oprhaned_headers(self, block_hashes: List[bytes]) -> None:
+    def mysql_update_oprhaned_headers(self, block_hashes: list[bytes]) -> None:
         """This allows us to filter out any query results that do not lie on the longest chain"""
         for block_hash in block_hashes:
             try:
@@ -404,8 +403,8 @@ class MySQLQueries:
                 self.mysql_db.commit_transaction()
 
     def update_allocated_state(self, reorg_was_allocated: bool, first_allocated: bitcoinx.Header,
-            last_allocated: bitcoinx.Header, old_hashes: Optional[ChainHashes],
-            new_hashes: Optional[ChainHashes]) -> None:
+            last_allocated: bitcoinx.Header, old_hashes: ChainHashes | None,
+            new_hashes: ChainHashes | None) -> None:
         # old_hashes and new_hashes are null unless there there was a reorg in which case we
         # need to be precise about how we do the db repair / rollback (if ever needed)
         if old_hashes is not None:
@@ -427,20 +426,20 @@ class MySQLQueries:
             if old_hashes_array and new_hashes_array is not None:
                 query = f"""
                     UPDATE checkpoint_state
-                    SET reorg_was_allocated = {reorg_was_allocated}, 
-                        first_allocated_block_hash = X'{first_allocated.hash.hex()}', 
-                        last_allocated_block_hash = X'{last_allocated.hash.hex()}', 
-                        old_hashes_array = X'{old_hashes_array.hex()}', 
+                    SET reorg_was_allocated = {reorg_was_allocated},
+                        first_allocated_block_hash = X'{first_allocated.hash.hex()}',
+                        last_allocated_block_hash = X'{last_allocated.hash.hex()}',
+                        old_hashes_array = X'{old_hashes_array.hex()}',
                         new_hashes_array = X'{new_hashes_array.hex()}'
                     WHERE id = 0
                     """
             else:
                 query = f"""
                     UPDATE checkpoint_state
-                    SET reorg_was_allocated = {reorg_was_allocated}, 
-                        first_allocated_block_hash = X'{first_allocated.hash.hex()}', 
-                        last_allocated_block_hash = X'{last_allocated.hash.hex()}', 
-                        old_hashes_array = null, 
+                    SET reorg_was_allocated = {reorg_was_allocated},
+                        first_allocated_block_hash = X'{first_allocated.hash.hex()}',
+                        last_allocated_block_hash = X'{last_allocated.hash.hex()}',
+                        old_hashes_array = null,
                         new_hashes_array = null
                     WHERE id = 0
                     """

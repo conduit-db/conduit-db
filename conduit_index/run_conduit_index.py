@@ -10,7 +10,7 @@ from asyncio import AbstractEventLoop
 from pathlib import Path
 
 import typing
-from typing import Dict, Any
+from typing import Any
 
 # The loading of environment variables must occur before importing any other
 # conduit_lib modules so the `.env` file environment variables are loaded before `constants.py`.

@@ -2,7 +2,6 @@ import logging
 import threading
 
 import zmq
-from typing import List
 
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block, zmq_send_no_block
 
@@ -22,7 +21,7 @@ def client():
         zmq_send_no_block(tx_parse_ack_socket, msg, on_blocked_msg="Receiver is busy")
 
 
-def process_work_items(work_items: List[bytes]) -> None:
+def process_work_items(work_items: list[bytes]) -> None:
     logger.debug(f"Got {len(work_items)} work items for processing")
 
 

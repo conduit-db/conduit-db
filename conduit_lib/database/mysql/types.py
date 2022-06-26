@@ -1,4 +1,4 @@
-from typing import NamedTuple, List, Union
+from typing import NamedTuple
 
 
 class PushdataRow(NamedTuple):
@@ -69,15 +69,15 @@ class MempoolTxAck(NamedTuple):
 
 
 class MySQLFlushBatch(NamedTuple):
-    tx_rows: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]]
-    in_rows: List[InputRow]
-    out_rows: List[OutputRow]
-    pd_rows: List[PushdataRow]
+    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
+    in_rows: list[InputRow]
+    out_rows: list[OutputRow]
+    pd_rows: list[PushdataRow]
 
 
 class MySQLFlushBatchWithAcks(NamedTuple):
-    tx_rows: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]]
-    in_rows: List[InputRow]
-    out_rows: List[OutputRow]
-    pd_rows: List[PushdataRow]
-    acks: List[Union[MempoolTxAck, BlockAck]]
+    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
+    in_rows: list[InputRow]
+    out_rows: list[OutputRow]
+    pd_rows: list[PushdataRow]
+    acks: list[MempoolTxAck | BlockAck]

@@ -1,19 +1,21 @@
+from __future__ import annotations
+
 import array
+from datetime import datetime
+from functools import partial
 import logging.handlers
 import logging
 import multiprocessing
 import os
+from pathlib import Path
 import queue
 import socket
 import struct
 import sys
 import threading
 import time
-from datetime import datetime
-from functools import partial
-from pathlib import Path
+from typing import cast, Callable
 
-from typing import Tuple, List, Dict, cast, Union, Optional, Callable
 
 import cbor2
 import zmq
@@ -40,10 +42,10 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 def extend_batched_rows(
         blk_rows: MySQLFlushBatch,
-        txs: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]],
-        ins: List[InputRow],
-        outs: List[OutputRow],
-        pds: List[PushdataRow]) -> MySQLFlushBatch:
+        txs: list[MempoolTransactionRow | ConfirmedTransactionRow],
+        ins: list[InputRow],
+        outs: list[OutputRow],
+        pds: list[PushdataRow]) -> MySQLFlushBatch:
     """The updates are grouped as a safety precaution to not accidentally forget one of them"""
     tx_rows, in_rows, out_rows, set_pd_rows = blk_rows
     txs.extend(tx_rows)
@@ -54,11 +56,11 @@ def extend_batched_rows(
 
 
 def reset_rows() -> MySQLFlushBatchWithAcks:
-    txs: List[Union[MempoolTransactionRow, ConfirmedTransactionRow]] = []
-    ins: List[InputRow] = []
-    outs: List[OutputRow] = []
-    pds: List[PushdataRow] = []
-    acks: List[Union[MempoolTxAck, BlockAck]] = []
+    txs: list[MempoolTransactionRow | ConfirmedTransactionRow] = []
+    ins: list[InputRow] = []
+    outs: list[OutputRow] = []
+    pds: list[PushdataRow] = []
+    acks: list[MempoolTxAck | BlockAck] = []
     return MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks)
 
 
@@ -82,10 +84,10 @@ class TxParser(multiprocessing.Process):
 
         # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
 
-        self.confirmed_tx_flush_queue: Optional[queue.Queue[MySQLFlushBatch]] = None
-        self.mempool_tx_flush_queue: Optional[queue.Queue[MySQLFlushBatch]] = None
+        self.confirmed_tx_flush_queue: queue.Queue[MySQLFlushBatch]  | None = None
+        self.mempool_tx_flush_queue: queue.Queue[MySQLFlushBatch] | None = None
 
-        self.mysql: Optional[MySQLDatabase] = None
+        self.mysql: MySQLDatabase | None = None
 
         # accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
         # TODO - during initial block download - should NOT rely on a timeout at all
@@ -130,8 +132,8 @@ class TxParser(multiprocessing.Process):
         self.sock_callback_ip = os.getenv('CONDUIT_INDEX_HOST', '127.0.0.1')
         self.sock.listen()
 
-        self.raw_blocks_array_cache: Dict[int, bytearray] = {}  # batch_id: array
-        self.raw_blocks_array_recv_events: Dict[int, threading.Event] = {}  # batch_id: event
+        self.raw_blocks_array_cache: dict[int, bytearray] = {}  # batch_id: array
+        self.raw_blocks_array_recv_events: dict[int, threading.Event] = {}  # batch_id: event
         self.batch_id = 0
 
         # the connection to MySQL is not thread safe
@@ -171,8 +173,8 @@ class TxParser(multiprocessing.Process):
         for t in threads:
             t.join()
 
-    def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows: List[InputRow],
-            out_rows: List[OutputRow], pd_rows: List[PushdataRow], mysql_db: MySQLDatabase) -> None:
+    def mysql_flush_ins_outs_and_pushdata_rows(self, in_rows: list[InputRow],
+            out_rows: list[OutputRow], pd_rows: list[PushdataRow], mysql_db: MySQLDatabase) -> None:
         mysql_db.mysql_bulk_load_output_rows(out_rows)
         mysql_db.mysql_bulk_load_input_rows(in_rows)
         mysql_db.mysql_bulk_load_pushdata_rows(pd_rows)
@@ -184,7 +186,7 @@ class TxParser(multiprocessing.Process):
         with self.flush_lock:
             try:
                 if confirmed:
-                    mysql_db.mysql_bulk_load_confirmed_tx_rows(cast(List[ConfirmedTransactionRow], tx_rows))
+                    mysql_db.mysql_bulk_load_confirmed_tx_rows(cast(list[ConfirmedTransactionRow], tx_rows))
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows,
                         mysql_db)
 
@@ -197,7 +199,7 @@ class TxParser(multiprocessing.Process):
                         zmq_send_no_block(self.tx_parse_ack_socket, msg,
                             on_blocked_msg="Tx parse ACK receiver is busy")
                 else:
-                    mysql_db.mysql_bulk_load_mempool_tx_rows(cast(List[MempoolTransactionRow], tx_rows))
+                    mysql_db.mysql_bulk_load_mempool_tx_rows(cast(list[MempoolTransactionRow], tx_rows))
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows,
                         mysql_db)
 
@@ -311,14 +313,14 @@ class TxParser(multiprocessing.Process):
 
     # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
     def get_block_part_tx_hashes(self, raw_block_slice: bytes,
-            tx_offsets: array.ArrayType) -> Tuple[TxHashes, TxHashRows]:  # type: ignore
+            tx_offsets: array.ArrayType[int]) -> tuple[TxHashes, TxHashRows]:
         """Returns both a list of tx hashes and list of tuples containing tx hashes (the same
         data ready for database insertion)"""
         var_int_field_max_size = 9
         max_size_header_plus_tx_count_field = 80 + var_int_field_max_size
         # Is this the first slice of the block? Otherwise adjust the offsets to start at zero
         if tx_offsets[0] > max_size_header_plus_tx_count_field:
-            tx_offsets = array.array("Q", map(lambda x: x - tx_offsets[0], tx_offsets))  # type: ignore
+            tx_offsets = array.array("Q", map(lambda x: x - tx_offsets[0], tx_offsets))
         partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block_slice, tx_offsets)[
             0]
         tx_hash_rows = []
@@ -328,10 +330,10 @@ class TxParser(multiprocessing.Process):
         return partition_tx_hashes, tx_hash_rows
 
     def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
-            merged_offsets_map: Dict[bytes, int],
-            merged_tx_to_work_item_id_map: Dict[bytes, int],
+            merged_offsets_map: dict[bytes, int],
+            merged_tx_to_work_item_id_map: dict[bytes, int],
             merged_part_tx_hash_rows: TxHashRows,
-            mysql_db: MySQLDatabase) -> Tuple[Dict[int, List[int]], Dict[int, List[int]]]:
+            mysql_db: MySQLDatabase) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction hence we calculate which category each tx
@@ -350,8 +352,8 @@ class TxParser(multiprocessing.Process):
         t0 = time.time()
         t1 = 0.
 
-        new_tx_offsets: Dict[int, List[int]] = {}
-        not_new_tx_offsets: Dict[int, List[int]] = {}
+        new_tx_offsets: dict[int, list[int]] = {}
+        not_new_tx_offsets: dict[int, list[int]] = {}
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
@@ -455,15 +457,15 @@ class TxParser(multiprocessing.Process):
             mempool_tx_socket.close()
             # mempool_tx_socket.term()
 
-    def get_block_slices(self, block_hashes: List[bytes],
-            block_slice_offsets: List[Tuple[int, int]],
+    def get_block_slices(self, block_hashes: list[bytes],
+            block_slice_offsets: list[tuple[int, int]],
             ipc_sock_client: IPCSocketClient) -> bytes:
         t0 = time.time()
         try:
             response = ipc_sock_client.block_number_batched(block_hashes)
 
             # Ordering of both of these arrays must be guaranteed
-            block_requests = cast(List[BlockSliceRequestType], list(zip(response.block_numbers, block_slice_offsets)))
+            block_requests = cast(list[BlockSliceRequestType], list(zip(response.block_numbers, block_slice_offsets)))
 
             raw_blocks_array = ipc_sock_client.block_batched(block_requests)
             # len_bytearray = struct.unpack_from("<Q", response)
@@ -479,12 +481,12 @@ class TxParser(multiprocessing.Process):
                 self.last_ipc_sock_time = self.ipc_sock_time
                 self.logger.debug(f"total time for ipc socket calls={self.ipc_sock_time}")
 
-    def unpack_batched_msgs(self, work_items: List[bytes]) \
-            -> Tuple[TxHashes, List[BlockSliceOffsets], List[WorkPart], bool]:
+    def unpack_batched_msgs(self, work_items: list[bytes]) \
+            -> tuple[TxHashes, list[BlockSliceOffsets], list[WorkPart], bool]:
         """Batched messages from zmq PULL socket"""
-        block_slice_offsets: List[BlockSliceOffsets] = []  # start_offset, end_offset
+        block_slice_offsets: list[BlockSliceOffsets] = []  # start_offset, end_offset
         block_hashes: TxHashes = []
-        unpacked_work_items: List[WorkPart] = []
+        unpacked_work_items: list[WorkPart] = []
 
         reorg = False
         for packed_msg in work_items:
@@ -508,9 +510,9 @@ class TxParser(multiprocessing.Process):
 
         return block_hashes, block_slice_offsets, unpacked_work_items, reorg
 
-    def build_merged_data_structures(self, work_items: List[bytes],
+    def build_merged_data_structures(self, work_items: list[bytes],
             ipc_socket_client: IPCSocketClient) -> \
-            Tuple[
+            tuple[
                 TxHashToOffsetMap,
                 TxHashToWorkIdMap,
                 TxHashRows,
@@ -577,8 +579,8 @@ class TxParser(multiprocessing.Process):
         return merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
             batched_raw_block_slices, acks, contains_reorg_tx
 
-    def parse_txs_and_push_to_queue(self, new_tx_offsets: Dict[int, List[int]],
-            not_new_tx_offsets: Dict[int, List[int]],
+    def parse_txs_and_push_to_queue(self, new_tx_offsets: dict[int, list[int]],
+            not_new_tx_offsets: dict[int, list[int]],
             batched_raw_block_slices: BatchedRawBlockSlices) -> None:
         # Todo - raw_block memory allocations
         assert self.confirmed_tx_flush_queue is not None
@@ -604,7 +606,7 @@ class TxParser(multiprocessing.Process):
                 tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
                 tx_rows_now_confirmed_fixed = []
                 if is_reorg:  # the tx_pos will actually be wrong so need to fix it here
-                    all_tx_offsets: List[int] = new_tx_offsets[work_item]
+                    all_tx_offsets: list[int] = new_tx_offsets[work_item]
                     all_tx_offsets.extend(not_new_tx_offsets[work_item])
                     all_tx_offsets.sort()
                     corrected_tx_positions = []
@@ -621,7 +623,7 @@ class TxParser(multiprocessing.Process):
 
             self.confirmed_tx_flush_queue.put(MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows))
 
-    def process_work_items(self, work_items: List[bytes], ipc_socket_client: IPCSocketClient,
+    def process_work_items(self, work_items: list[bytes], ipc_socket_client: IPCSocketClient,
             mysql_db: MySQLDatabase, ack_for_mined_tx_socket: zmq.Socket[bytes]) -> None:
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
@@ -665,7 +667,7 @@ class TxParser(multiprocessing.Process):
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             ipc_socket_client = IPCSocketClient()
 
-            process_batch_func: Callable[[List[bytes]], None] = partial(self.process_work_items,
+            process_batch_func: Callable[[list[bytes]], None] = partial(self.process_work_items,
                 ipc_socket_client=ipc_socket_client, mysql_db=mysql_db,
                 ack_for_mined_tx_socket=ack_for_mined_tx_socket)
 

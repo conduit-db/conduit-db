@@ -1,9 +1,7 @@
 import logging
 import os
 from pathlib import Path
-
 import typing
-from typing import Optional
 
 import bitcoinx
 import cbor2
@@ -37,7 +35,7 @@ class LmdbTxOffsets:
         self.ffdb = FlatFileDb(tx_offsets_dir, tx_offsets_lockfile)
         self.tx_offsets_db = self.db.env.open_db(self.TX_OFFSETS_DB)
 
-    def _get_single_tx_slice(self, tx_loc: TxLocation) -> Optional[Slice]:
+    def _get_single_tx_slice(self, tx_loc: TxLocation) -> Slice | None:
         """If end_offset=0 then it goes to the end of the block"""
         with self.db.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(tx_loc.block_hash)
@@ -70,13 +68,13 @@ class LmdbTxOffsets:
 
     # -------------------- EXTERNAL API -------------------- #
 
-    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> Optional[bytes]:
+    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes | None:
         slice = self._get_single_tx_slice(tx_loc)
         if slice is None:
             return None
         return self.db.get_block(tx_loc.block_num, slice)
 
-    def get_data_location(self,  block_hash: bytes) -> Optional[DataLocation]:
+    def get_data_location(self,  block_hash: bytes) -> DataLocation | None:
         with self.db.env.begin(db=self.tx_offsets_db, write=False, buffers=True) as txn:
             val: bytes = txn.get(block_hash)
             if not val:
@@ -86,7 +84,7 @@ class LmdbTxOffsets:
         read_path, start_offset, end_offset = cbor2.loads(val)
         return DataLocation(read_path, start_offset, end_offset)
 
-    def get_tx_offsets(self, block_hash: bytes) -> Optional[bytes]:
+    def get_tx_offsets(self, block_hash: bytes) -> bytes | None:
         """If end_offset=0 then it goes to the end of the block"""
         data_location = self.get_data_location(block_hash)
         if not data_location:

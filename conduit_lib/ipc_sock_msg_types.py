@@ -4,7 +4,7 @@ to primitive types supported by cbor by default for simplicity sake (although I 
 could extend it if we wanted)."""
 import abc
 import json
-from typing import Optional, cast, Any, Dict, Sequence, Set
+from typing import Any, cast, Sequence
 
 import cbor2
 from bitcoinx import hash_to_hex_str
@@ -18,7 +18,7 @@ BlockHeaders = list[bytes]
 
 class BaseMsg(abc.ABC):
 
-    def __init__(self, *args: Sequence[Any], **kwargs: Dict[Any, Any]) -> None:
+    def __init__(self, *args: Sequence[Any], **kwargs: dict[Any, Any]) -> None:
         pass
 
     def to_cbor(self) -> bytes:
@@ -85,7 +85,7 @@ class ChainTipRequest(BaseMsg):
 class ChainTipResponse(BaseMsg):
     command = ipc_sock_commands.CHAIN_TIP
 
-    def __init__(self, header: bytes, height: int, command: Optional[str]=None) -> None:
+    def __init__(self, header: bytes, height: int, command: str | None=None) -> None:
         super().__init__()
         self.header = header
         self.height = height
@@ -106,7 +106,7 @@ class ChainTipResponse(BaseMsg):
 class BlockNumberBatchedRequest(BaseMsg):
     command = ipc_sock_commands.BLOCK_NUMBER_BATCHED
 
-    def __init__(self, block_hashes: BlockHashes, command: Optional[str]=None) -> None:
+    def __init__(self, block_hashes: BlockHashes, command: str | None=None) -> None:
         super().__init__()
         self.block_hashes = block_hashes
 
@@ -121,7 +121,7 @@ class BlockNumberBatchedRequest(BaseMsg):
 class BlockNumberBatchedResponse(BaseMsg):
     command = ipc_sock_commands.BLOCK_NUMBER_BATCHED
 
-    def __init__(self, block_numbers: list[int], command: Optional[str]=None) -> None:
+    def __init__(self, block_numbers: list[int], command: str | None=None) -> None:
         super().__init__()
         self.block_numbers = block_numbers
 
@@ -136,7 +136,7 @@ class BlockNumberBatchedResponse(BaseMsg):
 class BlockBatchedRequest(BaseMsg):
     command = ipc_sock_commands.BLOCK_BATCHED
 
-    def __init__(self, block_requests: list[BlockSliceRequestType], command: Optional[str]=None) -> None:
+    def __init__(self, block_requests: list[BlockSliceRequestType], command: str | None=None) -> None:
         super().__init__()
         self.block_requests = block_requests
 
@@ -156,7 +156,7 @@ class BlockBatchedRequest(BaseMsg):
 class MerkleTreeRowRequest(BaseMsg):
     command = ipc_sock_commands.MERKLE_TREE_ROW
 
-    def __init__(self, block_hash: bytes, level: int, command: Optional[str]=None) -> None:
+    def __init__(self, block_hash: bytes, level: int, command: str | None=None) -> None:
         super().__init__()
         self.block_hash = block_hash
         self.level = level
@@ -179,7 +179,7 @@ class MerkleTreeRowRequest(BaseMsg):
 class MerkleTreeRowResponse(BaseMsg):
     command = ipc_sock_commands.MERKLE_TREE_ROW
 
-    def __init__(self, mtree_row: bytes, command: Optional[str]=None) -> None:
+    def __init__(self, mtree_row: bytes, command: str | None=None) -> None:
         super().__init__()
         self.mtree_row = mtree_row
 
@@ -197,7 +197,7 @@ class MerkleTreeRowResponse(BaseMsg):
 class TransactionOffsetsBatchedRequest(BaseMsg):
     command = ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED
 
-    def __init__(self, block_hashes: BlockHashes, command: Optional[str]=None) -> None:
+    def __init__(self, block_hashes: BlockHashes, command: str | None=None) -> None:
         super().__init__()
         self.block_hashes = block_hashes
 
@@ -212,7 +212,7 @@ class TransactionOffsetsBatchedRequest(BaseMsg):
 class TransactionOffsetsBatchedResponse(BaseMsg):
     command = ipc_sock_commands.TRANSACTION_OFFSETS_BATCHED
 
-    def __init__(self, tx_offsets_batch: list[bytes], command: Optional[str]=None) -> None:
+    def __init__(self, tx_offsets_batch: list[bytes], command: str | None=None) -> None:
         super().__init__()
         self.tx_offsets_batch = tx_offsets_batch
 
@@ -227,7 +227,7 @@ class TransactionOffsetsBatchedResponse(BaseMsg):
 class BlockMetadataBatchedRequest(BaseMsg):
     command = ipc_sock_commands.BLOCK_METADATA_BATCHED
 
-    def __init__(self, block_hashes: BlockHashes, command: Optional[str]=None) -> None:
+    def __init__(self, block_hashes: BlockHashes, command: str | None=None) -> None:
         super().__init__()
         self.block_hashes = block_hashes
 
@@ -242,7 +242,7 @@ class BlockMetadataBatchedRequest(BaseMsg):
 class BlockMetadataBatchedResponse(BaseMsg):
     command = ipc_sock_commands.BLOCK_METADATA_BATCHED
 
-    def __init__(self, block_metadata_batch: list[BlockMetadata], command: Optional[str]=None) -> None:
+    def __init__(self, block_metadata_batch: list[BlockMetadata], command: str | None=None) -> None:
         super().__init__()
         # Cast to BlockMetadata again because cbor converts tuples to lists
         self.block_metadata_batch = [BlockMetadata(block_size, tx_count)
@@ -260,7 +260,7 @@ class BlockMetadataBatchedResponse(BaseMsg):
 class HeadersBatchedRequest(BaseMsg):
     command = ipc_sock_commands.HEADERS_BATCHED
 
-    def __init__(self, start_height: int, batch_size: int, command: Optional[str]=None) -> None:
+    def __init__(self, start_height: int, batch_size: int, command: str | None=None) -> None:
         super().__init__()
         self.start_height = start_height
         self.batch_size = batch_size
@@ -283,7 +283,7 @@ class HeadersBatchedRequest(BaseMsg):
 class HeadersBatchedResponse(BaseMsg):
     command = ipc_sock_commands.HEADERS_BATCHED
 
-    def __init__(self, headers_batch: BlockHeaders, command: Optional[str]=None) -> None:
+    def __init__(self, headers_batch: BlockHeaders, command: str | None=None) -> None:
         super().__init__()
         self.headers_batch = headers_batch
 
@@ -298,7 +298,7 @@ class ReorgDifferentialRequest(BaseMsg):
     command = ipc_sock_commands.REORG_DIFFERENTIAL
 
     def __init__(self, old_hashes: ChainHashes, new_hashes: ChainHashes,
-            command: Optional[str]=None) -> None:
+            command: str | None=None) -> None:
         super().__init__()
         self.old_hashes = old_hashes
         self.new_hashes = new_hashes
@@ -321,8 +321,8 @@ class ReorgDifferentialRequest(BaseMsg):
 class ReorgDifferentialResponse(BaseMsg):
     command = ipc_sock_commands.REORG_DIFFERENTIAL
 
-    def __init__(self, removals_from_mempool: Set[bytes], additions_to_mempool: Set[bytes],
-            orphaned_tx_hashes: Set[bytes], command: Optional[str]=None) -> None:
+    def __init__(self, removals_from_mempool: set[bytes], additions_to_mempool: set[bytes],
+            orphaned_tx_hashes: set[bytes], command: str | None=None) -> None:
         super().__init__()
         self.removals_from_mempool = removals_from_mempool
         self.additions_to_mempool = additions_to_mempool

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import typing
-from typing import Optional, Tuple, TypedDict, Dict, Any
+from typing import Any, TypedDict
 
 from bitcoinx import MissingHeader, double_sha256
 
@@ -18,7 +18,7 @@ REGTEST_BITCOIN_RPC_URL = f"http://rpcuser:rpcpassword@{BITCOIN_HOST}:{BITCOIN_R
 
 
 class NodeRPCResult(TypedDict):
-    result: Dict[Any, Any]
+    result: dict[Any, Any]
 
 
 class NodeRPCTipJson(TypedDict):
@@ -55,7 +55,7 @@ class RegtestSupport:
         block_header = await self.regtest_fetch_block_header_for_hash(block_hash)
         return bytes.fromhex(block_header)
 
-    async def regtest_get_chain_tip(self) -> Optional[NodeRPCTipJson]:
+    async def regtest_get_chain_tip(self) -> NodeRPCTipJson | None:
         assert self.aiohttp_client_session is not None
         body = {"jsonrpc": "2.0", "method": "getchaintips", "params": [], "id": 1}
         result = await self.aiohttp_client_session.post(REGTEST_BITCOIN_RPC_URL, json=body)
@@ -66,7 +66,7 @@ class RegtestSupport:
         response_json: NodeRPCResult = await result.json()
         # self.logger.debug(f"regtest_poll_node_for_tip_job result: {response_json}")
 
-        best_tip: Optional[NodeRPCTipJson] = None
+        best_tip: NodeRPCTipJson | None = None
         for tip in response_json['result']:
             if not best_tip:
                 best_tip = tip
@@ -76,7 +76,7 @@ class RegtestSupport:
 
         return best_tip
 
-    async def regtest_sync_headers(self, best_tip: NodeRPCTipJson) -> Tuple[int, bytes, bytes, bool]:
+    async def regtest_sync_headers(self, best_tip: NodeRPCTipJson) -> tuple[int, bytes, bytes, bool]:
         # Types
         height: int = -1
         first_header_of_batch: bytes = bytes()

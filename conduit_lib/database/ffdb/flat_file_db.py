@@ -9,7 +9,7 @@ import os
 import threading
 from pathlib import Path
 from types import TracebackType
-from typing import NamedTuple, Optional, Set, Type, List
+from typing import NamedTuple, Type
 from fasteners import InterProcessReaderWriterLock
 
 from conduit_lib.types import Slice
@@ -96,7 +96,7 @@ class FlatFileDb:
 
         with self.mutable_file_rwlock.read_lock():
             # Scans datadir to get the correct mutable_file_file cached properties
-            _immutable_files: List[str] = os.listdir(self.datadir)
+            _immutable_files: list[str] = os.listdir(self.datadir)
             _immutable_files.sort()
             # Pop the single mutable file (which always has the highest number)
             for file in _immutable_files:
@@ -105,14 +105,14 @@ class FlatFileDb:
             mutable_filename = _immutable_files.pop()
             self.mutable_file_num = self._mutable_filename_to_num(mutable_filename)
             self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
-            self.immutable_files: Set[str] = set(_immutable_files)
+            self.immutable_files = set(_immutable_files)
 
     def __enter__(self) -> 'FlatFileDb':
         self.threading_lock.acquire()
         return self
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]],
-            exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    def __exit__(self, exc_type: Type[BaseException] | None, exc_val: BaseException | None,
+            exc_tb: TracebackType | None) -> None:
         self.threading_lock.release()
 
     def _file_num_to_mutable_file_path(self, file_num: int) -> Path:
@@ -176,7 +176,7 @@ class FlatFileDb:
 
             return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
 
-    def get(self, data_location: DataLocation, slice: Optional[Slice] = None,
+    def get(self, data_location: DataLocation, slice: Slice | None = None,
             lock_free_access: bool=False) -> bytes:
         """If the end offset of the Slice is zero, it reads to the end of the
         data location

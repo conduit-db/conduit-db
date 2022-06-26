@@ -1,12 +1,13 @@
 """slower pure python alternative"""
 from __future__ import annotations
+
 import array
 import logging
 import os
 import struct
 from hashlib import sha256
 from math import ceil, log
-from typing import Dict, Union, Tuple, List, cast, NamedTuple, Set
+from typing import cast, NamedTuple
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 
@@ -17,7 +18,7 @@ from conduit_lib.types import PushdataMatchFlags
 
 MTreeLevel = int
 MTreeNodeArray = list[bytes]
-MTree = Dict[MTreeLevel, MTreeNodeArray]
+MTree = dict[MTreeLevel, MTreeNodeArray]
 
 
 HEADER_OFFSET = 80
@@ -47,8 +48,7 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple[int, int]:  # type: ignore
+def unpack_varint(buf: memoryview | array.ArrayType[int], offset: int) -> tuple[int, int]:
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -61,9 +61,8 @@ def unpack_varint(buf: Union[memoryview, array.ArrayType], offset: int) -> tuple
 # -------------------- PREPROCESSOR -------------------- #
 
 
-# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def preprocessor(block_view: memoryview,
-        tx_offsets_array: array.ArrayType, block_offset: int=0) -> Tuple[int, array.ArrayType]:  # type: ignore
+def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType[int],
+        block_offset: int=0) -> tuple[int, array.ArrayType[int]]:
     block_offset += HEADER_OFFSET
     count, block_offset = unpack_varint(block_view, block_offset)
     cur_idx = 0
@@ -108,11 +107,11 @@ class PushdataMatch(NamedTuple):
 
 # Todo - unittest coverage
 # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: int,  # type: ignore
-        flags: PushdataMatchFlags, tx_pos: int, genesis_height: int) -> List[PushdataMatch]:
+def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx: int,
+        flags: PushdataMatchFlags, tx_pos: int, genesis_height: int) -> list[PushdataMatch]:
     i = 0
-    all_pushdata: Set[Tuple[bytes, PushdataMatchFlags]] = set()
-    pd_matches: List[PushdataMatch] = []
+    all_pushdata: set[tuple[bytes, PushdataMatchFlags]] = set()
+    pd_matches: list[PushdataMatch] = []
     len_script = len(script)
     unreachable_code = False
     try:
@@ -187,9 +186,8 @@ def get_pk_and_pkh_from_script(script: 'array.ArrayType', tx_hash: bytes, idx: i
         raise
 
 
-# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayType],  # type: ignore
-        height_or_timestamp: Union[int, str], confirmed: bool, first_tx_pos_batch=0) \
+def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayType[int],
+        height_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0) \
             -> MySQLFlushBatch:
     """
     This function is dual-purpose - it can:
@@ -206,7 +204,7 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
     """
     genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
-    tx_rows = []
+    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow] = []
     in_rows = set()
     out_rows = set()
     set_pd_rows = set()
@@ -307,13 +305,13 @@ def parse_txs(buffer: array.ArrayType, tx_offsets: Union[List[int], array.ArrayT
             else:
                 # Note mempool uses full length tx_hash
                 height_or_timestamp = cast(str, height_or_timestamp)
-                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), height_or_timestamp))  # type: ignore
+                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), height_or_timestamp))
         assert len(tx_rows) == count_txs
         return MySQLFlushBatch(
-            cast(List[Union[ConfirmedTransactionRow, MempoolTransactionRow]], tx_rows),
-            cast(List[InputRow], list(in_rows)),
-            cast(List[OutputRow], list(out_rows)),
-            cast(List[PushdataRow], list(set_pd_rows)))
+            tx_rows,
+            cast(list[InputRow], list(in_rows)),
+            cast(list[OutputRow], list(out_rows)),
+            cast(list[PushdataRow], list(set_pd_rows)))
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -331,7 +329,7 @@ def calc_depth(leaves_count: int) -> int:
 
 
 def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_block: bytes,
-        tx_offsets: 'array.ArrayType[int]') -> MTree:
+        tx_offsets: array.ArrayType[int]) -> MTree:
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
@@ -362,7 +360,7 @@ def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> None:
         mtree[current_level - 1] = hashes
 
 
-def calc_mtree(raw_block: Union[memoryview, bytes], tx_offsets: 'array.ArrayType[int]') -> MTree:
+def calc_mtree(raw_block: memoryview | bytes, tx_offsets: array.ArrayType[int]) -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree: MTree = {}

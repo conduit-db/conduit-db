@@ -1,8 +1,8 @@
 import logging
 import os
-import typing
-from typing import Optional, List, Callable
 from pathlib import Path
+import typing
+from typing import Callable
 
 import cbor2
 import lmdb
@@ -28,7 +28,7 @@ def tree_depth_for_mtree(mtree: MTree) -> int:
     return len(mtree) - 1
 
 
-def _pack_list_to_concatenated_bytes(hashes: List[bytes]) -> bytearray:
+def _pack_list_to_concatenated_bytes(hashes: list[bytes]) -> bytearray:
     byte_array = bytearray()
     for _hash in hashes:
         byte_array += _hash
@@ -76,7 +76,7 @@ class LmdbMerkleTree:
         start_offset = to_add_to_start
         return Slice(start_offset, end_offset)
 
-    def _get_merkle_tree_data(self, block_hash: bytes, slice: Optional[Slice]) -> Optional[bytes]:
+    def _get_merkle_tree_data(self, block_hash: bytes, slice: Slice | None) -> bytes | None:
         """If end_offset=0 then it goes to the end of the block"""
         data_location = self.get_data_location(block_hash)
         if not data_location:
@@ -94,7 +94,7 @@ class LmdbMerkleTree:
             tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
             return tx_hash
 
-    def get_data_location(self,  block_hash: bytes) -> Optional[DataLocation]:
+    def get_data_location(self,  block_hash: bytes) -> DataLocation | None:
         with self.db.env.begin(db=self.mtree_db, buffers=False) as txn:
             mtree_location_bytes: bytes = txn.get(block_hash)
             if not mtree_location_bytes:
@@ -130,7 +130,7 @@ class LmdbMerkleTree:
         return node_hash
 
     def get_mtree_row(self, block_hash: bytes, level: int,
-            cursor: Optional[lmdb.Cursor]=None) -> Optional[bytes]:
+            cursor: lmdb.Cursor | None=None) -> bytes | None:
         """level zero is the merkle root node"""
         if cursor:
             val = bytes(cursor.get(block_hash))
@@ -145,8 +145,7 @@ class LmdbMerkleTree:
         slice = self._get_merkle_slice_for_level(mtree_array_location, node_counts, level)
         return self._get_merkle_tree_data(block_hash, slice)
 
-    def get_merkle_branch(self, tx_metadata: TxMetadata) \
-            -> Optional[tuple[list[str], str]]:
+    def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str] | None:
         block_metadata = self.db.get_block_metadata(tx_metadata.block_hash)
         assert block_metadata is not None, "Null checks should already have " \
                                            "been done in the caller"

@@ -1,15 +1,11 @@
 import asyncio
 import logging
-import queue
+from queue import Queue
 import threading
 import typing
 
 import bitcoinx
 from bitcoinx import hash_to_hex_str
-from queue import Queue
-from typing import Set
-
-from conduit_lib.types import MultiprocessingQueue
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -30,7 +26,7 @@ class BatchCompletionRaw(threading.Thread):
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
             worker_ack_queue_blk_writer: Queue[bytes],
-            blocks_batch_set_queue_raw: Queue[Set[bytes]], daemon: bool=True) -> None:
+            blocks_batch_set_queue_raw: Queue[set[bytes]], daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-raw")
         self.controller: Controller = controller
@@ -40,7 +36,7 @@ class BatchCompletionRaw(threading.Thread):
         self.blocks_batch_set_queue_raw = blocks_batch_set_queue_raw
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
+    def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_blk_writer.get()
             if block_hash in blocks_batch_set:
@@ -77,7 +73,7 @@ class BatchCompletionMtree(threading.Thread):
             controller: 'Controller',
             sync_state: 'SyncState',
             worker_ack_queue_mtree: Queue[bytes],
-            blocks_batch_set_queue_mtree: Queue[Set[bytes]],
+            blocks_batch_set_queue_mtree: Queue[set[bytes]],
             daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
 
@@ -89,7 +85,7 @@ class BatchCompletionMtree(threading.Thread):
         self.blocks_batch_set_queue_mtree = blocks_batch_set_queue_mtree
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
+    def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_mtree.get()
             if block_hash in blocks_batch_set:
@@ -123,7 +119,7 @@ class BatchCompletionPreprocessor(threading.Thread):
 
     def __init__(self, controller: 'Controller', sync_state: 'SyncState',
             worker_ack_queue_preproc: Queue[bytes],
-            blocks_batch_set_queue_preproc: Queue[Set[bytes]], daemon: bool=True) -> None:
+            blocks_batch_set_queue_preproc: Queue[set[bytes]], daemon: bool=True) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-preproc")
         self.controller: Controller = controller
@@ -133,7 +129,7 @@ class BatchCompletionPreprocessor(threading.Thread):
         self.blocks_batch_set_queue_preproc = blocks_batch_set_queue_preproc
         self.loop = asyncio.get_running_loop()
 
-    def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
+    def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_preproc.get()
             if block_hash in blocks_batch_set:

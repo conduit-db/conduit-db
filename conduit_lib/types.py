@@ -2,7 +2,7 @@ import enum
 import struct
 import typing
 from queue import Queue
-from typing import TypedDict, Optional, NamedTuple, List
+from typing import TypedDict, NamedTuple
 
 import bitcoinx
 from bitcoinx import hex_str_to_hash, Header
@@ -18,7 +18,7 @@ class TSCMerkleProof(TypedDict):
     txOrId: str
     target: str
     nodes: list[str]
-    targetType: Optional[str]
+    targetType: str | None
 
 
 class BlockHeaderRow(NamedTuple):
@@ -85,7 +85,7 @@ class RestorationFilterQueryResult(NamedTuple):
     ref_type: int
     pushdata_hashX: bytes
     transaction_hash: bytes
-    spend_transaction_hash: Optional[bytes]
+    spend_transaction_hash: bytes | None
     transaction_output_index: int  # max(uint32) if no spend
     spend_input_index: int
     tx_location: TxLocation
@@ -100,7 +100,7 @@ class RestorationFilterJSONResponse(TypedDict):
     pushDataHashHex: str
     lockingTransactionId: str
     lockingTransactionIndex: int
-    unlockingTransactionId: Optional[str]
+    unlockingTransactionId: str | None
     unlockingInputIndex: int
 
 
@@ -175,7 +175,7 @@ def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx
 
 
 def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_tx_hash: str,
-        full_pushdata_hash: str, full_spend_transaction_hash: Optional[str]) \
+        full_pushdata_hash: str, full_spend_transaction_hash: str | None) \
             -> RestorationFilterJSONResponse:
     pushdata_hash = full_pushdata_hash
     tx_hash = full_tx_hash
@@ -251,4 +251,4 @@ class HeaderSpan(NamedTuple):
     stop_header: Header
 
 
-ChainHashes = List[bytes]
+ChainHashes = list[bytes]

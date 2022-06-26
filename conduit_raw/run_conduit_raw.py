@@ -10,7 +10,7 @@ from asyncio import AbstractEventLoop
 from pathlib import Path
 
 import typing
-from typing import Dict, Any
+from typing import Any
 
 # The loading of environment variables must occur before importing any other
 # conduit_lib modules so the `.env` file environment variables are loaded before `constants.py`.
@@ -52,7 +52,7 @@ elif sys.platform == 'linux':
         pass
 
 
-def loop_exception_handler(_loop: AbstractEventLoop, context: Dict[str, Any]) -> None:
+def loop_exception_handler(_loop: AbstractEventLoop, context: dict[str, Any]) -> None:
     logger = logging.getLogger("loop-exception-handler")
     logger.debug("Exception handler called")
     logger.debug(context)

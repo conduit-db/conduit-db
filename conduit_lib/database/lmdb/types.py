@@ -1,6 +1,6 @@
-from typing import Dict, NamedTuple
+from typing import NamedTuple
 
-MerkleTree = Dict[int, list[bytes]]
+MerkleTree = dict[int, list[bytes]]
 
 
 class MerkleTreeRow(NamedTuple):

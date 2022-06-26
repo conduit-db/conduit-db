@@ -1,10 +1,10 @@
 import asyncio
-
 import bitcoinx
 import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import List, Tuple, Set, Any, Callable, TypeVar, Optional
+from typing import Any, Callable, TypeVar
+
 import MySQLdb
 from MySQLdb.connections import Connection
 
@@ -22,7 +22,7 @@ T1 = TypeVar("T1")
 
 class MySQLDatabase:
 
-    def __init__(self, mysql_conn: MySQLdb.Connection, worker_id: Optional[int]=None) -> None:
+    def __init__(self, mysql_conn: MySQLdb.Connection, worker_id: int | None=None) -> None:
         self.mysql_conn = mysql_conn
         self.worker_id = worker_id
         self.tables = MySQLTables(self.mysql_conn)
@@ -90,15 +90,15 @@ class MySQLDatabase:
         self.tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
 
     # QUERIES
-    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: List[MinedTxHashes]) -> None:
+    def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         self.queries.mysql_load_temp_mined_tx_hashes(mined_tx_hashes)
 
     def mysql_load_temp_inbound_tx_hashes(self,
-            inbound_tx_hashes: List[Tuple[str]], inbound_tx_table_name: str) -> None:
+            inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str) -> None:
         self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes, inbound_tx_table_name)
 
     def mysql_get_unprocessed_txs(self, is_reorg: bool,
-            new_tx_hashes: List[Tuple[str]], inbound_tx_table_name: str) -> Set[bytes]:
+            new_tx_hashes: list[tuple[str]], inbound_tx_table_name: str) -> set[bytes]:
         return self.queries.mysql_get_unprocessed_txs(is_reorg, new_tx_hashes,
             inbound_tx_table_name)
 
@@ -109,19 +109,19 @@ class MySQLDatabase:
         self.queries.mysql_update_checkpoint_tip(checkpoint_tip)
 
     # BULK LOADS
-    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows: List[ConfirmedTransactionRow]) -> None:
+    def mysql_bulk_load_confirmed_tx_rows(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
         self.bulk_loads.mysql_bulk_load_confirmed_tx_rows(tx_rows)
 
-    def mysql_bulk_load_mempool_tx_rows(self, tx_rows: List[MempoolTransactionRow]) -> None:
+    def mysql_bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.mysql_bulk_load_mempool_tx_rows(tx_rows)
 
-    def mysql_bulk_load_output_rows(self, out_rows: List[OutputRow]) -> None:
+    def mysql_bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
         self.bulk_loads.mysql_bulk_load_output_rows(out_rows)
 
-    def mysql_bulk_load_input_rows(self, in_rows: List[InputRow]) -> None:
+    def mysql_bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
         self.bulk_loads.mysql_bulk_load_input_rows(in_rows)
 
-    def mysql_bulk_load_pushdata_rows(self, pd_rows: List[PushdataRow]) -> None:
+    def mysql_bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
         self.bulk_loads.mysql_bulk_load_pushdata_rows(pd_rows)
 
 
@@ -137,7 +137,7 @@ def get_connection() -> Connection:
     return conn
 
 
-def mysql_connect(worker_id: Optional[int]=None) -> MySQLDatabase:
+def mysql_connect(worker_id: int | None=None) -> MySQLDatabase:
     conn = get_connection()
     return MySQLDatabase(conn, worker_id=worker_id)
 

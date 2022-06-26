@@ -1,5 +1,5 @@
 import logging
-from typing import Generator, Optional
+from typing import Generator
 
 import MySQLdb
 import typing
@@ -24,14 +24,14 @@ class MySQLAPIQueries:
         self.mysql_tables = mysql_tables
         self.mysql_db = mysql_db
 
-    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> Optional[TxMetadata]:
+    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata | None:
         try:
             sql = f"""
-                SELECT CT.tx_hash, CT.tx_block_num, CT.tx_position, HD.block_num, HD.block_hash, 
+                SELECT CT.tx_hash, CT.tx_block_num, CT.tx_position, HD.block_num, HD.block_hash,
                     HD.block_height FROM confirmed_transactions CT
                 INNER JOIN headers HD
                 ON HD.block_num = CT.tx_block_num
-                WHERE CT.tx_hash = X'{tx_hashX.hex()}' 
+                WHERE CT.tx_hash = X'{tx_hashX.hex()}'
                 AND HD.is_orphaned = 0;"""
 
             self.mysql_conn.query(sql)
@@ -64,20 +64,20 @@ class MySQLAPIQueries:
             self.mysql_db.commit_transaction()
 
     def get_header_data(self, block_hash: bytes, raw_header_data: bool=True) \
-            -> Optional[BlockHeaderRow]:
+            -> BlockHeaderRow | None:
         try:
             if raw_header_data:
                 sql = f"""
-                    SELECT * 
-                    FROM headers HD 
-                    WHERE HD.block_hash = X'{block_hash.hex()}' 
+                    SELECT *
+                    FROM headers HD
+                    WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
                 self.mysql_conn.query(sql)
             else:
                 sql = f"""
-                    SELECT block_num, block_hash, block_height, block_tx_count, block_size 
-                    FROM headers HD 
-                    WHERE HD.block_hash = X'{block_hash.hex()}' 
+                    SELECT block_num, block_hash, block_height, block_tx_count, block_size
+                    FROM headers HD
+                    WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
                 self.mysql_conn.query(sql)
             result = self.mysql_conn.store_result()
@@ -104,16 +104,16 @@ class MySQLAPIQueries:
         try:
             query_format_pushdata_hashes = [f"X'{pd_hashX}'" for pd_hashX in pushdata_hashXes]
             sql = f"""
-                SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx, 
+                SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx,
                     HD.block_hash, HD.block_num, CT.tx_position
                 FROM pushdata PD
-                LEFT JOIN inputs_table IT 
-                    ON PD.tx_hash=IT.out_tx_hash 
-                    AND PD.idx=IT.out_idx 
+                LEFT JOIN inputs_table IT
+                    ON PD.tx_hash=IT.out_tx_hash
+                    AND PD.idx=IT.out_idx
                     AND PD.ref_type & {PushdataMatchFlags.OUTPUT} = {PushdataMatchFlags.OUTPUT}
                 LEFT JOIN confirmed_transactions CT ON CT.tx_hash=PD.tx_hash
                 INNER JOIN headers HD ON CT.tx_block_num = HD.block_num
-                WHERE PD.pushdata_hash IN ({",".join(query_format_pushdata_hashes)}) 
+                WHERE PD.pushdata_hash IN ({",".join(query_format_pushdata_hashes)})
                 AND HD.is_orphaned = 0
                 LIMIT 1000;"""
             self.mysql_conn.query(sql)

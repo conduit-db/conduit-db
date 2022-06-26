@@ -14,7 +14,7 @@ import io
 import os
 import requests
 import sys
-from typing import cast, List, TypedDict
+from typing import cast, TypedDict
 
 from bitcoinx import hash_to_hex_str, double_sha256
 
@@ -99,7 +99,7 @@ def main() -> None:
 
     header_io = io.StringIO()
     headers_view = memoryview(headers_bytes)
-    header_hash_hexs: List[str] = []
+    header_hash_hexs: list[str] = []
     for i in range(height+1):
         header_hash = double_sha256(headers_view[i*80:i*80+80])
         header_hash_hex = hash_to_hex_str(header_hash)

@@ -3,7 +3,6 @@ import os
 
 import typing
 from io import BytesIO
-from typing import Tuple, Optional, List
 from pathlib import Path
 
 import bitcoinx
@@ -53,7 +52,7 @@ class LmdbBlocks:
 
     # -------------------- EXTERNAL API -------------------- #
 
-    def get_block_num(self, block_hash: bytes) -> Optional[int]:
+    def get_block_num(self, block_hash: bytes) -> int | None:
         with self.db.env.begin(db=self.block_nums_db) as txn:
             result = txn.get(block_hash)
             if result:
@@ -62,7 +61,7 @@ class LmdbBlocks:
                               f"{bitcoinx.hash_to_hex_str(block_hash)} not found")
             return None
 
-    def get_data_location(self,  block_num: int) -> Optional[DataLocation]:
+    def get_data_location(self,  block_num: int) -> DataLocation | None:
         with self.db.env.begin(db=self.blocks_db, buffers=False) as txn:
             val: bytes = txn.get(struct_be_I.pack(block_num))
             if not val:
@@ -71,7 +70,7 @@ class LmdbBlocks:
         read_path, start_offset_in_dat_file, end_offset_in_dat_file = cbor2.loads(val)
         return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
 
-    def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
+    def get_block(self, block_num: int, slice: Slice | None=None) -> bytes | None:
         """If end_offset=0 then it goes to the end of the block"""
         data_location = self.get_data_location(block_num)
         if not data_location:
@@ -80,7 +79,7 @@ class LmdbBlocks:
         with self.ffdb:
             return self.ffdb.get(data_location, slice, lock_free_access=True)
 
-    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]],
+    def put_blocks(self, batched_blocks: list[tuple[bytes, int, int]],
             shared_mem_buffer: memoryview) -> None:
         """write blocks in append-only mode to disc."""
         try:
@@ -114,7 +113,7 @@ class LmdbBlocks:
         except Exception as e:
             self.logger.exception(e)
 
-    def get_block_metadata(self, block_hash: bytes) -> Optional[BlockMetadata]:
+    def get_block_metadata(self, block_hash: bytes) -> BlockMetadata | None:
         """Namely size in bytes but could later include things like compression dictionary id and
         maybe interesting things like MinerID"""
         assert self.db.env is not None

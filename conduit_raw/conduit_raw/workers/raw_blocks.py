@@ -7,7 +7,7 @@ import threading
 import time
 from multiprocessing import shared_memory
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Optional
 
 import zmq
 
@@ -34,7 +34,7 @@ class BlockWriter(multiprocessing.Process):
     def __init__(
             self,
             shm_name: str,
-            worker_in_queue_blk_writer: MultiprocessingQueue[Tuple[bytes, int, int]],
+            worker_in_queue_blk_writer: MultiprocessingQueue[tuple[bytes, int, int]],
             worker_ack_queue_blk_writer: MultiprocessingQueue[bytes]
     ) -> None:
         super(BlockWriter, self).__init__()
@@ -42,7 +42,7 @@ class BlockWriter(multiprocessing.Process):
         self.worker_in_queue_blk_writer = worker_in_queue_blk_writer
         self.worker_ack_queue_blk_writer = worker_ack_queue_blk_writer
 
-        self.batched_blocks: Optional[List[Tuple[bytes, int, int]]] = None
+        self.batched_blocks: list[tuple[bytes, int, int]] | None = None
         self.batched_blocks_lock: Optional[threading.Lock] = None
         self.lmdb = None
 
@@ -137,7 +137,7 @@ class BlockWriter(multiprocessing.Process):
             self.logger.info(f"Process Stopped")
             sys.exit(0)
 
-    def ack_for_loaded_blocks(self, batched_blocks: List[Tuple[bytes, int, int]]) -> None:
+    def ack_for_loaded_blocks(self, batched_blocks: list[tuple[bytes, int, int]]) -> None:
         if len(batched_blocks) == 0:
             return None
         # Ack for all flushed blocks

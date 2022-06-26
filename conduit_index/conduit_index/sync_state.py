@@ -1,16 +1,16 @@
 import asyncio
+from concurrent.futures.thread import ThreadPoolExecutor
+from datetime import datetime, timedelta
 import logging
 import multiprocessing
 import threading
 import time
 import typing
-from datetime import datetime, timedelta
-from typing import Set, List, Tuple, Dict, Union
-from concurrent.futures.thread import ThreadPoolExecutor
-from typing import Optional, cast
+from typing import cast
 
 import bitcoinx
 from bitcoinx import unpack_header, double_sha256
+from bitcoinx.networks import Header
 
 from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -18,7 +18,6 @@ from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch
-from bitcoinx.networks import Header
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -46,40 +45,40 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
-        self.ipc_sock_client: Optional[IPCSocketClient] = None
+        self.ipc_sock_client: IPCSocketClient | None = None
 
-        self.conduit_raw_header_tip: Optional[bitcoinx.Header] = None
+        self.conduit_raw_header_tip: bitcoinx.Header | None = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
 
         # Not actually used by Indexer but cannot remove because it's in the shared lib
-        self.target_header_height: Optional[int] = None
-        self.target_block_header_height: Optional[int] = None
+        self.target_header_height: int | None = None
+        self.target_block_header_height: int | None = None
         self.local_block_tip_height: int = self.get_local_block_tip_height()
         self.initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: \
-            asyncio.Queue[Tuple[bytes, Union[memoryview, BlockCallback]]] = asyncio.Queue()
+            asyncio.Queue[tuple[bytes, memoryview | BlockCallback]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
         self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
-        self.blocks_batch_set: Set[bytes] = set()  # usually a set of 500 hashes
-        self.expected_blocks_tx_counts: Dict[bytes, int] = {}  # blk_hash: total_tx_count
-        self._blocks_progress_counter: Dict[bytes, int] = {}  # block_hash: txs_done_count
+        self.blocks_batch_set = set[bytes]()  # usually a set of 500 hashes
+        self.expected_blocks_tx_counts: dict[bytes, int] = {}  # blk_hash: total_tx_count
+        self._blocks_progress_counter: dict[bytes, int] = {}  # block_hash: txs_done_count
 
         # Accounting and ack'ing for chip away block msgs
-        self.all_pending_chip_away_work_item_ids: Set[int] = set()  # set of work_item_ids
-        self.expected_work_item_tx_counts: Dict[int, int] = {}  # work_item_id: total_tx_count
-        self._work_item_progress_counter: Dict[int, int] = {}  # work_item_id: txs_done_count
+        self.all_pending_chip_away_work_item_ids = set[int]()  # set of work_item_ids
+        self.expected_work_item_tx_counts: dict[int, int] = {}  # work_item_id: total_tx_count
+        self._work_item_progress_counter: dict[int, int] = {}  # work_item_id: txs_done_count
         self.chip_away_batch_event = asyncio.Event()
 
         # Accounting and ack'ing for block msgs
-        self.all_pending_block_hashes: Set[bytes] = set()  # usually a set of 500 hashes during IBD
-        self.received_blocks: Set[bytes] = set()  # must process before network buffer reset
-        self.done_blocks_tx_parser: Set[bytes] = set()
+        self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
+        self.received_blocks = set[bytes]()  # must process before network buffer reset
+        self.done_blocks_tx_parser = set[bytes]()
         self.done_blocks_tx_parser_lock = threading.Lock()
         self.done_blocks_tx_parser_event = asyncio.Event()
 
@@ -88,7 +87,7 @@ class SyncState:
 
         self.total_time_allocating_work = 0.
         self.is_post_ibd = False
-        self.conduit_best_tip: Optional[bitcoinx.Header] = None
+        self.conduit_best_tip: bitcoinx.Header | None = None
 
     @property
     def message_received_count(self) -> int:
@@ -158,8 +157,8 @@ class SyncState:
         with self._msg_received_count_lock:
             self._msg_received_count = 0
 
-    def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: Set[bytes],
-            all_work: MainBatch) -> List[WorkUnit]:
+    def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: set[bytes],
+            all_work: MainBatch) -> list[WorkUnit]:
         """is_reorg means that this block hash was one of the ones affected by the reorg."""
 
         t0 = time.perf_counter()
@@ -203,8 +202,8 @@ class SyncState:
             self.total_time_allocating_work += t1
             self.logger.debug(f"total time allocating work: {self.total_time_allocating_work}")
 
-    def get_work_units_chip_away(self, remaining_work_units: List[WorkUnit]) \
-            -> Tuple[List[WorkUnit], List[WorkUnit]]:
+    def get_work_units_chip_away(self, remaining_work_units: list[WorkUnit]) \
+            -> tuple[list[WorkUnit], list[WorkUnit]]:
         """When limits are reached this function can merely return back to caller and this
         function will be called repeatedly until 'all_pending_block_hashes' have been fully
         consumed.
@@ -243,7 +242,7 @@ class SyncState:
                 block_height_deficit = stop_header.height - (start_header.height - 1)
 
                 # May need to use block_hash not height to be more correct
-                block_headers: List[bitcoinx.Header] = []
+                block_headers: list[bitcoinx.Header] = []
                 for i in range(1, block_height_deficit + 1):
                     block_header = self.controller.get_header_for_height(start_header.height - 1 + i)
                     block_headers.append(block_header)

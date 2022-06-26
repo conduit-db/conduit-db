@@ -11,9 +11,7 @@ import json
 import os
 import requests
 import sys
-from typing import cast, List, TypedDict
 
-from bitcoinx import hash_to_hex_str, double_sha256
 
 RPC_URI = "http://rpcuser:rpcpassword@127.0.0.1:18332"
 
@@ -39,7 +37,7 @@ def validate_inputs(blockchain_dir: str):
 
 
 def get_header_hash_hexs(headers_file_path: str, output_dir_path: str):
-    header_hash_hexs: List[str] = []
+    header_hash_hexs: list[str] = []
     with open(headers_file_path, "r") as hf:
         i = 0
         while 1:
@@ -55,7 +53,7 @@ def get_header_hash_hexs(headers_file_path: str, output_dir_path: str):
     return header_hash_hexs
 
 
-def submit_blocks(header_hash_hexs: List[str], output_dir_path: str):
+def submit_blocks(header_hash_hexs: list[str], output_dir_path: str):
     for i, header_hash_hex in enumerate(header_hash_hexs):
         print(f"Uploading block {i} {header_hash_hex[:6]}")
         block_file_path = os.path.join(output_dir_path, header_hash_hex)

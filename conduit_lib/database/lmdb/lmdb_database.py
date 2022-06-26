@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -5,7 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 import lmdb
-from typing import List, Tuple, Optional, Set
 import typing
 
 from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
@@ -33,7 +34,7 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 class LMDB_Database:
     """simple interface to LMDB"""
 
-    def __init__(self, storage_path: Optional[str]=None, lock: bool=True) -> None:
+    def __init__(self, storage_path: str | None=None, lock: bool=True) -> None:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
@@ -66,7 +67,7 @@ class LMDB_Database:
         self._db2 = None
         self._opened = False
 
-    def _make_reorg_tx_set(self, chain: ChainHashes) -> Set[bytes]:
+    def _make_reorg_tx_set(self, chain: ChainHashes) -> set[bytes]:
         chain_tx_hashes = set()
         for block_hash in chain:
             block_metadata = self.get_block_metadata(block_hash)
@@ -97,35 +98,35 @@ class LMDB_Database:
             cursor = txn.cursor()
             return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
 
-    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: Optional[lmdb.Cursor]=None) \
-            -> Optional[bytes]:
+    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: lmdb.Cursor | None=None) \
+            -> bytes | None:
         return self.merkle_tree.get_mtree_row(blk_hash, level, cursor)
 
-    def get_merkle_branch(self, tx_metadata: TxMetadata) -> Optional[tuple[list[str], str]]:
+    def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str] | None:
         return self.merkle_tree.get_merkle_branch(tx_metadata)
 
     def put_merkle_trees(self, batched_merkle_trees: list[MerkleTreeRow]) -> None:
         self.merkle_tree.put_merkle_trees(batched_merkle_trees)
 
-    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> Optional[bytes]:
+    def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes | None:
         return self.tx_offsets.get_rawtx_by_loc(tx_loc)
 
     async def get_rawtx_by_loc_async(self, executor: ThreadPoolExecutor, tx_loc: TxLocation) \
-            -> Optional[bytes]:
+            -> bytes | None:
         return await asyncio.get_running_loop().run_in_executor(executor,
             self.get_rawtx_by_loc, tx_loc)
 
-    def get_single_tx_slice(self, tx_loc: TxLocation) -> Optional[Slice]:
+    def get_single_tx_slice(self, tx_loc: TxLocation) -> Slice | None:
         return self.tx_offsets._get_single_tx_slice(tx_loc)
 
-    def get_tx_offsets(self, block_hash: bytes) -> Optional[bytes]:
+    def get_tx_offsets(self, block_hash: bytes) -> bytes | None:
         return self.tx_offsets.get_tx_offsets(block_hash)
 
-    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) \
+    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, array.ArrayType[int]]]) \
             -> None:
         return self.tx_offsets.put_tx_offsets(batched_tx_offsets)
 
-    def get_block_num(self, block_hash: bytes) -> Optional[int]:
+    def get_block_num(self, block_hash: bytes) -> int | None:
         return self.blocks.get_block_num(block_hash)
 
     def check_block(self, block_hash: bytes) -> None:
@@ -188,18 +189,18 @@ class LMDB_Database:
             self.logger.exception(f"Failed to complete full purge of block data for block hash: "
                                   f"{hash_to_hex_str(block_hash)}")
 
-    def get_block(self, block_num: int, slice: Optional[Slice]=None) -> Optional[bytes]:
+    def get_block(self, block_num: int, slice: Slice | None=None) -> bytes | None:
         return self.blocks.get_block(block_num, slice)
 
-    def get_block_metadata(self, block_hash: bytes) -> Optional[BlockMetadata]:
+    def get_block_metadata(self, block_hash: bytes) -> BlockMetadata | None:
         return self.blocks.get_block_metadata(block_hash)
 
-    def put_blocks(self, batched_blocks: List[Tuple[bytes, int, int]],
+    def put_blocks(self, batched_blocks: list[tuple[bytes, int, int]],
             shared_mem_buffer: memoryview) -> None:
         return self.blocks.put_blocks(batched_blocks, shared_mem_buffer)
 
     def get_reorg_differential(self, old_chain: ChainHashes, new_chain: ChainHashes) \
-            -> Tuple[Set[bytes], Set[bytes], Set[bytes]]:
+            -> tuple[set[bytes], set[bytes], set[bytes]]:
         """This query basically wants to find out the ** differential ** in terms of tx hashes
          between the orphaned chain of blocks vs the new reorging longest chain.
          It should go without saying that we only care about the block hashes going back to

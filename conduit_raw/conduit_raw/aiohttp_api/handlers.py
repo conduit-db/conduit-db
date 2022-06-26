@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Optional, cast
+from typing import cast, TYPE_CHECKING
 
 import bitcoinx
 from aiohttp import web
@@ -34,7 +34,7 @@ async def error(request: web.Request) -> web.Response:
     raise web.HTTPBadRequest(reason="This is a test of raising an exception in the handler")
 
 
-def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> Optional[TxMetadata]:
+def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> TxMetadata | None:
     """Truncates full hash -> hashX length"""
     tx_metadata = mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
@@ -43,13 +43,13 @@ def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> Optional[TxMeta
 
 
 async def _get_tx_metadata_async(tx_hash: bytes, mysql_db: MySQLDatabase,
-        executor: ThreadPoolExecutor) -> Optional[TxMetadata]:
+        executor: ThreadPoolExecutor) -> TxMetadata | None:
     tx_metadata = await asyncio.get_running_loop().run_in_executor(executor,
         _get_tx_metadata, tx_hash, mysql_db)
     return tx_metadata
 
 
-def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> Optional[bytes]:
+def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
     # get base level of merkle tree with the tx hashes array
     block_metadata = lmdb.get_block_metadata(tx_location.block_hash)
     if block_metadata is None:
@@ -144,7 +144,7 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
 
         count = 0
         result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
-        response: Optional[StreamResponse] = None
+        response: StreamResponse | None = None
         for match in result_generator:
             if count == 0:
                 response = StreamResponse(status=200, reason='OK', headers=headers)

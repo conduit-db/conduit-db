@@ -1,7 +1,7 @@
 import asyncio
 import io
 from asyncio import BufferedProtocol, Transport, BaseProtocol, BaseTransport
-from typing import Callable, cast, Optional, NamedTuple, Union
+from typing import Callable, cast, NamedTuple
 from bitcoinx import read_varint
 from collections import namedtuple
 from multiprocessing import shared_memory
@@ -50,7 +50,7 @@ class BitcoinNetIO(BufferedProtocol):
     _payload_size = 0
 
     def __init__(self, on_buffer_full: Callable[[], None],
-            on_msg: Callable[[bytes, Union[BlockCallback, memoryview]], None],
+            on_msg: Callable[[bytes, BlockCallback | memoryview], None],
             on_connection_made: Callable[[], None],
             on_connection_lost: Callable[[], None]) -> None:
 
@@ -86,7 +86,7 @@ class BitcoinNetIO(BufferedProtocol):
         self.logger.info("Connection made")
         self.on_connection_made_callback()
 
-    def connection_lost(self, exc: Optional[BaseException]) -> None:
+    def connection_lost(self, exc: BaseException | None) -> None:
         if exc:
             self.logger.exception(exc)
         self.on_connection_lost_callback()
@@ -120,7 +120,9 @@ class BitcoinNetIO(BufferedProtocol):
         self._pos = self._pos - self._last_msg_end_pos
         self._last_msg_end_pos = 0
 
-    def get_buffer(self, sizehint: int) -> memoryview:  # type: ignore
+    # NOTE(typing) Return type "memoryview" of "get_buffer" incompatible with return type
+    #   "bytearray" in supertype "BufferedProtocol"  [override]
+    def get_buffer(self, sizehint: int) -> memoryview:  # type: ignore[override]
         return self.shm_buffer_view[self._pos:]
 
     def _unpack_msg_header(self) -> Header:

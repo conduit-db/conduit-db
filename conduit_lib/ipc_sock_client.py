@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import array
 import logging
 import os
@@ -5,7 +7,7 @@ import socket
 import time
 from pathlib import Path
 from types import TracebackType
-from typing import Iterator, Optional, Type, List
+from typing import Iterator, Type
 
 import cbor2
 
@@ -41,8 +43,8 @@ class IPCSocketClient:
     def __enter__(self) -> 'IPCSocketClient':
         return self
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]],
-            exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    def __exit__(self, exc_type: Type[BaseException] | None, exc_val: BaseException | None,
+            exc_tb: TracebackType | None) -> None:
         self.sock.close()
 
     def wait_for_connection(self) -> None:
@@ -171,7 +173,7 @@ class IPCSocketClient:
 
     # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
     def transaction_offsets_batched(self,
-            block_hashes: List[bytes]) -> Iterator[array.ArrayType]:  # type: ignore
+            block_hashes: list[bytes]) -> Iterator[array.ArrayType[int]]:
         try:
             msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
             send_msg(self.sock, msg_req.to_cbor())
