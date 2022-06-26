@@ -62,7 +62,7 @@ class BatchCompletionRaw(threading.Thread):
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
-                self.logger.exception(e)
+                self.logger.exception("Caught exception")
 
 
 class BatchCompletionMtree(threading.Thread):
@@ -111,7 +111,7 @@ class BatchCompletionMtree(threading.Thread):
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
-                self.logger.exception(e)
+                self.logger.exception("Caught exception")
 
 
 class BatchCompletionPreprocessor(threading.Thread):
@@ -155,4 +155,4 @@ class BatchCompletionPreprocessor(threading.Thread):
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1
             except Exception as e:
-                self.logger.exception(e)
+                self.logger.exception("Caught exception")

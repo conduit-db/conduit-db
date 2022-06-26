@@ -296,16 +296,12 @@ class Controller(ControllerBase):
     async def handle(self) -> None:
         while True:
             command, message = await self.sync_state.incoming_msg_queue.get()
-            try:
-                # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
-                handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
-                handler_func = getattr(self.handlers, handler_func_name)
-                await handler_func(message)
-                if command != BLOCK_BIN:
-                    self.sync_state.incr_msg_handled_count()
-            except Exception as e:
-                self.logger.exception("unexpected exception in handle()")
-                raise
+            # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
+            handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
+            handler_func = getattr(self.handlers, handler_func_name)
+            await handler_func(message)
+            if command != BLOCK_BIN:
+                self.sync_state.incr_msg_handled_count()
 
     async def spawn_handler_tasks(self) -> None:
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
@@ -589,7 +585,7 @@ class Controller(ControllerBase):
                 self.logger.debug("skipping - prev_out == genesis block")
                 return True
             else:
-                self.logger.exception(e)
+                self.logger.exception("Caught exception")
                 raise
 
     async def check_for_ibd_status(self, conduit_best_tip: Header) -> None:

@@ -80,7 +80,7 @@ class MySQLTables:
 
             self.mysql_conn.query("""DROP TABLE mempool_transactions;""")
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.commit_transaction()
 

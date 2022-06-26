@@ -111,7 +111,7 @@ class LmdbBlocks:
                         cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
 
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
 
     def get_block_metadata(self, block_hash: bytes) -> BlockMetadata | None:
         """Namely size in bytes but could later include things like compression dictionary id and

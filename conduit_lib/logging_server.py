@@ -148,7 +148,7 @@ class TCPLoggingServer(multiprocessing.Process):
         except KeyboardInterrupt:
             self.logger.debug("ThreadingTCPServer stopping...")
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             if self.tcpserver is not None:
                 self.tcpserver.shutdown()

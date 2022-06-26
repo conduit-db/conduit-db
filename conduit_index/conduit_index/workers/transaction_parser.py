@@ -158,8 +158,8 @@ class TxParser(multiprocessing.Process):
 
             self.start_flush_threads()
             self.logger.info(f"{self.__class__.__name__} exiting")
-        except Exception as e:
-            self.logger.exception(e)
+        except Exception:
+            self.logger.exception("Caught exception")
             raise
         finally:
             if int(os.environ.get('RUN_STACK_TRACER', '0')):
@@ -243,7 +243,7 @@ class TxParser(multiprocessing.Process):
                     continue
 
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
             raise e
         finally:
             mysql_db.close()
@@ -306,7 +306,7 @@ class TxParser(multiprocessing.Process):
                     continue
 
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
             raise e
         finally:
             mysql_db.close()
@@ -451,7 +451,7 @@ class TxParser(multiprocessing.Process):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.logger.info("Closing mined_blocks_thread")
             mempool_tx_socket.close()
@@ -681,7 +681,7 @@ class TxParser(multiprocessing.Process):
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.logger.info("Closing mined_blocks_thread")
             mined_tx_socket.close()

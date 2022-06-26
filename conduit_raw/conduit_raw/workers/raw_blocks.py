@@ -81,7 +81,7 @@ class BlockWriter(multiprocessing.Process):
             for thread in threads:
                 thread.join()
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
             raise
         except KeyboardInterrupt:
             self.logger.debug("BlockWriter stopping...")
@@ -103,7 +103,7 @@ class BlockWriter(multiprocessing.Process):
                         self.batched_blocks = []
                 time.sleep(0.3)
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
             raise
 
     def main_thread(self) -> None:
@@ -120,7 +120,7 @@ class BlockWriter(multiprocessing.Process):
                     blk_hash, blk_start_pos, blk_end_pos = item
                     self.batched_blocks.append((blk_hash, blk_start_pos, blk_end_pos))
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
 
     def kill_thread(self) -> None:
         try:
@@ -132,7 +132,7 @@ class BlockWriter(multiprocessing.Process):
                     break
                 time.sleep(0.2)
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.logger.info(f"Process Stopped")
             sys.exit(0)

@@ -110,7 +110,7 @@ class MTreeCalculator(multiprocessing.Process):
             # is therefore that we catch this and recognise it as an exit condition.
             return
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.logger.info("Closing mined_blocks_thread")
             merkle_tree_socket.close()
@@ -126,7 +126,7 @@ class MTreeCalculator(multiprocessing.Process):
                     break
                 time.sleep(0.2)
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
         finally:
             self.logger.info(f"Process Stopped")
             sys.exit(0)

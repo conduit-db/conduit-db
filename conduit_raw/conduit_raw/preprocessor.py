@@ -63,5 +63,5 @@ class BlockPreProcessor(threading.Thread):
                 merkle_tree_socket.send(packed_msg)
                 self.worker_ack_queue_preproc.put(blk_hash)
         except Exception as e:
-            self.logger.exception(e)
+            self.logger.exception("Caught exception")
             raise

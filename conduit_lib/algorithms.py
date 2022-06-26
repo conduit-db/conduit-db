@@ -317,7 +317,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
             f"txid={hash_to_hex_str(tx_hashX)}"
         )
-        logger.exception(e)
+        logger.exception("Caught exception")
         raise
 
 
