@@ -69,8 +69,8 @@ class MTreeCalculator(multiprocessing.Process):
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
         # PUB-SUB from Controller to worker to kill the worker
-        context1 = zmq.Context()  # type: ignore
-        self.kill_worker_socket = context1.socket(zmq.SUB)  # type: ignore
+        context1 = zmq.Context[zmq.Socket[bytes]]()
+        self.kill_worker_socket = context1.socket(zmq.SUB)
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
@@ -82,8 +82,8 @@ class MTreeCalculator(multiprocessing.Process):
         batch = []
         prev_time_check = time.time()
 
-        context2 = zmq.Context()  # type: ignore
-        merkle_tree_socket = context2.socket(zmq.PULL)  # type: ignore
+        context2 = zmq.Context[zmq.Socket[bytes]]()
+        merkle_tree_socket = context2.socket(zmq.PULL)
         merkle_tree_socket.connect("tcp://127.0.0.1:41835")
 
         try:

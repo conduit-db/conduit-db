@@ -8,8 +8,7 @@ import os
 import queue
 import threading
 import time
-from typing import Optional, List, Set, Coroutine, Any, Callable, TypeVar, Sequence, Dict, Tuple, \
-    Union
+from typing import Coroutine, Any, Callable, TypeVar, Sequence
 import multiprocessing
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -57,7 +56,7 @@ class Controller(ControllerBase):
     """
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
-            loop_type: Optional[str]=None) -> None:
+            loop_type: str | None=None) -> None:
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -83,8 +82,8 @@ class Controller(ControllerBase):
         self.deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state = SyncState(self.storage, self)
         self.lmdb = self.storage.lmdb
-        self.ipc_sock_client: Optional[IPCSocketClient] = None
-        self.ipc_sock_server: Optional[ThreadedTCPServer] = None
+        self.ipc_sock_client: IPCSocketClient | None = None
+        self.ipc_sock_server: ThreadedTCPServer | None = None
         self.general_executor = ThreadPoolExecutor(max_workers=1)
 
         # Connection entry/exit
@@ -92,29 +91,29 @@ class Controller(ControllerBase):
         self.con_lost_event = asyncio.Event()
 
         # Worker queues & events
-        self.worker_in_queue_preproc: queue.Queue[Tuple[bytes, int, int, int]] = queue.Queue()  # no ack needed
+        self.worker_in_queue_preproc: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
 
         # PUB-SUB from Controller to worker to kill the worker
         # Todo - PUB/SUB is unreliable with ZMQ. Need a better solution
-        context = zmq.Context()  # type: ignore[no-untyped-call]
-        self.kill_worker_socket: zmq.Socket = context.socket(zmq.PUB)  # type: ignore[no-untyped-call]
-        self.kill_worker_socket.bind("tcp://127.0.0.1:46464")  # type: ignore[no-untyped-call]
+        context = zmq.Context[zmq.Socket[bytes]]()
+        self.kill_worker_socket = context.socket(zmq.PUB)
+        self.kill_worker_socket.bind("tcp://127.0.0.1:46464")
 
-        self.worker_in_queue_blk_writer: MultiprocessingQueue[Tuple[bytes, int, int]] = multiprocessing.Queue()
+        self.worker_in_queue_blk_writer: MultiprocessingQueue[tuple[bytes, int, int]] = multiprocessing.Queue()
         self.worker_ack_queue_mtree: MultiprocessingQueue[bytes] = multiprocessing.Queue()
         self.worker_ack_queue_blk_writer: MultiprocessingQueue[bytes] = multiprocessing.Queue()
 
-        self.blocks_batch_set_queue_raw: queue.Queue[Set[bytes]] = queue.Queue()
-        self.blocks_batch_set_queue_mtree: queue.Queue[Set[bytes]] = queue.Queue()
-        self.blocks_batch_set_queue_preproc: queue.Queue[Set[bytes]] = queue.Queue()
+        self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
+        self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
+        self.blocks_batch_set_queue_preproc = queue.Queue[set[bytes]]()
 
         # Database Interfaces
         # self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network IO + callbacks
-        self.transport: Optional[BaseTransport] = None
-        self.session: Optional[BaseProtocol] = None
+        self.transport: BaseTransport | None = None
+        self.session: BaseProtocol | None = None
         self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
             self.on_connection_made, self.on_connection_lost)
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
@@ -122,7 +121,7 @@ class Controller(ControllerBase):
 
         self.estimated_moving_av_block_size_mb = 0.1 if \
             self.sync_state.get_local_block_tip_height() < 2016 else 500
-        self.aiohttp_client_session: Optional[aiohttp.ClientSession] = None
+        self.aiohttp_client_session: aiohttp.ClientSession | None = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
     async def setup(self) -> None:
@@ -239,7 +238,7 @@ class Controller(ControllerBase):
         coro = self._on_buffer_full()
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-    def on_msg(self, command: bytes, message: Union[BlockCallback, memoryview]) -> None:
+    def on_msg(self, command: bytes, message: BlockCallback | memoryview) -> None:
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
@@ -272,7 +271,7 @@ class Controller(ControllerBase):
             raise
 
     def run_coro_threadsafe(self, coro: Callable[..., Coroutine[Any, Any, T2]],
-            *args: Sequence[str], **kwargs: Dict[Any, Any]) -> None:
+            *args: Sequence[str], **kwargs: dict[Any, Any]) -> None:
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     async def handle(self) -> None:
@@ -454,7 +453,7 @@ class Controller(ControllerBase):
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
         return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
 
-    async def request_all_batch_block_data(self, _batch_id: int, blocks_batch_set: Set[bytes],
+    async def request_all_batch_block_data(self, _batch_id: int, blocks_batch_set: set[bytes],
             stop_header_height: int) -> None:
         """
         This method relies on the node responding to the prior getblocks request with up to 500
@@ -501,7 +500,7 @@ class Controller(ControllerBase):
             self.storage.block_headers.connect(header.raw)
         self.storage.block_headers.flush()
 
-    async def connect_done_block_headers(self, blocks_batch_set: Set[bytes]) -> None:
+    async def connect_done_block_headers(self, blocks_batch_set: set[bytes]) -> None:
         """If this returns False, it means a reorg happened"""
         sorted_headers = sorted([(self.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
@@ -542,7 +541,7 @@ class Controller(ControllerBase):
             return hash_stop
 
     async def wait_for_batched_blocks_completion(self, batch_id: int,
-            all_pending_block_hashes: Set[bytes], stop_header_height: int) -> None:
+            all_pending_block_hashes: set[bytes], stop_header_height: int) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
             await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
@@ -702,7 +701,7 @@ class Controller(ControllerBase):
             self.logger.exception("Unexpected exception")
             raise
 
-    async def send_inv(self, inv_vects: List[Inv]) -> None:
+    async def send_inv(self, inv_vects: list[Inv]) -> None:
         await self.serializer.inv(inv_vects)
 
     async def enforce_lmdb_flush(self) -> None:

@@ -62,8 +62,8 @@ class BlockWriter(multiprocessing.Process):
         asyncio.set_event_loop(self.loop)
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()  # type: ignore
-        self.kill_worker_socket = context3.socket(zmq.SUB)  # type: ignore
+        context3 = zmq.Context[zmq.Socket[bytes]]()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 

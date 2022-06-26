@@ -1,26 +1,26 @@
 from __future__ import annotations
 
 import array
-import multiprocessing
-import socket
-import typing
+import asyncio
 from asyncio import BaseTransport, BaseProtocol
+from concurrent.futures.thread import ThreadPoolExecutor
 from io import BytesIO
+import logging
+import multiprocessing
 from multiprocessing.process import BaseProcess
+import os
+from pathlib import Path
+import socket
+import struct
+import time
+import typing
+from typing import Any, cast
 
 import bitcoinx
 import cbor2
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
-import logging
-import os
-import struct
-import time
-from typing import Coroutine, Optional, Dict, List, Tuple, Set, Any, TypeVar, Union, cast
-from concurrent.futures.thread import ThreadPoolExecutor
-from pathlib import Path
 import zmq
 from zmq.asyncio import Context as AsyncZMQContext
-import asyncio
 
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_net_io import BitcoinNetIO, BlockCallback
@@ -70,13 +70,13 @@ class Controller(ControllerBase):
     - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
     """
 
-    def __init__(self, net_config: 'NetworkConfig', host: str="127.0.0.1", port: int=8000,
+    def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: None=None) -> None:
 
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
-        self.processes: List[BaseProcess] = []
-        self.tasks: List[asyncio.Task[Any]] = []
+        self.processes: list[BaseProcess] = []
+        self.tasks: list[asyncio.Task[Any]] = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
 
@@ -91,9 +91,9 @@ class Controller(ControllerBase):
         self.peer = self.get_peer()
         self.host = host  # bind address
         self.port = port  # bind port
-        self.protocol: Optional[BaseProtocol] = None
+        self.protocol: BaseProtocol | None = None
         self.protocol_factory = None
-        self.transport: Optional[BaseTransport]
+        self.transport: BaseTransport | None = None
 
         wait_for_conduit_raw_api()
         wait_for_mysql()
@@ -105,14 +105,13 @@ class Controller(ControllerBase):
         self.sync_state: SyncState = SyncState(self.storage, self)
 
         # Bitcoin Network IO + callbacks
-        self.transport = None
         self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
             self.on_connection_made, self.on_connection_lost)
         self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
         self.shm_buffer = self.bitcoin_net_io.shm_buffer
 
         # Mempool and API state
-        self.mempool_tx_hash_set: Set[bytes] = set()
+        self.mempool_tx_hash_set: set[bytes] = set()
 
         # Connection entry/exit
         self.handshake_complete_event = asyncio.Event()
@@ -120,48 +119,48 @@ class Controller(ControllerBase):
 
         # IPC from Controller to TxParser
         context1 = AsyncZMQContext.instance()
-        self.mined_tx_socket = context1.socket(zmq.PUSH)  # type: ignore
+        self.mined_tx_socket = context1.socket(zmq.PUSH)
         self.mined_tx_socket.bind("tcp://127.0.0.1:55555")
 
         # IPC from Controller to TxParser
         context2 = AsyncZMQContext.instance()
-        self.mempool_tx_socket: zmq.Socket = context2.socket(zmq.PUSH)  # type: ignore
-        self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")  # type: ignore
+        self.mempool_tx_socket = context2.socket(zmq.PUSH)
+        self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")
 
         # PUB-SUB from Controller to worker to kill the worker
         context3 = AsyncZMQContext.instance()
-        self.kill_worker_socket = context3.socket(zmq.PUB)  # type: ignore
+        self.kill_worker_socket = context3.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:63241")
 
         # PUB-SUB from Controller to worker to signal when initial block download is in effect
         # Defined as when the local chain tip is within 24 hours of the best known chain tip
         # This is the same definition that the reference bitcoin-sv node uses.
         context4 = AsyncZMQContext.instance()
-        self.is_ibd_socket = context4.socket(zmq.PUB)  # type: ignore
+        self.is_ibd_socket = context4.socket(zmq.PUB)
         self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
         self.ibd_signal_sent = False
 
         context5 = AsyncZMQContext.instance()
-        self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)  # type: ignore
+        self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)
         self.ack_for_mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
         self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
 
         context6 = AsyncZMQContext.instance()
-        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PUSH)  # type: ignore
-        self.reorg_event_socket.connect("tcp://127.0.0.1:51495")  # type: ignore
+        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PUSH)
+        self.reorg_event_socket.connect("tcp://127.0.0.1:51495")
 
         context6 = AsyncZMQContext.instance()
-        self.tx_parse_ack_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)  # type: ignore
-        self.tx_parse_ack_socket.bind("tcp://127.0.0.1:54214")  # type: ignore
+        self.tx_parse_ack_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)
+        self.tx_parse_ack_socket.bind("tcp://127.0.0.1:54214")
 
         # Batch Completion
-        self.tx_parser_completion_queue: asyncio.Queue[Set[bytes]] = asyncio.Queue()
+        self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
-        self.global_tx_hashes_dict: Dict[int, list[bytes]] = {}  # blk_num:tx_hashes
+        self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
 
         # Database Interfaces
-        self.mysql_db: Optional[MySQLDatabase] = None
+        self.mysql_db: MySQLDatabase | None = None
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.
         self.general_executor = ThreadPoolExecutor(max_workers=1)
@@ -222,7 +221,7 @@ class Controller(ControllerBase):
 
         self.sync_state._batched_blocks_exec.shutdown(wait=False)
 
-        self.mempool_tx_socket.close()  # type: ignore
+        self.mempool_tx_socket.close()
         self.is_ibd_socket.close()
 
         for task in self.tasks:
@@ -267,7 +266,7 @@ class Controller(ControllerBase):
         self.sync_state.reset_msg_counts()
         self.bitcoin_net_io.resume()
 
-    def on_msg(self, command: bytes, message: Union[memoryview, BlockCallback]) -> None:
+    def on_msg(self, command: bytes, message: memoryview | BlockCallback) -> None:
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         if command == MEMPOOL_BIN:
@@ -356,9 +355,9 @@ class Controller(ControllerBase):
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
-            old_hashes: List[bytes] | None = [old_hashes_array[i:i + 32] for i in
+            old_hashes: list[bytes] | None = [old_hashes_array[i:i + 32] for i in
                 range(len(old_hashes_array))]
-            new_hashes: List[bytes] | None = [new_hashes_array[i:i + 32] for i in
+            new_hashes: list[bytes] | None = [new_hashes_array[i:i + 32] for i in
                 range(len(new_hashes_array))]
             assert new_hashes is not None
             await self.undo_specific_block_hashes(new_hashes)
@@ -531,7 +530,7 @@ class Controller(ControllerBase):
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return best_flushed_block_height
 
-    async def connect_done_block_headers(self, blocks_batch_set: Set[bytes]) -> None:
+    async def connect_done_block_headers(self, blocks_batch_set: set[bytes]) -> None:
         assert self.mysql_db is not None
         ipc_socket_client = IPCSocketClient()
         t0 = time.perf_counter()
@@ -606,8 +605,8 @@ class Controller(ControllerBase):
             await self.handshake_complete_event.wait()
             await self.request_mempool()
 
-    async def long_poll_conduit_raw_chain_tip(self) -> Tuple[bool, Header, Header,
-            Optional[ChainHashes], Optional[ChainHashes]]:
+    async def long_poll_conduit_raw_chain_tip(self) -> tuple[bool, Header, Header,
+            ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
@@ -674,7 +673,7 @@ class Controller(ControllerBase):
                         #  datagram socket using a sendto call) no address was supplied"
                         pass
 
-    async def push_chip_away_work(self, work_units: List[WorkUnit]) -> None:
+    async def push_chip_away_work(self, work_units: list[WorkUnit]) -> None:
         # Push to workers only a subset of the 'full_batch_for_deficit' to chip away
         for is_reorg, part_size, work_item_id, block_hash, block_num, first_tx_pos_batch, \
                 part_end_offset, tx_offsets_array in work_units:
@@ -684,7 +683,7 @@ class Controller(ControllerBase):
                 work_item_id, is_reorg, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
             await self.mined_tx_socket.send(packed_msg)
 
-    async def chip_away(self, remaining_work_units: List[WorkUnit]) -> List[WorkUnit]:
+    async def chip_away(self, remaining_work_units: list[WorkUnit]) -> list[WorkUnit]:
         """This breaks up blocks into smaller 'WorkUnits'. This allows tailoring workloads and
         max memory allocations to be safe with available system resources)"""
         remaining_work, work_for_this_batch = \
@@ -693,8 +692,8 @@ class Controller(ControllerBase):
         await self.push_chip_away_work(work_for_this_batch)
         return remaining_work
 
-    async def _get_differential_post_reorg(self, old_hashes: List[bytes], new_hashes: List[bytes])\
-            -> Tuple[Set[bytes], Set[bytes], Set[bytes]]:
+    async def _get_differential_post_reorg(self, old_hashes: list[bytes], new_hashes: list[bytes])\
+            -> tuple[set[bytes], set[bytes], set[bytes]]:
         # The transaction_parser.py needs the "removals_from_mempool"
         # to only include these in the inputs, outputs, pushdata tables
         # the rest of the reorging block txs are already included for these tables
@@ -709,7 +708,7 @@ class Controller(ControllerBase):
                           f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)}")
         return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
 
-    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: Set[bytes]) -> None:
+    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
             self.logger.debug(f"Waiting for main batch to complete")
@@ -723,8 +722,8 @@ class Controller(ControllerBase):
                 "'wait_for_batched_blocks_completion' ")
 
     async def index_blocks(self, is_reorg: bool, start_header: bitcoinx.Header,
-            stop_header: bitcoinx.Header, old_hashes: Optional[ChainHashes],
-            new_hashes: Optional[ChainHashes]) -> int:
+            stop_header: bitcoinx.Header, old_hashes: ChainHashes | None,
+            new_hashes: ChainHashes | None) -> int:
         assert self.mysql_db is not None
 
         if is_reorg:
@@ -748,7 +747,7 @@ class Controller(ControllerBase):
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
         main_batch = await self.loop.run_in_executor(self.general_executor,
             self.sync_state.get_main_batch, start_header, stop_header)
-        all_pending_block_hashes: Set[bytes] = set()
+        all_pending_block_hashes: set[bytes] = set()
 
 
         all_work_units = self.sync_state.get_work_units_all(is_reorg,
@@ -775,7 +774,7 @@ class Controller(ControllerBase):
         await self.wait_for_batched_blocks_completion(all_pending_block_hashes)
         if is_reorg:
             reorg_handling_complete = False
-            await self.reorg_event_socket.send(  # type: ignore
+            await self.reorg_event_socket.send(
                 cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
@@ -787,7 +786,7 @@ class Controller(ControllerBase):
 
         if is_reorg:
             reorg_handling_complete = True
-            await self.reorg_event_socket.send(  # type: ignore
+            await self.reorg_event_socket.send(
                 cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
         return best_flushed_tip_height
 
@@ -833,11 +832,11 @@ class Controller(ControllerBase):
         )
         await self.send_request(VERSION, message)
 
-    async def wait_for_batch_completion(self, blocks_batch_set: Set[bytes]) -> None:
+    async def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch
         is done"""
         while True:
-            msg = await self.tx_parse_ack_socket.recv()  # type: ignore
+            msg = await self.tx_parse_ack_socket.recv()
             worker_id, work_item_id, block_hash, txs_done_count = cbor2.loads(msg)
             try:
                 self.sync_state._work_item_progress_counter[work_item_id] += txs_done_count

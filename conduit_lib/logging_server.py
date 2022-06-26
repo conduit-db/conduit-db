@@ -1,21 +1,19 @@
 import os
-import pickle
 import logging
 import logging.handlers
+import pickle
+from pathlib import Path
 import socket
 import socketserver
 import struct
 import multiprocessing
 import threading
 import time
-from pathlib import Path
-
-
-# Log level
-from typing import Optional, Callable, Any
+from typing import Any, Callable
 
 import zmq
 
+# Log level
 PROFILING = 9
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -79,7 +77,7 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
         socketserver.ThreadingTCPServer.__init__(self, (host, port), handler)
         self.abort: int = 0
         self.timeout: int = 1
-        self.logname: Optional[int] = None
+        self.logname: int | None = None
 
 
 class TCPLoggingServer(multiprocessing.Process):
@@ -90,7 +88,7 @@ class TCPLoggingServer(multiprocessing.Process):
         super(TCPLoggingServer, self).__init__()
         self.port: int = port
         self.kill_port: int = kill_port
-        self.tcpserver: Optional[LogRecordSocketReceiver] = None
+        self.tcpserver: LogRecordSocketReceiver | None = None
         self.service_name: str = service_name
 
     def setup_local_logging_policy(self) -> None:
@@ -130,12 +128,12 @@ class TCPLoggingServer(multiprocessing.Process):
         self.logger.info(f'Starting {self.__class__.__name__}...')
 
         # PUB-SUB from Controller to worker to kill the worker
-        context3: zmq.Context = zmq.Context()  # type: ignore
+        context3 = zmq.Context[zmq.Socket[bytes]]()
 
         # Todo there is cross-talk of the stop_signal from ConduitIndex and ConduitRaw because
         #  they both import this common library and use port: 63241
-        self.kill_worker_socket: zmq.Socket = context3.socket(zmq.SUB)  # type: ignore
-        self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")  # type: ignore
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
         main_thread = threading.Thread(target=self.main_thread, daemon=True)

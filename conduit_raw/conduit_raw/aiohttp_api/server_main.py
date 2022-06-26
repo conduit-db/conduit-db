@@ -1,12 +1,12 @@
+from __future__ import annotations
 from aiohttp import web
-from conduit_lib import LMDB_Database
-import os
-import sys
-from pathlib import Path
 import asyncio
+from conduit_lib import LMDB_Database
 import logging
+import os
+from pathlib import Path
+import sys
 import typing
-from typing import Optional
 
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
@@ -27,36 +27,36 @@ class AiohttpServer:
 
     def __init__(self, app: web.Application, host: str = SERVER_HOST,
             port: int = SERVER_PORT) -> None:
-        self.runner: Optional[web.AppRunner] = None
-        self.app = app
-        self.app_state: 'ApplicationState' = app['app_state']
-        self.app.on_startup.append(self.on_startup)
-        self.app.on_shutdown.append(self.on_shutdown)
-        self.app.freeze()  # No further callback modification allowed
-        self.host = host
-        self.port = port
-        self.logger = logging.getLogger("aiohttp-rest-api")
+        self._runner: web.AppRunner | None = None
+        self._app = app
+        self._app_state: ApplicationState = app['app_state']
+        self._app.on_startup.append(self.on_startup)
+        self._app.on_shutdown.append(self.on_shutdown)
+        self._app.freeze()  # No further callback modification allowed
+        self._host = host
+        self._port = port
+        self._logger = logging.getLogger("aiohttp-rest-api")
 
     async def on_startup(self, app: web.Application) -> None:
-        # self.logger.debug("Starting...")
-        pass
+        self._logger.debug("Started reference server API")
 
     async def on_shutdown(self, app: web.Application) -> None:
-        self.logger.debug("Stopped reference server REST API")
+        self._logger.debug("Stopped reference server API")
 
     async def start(self) -> None:
-        self.logger.debug("Started on http://%s:%s", self.host, self.port)
-        self.runner = web.AppRunner(self.app, access_log=None)
-        await self.runner.setup()
-        site = web.TCPSite(self.runner, self.host, self.port, reuse_address=True)
+        self._logger.debug("Starting reference server API on http://%s:%s", self._host,
+            self._port)
+        self._runner = web.AppRunner(self._app, access_log=None)
+        await self._runner.setup()
+        site = web.TCPSite(self._runner, self._host, self._port, reuse_address=True)
         await site.start()
-        self.app_state.start_threads()
-        self.app_state.start_tasks()
+        self._app_state.start_threads()
+        self._app_state.start_tasks()
 
     async def stop(self) -> None:
-        self.logger.debug("Stopping reference server REST API")
-        assert self.runner is not None
-        await self.runner.cleanup()
+        self._logger.debug("Stopping reference server API")
+        assert self._runner is not None
+        await self._runner.cleanup()
 
 
 async def main(lmdb: LMDB_Database) -> None:

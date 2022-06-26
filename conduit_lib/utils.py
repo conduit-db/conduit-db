@@ -4,26 +4,24 @@ import ipaddress
 import logging
 import math
 import os
+from pathlib import Path
 import socket
 import struct
 import threading
 import time
-from typing import Any, cast, Callable, Coroutine, List, Optional, TypeVar, Tuple
+from typing import Any, cast, Callable, Coroutine, Optional, TypeVar
 
 import bitcoinx
-import zmq
 from bitcoinx import (
     read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
 )
+import zmq
 
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .deserializer_types import NodeAddr
 from .types import ChainHashes
-from typing import Union
-from _io import BytesIO
-from pathlib import Path
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -39,7 +37,7 @@ def is_docker() -> bool:
     )
 
 
-def payload_to_checksum(payload: Union[bytearray, bytes]) -> bytes:
+def payload_to_checksum(payload: bytearray | bytes) -> bytes:
     return cast(bytes, double_sha256(payload)[:4])
 
 
@@ -55,7 +53,7 @@ def ipv4_to_mapped_ipv6(ipv4: str) -> bytes:
     return bytes(10) + bytes.fromhex("ffff") + ipaddress.IPv4Address(ipv4).packed
 
 
-def mapped_ipv6_to_ipv4(f: BytesIO) -> NodeAddr:
+def mapped_ipv6_to_ipv4(f: io.BytesIO) -> NodeAddr:
     services = read_le_uint64(f.read)
     reserved = f.read(12)
     ipv4 = socket.inet_ntoa(f.read(4))
@@ -73,7 +71,7 @@ def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     return int(filter_size)
 
 
-def unpack_varint_from_mv(buffer: bytes) -> Tuple[int, int]:
+def unpack_varint_from_mv(buffer: bytes) -> tuple[int, int]:
     """buffer argument should be a memory view ideally and returns the value and how many bytes
     were read as a tuple"""
     (n,) = struct.unpack_from("B", buffer)
@@ -126,7 +124,7 @@ def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
     return ba
 
 
-def connect_headers(stream: BytesIO, headers_store: Headers) -> tuple[bytes, bool]:
+def connect_headers(stream: io.BytesIO, headers_store: Headers) -> tuple[bytes, bool]:
     """Two mmap files - one for "headers-first download" and the other for the
     blocks we then download."""
     count = bitcoinx.read_varint(stream.read)
@@ -207,7 +205,7 @@ def find_common_parent(reorg_node_tip: Header, orphaned_tip: Header,
 
 def reorg_detect(old_tip: bitcoinx.Header, new_tip: bitcoinx.Header, chains: list[Chain],
         lock: Optional[threading.RLock]) \
-        -> Optional[tuple[int, Header, Header]]:
+        -> tuple[int, Header, Header] | None:
     try:
         if lock:
             lock.acquire()
@@ -246,7 +244,7 @@ def _get_chain_hashes_back_to_common_parent(tip: Header, common_parent_height: i
 
 def connect_headers_reorg_safe(message: bytes, headers_store: Headers,
         headers_lock: threading.RLock) \
-            -> tuple[bool, Header, Header, Optional[ChainHashes], Optional[ChainHashes]]:
+            -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
     """This needs to ingest a p2p messaging protocol style headers message and if they do indeed
     constitute a reorg event, they need to go far back enough to include the common parent
     height so it can connect to our local headers longest chain. Otherwise, raises ValueError"""
@@ -301,19 +299,19 @@ def get_network_type() -> str:
     raise ValueError("There is no 'NETWORK' key in os.environ")
 
 
-def zmq_send_no_block(sock: zmq.Socket, msg: bytes, on_blocked_msg: str) -> None:
+def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str) -> None:
     while True:
         try:
-            sock.send(msg, zmq.NOBLOCK)  # type: ignore
+            sock.send(msg, zmq.NOBLOCK)
             break
         except zmq.error.Again:
             logger.debug(on_blocked_msg)
             time.sleep(0.1)
 
 
-def maybe_process_batch(process_batch_func: Callable[[List[bytes]], None],
-        work_items: List[bytes], prev_time_check: float, batching_rate: float=0.3) \
-            -> Tuple[List[bytes], float]:
+def maybe_process_batch(process_batch_func: Callable[[list[bytes]], None],
+        work_items: list[bytes], prev_time_check: float, batching_rate: float=0.3) \
+            -> tuple[list[bytes], float]:
     time_diff = time.time() - prev_time_check
     if time_diff > batching_rate:
         prev_time_check = time.time()
@@ -323,16 +321,16 @@ def maybe_process_batch(process_batch_func: Callable[[List[bytes]], None],
     return work_items, prev_time_check
 
 
-def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
-        process_batch_func: Callable[[List[bytes]], None], on_blocked_msg: Optional[str]=None,
+def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket[bytes],
+        process_batch_func: Callable[[list[bytes]], None], on_blocked_msg: str | None=None,
         batching_rate: float=0.3, poll_timeout_ms: int=1000) -> None:
-    work_items: List[bytes] = []
+    work_items: list[bytes] = []
     prev_time_check: float = time.time()
     try:
         while True:
             try:
-                if sock.poll(poll_timeout_ms, zmq.POLLIN):  # type: ignore
-                    msg: bytes = cast(bytes, sock.recv(zmq.NOBLOCK))
+                if sock.poll(poll_timeout_ms, zmq.POLLIN):
+                    msg: bytes = sock.recv(zmq.NOBLOCK)
                     if not msg:
                         return  # poison pill
                     work_items.append(bytes(msg))
@@ -351,7 +349,7 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket,
                 continue
     finally:
         logger.info("Closing thread")
-        sock.close()  # type: ignore
+        sock.close()
 
 
 def get_headers_dir_conduit_index() -> Path:

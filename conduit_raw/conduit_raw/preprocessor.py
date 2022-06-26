@@ -1,13 +1,12 @@
 import array
 import logging
+from multiprocessing import shared_memory
 import queue
 import threading
 import time
-from multiprocessing import shared_memory
 
 import cbor2
 import zmq
-from typing import Tuple
 
 from conduit_lib.algorithms import preprocessor
 
@@ -23,7 +22,7 @@ class BlockPreProcessor(threading.Thread):
     def __init__(
             self,
             shm_name: str,
-            worker_in_queue_preproc: queue.Queue[Tuple[bytes, int, int, int]],
+            worker_in_queue_preproc: queue.Queue[tuple[bytes, int, int, int]],
             worker_ack_queue_preproc: queue.Queue[bytes],
             daemon: bool=True
     ) -> None:
@@ -38,8 +37,8 @@ class BlockPreProcessor(threading.Thread):
     def run(self) -> None:
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
-        context1 = zmq.Context()  # type: ignore
-        merkle_tree_socket = context1.socket(zmq.PUSH)  # type: ignore
+        context1 = zmq.Context[zmq.Socket[bytes]]()
+        merkle_tree_socket = context1.socket(zmq.PUSH)
         merkle_tree_socket.bind("tcp://127.0.0.1:41835")
 
         try:

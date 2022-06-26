@@ -11,10 +11,10 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 def client():
-    context6 = zmq.Context()  # type: ignore
-    tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PUSH)  # type: ignore
+    context6 = zmq.Context[zmq.Socket[bytes]]()
+    tx_parse_ack_socket = context6.socket(zmq.PUSH)
     tx_parse_ack_socket.setsockopt(zmq.SNDHWM, 10000)
-    tx_parse_ack_socket.connect("tcp://127.0.0.1:33333")  # type: ignore
+    tx_parse_ack_socket.connect("tcp://127.0.0.1:33333")
 
     count = 0
     while True:
@@ -27,10 +27,10 @@ def process_work_items(work_items: List[bytes]) -> None:
 
 
 def server():
-    context6 = zmq.Context()  # type: ignore
-    tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PULL)  # type: ignore
+    context6 = zmq.Context[zmq.Socket[bytes]]()
+    tx_parse_ack_socket = context6.socket(zmq.PULL)
     tx_parse_ack_socket.setsockopt(zmq.RCVHWM, 10000)
-    tx_parse_ack_socket.bind("tcp://127.0.0.1:33333")  # type: ignore
+    tx_parse_ack_socket.bind("tcp://127.0.0.1:33333")
     BATCHING_RATE = 1
 
     zmq_recv_and_process_batchwise_no_block(tx_parse_ack_socket, process_work_items,

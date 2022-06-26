@@ -104,20 +104,20 @@ class TxParser(multiprocessing.Process):
 
     def run(self) -> None:
         # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context()  # type: ignore
-        self.kill_worker_socket: zmq.Socket = context3.socket(zmq.SUB)  # type: ignore
-        self.kill_worker_socket.connect("tcp://127.0.0.1:63241")  # type: ignore
+        context3 = zmq.Context[zmq.Socket[bytes]]()
+        self.kill_worker_socket = context3.socket(zmq.SUB)
+        self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
-        context4 = zmq.Context()  # type: ignore
-        self.is_ibd_socket = context4.socket(zmq.SUB)  # type: ignore
+        context4 = zmq.Context[zmq.Socket[bytes]]()
+        self.is_ibd_socket = context4.socket(zmq.SUB)
         self.is_ibd_socket.connect("tcp://127.0.0.1:52841")
         self.is_ibd_socket.setsockopt(zmq.SUBSCRIBE, b"is_ibd_signal")
 
-        context6 = zmq.Context()  # type: ignore
-        self.tx_parse_ack_socket: zmq.Socket = context6.socket(zmq.PUSH)  # type: ignore
+        context6 = zmq.Context[zmq.Socket[bytes]]()
+        self.tx_parse_ack_socket = context6.socket(zmq.PUSH)
         self.tx_parse_ack_socket.setsockopt(zmq.SNDHWM, 10000)
-        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:54214")  # type: ignore
+        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:54214")
 
         # Todo - these should all be local to the thread's state only - not global to
         #  avoid race... Need to refactor to class-based thread module. For now it will
@@ -433,8 +433,8 @@ class TxParser(multiprocessing.Process):
                     f"Starting mempool tx parsing thread.")
                 break
 
-        context2 = zmq.Context()  # type: ignore
-        mempool_tx_socket = context2.socket(zmq.PULL)  # type: ignore
+        context2 = zmq.Context[zmq.Socket[bytes]]()
+        mempool_tx_socket = context2.socket(zmq.PULL)
         mempool_tx_socket.connect("tcp://127.0.0.1:55556")
         try:
             process_batch_func = partial(self.process_mempool_batch)
@@ -622,7 +622,7 @@ class TxParser(multiprocessing.Process):
             self.confirmed_tx_flush_queue.put(MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows))
 
     def process_work_items(self, work_items: List[bytes], ipc_socket_client: IPCSocketClient,
-            mysql_db: MySQLDatabase, ack_for_mined_tx_socket: zmq.Socket) -> None:
+            mysql_db: MySQLDatabase, ack_for_mined_tx_socket: zmq.Socket[bytes]) -> None:
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
         iteratively.
@@ -651,15 +651,15 @@ class TxParser(multiprocessing.Process):
                 on_blocked_msg="Mined Transaction ACK receiver is busy")
 
     def mined_blocks_thread(self) -> None:
-        context: zmq.Context = zmq.Context()  # type: ignore
-        mined_tx_socket: zmq.Socket = context.socket(zmq.PULL)  # type: ignore
+        context = zmq.Context[zmq.Socket[bytes]]()
+        mined_tx_socket = context.socket(zmq.PULL)
         mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
-        mined_tx_socket.connect("tcp://127.0.0.1:55555")  # type: ignore
+        mined_tx_socket.connect("tcp://127.0.0.1:55555")
 
-        context2 = zmq.Context()  # type: ignore
-        ack_for_mined_tx_socket: zmq.Socket = context2.socket(zmq.PUSH)  # type: ignore
+        context2 = zmq.Context[zmq.Socket[bytes]]()
+        ack_for_mined_tx_socket = context2.socket(zmq.PUSH)
         ack_for_mined_tx_socket.setsockopt(zmq.SNDHWM, 10000)
-        ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")  # type: ignore
+        ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")
 
         try:
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
@@ -682,9 +682,9 @@ class TxParser(multiprocessing.Process):
             self.logger.exception(e)
         finally:
             self.logger.info("Closing mined_blocks_thread")
-            mined_tx_socket.close()  # type: ignore
-            ack_for_mined_tx_socket.close()  # type: ignore
-            context.term()  # type: ignore
+            mined_tx_socket.close()
+            ack_for_mined_tx_socket.close()
+            context.term()
 
     def main_thread(self) -> None:
         try:

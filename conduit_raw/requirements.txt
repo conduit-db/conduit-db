@@ -3,7 +3,7 @@ bitcoinx
 requests>=2.21.0
 dnspython~=1.16.0
 mysqlclient
-zmq
+pyzmq
 cbor2
 aiohttp
 fasteners
