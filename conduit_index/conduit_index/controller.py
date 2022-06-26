@@ -146,11 +146,11 @@ class Controller(ControllerBase):
         self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
 
         context6 = AsyncZMQContext.instance()
-        self.reorg_event_socket: zmq.asyncio.Socket = context6.socket(zmq.PUSH)
+        self.reorg_event_socket = context6.socket(zmq.PUSH)
         self.reorg_event_socket.connect("tcp://127.0.0.1:51495")
 
         context6 = AsyncZMQContext.instance()
-        self.tx_parse_ack_socket: zmq.asyncio.Socket = context6.socket(zmq.PULL)
+        self.tx_parse_ack_socket = context6.socket(zmq.PULL)
         self.tx_parse_ack_socket.bind("tcp://127.0.0.1:54214")
 
         # Batch Completion
@@ -793,36 +793,25 @@ class Controller(ControllerBase):
     async def sync_all_blocks_job(self) -> None:
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""
 
-        async def maintain_chain_tip() -> None:
-            # Now wait on the queue for notifications
+        # up to 500 blocks per loop
+        # Now wait on the queue for notifications
 
-            batch_id = 0
-            while True:
-                # ------------------------- Batch Start ------------------------- #
-                # This queue is just a trigger to check the new tip and allocate another batch
-                is_reorg, start_header, stop_header, old_hashes, new_hashes = \
-                    await self.long_poll_conduit_raw_chain_tip()
+        batch_id = 0
+        while True:
+            # ------------------------- Batch Start ------------------------- #
+            # This queue is just a trigger to check the new tip and allocate another batch
+            is_reorg, start_header, stop_header, old_hashes, new_hashes = \
+                await self.long_poll_conduit_raw_chain_tip()
 
-                if stop_header.height <= self.sync_state.get_local_block_tip_height():
-                    continue  # drain the queue until we hit relevant ones
+            if stop_header.height <= self.sync_state.get_local_block_tip_height():
+                continue  # drain the queue until we hit relevant ones
 
-                batch_id += 1
-                self.logger.debug(f"Controller Batch {batch_id} Start")
-                best_flushed_tip_height = await self.index_blocks(is_reorg, start_header,
-                    stop_header, old_hashes, new_hashes)
-                self.logger.debug(f"Controller Batch {batch_id} Complete. "
-                                  f"New tip height: {best_flushed_tip_height}")
-
-        try:
-            # up to 500 blocks per loop
-            await maintain_chain_tip()
-
-        except asyncio.CancelledError:
-            # This is ignored as it is normal.
-            raise
-        except Exception as e:
-            self.logger.exception("sync_blocks_job raised an exception")
-            raise
+            batch_id += 1
+            self.logger.debug(f"Controller Batch {batch_id} Start")
+            best_flushed_tip_height = await self.index_blocks(is_reorg, start_header,
+                stop_header, old_hashes, new_hashes)
+            self.logger.debug(f"Controller Batch {batch_id} Complete. "
+                                f"New tip height: {best_flushed_tip_height}")
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \
