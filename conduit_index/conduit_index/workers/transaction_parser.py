@@ -186,6 +186,11 @@ class TxParser(multiprocessing.Process):
         with self.flush_lock:
             try:
                 if confirmed:
+                    # TODO `mysql_bulk_load_confirmed_tx_rows` should raise if the database
+                    #  is overloaded and the `acks` should be pushed to a different error
+                    #  handling queue for the controller to re-enqueue the work items.
+                    #  The controller should keep a hash map of workitem ids -> WorkUnits for
+                    #  re-scheduling the work
                     mysql_db.mysql_bulk_load_confirmed_tx_rows(cast(list[ConfirmedTransactionRow], tx_rows))
                     self.mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows,
                         mysql_db)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import io
 from asyncio import BufferedProtocol, Transport, BaseProtocol, BaseTransport
@@ -50,7 +52,7 @@ class BitcoinNetIO(BufferedProtocol):
     _payload_size = 0
 
     def __init__(self, on_buffer_full: Callable[[], None],
-            on_msg: Callable[[bytes, BlockCallback | memoryview], None],
+            on_msg: Callable[[bytes, BlockCallback | bytes], None],
             on_connection_made: Callable[[], None],
             on_connection_lost: Callable[[], None]) -> None:
 
@@ -162,12 +164,17 @@ class BitcoinNetIO(BufferedProtocol):
 
             cur_header = self._unpack_msg_header()
             self._payload_size = cur_header.payload_size
+
+            # TODO This needs to change for `BLOCK_BIN` type messages to instead stream them
+            #  incrementally to file
             if self.is_next_payload_available():
 
                 cur_msg_end_pos = self._last_msg_end_pos + HEADER_LENGTH + self._payload_size
                 cur_msg_start_pos = self._last_msg_end_pos + HEADER_LENGTH
 
                 # Block messages
+                # TODO - Block type messages should be written incrementally straight to disc
+                #  To complete this upgrade though all shared memory buffer logic will need to go.
                 if cur_header.command == BLOCK_BIN:
                     self.on_msg_callback(
                         cur_header.command,
@@ -176,7 +183,7 @@ class BitcoinNetIO(BufferedProtocol):
 
                 # Tx messages (via mempool relay)
                 elif cur_header.command == TX_BIN:
-                    rawtx = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos]
+                    rawtx: bytes = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos].tobytes()
 
                     self.on_msg_callback(
                         cur_header.command,
@@ -185,7 +192,7 @@ class BitcoinNetIO(BufferedProtocol):
 
                 # Non-block messages
                 else:
-                    sub_view_payload = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos]
+                    sub_view_payload = self.shm_buffer_view[cur_msg_start_pos:cur_msg_end_pos].tobytes()
                     self.on_msg_callback(cur_header.command, sub_view_payload)
                 self._last_msg_end_pos = cur_msg_end_pos
             else:

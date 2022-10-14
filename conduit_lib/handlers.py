@@ -139,9 +139,9 @@ class Handlers:
 
     # ----- Special case messages ----- #  # Todo - should probably be registered callbacks
 
-    async def on_tx(self, rawtx: memoryview) -> None:
+    async def on_tx(self, rawtx: bytes) -> None:
         size_tx = len(rawtx)
-        packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx.tobytes())
+        packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx)
         if hasattr(self.controller, 'mempool_tx_socket'):  # Only conduit_index has this
             await self.controller.mempool_tx_socket.send(packed_message)
             self.controller.sync_state.incr_msg_handled_count()

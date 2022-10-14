@@ -1,3 +1,9 @@
+# TODO This whole worker type should probably be deleted and instead just do this directly
+#  on the async thread (because we need to stream the raw block directly from the network buffer
+#  to file anyway)... And disc io is the limiting factor here...
+
+from __future__ import annotations
+
 import asyncio
 import logging
 import multiprocessing
@@ -20,6 +26,7 @@ from conduit_lib.types import MultiprocessingQueue
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
+# TODO This entire writer process should just be done on the asyncio event loop
 class BlockWriter(multiprocessing.Process):
     """
     Single writer to blocks LMDB database in append only mode (will only ever need one of these to

@@ -270,8 +270,8 @@ class Controller(ControllerBase):
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         if command == MEMPOOL_BIN:
-            self.logger.debug(f"putting mempool tx to queue: "
-                f"{bitcoinx.hash_to_hex_str(bitcoinx.Tx.from_bytes(message).hash())}")
+            self.logger.debug("putting mempool tx to queue: %s",
+                bitcoinx.hash_to_hex_str(bitcoinx.Tx.from_bytes(message).hash()))
 
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 

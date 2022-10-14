@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import aiohttp
 import asyncio
 from asyncio import BaseTransport, BaseProtocol

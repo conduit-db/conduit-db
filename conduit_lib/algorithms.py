@@ -23,6 +23,7 @@ MTree = dict[MTreeLevel, MTreeNodeArray]
 
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
+OP_PUSH_32 = 32
 OP_PUSH_33 = 33
 OP_PUSH_65 = 65
 OP_RETURN = 0x6a
@@ -125,7 +126,7 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
                 elif script[i] == OP_ELSE:
                     unreachable_code = False
                     i += 1
-                elif script[i] in {OP_PUSH_20, OP_PUSH_33, OP_PUSH_65}:
+                elif script[i] in {OP_PUSH_20, OP_PUSH_32, OP_PUSH_33, OP_PUSH_65}:
                     length = script[i]
                     i += 1
                     if unreachable_code:
@@ -135,36 +136,36 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
                 elif script[i] in SET_OTHER_PUSH_OPS:
                     length = script[i]
                     i += 1
-                    # ECDSA signatures and other input pushdata are not indexed (only pkh and pks)
-                    if length >= 20 and unreachable_code:
-                        pd = script[i: i + length].tobytes()
-                        flags |= PushdataMatchFlags.DATA
-                        all_pushdata.add((pd, flags))
+                    # ----- Uncomment to capture arbitrary length pushdata from outputs only --- #
+                    # if length >= 20 and unreachable_code:
+                    #     pd = script[i: i + length].tobytes()
+                    #     flags |= PushdataMatchFlags.DATA
+                    #     all_pushdata.add((pd, flags))
                     i += length
                 elif script[i] == OP_PUSHDATA1:
                     i += 1
                     length = script[i]
                     i += 1
-                    # ECDSA signatures are excluded
-                    if length > 20 and unreachable_code:
-                        pd = script[i: i + length].tobytes()
-                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
+                    # # ----- Uncomment to capture arbitrary length pushdata from outputs only --- #
+                    # if length > 20 and unreachable_code:
+                    #     pd = script[i: i + length].tobytes()
+                    #     all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
                     i += length
                 elif script[i] == OP_PUSHDATA2:
                     i += 1
                     length = int.from_bytes(script[i : i + 2], byteorder="little", signed=False)
-                    # ECDSA signatures are excluded
-                    if length > 20 and unreachable_code:
-                        pd = script[2 + i: 2 + i + length].tobytes()
-                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
+                    # # ----- Uncomment to capture arbitrary length pushdata from outputs only --- #
+                    # if length > 20 and unreachable_code:
+                    #     pd = script[2 + i: 2 + i + length].tobytes()
+                    #     all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
                     i += 2 + length
                 elif script[i] == OP_PUSHDATA4:
                     i += 1
                     length = int.from_bytes(script[i : i + 4], byteorder="little", signed=False)
-                    # ECDSA signatures are excluded
-                    if length > 20 and unreachable_code:
-                        pd = script[4 + i: 4 + i + length].tobytes()
-                        all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
+                    # # ----- Uncomment to capture arbitrary length pushdata from outputs only --- #
+                    # if length > 20 and unreachable_code:
+                    #     pd = script[4 + i: 4 + i + length].tobytes()
+                    #     all_pushdata.add((pd, flags | PushdataMatchFlags.DATA))
                     i += 4 + length
                 else:  # slow search byte by byte...
                     i += 1
