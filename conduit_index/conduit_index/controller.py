@@ -649,7 +649,6 @@ class Controller(ControllerBase):
                 if stop_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {stop_header.height}")
-
                     await self.check_for_ibd_status(conduit_best_tip=conduit_best_tip)
                     return is_reorg, start_header, stop_header, old_hashes, new_hashes
                 else:

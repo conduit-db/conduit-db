@@ -9,16 +9,14 @@ import queue
 import sys
 import threading
 import time
-
-
 import zmq
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.stack_tracer import trace_start, trace_stop
-from .flush_transactions_threads import FlushConfirmedTransactionsThread, \
-    FlushMempoolTransactionsThread
-from .mempool_parsing_thread import MempoolThread
+from .flush_mempool_thread import FlushMempoolTransactionsThread
+from .flush_blocks_thread import FlushConfirmedTransactionsThread
+from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
 from ..types import ProcessedBlockAcks, MempoolTxAck
 
@@ -66,7 +64,7 @@ class TxParser(multiprocessing.Process):
             assert self.mempool_tx_flush_queue is not None
             threads = [
                 MinedBlockParsingThread(self.worker_id, self.confirmed_tx_flush_queue, daemon=True),
-                MempoolThread(self.worker_id, self.mempool_tx_flush_queue, daemon=True)
+                MempoolParsingThread(self.worker_id, self.mempool_tx_flush_queue, daemon=True)
             ]
             for t in threads:
                 t.start()

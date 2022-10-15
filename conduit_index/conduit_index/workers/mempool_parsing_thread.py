@@ -15,12 +15,13 @@ from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 
 
-class MempoolThread(threading.Thread):
+class MempoolParsingThread(threading.Thread):
 
     def __init__(self, worker_id: int,
             mempool_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, MempoolTxAck]],
             daemon: bool=True) -> None:
-        self.logger = logging.getLogger("mempool-parsing-thread")
+        self.logger = logging.getLogger(f"mempool-parsing-thread-{worker_id}")
+        self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
         self.worker_id = worker_id
@@ -82,9 +83,10 @@ class MempoolThread(threading.Thread):
             set_pd_rows_batched.extend(set_pd_rows)
 
         num_mempool_txs_processed = len(tx_rows_batched)
-        # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
+        self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
         self.mempool_tx_flush_queue.put(
             (MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched),
             MempoolTxAck(num_mempool_txs_processed))
         )
+

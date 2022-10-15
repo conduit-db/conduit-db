@@ -169,7 +169,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                 raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
                     block_number, len_slice, raw_block_slice)
 
-            # logger.debug(f"Sending block_batched response: len(raw_blocks_array): {len(raw_blocks_array)}")
+            # logger.debug(f"Sending block_batched response: len(raw_blocks_array):
+            # {len(raw_blocks_array)}")
 
             # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if raw_blocks_array:
@@ -320,6 +321,16 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 if __name__ == "__main__":
+    os.environ["LMDB_DATABASE_DIR"] = "test_lmdb"
+    os.environ["RAW_BLOCKS_DIR"] = "test_rawblocks"
+    os.environ["RAW_BLOCKS_LOCKFILE"] = "test_rawblocks.lock"
+
+    os.environ["MERKLE_TREES_DIR"] = "test_merkle_trees"
+    os.environ["MERKLE_TREES_LOCKFILE"] = "test_merkle_trees.lock"
+
+    os.environ["TX_OFFSETS_DIR"] = "test_tx_offsets"
+    os.environ["TX_OFFSETS_LOCKFILE"] = "test_tx_offsets.lock"
+
     logging.basicConfig(level=logging.DEBUG)
     # Port 0 means to select an arbitrary unused port
     HOST, PORT = "127.0.0.1", 50000

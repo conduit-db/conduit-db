@@ -28,6 +28,7 @@ class MinedBlockParsingThread(threading.Thread):
             confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
             daemon: bool = True) -> None:
         self.logger = logging.getLogger("mined-block-parsing-thread")
+        self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
         self.worker_id = worker_id

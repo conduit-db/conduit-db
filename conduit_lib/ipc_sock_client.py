@@ -74,7 +74,6 @@ class IPCSocketClient:
             raise SocketServerError("No data in response from server")
         return data
 
-
     def ping(self) -> ipc_sock_msg_types.PingResponse:
         # Send
         msg_req = ipc_sock_msg_types.PingRequest()
@@ -95,7 +94,12 @@ class IPCSocketClient:
         send_msg(self.sock, msg_req.to_cbor())
 
         # Recv
-        data = self.receive_data()
+        try:
+            data = self.receive_data()
+        except SocketServerError:
+            self.logger.info("Server forcefully cancelled all requests")
+            return ipc_sock_msg_types.StopResponse()
+
         cbor_obj = cbor2.loads(data)
         msg_resp = ipc_sock_msg_types.StopResponse(**cbor_obj)
         # self.logger.debug(f"Received {ipc_sock_commands.STOP} response: {msg_resp}")
