@@ -112,7 +112,7 @@ class MTreeCalculator(multiprocessing.Process):
         except Exception as e:
             self.logger.exception("Caught exception")
         finally:
-            self.logger.info("Closing mined_blocks_thread")
+            self.logger.info("Closing merkle tree thread")
             merkle_tree_socket.close()
             # merkle_tree_socket.term()
 

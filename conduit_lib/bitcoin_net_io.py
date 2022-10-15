@@ -124,7 +124,7 @@ class BitcoinNetIO(BufferedProtocol):
 
     # NOTE(typing) Return type "memoryview" of "get_buffer" incompatible with return type
     #   "bytearray" in supertype "BufferedProtocol"  [override]
-    def get_buffer(self, sizehint: int) -> memoryview:  # type: ignore[override]
+    def get_buffer(self, sizehint: int) -> memoryview:
         return self.shm_buffer_view[self._pos:]
 
     def _unpack_msg_header(self) -> Header:

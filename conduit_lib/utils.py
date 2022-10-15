@@ -295,7 +295,7 @@ def get_network_type() -> str:
     nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
     for key, val in os.environ.items():
         if key == 'NETWORK':
-            if not val.lower() in nets:
+            if val.lower() not in nets:
                 raise InvalidNetworkException(f"Network not found: must be one of: {nets}")
             return val.lower()
     raise ValueError("There is no 'NETWORK' key in os.environ")

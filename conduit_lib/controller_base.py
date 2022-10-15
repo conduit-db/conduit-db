@@ -28,14 +28,14 @@ class ControllerBase:
         This is intended so that as block sizes increase we are not requesting 500 x 4GB blocks!
         As the average block size increases we should gradually reduce the number of raw blocks
         we request as a single batch."""
-        # TODO - store this in DB otherwise it will start out at 500 which is way too much
+        # TODO - store this in DB otherwise it will start out at 250 which is way too much
         #  near the tip
 
         estimated_ideal_block_count = math.ceil((target_bytes / (1024 ** 2)) /
                                                 self.estimated_moving_av_block_size_mb)
 
-        # 500 headers is the max allowed over p2p protocol
-        estimated_ideal_block_count = min(estimated_ideal_block_count, 500)
+        MAX_BLOCK_COUNT = 250
+        estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count
 

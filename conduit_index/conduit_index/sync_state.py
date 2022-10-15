@@ -60,7 +60,7 @@ class SyncState:
 
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: \
-            asyncio.Queue[tuple[bytes, memoryview | BlockCallback]] = asyncio.Queue()
+            asyncio.Queue[tuple[bytes, bytes | BlockCallback]] = asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()

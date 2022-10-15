@@ -39,7 +39,8 @@ class SyncState:
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, BlockCallback | memoryview]] = asyncio.Queue()
+        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, BlockCallback | bytes]] = \
+            asyncio.Queue()
         self._msg_received_count = 0
         self._msg_handled_count = 0
         self._msg_received_count_lock = threading.Lock()
@@ -108,7 +109,8 @@ class SyncState:
         self.all_pending_block_hashes = set()
         block_height_deficit = to_height - from_height
 
-        estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(target_bytes=TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
+        estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
+            target_bytes=TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count + 1

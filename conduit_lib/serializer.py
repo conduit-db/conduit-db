@@ -141,7 +141,7 @@ class Serializer:
         nonce = random.randint(0, 2 ** 64 - 1)
         return self.payload_to_message(PING_BIN, pack_le_uint64(nonce))
 
-    def pong(self, nonce: memoryview) -> bytes:
+    def pong(self, nonce: bytes) -> bytes:
         return self.payload_to_message(PONG_BIN, nonce)
 
     def filterclear(self) -> bytes:

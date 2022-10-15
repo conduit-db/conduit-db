@@ -59,6 +59,7 @@ class Controller(ControllerBase):
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: str | None=None) -> None:
+        self.batch_start_time: int = int(time.time())
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -240,7 +241,7 @@ class Controller(ControllerBase):
         coro = self._on_buffer_full()
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
-    def on_msg(self, command: bytes, message: BlockCallback | memoryview) -> None:
+    def on_msg(self, command: bytes, message: BlockCallback | bytes) -> None:
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
@@ -321,11 +322,9 @@ class Controller(ControllerBase):
             self.tasks.append(create_task(self.handle()))
 
     async def spawn_sync_headers_task(self) -> None:
-        """runs once at startup and is re-spawned for new unsolicited block tips"""
         self.tasks.append(create_task(self.sync_headers_job()))
 
     async def spawn_initial_block_download(self) -> None:
-        """runs once at startup and is re-spawned for new unsolicited block tips"""
         self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     def ipc_sock_server_thread(self) -> None:
@@ -597,7 +596,6 @@ class Controller(ControllerBase):
 
                 block_locator_hashes = [first_locator.hash]
                 hash_count = len(block_locator_hashes)
-                hash_stop = ZERO_HASH  # get max
 
                 # Allocate next batch of blocks
                 # reassigns new global sync_state.blocks_batch_set
@@ -609,9 +607,7 @@ class Controller(ControllerBase):
 
             next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
             batch_count, all_pending_block_hashes, stop_header_height = next_batch
-
-            if batch_count != 500:  # i.e. max allowed by p2p proto is 500 at a time
-                hash_stop = self.get_hash_stop(stop_header_height)
+            hash_stop = self.get_hash_stop(stop_header_height)
 
             await self.send_request(GETBLOCKS,
                 self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
@@ -621,12 +617,9 @@ class Controller(ControllerBase):
                 stop_header_height)
 
             # ------------------------- Batch complete ------------------------- #
-            if batch_id == 0:
-                self.logger.debug(f"Initial Block Download Complete. New block tip height: "
-                                  f"{self.sync_state.get_local_block_tip_height()}")
-            else:
-                self.logger.debug(f"Controller Batch {batch_id} Complete."
-                                  f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+            self.logger.debug(f"Controller Batch {batch_id} Complete."
+                f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:
                 break
@@ -643,6 +636,7 @@ class Controller(ControllerBase):
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
+                self.batch_start_time = int(time.time())
                 # If there's a reorg, starting header can be less than longest_chain().tip
                 while True:
                     try:
@@ -667,6 +661,7 @@ class Controller(ControllerBase):
                     continue
 
                 await self.sync_blocks_batch(batch_id, start_header, stop_header)
+                batch_id += 1
 
         except asyncio.CancelledError:
             raise
@@ -679,14 +674,14 @@ class Controller(ControllerBase):
          batch of blocks, it will begin logging the state of progress"""
         assert self.sync_state is not None
         timeout = 10
-        last_check = time.time()
+        last_check = self.batch_start_time
         while True:
             await asyncio.sleep(1)
-            diff = time.time() - last_check
+            diff = int(time.time()) - last_check
             if diff > timeout:
                 if not self.sync_state.have_processed_block_msgs():
                     self.sync_state.print_progress_info()
-                    last_check = time.time()
+                    last_check = int(time.time())
 
     async def spawn_lagging_batch_monitor(self) -> None:
         self.tasks.append(create_task(self.lagging_batch_monitor()))

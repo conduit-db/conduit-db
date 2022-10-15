@@ -60,26 +60,8 @@ class MinedTxHashes(NamedTuple):
     block_number: int
 
 
-class BlockAck(NamedTuple):
-    work_item_id: int
-    blk_hash: bytes
-    num_txs: int
-
-
-class MempoolTxAck(NamedTuple):
-    num_mempool_txs_processed: int
-
-
 class MySQLFlushBatch(NamedTuple):
     tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
     in_rows: list[InputRow]
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
-
-
-class MySQLFlushBatchWithAcks(NamedTuple):
-    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
-    in_rows: list[InputRow]
-    out_rows: list[OutputRow]
-    pd_rows: list[PushdataRow]
-    acks: list[MempoolTxAck | BlockAck]

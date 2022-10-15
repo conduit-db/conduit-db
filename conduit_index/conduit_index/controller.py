@@ -266,7 +266,7 @@ class Controller(ControllerBase):
         self.sync_state.reset_msg_counts()
         self.bitcoin_net_io.resume()
 
-    def on_msg(self, command: bytes, message: memoryview | BlockCallback) -> None:
+    def on_msg(self, command: bytes, message: bytes | BlockCallback) -> None:
         if command != BLOCK_BIN:
             self.sync_state.incr_msg_received_count()
         if command == MEMPOOL_BIN:
