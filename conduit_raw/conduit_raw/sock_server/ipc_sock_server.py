@@ -297,7 +297,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         super(ThreadedTCPServer, self).__init__(addr, handler)
 
         logger.debug(f"ThreadedTCPServer LMDB_Database storage_path={storage_path}")
-        self.lmdb = LMDB_Database(storage_path=str(storage_path))
+        self.lmdb = LMDB_Database(storage_path=str(storage_path), lock=True)
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
 

@@ -48,8 +48,8 @@ class LMDB_Database:
 
         self._map_size = pow(1024, 3) * 5
         self._storage_path = storage_path
-        self.env = lmdb.open(self._storage_path, max_dbs=5, readonly=False,
-            readahead=False, sync=False, map_size=self._map_size, lock=lock)
+        self.env = lmdb.open(self._storage_path, max_dbs=5, readahead=False, sync=False,
+            map_size=self._map_size, lock=lock)
         self._opened = True
 
         self.blocks = LmdbBlocks(self)

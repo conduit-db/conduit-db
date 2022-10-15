@@ -53,17 +53,11 @@ class ApplicationState(object):
         self._reference_server_connections_lock: threading.RLock = threading.RLock()
         self._reference_server_connection_established_event = asyncio.Event()
 
-    async def mysql_connect(self) -> None:
-        self._logger.debug("Refreshing mysql connection")
-        self.mysql_db.close()
-        self.mysql_db = await asyncio.get_event_loop().run_in_executor(
-            self.executor, load_mysql_database)
-
     async def refresh_mysql_connection_task(self) -> None:
         REFRESH_TIMEOUT = 300
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
-            await self.mysql_connect()
+            await self.mysql_db.mysql_conn.ping(reconnect=True)
 
     def start_threads(self) -> None:
         pass

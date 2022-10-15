@@ -71,8 +71,8 @@ async def main(lmdb: LMDB_Database) -> None:
 
 if __name__ == "__main__":
     try:
-        lmdb = LMDB_Database()
-        asyncio.run(main(lmdb))
+        lmdb_db = LMDB_Database(lock=False)
+        asyncio.run(main(lmdb_db))
         sys.exit(0)
     except KeyboardInterrupt:
         pass

@@ -148,8 +148,7 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
         mysql_database = None
 
     if os.environ['SERVER_TYPE'] == "ConduitRaw":
-        # NOTE: The controller process must never mutate LMDB. It must only ever read.
-        lmdb_db = LMDB_Database(lock=False)
+        lmdb_db = LMDB_Database(lock=True)
     else:
         lmdb_db = None
 
