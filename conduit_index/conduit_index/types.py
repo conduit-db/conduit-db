@@ -1,5 +1,5 @@
 import array
-from typing import NamedTuple
+from typing import NamedTuple, TypedDict
 
 import bitcoinx
 
@@ -38,3 +38,9 @@ class MySQLFlushBatchWithAcks(NamedTuple):
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
     acks: MempoolTxAck | ProcessedBlockAcks
+
+
+WorkItemId = int
+TxOffset = int
+AlreadySeenMempoolTxOffsets = dict[WorkItemId, set[TxOffset]]
+NewNotSeenBeforeTxOffsets = dict[WorkItemId, set[TxOffset]]

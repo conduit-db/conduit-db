@@ -188,8 +188,8 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
 
 
 def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayType[int],
-        height_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0) \
-            -> MySQLFlushBatch:
+        height_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0,
+        already_seen_offsets: set[int] | None=None) -> MySQLFlushBatch:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -203,6 +203,10 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
         in_rows =       [(prevout_hash, out_idx, tx_hash, in_idx, in_offset_start, in_offset_end)...)...]
         out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
         pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
+
+    `already_seen_offsets` is to exclude inputs, outputs and pushdata rows from the end
+    result because these have already been flushed to disc earlier - this could be from either
+    a reorg or from mempool processing
     """
     genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
     tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow] = []
@@ -210,6 +214,9 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
     out_rows = set()
     set_pd_rows = set()
     count_txs = len(tx_offsets)
+    is_previously_seen_mempool_tx = False
+    if already_seen_offsets is None:
+        already_seen_offsets = set()
 
     # Partitions other than the first, the tx offsets need to be adjusted (to start at zero)
     # to account for the preceding partitions that are excluded in this buffer.
@@ -223,6 +230,9 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
 
             # tx_hash
             offset = tx_offsets[i] - adjustment
+            if offset in already_seen_offsets:
+                is_previously_seen_mempool_tx = True
+
             tx_offset_start = offset
             if i < count_txs - 1:
                 next_tx_offset = tx_offsets[i + 1] - adjustment
@@ -249,13 +259,15 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
-                in_rows.add(
-                    InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
+                if not is_previously_seen_mempool_tx:
+                    in_rows.add(
+                        InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
                 # mempool txs will appear to have a tx_pos=0
-                if (not tx_pos == 0 and confirmed) or not confirmed:
+                if (not tx_pos == 0 and confirmed) or not confirmed and \
+                        not is_previously_seen_mempool_tx:
 
                     pushdata_matches = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
                         idx=in_idx, flags=PushdataMatchFlags.INPUT, tx_pos=tx_pos,
@@ -279,22 +291,24 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
-                    idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
-                    genesis_height=genesis_height)
-                if len(pushdata_matches):
-                    for out_pushdata_hashX, flags in pushdata_matches:
-                        set_pd_rows.add(
-                            PushdataRow(
-                                out_pushdata_hashX.hex(),
-                                tx_hashX.hex(),
-                                out_idx,
-                                int(flags),
+                if not is_previously_seen_mempool_tx:
+                    pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
+                        idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
+                        genesis_height=genesis_height)
+                    if len(pushdata_matches):
+                        for out_pushdata_hashX, flags in pushdata_matches:
+                            set_pd_rows.add(
+                                PushdataRow(
+                                    out_pushdata_hashX.hex(),
+                                    tx_hashX.hex(),
+                                    out_idx,
+                                    int(flags),
+                                )
                             )
-                        )
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
-                out_rows.add(OutputRow(tx_hashX.hex(), out_idx, out_value))
+                if not is_previously_seen_mempool_tx:
+                    out_rows.add(OutputRow(tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
             offset += 4

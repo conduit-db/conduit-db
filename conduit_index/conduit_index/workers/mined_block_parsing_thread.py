@@ -11,7 +11,8 @@ from typing import Callable, cast
 import zmq
 
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
-    TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck
+    TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, WorkItemId, TxOffset, \
+    AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets
 from ..workers.common import reset_rows, maybe_refresh_mysql_connection
 
 from conduit_lib import IPCSocketClient, MySQLDatabase
@@ -215,48 +216,28 @@ class MinedBlockParsingThread(threading.Thread):
         return merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
             batched_raw_block_slices, acks, contains_reorg_tx
 
-    def parse_txs_and_push_to_queue(self, new_tx_offsets: dict[int, list[int]],
-            not_new_tx_offsets: dict[int, list[int]],
+    def parse_txs_and_push_to_queue(self, new_tx_offsets: NewNotSeenBeforeTxOffsets,
+            not_new_tx_offsets: AlreadySeenMempoolTxOffsets,
             batched_raw_block_slices: BatchedRawBlockSlices, acks: ProcessedBlockAcks) \
                 -> None:
-        # Todo - raw_block memory allocations
         assert self.confirmed_tx_flush_queue is not None
 
-        for raw_block_slice, work_item, is_reorg, blk_num, first_tx_pos_batch \
+        for raw_block_slice, work_item, _is_reorg, blk_num, first_tx_pos_batch \
                 in batched_raw_block_slices:
             tx_rows, in_rows, out_rows, pd_rows, _ = reset_rows()
-            # Mempool txs already have entries for inputs, pushdata or output tables so we handle
-            # them differently
 
-            # These txs have no entries yet for inputs, pushdata or output tables
-            have_new_mined_txs = work_item in new_tx_offsets
-            if have_new_mined_txs:
-                rows_not_previously_in_mempool: \
-                    MySQLFlushBatch = parse_txs(raw_block_slice, new_tx_offsets[work_item],
-                        blk_num, True, first_tx_pos_batch)
-                tx_rows, in_rows, out_rows, pd_rows = rows_not_previously_in_mempool
+            # Mempool txs already have entries for inputs, pushdata or output tables so we
+            # avoid re-inserting these rows a second time (`parse_txs` skips over them)
+            all_tx_offsets: set[int] = new_tx_offsets.get(work_item, set()) | \
+                not_new_tx_offsets.get(work_item, set())
+            all_tx_offsets_sorted = list(all_tx_offsets)
+            all_tx_offsets_sorted.sort()
 
-            have_not_new_txs = work_item in not_new_tx_offsets
-            if have_not_new_txs:  # Includes orphaned block txs
-                rows_previously_in_mempool: MySQLFlushBatch = parse_txs(raw_block_slice,
-                    not_new_tx_offsets[work_item], blk_num, True, first_tx_pos_batch)
-                tx_rows_now_confirmed, _, _, _ = rows_previously_in_mempool
-                tx_rows_now_confirmed_fixed = []
-                if is_reorg:  # the tx_pos will actually be wrong so need to fix it here
-                    all_tx_offsets: list[int] = new_tx_offsets[work_item]
-                    all_tx_offsets.extend(not_new_tx_offsets[work_item])
-                    all_tx_offsets.sort()
-                    corrected_tx_positions = []
-                    for tx_offset in not_new_tx_offsets[work_item]:
-                        corrected_tx_pos = all_tx_offsets.index(tx_offset)
-                        corrected_tx_positions.append(corrected_tx_pos)
-                    for row, corrected_tx_pos in zip(tx_rows_now_confirmed, corrected_tx_positions):
-                        tx_rows_now_confirmed_fixed.append(
-                            ConfirmedTransactionRow(row[0], int(row[1]), corrected_tx_pos))
+            all_rows: MySQLFlushBatch = parse_txs(raw_block_slice,
+                all_tx_offsets_sorted, blk_num, True, first_tx_pos_batch,
+                already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
 
-                    tx_rows.extend(tx_rows_now_confirmed_fixed)
-                else:
-                    tx_rows.extend(tx_rows_now_confirmed)
+            tx_rows, in_rows, out_rows, pd_rows = all_rows
 
             self.confirmed_tx_flush_queue.put(
                 (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks))
@@ -265,7 +246,8 @@ class MinedBlockParsingThread(threading.Thread):
             merged_offsets_map: dict[bytes, int],
             merged_tx_to_work_item_id_map: dict[bytes, int],
             merged_part_tx_hash_rows: TxHashRows,
-            mysql_db: MySQLDatabase) -> tuple[dict[int, list[int]], dict[int, list[int]]]:
+            mysql_db: MySQLDatabase) \
+                -> tuple[NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
         already occurred for the mempool transaction hence we calculate which category each tx
@@ -284,8 +266,8 @@ class MinedBlockParsingThread(threading.Thread):
         t0 = time.time()
         t1 = 0.
 
-        new_tx_offsets: dict[int, list[int]] = {}
-        not_new_tx_offsets: dict[int, list[int]] = {}
+        new_tx_offsets: NewNotSeenBeforeTxOffsets = {}
+        not_new_tx_offsets: AlreadySeenMempoolTxOffsets = {}
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
@@ -299,25 +281,19 @@ class MinedBlockParsingThread(threading.Thread):
 
                 has_block_num = new_tx_offsets.get(work_item_id)
                 if not has_block_num:  # init empty array of offsets
-                    new_tx_offsets[work_item_id] = []
-                new_tx_offsets[work_item_id].append(tx_offset)
+                    new_tx_offsets[work_item_id] = set()
+                new_tx_offsets[work_item_id].add(tx_offset)
 
             # left-overs are not new txs
             for tx_hash, tx_offset in merged_offsets_map.items():
                 work_item_id = merged_tx_to_work_item_id_map[tx_hash]
                 has_block_num = not_new_tx_offsets.get(work_item_id)
                 if not has_block_num:  # init empty array of offsets
-                    not_new_tx_offsets[work_item_id] = []
-                not_new_tx_offsets[work_item_id].append(tx_offset)
-
-            # Remember to sort the offsets!
-            for work_item_id in new_tx_offsets:
-                new_tx_offsets[work_item_id].sort()
-
-            for work_item_id in not_new_tx_offsets:
-                not_new_tx_offsets[work_item_id].sort()
+                    not_new_tx_offsets[work_item_id] = set()
+                not_new_tx_offsets[work_item_id].add(tx_offset)
 
             t1 = time.time() - t0
+            print(new_tx_offsets, not_new_tx_offsets)
             return new_tx_offsets, not_new_tx_offsets
         except KeyError as e:
             self.logger.exception("KeyError in get_processed_vs_unprocessed_tx_offsets")
