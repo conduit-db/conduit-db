@@ -23,8 +23,8 @@ import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.bitcoin_net_io import BitcoinNetIO, BlockCallback
-from conduit_lib.commands import BLOCK_BIN, MEMPOOL, VERSION, MEMPOOL_BIN
+from conduit_lib.bitcoin_net_io import BitcoinNetSocket, BlockCallback, get_bitcoin_p2p_socket
+from conduit_lib.commands import MEMPOOL, VERSION
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -36,7 +36,6 @@ from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
     CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
-from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
     get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
@@ -104,11 +103,8 @@ class Controller(ControllerBase):
         self.deserializer: Deserializer = Deserializer(self.net_config, self.storage)
         self.sync_state: SyncState = SyncState(self.storage, self)
 
-        # Bitcoin Network IO + callbacks
-        self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
-            self.on_connection_made, self.on_connection_lost)
-        self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
-        self.shm_buffer = self.bitcoin_net_io.shm_buffer
+        # Bitcoin Network Socket
+        self.bitcoin_net_io: BitcoinNetSocket | None = None
 
         # Mempool and API state
         self.mempool_tx_hash_set: set[bytes] = set()
@@ -253,26 +249,7 @@ class Controller(ControllerBase):
         return self.peers[0]
 
     # ---------- Callbacks ---------- #
-    def on_buffer_full(self) -> None:
-        coro = self._on_buffer_full()
-        asyncio.run_coroutine_threadsafe(coro, self.loop)
-
-    async def _on_buffer_full(self) -> None:
-        """Waits until all mempool txs in the shared memory buffer have been processed before
-        resuming (and therefore resetting the buffer) BitcoinNetIO."""
-        while not self.sync_state.have_processed_all_msgs_in_buffer():
-            await asyncio.sleep(0.05)
-
-        self.sync_state.reset_msg_counts()
-        self.bitcoin_net_io.resume()
-
-    def on_msg(self, command: bytes, message: bytes | BlockCallback) -> None:
-        if command != BLOCK_BIN:
-            self.sync_state.incr_msg_received_count()
-        if command == MEMPOOL_BIN:
-            self.logger.debug("putting mempool tx to queue: %s",
-                bitcoinx.hash_to_hex_str(bitcoinx.Tx.from_bytes(message).hash()))
-
+    def on_msg(self, command: bytes, message: BlockCallback | bytes) -> None:
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self) -> None:
@@ -283,15 +260,15 @@ class Controller(ControllerBase):
 
     # ---------- end callbacks ---------- #
 
-    async def connect_session(self) -> tuple[BaseTransport, BaseProtocol]:
-        loop = asyncio.get_event_loop()
+    async def connect_session(self) -> None:
         peer = self.get_peer()
-        self.logger.debug("connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
-        protocol_factory = lambda: self.bitcoin_net_io
-        self.transport, self.session = await loop.create_connection(
-            protocol_factory, peer.host, peer.port
-        )
-        return self.transport, self.session
+        self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
+        try:
+            self.bitcoin_net_io = await get_bitcoin_p2p_socket(peer.host, peer.port, self.on_msg,
+                self.on_connection_made, self.on_connection_lost)
+            self.shm_buffer = self.bitcoin_net_io.shm_buffer
+        except ConnectionResetError:
+            await self.stop()
 
     async def handle(self) -> None:
         while True:
@@ -300,8 +277,6 @@ class Controller(ControllerBase):
             handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
             handler_func = getattr(self.handlers, handler_func_name)
             await handler_func(message)
-            if command != BLOCK_BIN:
-                self.sync_state.incr_msg_handled_count()
 
     async def spawn_handler_tasks(self) -> None:
         """spawn 4 tasks so that if one handler is waiting on an event that depends on
@@ -310,7 +285,8 @@ class Controller(ControllerBase):
             self.tasks.append(create_task(self.handle()))
 
     async def send_request(self, command_name: str, message: bytes) -> None:
-        self.bitcoin_net_io.send_message(message)
+        assert self.bitcoin_net_io is not None
+        await self.bitcoin_net_io.send_message(message)
 
     # Multiprocessing Workers
     def start_workers(self) -> None:
@@ -321,10 +297,6 @@ class Controller(ControllerBase):
             self.processes.append(p)
         # Allow time for TxParsers to bind to the zmq socket to distribute load evenly
         time.sleep(2)
-
-    async def spawn_sync_all_blocks_job(self) -> None:
-        """runs once at startup and is re-spawned for new unsolicited block tips"""
-        self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     async def maybe_do_db_repair(self) -> None:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
@@ -436,7 +408,7 @@ class Controller(ControllerBase):
         await self.spawn_batch_completion_job()
         await self.maybe_do_db_repair()
         await self.spawn_lagging_batch_monitor()
-        await self.spawn_sync_all_blocks_job()
+        self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     async def spawn_batch_completion_job(self) -> None:
         create_task(self.batch_completion_job())
@@ -619,7 +591,7 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    target_bytes=TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
+                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, tip_height)
 
                 # Long-polling
                 ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
@@ -791,7 +763,7 @@ class Controller(ControllerBase):
         # up to 500 blocks per loop
         # Now wait on the queue for notifications
 
-        batch_id = 0
+        batch_id = 1
         while True:
             # ------------------------- Batch Start ------------------------- #
             # This queue is just a trigger to check the new tip and allocate another batch
@@ -801,12 +773,12 @@ class Controller(ControllerBase):
             if stop_header.height <= self.sync_state.get_local_block_tip_height():
                 continue  # drain the queue until we hit relevant ones
 
-            batch_id += 1
             self.logger.debug(f"Controller Batch {batch_id} Start")
             best_flushed_tip_height = await self.index_blocks(is_reorg, start_header,
                 stop_header, old_hashes, new_hashes)
             self.logger.debug(f"Controller Batch {batch_id} Complete. "
                                 f"New tip height: {best_flushed_tip_height}")
+            batch_id += 1
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \

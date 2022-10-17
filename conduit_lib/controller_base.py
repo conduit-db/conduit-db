@@ -21,7 +21,7 @@ class ControllerBase:
     def get_header_for_height(self, height: int) -> Header:
         raise NotImplementedError()
 
-    def get_ideal_block_batch_count(self, target_bytes: int) -> int:
+    def get_ideal_block_batch_count(self, target_bytes: int, local_tip_height: int) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point
         of requesting 1 block at a time.
 
@@ -35,6 +35,11 @@ class ControllerBase:
                                                 self.estimated_moving_av_block_size_mb)
 
         MAX_BLOCK_COUNT = 250
+        if local_tip_height > 700000:
+            MAX_BLOCK_COUNT = 20
+        if local_tip_height > 760000:
+            MAX_BLOCK_COUNT = 4  # blocks get much bigger after this height
+
         estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count

@@ -61,10 +61,6 @@ class SyncState:
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: \
             asyncio.Queue[tuple[bytes, bytes | BlockCallback]] = asyncio.Queue()
-        self._msg_received_count = 0
-        self._msg_handled_count = 0
-        self._msg_received_count_lock = threading.Lock()
-        self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
         self.blocks_batch_set = set[bytes]()  # usually a set of 500 hashes
@@ -90,14 +86,6 @@ class SyncState:
         self.total_time_allocating_work = 0.
         self.is_post_ibd = False
         self.conduit_best_tip: bitcoinx.Header | None = None
-
-    @property
-    def message_received_count(self) -> int:
-        return self._msg_received_count
-
-    @property
-    def message_handled_count(self) -> int:
-        return self._msg_handled_count
 
     # Conduit Best Tip
     async def get_conduit_best_tip(self) -> bitcoinx.Header:
@@ -146,18 +134,6 @@ class SyncState:
 
     def set_target_header_height(self, height: int) -> None:
         self.target_header_height = height
-
-    def have_processed_non_block_msgs(self) -> bool:
-        return self._msg_received_count == self._msg_handled_count
-
-    def have_processed_all_msgs_in_buffer(self) -> bool:
-        return self.have_processed_non_block_msgs()
-
-    def reset_msg_counts(self) -> None:
-        with self._msg_handled_count_lock:
-            self._msg_handled_count = 0
-        with self._msg_received_count_lock:
-            self._msg_received_count = 0
 
     def get_work_units_all(self, is_reorg: bool, all_pending_block_hashes: set[bytes],
             all_work: MainBatch) -> list[WorkUnit]:
@@ -264,14 +240,6 @@ class SyncState:
         except Exception as e:
             self.logger.exception(f"Unexpected exception in get_main_batch thread")
             raise
-
-    def incr_msg_received_count(self) -> None:
-        with self._msg_received_count_lock:
-            self._msg_received_count += 1
-
-    def incr_msg_handled_count(self) -> None:
-        with self._msg_handled_count_lock:
-            self._msg_handled_count += 1
 
     # ----- SUPERVISE BATCH COMPLETION ----- #
     # Maximum number of blocks in this batch is 'MAIN_BATCH_HEADERS_COUNT_LIMIT'

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import aiohttp
 import asyncio
-from asyncio import BaseTransport, BaseProtocol
 import bitcoinx
 from bitcoinx import hex_str_to_hash, MissingHeader, hash_to_hex_str, Header
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -18,8 +17,8 @@ import logging
 import zmq
 
 from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
-    BitcoinNetIO, wait_for_node, NetworkConfig, Peer)
-from conduit_lib.bitcoin_net_io import BlockCallback
+    wait_for_node, NetworkConfig, Peer)
+from conduit_lib.bitcoin_net_io import BlockCallback, BitcoinNetSocket, get_bitcoin_p2p_socket
 from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
@@ -59,7 +58,6 @@ class Controller(ControllerBase):
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: str | None=None) -> None:
-        self.batch_start_time: int = int(time.time())
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -114,13 +112,8 @@ class Controller(ControllerBase):
         # Database Interfaces
         # self.mysql_db: Optional[MySQLDatabase] = None
 
-        # Bitcoin Network IO + callbacks
-        self.transport: BaseTransport | None = None
-        self.session: BaseProtocol | None = None
-        self.bitcoin_net_io = BitcoinNetIO(self.on_buffer_full, self.on_msg,
-            self.on_connection_made, self.on_connection_lost)
-        self.shm_buffer_view = self.bitcoin_net_io.shm_buffer_view
-        self.shm_buffer = self.bitcoin_net_io.shm_buffer
+        # Bitcoin Network Socket
+        self.bitcoin_net_io: BitcoinNetSocket | None = None
 
         self.estimated_moving_av_block_size_mb = 0.1 if \
             self.sync_state.get_local_block_tip_height() < 2016 else 500
@@ -152,13 +145,15 @@ class Controller(ControllerBase):
         self.batch_completion_mtree.start()
         self.batch_completion_preprocessor.start()
 
-    async def connect_session(self) -> tuple[BaseTransport, BaseProtocol]:
+    async def connect_session(self) -> None:
         peer = self.get_peer()
         self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
-        self.transport, self.session = await self.bitcoin_net_io.connect(peer.host, peer.port)
-        assert self.transport is not None
-        assert self.session is not None
-        return self.transport, self.session
+        try:
+            self.bitcoin_net_io = await get_bitcoin_p2p_socket(peer.host, peer.port, self.on_msg,
+                self.on_connection_made, self.on_connection_lost)
+            self.shm_buffer = self.bitcoin_net_io.shm_buffer
+        except ConnectionResetError:
+            await self.stop()
 
     async def run(self) -> None:
         self.running = True
@@ -179,8 +174,8 @@ class Controller(ControllerBase):
     async def stop(self) -> None:
         self.running = False
         await self._close_aiohttp_client_session()
-        if self.transport:
-            self.transport.close()
+        if self.bitcoin_net_io:
+            self.bitcoin_net_io.close_connection()
         if self.storage:
             await self.storage.close()
         with self.kill_worker_socket as sock:
@@ -237,13 +232,7 @@ class Controller(ControllerBase):
         return self.peers[0]
 
     # ---------- Callbacks ---------- #
-    def on_buffer_full(self) -> None:
-        coro = self._on_buffer_full()
-        asyncio.run_coroutine_threadsafe(coro, self.loop)
-
     def on_msg(self, command: bytes, message: BlockCallback | bytes) -> None:
-        if command != BLOCK_BIN:
-            self.sync_state.incr_msg_received_count()
         self.sync_state.incoming_msg_queue.put_nowait((command, message))
 
     def on_connection_made(self) -> None:
@@ -253,25 +242,6 @@ class Controller(ControllerBase):
         self.con_lost_event.set()
 
     # ---------- end callbacks ---------- #
-    async def _on_buffer_full(self) -> None:
-        """Waits until all messages in the shared memory buffer have been processed before
-        resuming (and therefore resetting the buffer) BitcoinNetIO."""
-        try:
-            while not self.sync_state.have_processed_all_msgs_in_buffer():
-                await asyncio.sleep(0.1)
-
-            self.sync_state.reset_msg_counts()
-            with self.sync_state.done_blocks_raw_lock:
-                self.sync_state.done_blocks_raw = set()
-            with self.sync_state.done_blocks_mtree_lock:
-                self.sync_state.done_blocks_mtree = set()
-            with self.sync_state.done_blocks_preproc_lock:
-                self.sync_state.done_blocks_preproc = set()
-            self.sync_state.received_blocks = set()
-            self.bitcoin_net_io.resume()
-        except Exception:
-            self.logger.exception("Unexpected problem in '_on_buffer_full'")
-            raise
 
     def run_coro_threadsafe(self, coro: Callable[..., Coroutine[Any, Any, T2]],
             *args: Sequence[str], **kwargs: dict[Any, Any]) -> None:
@@ -285,14 +255,13 @@ class Controller(ControllerBase):
                 handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
                 handler_func = getattr(self.handlers, handler_func_name)
                 await handler_func(message)
-                if command != BLOCK_BIN:
-                    self.sync_state.incr_msg_handled_count()
             except Exception as e:
                 self.logger.exception("Handler exception")
                 raise
 
     async def send_request(self, command_name: str, message: bytes) -> None:
-        self.bitcoin_net_io.send_message(message)
+        assert self.bitcoin_net_io is not None
+        await self.bitcoin_net_io.send_message(message)
 
     def start_workers(self) -> None:
         # Thread (lightweight task -> lower latency this way)
@@ -323,9 +292,6 @@ class Controller(ControllerBase):
 
     async def spawn_sync_headers_task(self) -> None:
         self.tasks.append(create_task(self.sync_headers_job()))
-
-    async def spawn_initial_block_download(self) -> None:
-        self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     def ipc_sock_server_thread(self) -> None:
         assert self.lmdb is not None
@@ -384,8 +350,7 @@ class Controller(ControllerBase):
 
         await self.spawn_sync_headers_task()
         await self.sync_state.headers_event_initial_sync.wait()  # one-off
-        await self.spawn_initial_block_download()
-        await self.spawn_lagging_batch_monitor()
+        self.tasks.append(create_task(self.sync_all_blocks_job()))
         # await self.sync_state.initial_block_download_event.wait()
         # await self.request_mempool()
 
@@ -636,7 +601,6 @@ class Controller(ControllerBase):
             batch_id = 0
             while True:
                 # ------------------------- Batch Start ------------------------- #
-                self.batch_start_time = int(time.time())
                 # If there's a reorg, starting header can be less than longest_chain().tip
                 while True:
                     try:
@@ -668,23 +632,6 @@ class Controller(ControllerBase):
         except Exception as e:
             self.logger.exception("sync_blocks_job raised an exception")
             raise
-
-    async def lagging_batch_monitor(self) -> None:
-        """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the
-         batch of blocks, it will begin logging the state of progress"""
-        assert self.sync_state is not None
-        timeout = 10
-        last_check = self.batch_start_time
-        while True:
-            await asyncio.sleep(1)
-            diff = int(time.time()) - last_check
-            if diff > timeout:
-                if not self.sync_state.have_processed_block_msgs():
-                    self.sync_state.print_progress_info()
-                    last_check = int(time.time())
-
-    async def spawn_lagging_batch_monitor(self) -> None:
-        self.tasks.append(create_task(self.lagging_batch_monitor()))
 
     # -- Message Types -- #
     async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \

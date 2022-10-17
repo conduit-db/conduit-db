@@ -41,10 +41,6 @@ class SyncState:
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: asyncio.Queue[tuple[bytes, BlockCallback | bytes]] = \
             asyncio.Queue()
-        self._msg_received_count = 0
-        self._msg_handled_count = 0
-        self._msg_received_count_lock = threading.Lock()
-        self._msg_handled_count_lock = threading.Lock()
 
         # Accounting and ack'ing for block msgs
         self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
@@ -91,15 +87,6 @@ class SyncState:
     def set_target_header_height(self, height: int) -> None:
         self.target_header_height = height
 
-    def is_synchronized(self) -> bool:
-        return self.get_local_block_tip_height() >= self.get_local_tip_height()
-
-    def reset_msg_counts(self) -> None:
-        with self._msg_handled_count_lock:
-            self._msg_handled_count = 0
-        with self._msg_received_count_lock:
-            self._msg_received_count = 0
-
     def get_next_batched_blocks(self, from_height: int, to_height: int) \
             -> tuple[int, set[bytes], int]:
         """Key Variables
@@ -109,8 +96,9 @@ class SyncState:
         self.all_pending_block_hashes = set()
         block_height_deficit = to_height - from_height
 
+        local_tip_height = self.get_local_block_tip_height()
         estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
-            target_bytes=TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
+            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW, local_tip_height)
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count + 1
@@ -121,50 +109,8 @@ class SyncState:
 
         return batch_count, self.all_pending_block_hashes, stop_header_height
 
-    def incr_msg_received_count(self) -> None:
-        with self._msg_received_count_lock:
-            self._msg_received_count += 1
-
-    def incr_msg_handled_count(self) -> None:
-        with self._msg_handled_count_lock:
-            self._msg_handled_count += 1
-
-    def have_processed_non_block_msgs(self) -> bool:
-        return self._msg_received_count == self._msg_handled_count
-
     def print_progress_info(self) -> None:
         self.logger.debug(f"Count of received_blocks: {len(self.received_blocks)}")
         self.logger.debug(f"Count of done_blocks_raw: {len(self.done_blocks_raw)}")
         self.logger.debug(f"Count of done_blocks_mtree: {len(self.done_blocks_mtree)}")
         self.logger.debug(f"Count of done_blocks_preproc: {len(self.done_blocks_preproc)}")
-
-    def have_processed_block_msgs(self) -> bool:
-        try:
-            with self.done_blocks_raw_lock:
-                for blk_hash in self.done_blocks_raw:
-                    if not blk_hash in self.received_blocks:
-                        return False
-                if len(self.done_blocks_raw) != len(self.received_blocks):
-                    return False
-
-            with self.done_blocks_mtree_lock:
-                for blk_hash in self.done_blocks_mtree:
-                    if not blk_hash in self.received_blocks:
-                        return False
-                if len(self.done_blocks_mtree) != len(self.received_blocks):
-                    return False
-
-            with self.done_blocks_preproc_lock:
-                for blk_hash in self.done_blocks_preproc:
-                    if not blk_hash in self.received_blocks:
-                        return False
-                if len(self.done_blocks_preproc) != len(self.received_blocks):
-                    return False
-
-            return True
-        except Exception:
-            self.logger.exception("unexpected exception in have_processed_block_msgs")
-            raise
-
-    def have_processed_all_msgs_in_buffer(self) -> bool:
-        return self.have_processed_non_block_msgs() and self.have_processed_block_msgs()

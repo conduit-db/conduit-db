@@ -293,7 +293,6 @@ class MinedBlockParsingThread(threading.Thread):
                 not_new_tx_offsets[work_item_id].add(tx_offset)
 
             t1 = time.time() - t0
-            print(new_tx_offsets, not_new_tx_offsets)
             return new_tx_offsets, not_new_tx_offsets
         except KeyError as e:
             self.logger.exception("KeyError in get_processed_vs_unprocessed_tx_offsets")
