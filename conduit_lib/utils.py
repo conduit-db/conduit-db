@@ -373,3 +373,7 @@ def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
     # this callback we reraise any encountered exception in the callback and ensure it is visible.
     task.add_done_callback(asyncio_future_callback)
     return task
+
+
+def bin_p2p_command_to_ascii(bin_command: bytes) -> str:
+    return bin_command.rstrip(bytes(1)).decode()

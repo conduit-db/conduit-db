@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 from asyncio import StreamReader, \
     StreamWriter
 from multiprocessing import shared_memory
@@ -12,7 +13,7 @@ import struct
 
 from .commands import BLOCK_BIN
 from .constants import HEADER_LENGTH
-from .utils import create_task
+from .utils import create_task, bin_p2p_command_to_ascii
 
 
 class P2PHeader(NamedTuple):
@@ -55,7 +56,6 @@ def unpack_msg_header(header: bytes) -> P2PHeader:
 
 class BitcoinNetSocket:
 
-    BUFFER_SIZE = (1024**2)*256
     _pos = 0
     _last_msg_end_pos = 0
     _payload_size = 0
@@ -66,6 +66,7 @@ class BitcoinNetSocket:
         self.writer: StreamWriter = writer
         self.on_msg_callback = on_msg_callback
 
+        self.BUFFER_SIZE = int(os.getenv('NETWORK_BUFFER_SIZE', 0))
         self.shm_buffer = shared_memory.SharedMemory(create=True, size=self.BUFFER_SIZE)
 
     def get_block_tx_count(self, buffer: memoryview, end_blk_header_pos: int) -> int:
@@ -142,7 +143,9 @@ class BitcoinNetSocket:
                     break
 
             if self.BUFFER_SIZE - pos == 0:
-                logger.debug(f"Buffer is full: {cur_header}")
+                logger.debug(f"Buffer is full for command: "
+                             f"'{bin_p2p_command_to_ascii(cur_header.command)}', "
+                             f"payload size: {cur_header.payload_size}")
                 pos, last_msg_end_pos = self.new_buffer(pos, last_msg_end_pos)
 
     def close_connection(self) -> None:
