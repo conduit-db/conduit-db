@@ -35,48 +35,48 @@ class Handlers:
         self.server_type = os.environ['SERVER_TYPE']
 
     async def on_version(self, message: bytes) -> None:
-        logger.debug("handling version...")
+        # logger.debug("handling version...")
         version = self.controller.deserializer.version(io.BytesIO(message))
         self.controller.sync_state.set_target_header_height(version["start_height"])
-        logger.debug("Received version message: %s", version)
+        # logger.debug("Received version message: %s", version)
         verack_message = self.controller.serializer.verack()
         await self.controller.send_request(VERACK, verack_message)
 
     async def on_verack(self, message: bytes) -> None:
-        logger.debug("handling verack...")
-        logger.debug("handshake complete")
+        # logger.debug("handling verack...")
+        # logger.debug("handshake complete")
         self.controller.handshake_complete_event.set()
         pass
 
     async def on_protoconf(self, message: bytes) -> None:
-        logger.debug("Handling protoconf...")
+        # logger.debug("Handling protoconf...")
         protoconf = self.controller.deserializer.protoconf(io.BytesIO(message))
-        logger.debug(f"Protoconf: {protoconf}")
+        # logger.debug(f"Protoconf: {protoconf}")
         self.controller.handshake_complete_event.set()
 
     async def on_sendheaders(self, message: bytes) -> None:
-        logger.debug("handling sendheaders...")
+        # logger.debug("handling sendheaders...")
         pass
 
     async def on_sendcmpct(self, message: bytes) -> None:
-        message_bytes = message
-        logger.debug("handling sendcmpct...")
-        logger.debug("received sendcmpct message: %s", message_bytes.decode('utf-8'))
+        # message_bytes = message
+        # logger.debug("handling sendcmpct...")
+        # logger.debug("received sendcmpct message: %s", message_bytes.decode('utf-8'))
         sendcmpct = self.controller.serializer.sendcmpct()
-        logger.debug("responding with message: %s", sendcmpct)
+        # logger.debug("responding with message: %s", sendcmpct)
         await self.controller.send_request(SENDCMPCT, sendcmpct)
 
     async def on_ping(self, message: bytes) -> None:
-        logger.debug("handling ping...")
+        # logger.debug("handling ping...")
         pong_message = self.serializer.pong(message)
         await self.controller.send_request(PONG, pong_message)
 
     async def on_addr(self, message: bytes) -> None:
-        logger.debug("handling addr...")
+        # logger.debug("handling addr...")
         pass
 
     async def on_feefilter(self, message: bytes) -> None:
-        logger.debug("handling feefilter...")
+        # logger.debug("handling feefilter...")
         pass
 
     async def on_inv(self, message: bytes) -> None:
@@ -127,7 +127,7 @@ class Handlers:
         logger.debug("handling getdata...")
 
     async def on_headers(self, message: bytes) -> None:
-        logger.debug(f"got headers message")
+        # logger.debug(f"got headers message")
         message_bytes: bytes = message
         if message_bytes[0:1] == b'\x00':
             self.controller.sync_state.headers_msg_processed_queue.put_nowait(None)

@@ -57,6 +57,7 @@ def mysql_flush_rows_confirmed(worker: 'FlushConfirmedTransactionsThread',
                 on_blocked_msg="Mined Transaction ACK receiver is busy")
 
             tx_count = len(part_tx_hashes)
+
             msg2 = cbor2.dumps((worker.worker_id, work_item_id, blk_hash, tx_count))
             zmq_send_no_block(worker.tx_parse_ack_socket, msg2,
                 on_blocked_msg="Tx parse ACK receiver is busy")
@@ -87,12 +88,11 @@ def reset_rows() -> MySQLFlushBatchWithAcks:
 
 def maybe_refresh_mysql_connection(mysql_db: MySQLDatabase,
         last_mysql_activity: int, logger: logging.Logger) -> tuple[MySQLDatabase, int]:
-    REFRESH_TIMEOUT = 600
+    REFRESH_TIMEOUT = 300
     if int(time.time()) - last_mysql_activity > REFRESH_TIMEOUT:
         logger.info(f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} "
             f"second refresh timeout")
-        mysql_db.close()
-        mysql_db.mysql_conn.ping(True)
+        mysql_db.mysql_conn.ping()
         last_mysql_activity = int(time.time())
         return mysql_db, last_mysql_activity
     else:
