@@ -127,7 +127,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def stop(self, msg_req: ipc_sock_msg_types.StopRequest) -> None:
         logger.debug(f"Got {ipc_sock_commands.STOP} request: {msg_req}")
-        self.server.lmdb.close()
+        with self.server.lmdb_lock:
+            self.server.lmdb.close()
         self.server.shutdown()
 
         msg_resp = ipc_sock_msg_types.StopResponse()
@@ -146,10 +147,11 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     def block_number_batched(self, msg_req: ipc_sock_msg_types.BlockNumberBatchedRequest) -> None:
         try:
             block_numbers = []
-            for block_hash in msg_req.block_hashes:
-                block_number = self.server.lmdb.get_block_num(block_hash)
-                # NOTE(AustEcon): should the client handle errors / null results?
-                block_numbers.append(cast(int, block_number))
+            with self.server.lmdb_lock:
+                for block_hash in msg_req.block_hashes:
+                    block_number = self.server.lmdb.get_block_num(block_hash)
+                    # NOTE(AustEcon): should the client handle errors / null results?
+                    block_numbers.append(cast(int, block_number))
 
             msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(block_numbers=block_numbers)
             self.send_msg(msg_resp.to_cbor())
@@ -159,15 +161,16 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     def block_batched(self, msg_req: ipc_sock_msg_types.BlockBatchedRequest) -> None:
         try:
             raw_blocks_array = bytearray()
-            for block_request in msg_req.block_requests:
-                block_number, (start_offset, end_offset) = block_request
-                raw_block_slice = self.server.lmdb.get_block(block_number,
-                    Slice(start_offset, end_offset))
+            with self.server.lmdb_lock:
+                for block_request in msg_req.block_requests:
+                    block_number, (start_offset, end_offset) = block_request
+                    raw_block_slice = self.server.lmdb.get_block(block_number,
+                        Slice(start_offset, end_offset))
 
-                # NOTE(AustEcon): should the client handle errors / null results?
-                len_slice = len(cast(bytes, raw_block_slice))
-                raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
-                    block_number, len_slice, raw_block_slice)
+                    # NOTE(AustEcon): should the client handle errors / null results?
+                    len_slice = len(cast(bytes, raw_block_slice))
+                    raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
+                        block_number, len_slice, raw_block_slice)
 
             # logger.debug(f"Sending block_batched response: len(raw_blocks_array):
             # {len(raw_blocks_array)}")
@@ -182,8 +185,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def merkle_tree_row(self, msg_req: ipc_sock_msg_types.MerkleTreeRowRequest) -> None:
         try:
-            mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
-            # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
+            with self.server.lmdb_lock:
+                mtree_row = self.server.lmdb.get_mtree_row(msg_req.block_hash, msg_req.level)
+                # NOTE: No cbor serialization - this is a hot-path - needs to be fast!
             if mtree_row:
                 self.send_msg(mtree_row)
             else:
@@ -198,10 +202,11 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             msg_req: ipc_sock_msg_types.TransactionOffsetsBatchedRequest) -> None:
         try:
             tx_offsets_batch = []
-            for block_hash in msg_req.block_hashes:
-                # NOTE(AustEcon): should the client handle errors / null results?
-                tx_offsets_binary = cast(bytes, self.server.lmdb.get_tx_offsets(block_hash))
-                tx_offsets_batch.append(tx_offsets_binary)
+            with self.server.lmdb_lock:
+                for block_hash in msg_req.block_hashes:
+                    # NOTE(AustEcon): should the client handle errors / null results?
+                    tx_offsets_binary = cast(bytes, self.server.lmdb.get_tx_offsets(block_hash))
+                    tx_offsets_batch.append(tx_offsets_binary)
 
             msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(tx_offsets_batch=tx_offsets_batch)
             self.send_msg(msg_resp.to_cbor())
@@ -212,11 +217,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             -> None:
         try:
             block_metadata_batch = []
-            for block_hash in msg_req.block_hashes:
-                # NOTE(AustEcon): should the client handle errors / null results?
-                block_metadata = cast(BlockMetadata,
-                    self.server.lmdb.get_block_metadata(block_hash))
-                block_metadata_batch.append(block_metadata)
+            with self.server.lmdb_lock:
+                for block_hash in msg_req.block_hashes:
+                    # NOTE(AustEcon): should the client handle errors / null results?
+                    block_metadata = cast(BlockMetadata,
+                        self.server.lmdb.get_block_metadata(block_hash))
+                    block_metadata_batch.append(block_metadata)
 
                 assert block_metadata is not None, "block_metadata is None"
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
@@ -279,8 +285,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def reorg_differential(self, msg_req: ipc_sock_msg_types.ReorgDifferentialRequest) -> None:
         try:
-            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
-                self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
+            with self.server.lmdb_lock:
+                removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
+                    self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
             msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(removals_from_mempool,
                 additions_to_mempool, orphaned_tx_hashes)
             self.send_msg(msg_resp.to_cbor())
@@ -297,6 +304,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         super(ThreadedTCPServer, self).__init__(addr, handler)
 
         logger.debug(f"ThreadedTCPServer LMDB_Database storage_path={storage_path}")
+        self.lmdb_lock = threading.RLock()
         self.lmdb = LMDB_Database(storage_path=str(storage_path), lock=True)
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
