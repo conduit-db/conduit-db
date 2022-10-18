@@ -403,7 +403,7 @@ class Controller(ControllerBase):
     async def start_jobs(self) -> None:
         self.mysql_db = self.storage.mysql_database
         await self.spawn_handler_tasks()
-        await self.spawn_wait_for_mined_tx_acks_task()
+        create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
         await self.maybe_do_db_repair()
@@ -431,9 +431,6 @@ class Controller(ControllerBase):
             if expected_tx_count != processed_tx_count:
                 return False
         return True
-
-    async def spawn_wait_for_mined_tx_acks_task(self) -> None:
-        create_task(self.wait_for_mined_tx_acks_task())
 
     async def wait_for_mined_tx_acks_task(self) -> None:
         while True:

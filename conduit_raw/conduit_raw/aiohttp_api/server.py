@@ -54,7 +54,7 @@ class ApplicationState(object):
         self._reference_server_connection_established_event = asyncio.Event()
 
     async def refresh_mysql_connection_task(self) -> None:
-        REFRESH_TIMEOUT = 300
+        REFRESH_TIMEOUT = 600
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
             self.mysql_db.mysql_conn.ping()

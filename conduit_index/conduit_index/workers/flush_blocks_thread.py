@@ -29,7 +29,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
     def __init__(self, worker_id: int,
             confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
             daemon: bool = True) -> None:
-        self.logger = logging.getLogger("mined-blocks-thread")
+        self.logger = logging.getLogger(f"mined-blocks-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
@@ -63,12 +63,13 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             while True:
                 try:
                     # Pre-IBD do large batched flushes
-                    confirmed_rows, acks = self.confirmed_tx_flush_queue.get(
+                    confirmed_rows, new_acks = self.confirmed_tx_flush_queue.get(
                         timeout=BLOCK_BATCHING_RATE)
                     if not confirmed_rows:  # poison pill
                         break
 
                     txs, ins, outs, pds = extend_batched_rows(confirmed_rows, txs, ins, outs, pds)
+                    acks.extend(new_acks)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(

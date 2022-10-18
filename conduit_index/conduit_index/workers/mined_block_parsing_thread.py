@@ -11,14 +11,14 @@ from typing import Callable, cast
 import zmq
 
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
-    TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, WorkItemId, TxOffset, \
-    AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets
+    TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
+    AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets, WorkItemId
 from ..workers.common import reset_rows, maybe_refresh_mysql_connection
 
 from conduit_lib import IPCSocketClient, MySQLDatabase
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.database.mysql.mysql_database import mysql_connect
-from conduit_lib.database.mysql.types import MySQLFlushBatch, ConfirmedTransactionRow
+from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.types import BlockSliceRequestType
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 
@@ -28,7 +28,7 @@ class MinedBlockParsingThread(threading.Thread):
     def __init__(self, worker_id: int,
             confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
             daemon: bool = True) -> None:
-        self.logger = logging.getLogger("mined-block-parsing-thread")
+        self.logger = logging.getLogger(f"mined-block-parsing-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
@@ -154,7 +154,7 @@ class MinedBlockParsingThread(threading.Thread):
                 TxHashToWorkIdMap,
                 TxHashRows,
                 BatchedRawBlockSlices,
-                ProcessedBlockAcks,
+                dict[WorkItemId, ProcessedBlockAcks],
                 bool
             ]:
         """NOTE: For a very large block the work_items can arrive out of sequential order
@@ -166,7 +166,7 @@ class MinedBlockParsingThread(threading.Thread):
         merged_tx_to_work_item_id_map: TxHashToWorkIdMap = {}  # tx_hash: block_num
         merged_part_tx_hash_rows: TxHashRows = []
         batched_raw_block_slices: BatchedRawBlockSlices = []
-        acks: ProcessedBlockAcks = []
+        acks: dict[WorkItemId, ProcessedBlockAcks] = {}
 
         block_hashes, block_slice_offsets, unpacked_batch_msgs, is_reorg = self.unpack_batched_msgs(
             work_items)
@@ -207,19 +207,23 @@ class MinedBlockParsingThread(threading.Thread):
 
             # Todo - I don't like this re-allocation of raw_block_slice
             raw_block_slice = array.array('B', raw_block_slice)
+
             batched_raw_block_slices.append(
                 (raw_block_slice, work_item_id, is_reorg, blk_num, first_tx_pos_batch))
 
             # Needs full tx hashes for invalidating rows from mempool table
-            acks.append(ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes))
+            if acks.get(work_item_id) is None:
+                acks[work_item_id] = []
+            acks[work_item_id].append(
+                ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes))
 
         return merged_offsets_map, merged_tx_to_work_item_id_map, merged_part_tx_hash_rows, \
             batched_raw_block_slices, acks, contains_reorg_tx
 
     def parse_txs_and_push_to_queue(self, new_tx_offsets: NewNotSeenBeforeTxOffsets,
             not_new_tx_offsets: AlreadySeenMempoolTxOffsets,
-            batched_raw_block_slices: BatchedRawBlockSlices, acks: ProcessedBlockAcks) \
-                -> None:
+            batched_raw_block_slices: BatchedRawBlockSlices,
+            acks: dict[int, list[ProcessedBlockAck]]) -> None:
         assert self.confirmed_tx_flush_queue is not None
 
         for raw_block_slice, work_item, _is_reorg, blk_num, first_tx_pos_batch \
@@ -240,7 +244,7 @@ class MinedBlockParsingThread(threading.Thread):
             tx_rows, in_rows, out_rows, pd_rows = all_rows
 
             self.confirmed_tx_flush_queue.put(
-                (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks))
+                (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks[work_item]))
 
     def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
             merged_offsets_map: dict[bytes, int],

@@ -7,7 +7,8 @@ import cbor2
 from MySQLdb import _mysql
 
 from conduit_lib.utils import zmq_send_no_block
-from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks, MempoolTxAck
+from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks, MySQLFlushBatchWithAcksMempool, \
+    MempoolTxAck
 from conduit_lib import MySQLDatabase
 from conduit_lib.database.mysql.types import MempoolTransactionRow, ConfirmedTransactionRow, \
     InputRow, OutputRow, PushdataRow, MySQLFlushBatch
@@ -50,7 +51,6 @@ def mysql_flush_rows_confirmed(worker: 'FlushConfirmedTransactionsThread',
 
         # Ack for all flushed blocks
         assert worker.ack_for_mined_tx_socket is not None
-        acks = cast(ProcessedBlockAcks, acks)
         for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
             msg = cbor2.dumps({blk_num: part_tx_hashes})
             zmq_send_no_block(worker.ack_for_mined_tx_socket, msg,
@@ -67,7 +67,7 @@ def mysql_flush_rows_confirmed(worker: 'FlushConfirmedTransactionsThread',
 
 
 def mysql_flush_rows_mempool(worker: 'FlushMempoolTransactionsThread',
-        flush_batch_with_acks: MySQLFlushBatchWithAcks, mysql_db: MySQLDatabase) -> None:
+        flush_batch_with_acks: MySQLFlushBatchWithAcksMempool, mysql_db: MySQLDatabase) -> None:
     tx_rows, in_rows, out_rows, pd_rows, acks = flush_batch_with_acks
     try:
         mysql_db.mysql_bulk_load_mempool_tx_rows(cast(list[MempoolTransactionRow], tx_rows))
@@ -82,13 +82,22 @@ def reset_rows() -> MySQLFlushBatchWithAcks:
     ins: list[InputRow] = []
     outs: list[OutputRow] = []
     pds: list[PushdataRow] = []
-    acks: MempoolTxAck | ProcessedBlockAcks = []
+    acks: ProcessedBlockAcks = []
     return MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks)
+
+
+def reset_rows_mempool() -> MySQLFlushBatchWithAcksMempool:
+    txs: list[MempoolTransactionRow | ConfirmedTransactionRow] = []
+    ins: list[InputRow] = []
+    outs: list[OutputRow] = []
+    pds: list[PushdataRow] = []
+    acks: MempoolTxAck = 0
+    return MySQLFlushBatchWithAcksMempool(txs, ins, outs, pds, acks)
 
 
 def maybe_refresh_mysql_connection(mysql_db: MySQLDatabase,
         last_mysql_activity: int, logger: logging.Logger) -> tuple[MySQLDatabase, int]:
-    REFRESH_TIMEOUT = 300
+    REFRESH_TIMEOUT = 600
     if int(time.time()) - last_mysql_activity > REFRESH_TIMEOUT:
         logger.info(f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} "
             f"second refresh timeout")

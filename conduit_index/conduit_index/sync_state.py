@@ -11,7 +11,7 @@ import typing
 from typing import cast
 
 import bitcoinx
-from bitcoinx import unpack_header, double_sha256
+from bitcoinx import unpack_header, double_sha256, hash_to_hex_str
 from bitcoinx.networks import Header
 
 from conduit_lib.bitcoin_net_io import BlockCallback
@@ -294,4 +294,5 @@ class SyncState:
     def print_progress_info(self) -> None:
         self.logger.debug(f"Count of all_pending_chip_away_work_item_ids: "
                           f"{len(self.all_pending_chip_away_work_item_ids)}")
+        self.logger.debug(f"Missing work item ids: {self.all_pending_chip_away_work_item_ids}")
 

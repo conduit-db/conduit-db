@@ -87,6 +87,6 @@ class MempoolParsingThread(threading.Thread):
         self.mempool_tx_flush_queue.put(
             (MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched),
-            MempoolTxAck(num_mempool_txs_processed))
+            num_mempool_txs_processed)
         )
 

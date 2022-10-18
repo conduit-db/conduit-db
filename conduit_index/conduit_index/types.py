@@ -16,10 +16,6 @@ class ProcessedBlockAck(NamedTuple):
     partition_block_hashes: list[bytes]
 
 
-class MempoolTxAck(NamedTuple):
-    num_mempool_txs_processed: int
-
-
 WorkUnit = tuple[bool, int, int, bytes, int, int, int, 'array.ArrayType[int]']
 MainBatch = list[tuple[int, 'array.ArrayType[int]', bitcoinx.Header, int]]
 WorkPart = tuple[int, bytes, int, int, int, 'array.ArrayType[int]']
@@ -37,7 +33,16 @@ class MySQLFlushBatchWithAcks(NamedTuple):
     in_rows: list[InputRow]
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
-    acks: MempoolTxAck | ProcessedBlockAcks
+    acks: ProcessedBlockAcks
+
+
+MempoolTxAck = int
+class MySQLFlushBatchWithAcksMempool(NamedTuple):
+    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
+    in_rows: list[InputRow]
+    out_rows: list[OutputRow]
+    pd_rows: list[PushdataRow]
+    acks: MempoolTxAck
 
 
 WorkItemId = int
