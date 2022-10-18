@@ -388,7 +388,7 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_update_oprhaned_headers(self, block_hashes: list[bytes]) -> None:
+    def mysql_update_orphaned_headers(self, block_hashes: list[bytes]) -> None:
         """This allows us to filter out any query results that do not lie on the longest chain"""
         for block_hash in block_hashes:
             try:

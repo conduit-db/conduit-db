@@ -200,7 +200,6 @@ class MinedBlockParsingThread(threading.Thread):
 
             # Merge into big data structures
             merged_part_tx_hash_rows.extend(part_tx_hash_rows)
-
             merged_offsets_map.update(dict(zip(part_tx_hashes, tx_offsets_part)))
             for tx_hash in part_tx_hashes:
                 merged_tx_to_work_item_id_map[tx_hash] = work_item_id
@@ -230,8 +229,8 @@ class MinedBlockParsingThread(threading.Thread):
                 in batched_raw_block_slices:
             tx_rows, in_rows, out_rows, pd_rows, _ = reset_rows()
 
-            # Mempool txs already have entries for inputs, pushdata or output tables so we
-            # avoid re-inserting these rows a second time (`parse_txs` skips over them)
+            # Mempool and Reorg txs already have entries for inputs, pushdata and output tables
+            # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
             all_tx_offsets: set[int] = new_tx_offsets.get(work_item, set()) | \
                 not_new_tx_offsets.get(work_item, set())
             all_tx_offsets_sorted = list(all_tx_offsets)
@@ -242,7 +241,6 @@ class MinedBlockParsingThread(threading.Thread):
                 already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
 
             tx_rows, in_rows, out_rows, pd_rows = all_rows
-
             self.confirmed_tx_flush_queue.put(
                 (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks[work_item]))
 

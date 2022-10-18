@@ -669,7 +669,7 @@ class Controller(ControllerBase):
         orphaned_tx_hashes = response.orphaned_tx_hashes
         self.logger.debug(f"removals_from_mempool (len={len(removals_from_mempool)}), "
                           f"additions_to_mempool (len={len(additions_to_mempool)}),"
-                          f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)}")
+                          f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)})")
         return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
 
     async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) -> None:
@@ -693,7 +693,7 @@ class Controller(ControllerBase):
         if is_reorg:
             assert old_hashes is not None
             assert new_hashes is not None
-            self.mysql_db.queries.mysql_update_oprhaned_headers(old_hashes)
+            self.mysql_db.queries.mysql_update_orphaned_headers(old_hashes)
             removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
                 await self._get_differential_post_reorg(old_hashes, new_hashes)
 

@@ -214,7 +214,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
     out_rows = set()
     set_pd_rows = set()
     count_txs = len(tx_offsets)
-    is_previously_seen_mempool_tx = False
+    previously_processed = False
     if already_seen_offsets is None:
         already_seen_offsets = set()
 
@@ -230,9 +230,6 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
 
             # tx_hash
             offset = tx_offsets[i] - adjustment
-            if offset in already_seen_offsets:
-                is_previously_seen_mempool_tx = True
-
             tx_offset_start = offset
             if i < count_txs - 1:
                 next_tx_offset = tx_offsets[i + 1] - adjustment
@@ -242,6 +239,9 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
             rawtx = buffer[tx_offset_start:next_tx_offset].tobytes()
             tx_hash = double_sha256(rawtx)
             tx_hashX = tx_hash[0:HashXLength]
+
+            if offset in already_seen_offsets:
+                previously_processed = True
 
             # version
             offset += 4
@@ -259,15 +259,14 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
-                if not is_previously_seen_mempool_tx:
+                if not previously_processed:
                     in_rows.add(
                         InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
                 # mempool txs will appear to have a tx_pos=0
-                if (not tx_pos == 0 and confirmed) or not confirmed and \
-                        not is_previously_seen_mempool_tx:
+                if ((not tx_pos == 0 and confirmed) or not confirmed) and not previously_processed:
 
                     pushdata_matches = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
                         idx=in_idx, flags=PushdataMatchFlags.INPUT, tx_pos=tx_pos,
@@ -275,7 +274,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                     if len(pushdata_matches):
                         for in_pushdata_hashX, flags in pushdata_matches:
                             set_pd_rows.add(
-                                (
+                                PushdataRow(
                                     in_pushdata_hashX.hex(),
                                     tx_hashX.hex(),
                                     in_idx,
@@ -291,7 +290,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                if not is_previously_seen_mempool_tx:
+                if not previously_processed:
                     pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
                         idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
                         genesis_height=genesis_height)
@@ -307,7 +306,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                             )
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
-                if not is_previously_seen_mempool_tx:
+                if not previously_processed:
                     out_rows.add(OutputRow(tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
