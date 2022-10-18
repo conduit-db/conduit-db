@@ -188,7 +188,7 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
 
 
 def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayType[int],
-        height_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0,
+        block_num_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0,
         already_seen_offsets: set[int] | None=None) -> MySQLFlushBatch:
     """
     This function is dual-purpose - it can:
@@ -314,12 +314,12 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
 
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
-                height_or_timestamp = cast(int, height_or_timestamp)
-                tx_rows.append(ConfirmedTransactionRow(tx_hashX.hex(), height_or_timestamp, tx_pos))
+                block_num_or_timestamp = cast(int, block_num_or_timestamp)
+                tx_rows.append(ConfirmedTransactionRow(tx_hashX.hex(), block_num_or_timestamp, tx_pos))
             else:
                 # Note mempool uses full length tx_hash
-                height_or_timestamp = cast(str, height_or_timestamp)
-                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), height_or_timestamp))
+                block_num_or_timestamp = cast(str, block_num_or_timestamp)
+                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
         assert len(tx_rows) == count_txs
         return MySQLFlushBatch(
             tx_rows,
@@ -329,9 +329,8 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
-            f"txid={hash_to_hex_str(tx_hashX)}"
+            f"txid={hash_to_hex_str(tx_hash)}, height_or_timestamp={block_num_or_timestamp}"
         )
-        logger.exception("Caught exception")
         raise
 
 
