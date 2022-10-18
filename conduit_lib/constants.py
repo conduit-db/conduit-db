@@ -51,8 +51,8 @@ if os.environ.get('NETWORK') == 'regtest':
 else:
     CHIP_AWAY_BYTE_SIZE_LIMIT = (1024 ** 3) * 4
     MAIN_BATCH_HEADERS_COUNT_LIMIT = 100  # Number of headers to request (long poll) from conduit raw
-    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = int((1024 ** 2) * 256)
-    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = int((1024 ** 2) * 256)
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW = int((1024 ** 3) * 2)
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = int((1024 ** 3) * 2)
 
 
 class MsgType(enum.IntEnum):
