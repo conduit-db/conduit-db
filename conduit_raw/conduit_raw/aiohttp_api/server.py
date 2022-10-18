@@ -57,7 +57,7 @@ class ApplicationState(object):
         REFRESH_TIMEOUT = 600
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
-            self.mysql_db.mysql_conn.ping()
+            self.mysql_db.mysql_conn.ping(True)
 
     def start_threads(self) -> None:
         pass

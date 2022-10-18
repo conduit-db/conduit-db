@@ -101,7 +101,7 @@ def maybe_refresh_mysql_connection(mysql_db: MySQLDatabase,
     if int(time.time()) - last_mysql_activity > REFRESH_TIMEOUT:
         logger.info(f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} "
             f"second refresh timeout")
-        mysql_db.mysql_conn.ping()
+        mysql_db.mysql_conn.ping(True)
         last_mysql_activity = int(time.time())
         return mysql_db, last_mysql_activity
     else:
