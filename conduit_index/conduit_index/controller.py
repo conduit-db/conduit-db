@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import array
 import asyncio
+import tracemalloc
 from asyncio import BaseTransport, BaseProtocol
 from concurrent.futures.thread import ThreadPoolExecutor
 from io import BytesIO
@@ -36,6 +37,7 @@ from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
     CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
+from conduit_lib.utils import record_top_memory_consumers
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
     get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
@@ -242,6 +244,8 @@ class Controller(ControllerBase):
         try:
             self.shm_buffer.close()
             self.shm_buffer.unlink()
+        except AttributeError:
+            self.logger.error("Controller doesn't have a `shm_buffer` attribute anymore")
         except BufferError:
             self.logger.error("Unable to clean up shared memory, exported points still exist")
 
@@ -400,7 +404,17 @@ class Controller(ControllerBase):
         self.logger.debug(f"Requesting mempool...")
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
+    async def output_memory_usage_task_async(self):
+        self.logger.debug("Tracemalloc Active")
+        TRACEMALLOC_INTERVAL = int(os.environ.get('TRACEMALLOC_INTERVAL', '300'))
+        while True:
+            await asyncio.sleep(TRACEMALLOC_INTERVAL)
+            snapshot = tracemalloc.take_snapshot()
+            record_top_memory_consumers(snapshot, suffix='conduit_index')
+
     async def start_jobs(self) -> None:
+        if os.environ.get('TRACEMALLOC', '0') == '1':
+            self.tasks.append(create_task(self.output_memory_usage_task_async()))
         self.mysql_db = self.storage.mysql_database
         await self.spawn_handler_tasks()
         create_task(self.wait_for_mined_tx_acks_task())

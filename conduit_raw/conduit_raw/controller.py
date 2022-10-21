@@ -225,6 +225,8 @@ class Controller(ControllerBase):
         try:
             self.shm_buffer.close()
             self.shm_buffer.unlink()
+        except AttributeError:
+            self.logger.error("Controller doesn't have a `shm_buffer` attribute anymore")
         except BufferError:
             self.logger.error("Unable to clean up shared memory, exported points still exist")
 

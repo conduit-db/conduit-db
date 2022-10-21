@@ -6,6 +6,7 @@ import logging.handlers
 import logging
 import os
 import sys
+import tracemalloc
 from asyncio import AbstractEventLoop
 from pathlib import Path
 
@@ -107,6 +108,9 @@ async def main() -> None:
 
 if __name__ == "__main__":
     try:
+        if os.environ.get('TRACEMALLOC', '0') == '1':
+            tracemalloc.start()
+
         asyncio.run(main(), debug=False)
     except KeyboardInterrupt:
         print("ConduitDB Stopped")

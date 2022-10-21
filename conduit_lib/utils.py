@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import bitcoinx
+from bitcoinx import (
+    read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
+)
+from datetime import datetime
 import io
 import ipaddress
 import logging
+import linecache
 import math
 import os
 from pathlib import Path
@@ -12,11 +18,7 @@ import struct
 import threading
 import time
 from typing import Any, cast, Callable, Coroutine, Optional, TypeVar
-
-import bitcoinx
-from bitcoinx import (
-    read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
-)
+import tracemalloc
 import zmq
 
 from .commands import BLOCK_BIN
@@ -377,3 +379,44 @@ def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
 
 def bin_p2p_command_to_ascii(bin_command: bytes) -> str:
     return bin_command.rstrip(bytes(1)).decode()
+
+
+def record_top_memory_consumers(snapshot, key_type='lineno', limit=10, suffix=''):
+    output_filename = MODULE_DIR.parent / "logs" / \
+                      (datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + "_memory_usage_stats")
+    if suffix:
+        output_filename / ("_" + suffix)
+
+    snapshot = snapshot.filter_traces((
+        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+        tracemalloc.Filter(False, "<unknown>"),
+    ))
+    top_stats = snapshot.statistics(key_type)
+
+    with open(output_filename, 'w') as file:
+        logger.debug("---------- Top %s memory consumers ---------- " % limit)
+        file.write("Top %s lines" % limit)
+        for index, stat in enumerate(top_stats[:limit], 1):
+            frame = stat.traceback[0]
+            line = "#%s: %s:%s: %.1f KiB" % (index, frame.filename, frame.lineno, stat.size / 1024)
+            logger.debug(line)
+            file.write(line + "\n")
+
+            line2 = linecache.getline(frame.filename, frame.lineno).strip()
+            if line2:
+                logger.debug('    %s' % line2)
+                file.write(line2 + "\n")
+
+        other = top_stats[limit:]
+        if other:
+            size = sum(stat.size for stat in other)
+            line3 = "%s other: %.1f KiB" % (len(other), size / 1024)
+            logger.debug(line3)
+            file.write(line3 + "\n")
+        total = sum(stat.size for stat in top_stats)
+
+        line4 = "Total allocated size: %.1f KiB" % (total / 1024)
+        logger.debug(line4)
+        file.write(line4 + "\n")
+
+    logger.debug("---------- Tracemalloc report end ---------- ")
