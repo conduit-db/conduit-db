@@ -404,7 +404,7 @@ class Controller(ControllerBase):
         self.logger.debug(f"Requesting mempool...")
         await self.send_request(MEMPOOL, self.serializer.mempool())
 
-    async def output_memory_usage_task_async(self):
+    async def output_memory_usage_task_async(self) -> None:
         self.logger.debug("Tracemalloc Active")
         TRACEMALLOC_INTERVAL = int(os.environ.get('TRACEMALLOC_INTERVAL', '300'))
         while True:

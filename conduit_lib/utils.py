@@ -381,11 +381,12 @@ def bin_p2p_command_to_ascii(bin_command: bytes) -> str:
     return bin_command.rstrip(bytes(1)).decode()
 
 
-def record_top_memory_consumers(snapshot, key_type='lineno', limit=10, suffix=''):
+def record_top_memory_consumers(snapshot: tracemalloc.Snapshot, key_type: str='lineno',
+        limit: int=10, suffix: str='') -> None:
     output_filename = MODULE_DIR.parent / "logs" / \
                       (datetime.now().strftime('%Y_%m_%d_%H_%M_%S') + "_memory_usage_stats")
     if suffix:
-        output_filename / ("_" + suffix)
+        output_filename = output_filename / ("_" + suffix)
 
     snapshot = snapshot.filter_traces((
         tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
