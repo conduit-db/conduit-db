@@ -88,7 +88,7 @@ class MempoolParsingThread(threading.Thread):
             set_pd_rows_batched.extend(set_pd_rows)
 
         num_mempool_txs_processed = len(tx_rows_batched)
-        self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
+        # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
         self.mempool_tx_flush_queue.put(
             (MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched),

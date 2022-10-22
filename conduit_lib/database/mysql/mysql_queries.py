@@ -446,3 +446,10 @@ class MySQLQueries:
             self.mysql_conn.query(query)
         finally:
             self.mysql_db.commit_transaction()
+
+    def get_mempool_size(self) -> int:
+        sql = "SELECT TABLE_ROWS FROM information_schema.tables " \
+              "WHERE table_schema = DATABASE() and table_name = 'mempool_transactions';"
+        self.mysql_db.mysql_conn.query(sql)
+        result = self.mysql_db.mysql_conn.store_result()
+        return int(result.fetch_row()[0][0])

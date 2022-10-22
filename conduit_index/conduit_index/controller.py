@@ -25,7 +25,7 @@ from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_net_io import BitcoinNetSocket, BlockCallback, get_bitcoin_p2p_socket
-from conduit_lib.commands import MEMPOOL, VERSION
+from conduit_lib.commands import MEMPOOL, VERSION, TX_BIN
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -73,7 +73,6 @@ class Controller(ControllerBase):
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: None=None) -> None:
-
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -164,6 +163,8 @@ class Controller(ControllerBase):
         self.general_executor = ThreadPoolExecutor(max_workers=1)
         self.estimated_moving_av_block_size_mb = 0.1 if \
             self.sync_state.get_local_block_tip_height() < 2016 else 500
+
+        self.mempool_tx_count = 0
 
     def setup(self) -> None:
         self.mysql_db = load_mysql_database()
@@ -280,6 +281,9 @@ class Controller(ControllerBase):
             # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
             handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
             handler_func = getattr(self.handlers, handler_func_name)
+            if command == TX_BIN:
+                self.mempool_tx_count += 1
+
             await handler_func(message)
 
     async def spawn_handler_tasks(self) -> None:
@@ -480,6 +484,8 @@ class Controller(ControllerBase):
             for tx_hash in new_mined_tx_hashes:
                 mined_tx_hashes.append(MinedTxHashes(tx_hash.hex(), blk_num))
 
+        self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
+        self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
         self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
         self.global_tx_hashes_dict = {}
 
@@ -583,6 +589,7 @@ class Controller(ControllerBase):
             create_task(self.maintain_node_connection())
             await self.handshake_complete_event.wait()
             await self.request_mempool()
+            create_task(self.log_current_mempool_size_task_async())
 
     async def long_poll_conduit_raw_chain_tip(self) -> tuple[bool, Header, Header,
             ChainHashes | None, ChainHashes | None]:
@@ -768,6 +775,13 @@ class Controller(ControllerBase):
                 cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
         return best_flushed_tip_height
 
+    async def log_current_mempool_size_task_async(self) -> None:
+        assert self.mysql_db is not None
+        while True:
+            self.logger.debug(f"Mempool size: {self.mysql_db.queries.get_mempool_size()} "
+                f"transactions")
+            await asyncio.sleep(60)
+
     async def sync_all_blocks_job(self) -> None:
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""
 
@@ -855,17 +869,17 @@ class Controller(ControllerBase):
         self.mysql_db.start_transaction()
         try:
             self.mysql_db.mysql_invalidate_mempool_rows()
-            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
             self.mysql_db.mysql_update_checkpoint_tip(best_flushed_tip)
         finally:
             self.mysql_db.commit_transaction()
+            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
 
     def _apply_reorg_diff_to_mempool(self, best_flushed_block_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction
         assert self.mysql_db is not None
+        self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # not required so discard it
         self.mysql_db.start_transaction()
         try:
-            self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # not required so discard it
             self.mysql_db.queries.mysql_remove_from_mempool()
             self.mysql_db.queries.mysql_add_to_mempool()
             self.mysql_db.mysql_update_checkpoint_tip(best_flushed_block_tip)
