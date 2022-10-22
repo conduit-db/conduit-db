@@ -14,8 +14,6 @@ import zmq
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.stack_tracer import trace_start, trace_stop
-from .flush_mempool_thread import FlushMempoolTransactionsThread
-from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
 from ..types import ProcessedBlockAcks, MempoolTxAck
@@ -69,13 +67,6 @@ class TxParser(multiprocessing.Process):
             for t in threads:
                 t.start()
 
-            # Database flush threads
-            threads = [
-                FlushConfirmedTransactionsThread(self.worker_id, self.confirmed_tx_flush_queue),
-                FlushMempoolTransactionsThread(self.worker_id, self.mempool_tx_flush_queue),
-            ]
-            for t in threads:
-                t.start()
             for t in threads:
                 t.join()
             self.logger.info(f"{self.__class__.__name__} exiting")

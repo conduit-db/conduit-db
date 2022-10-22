@@ -10,6 +10,7 @@ from functools import partial
 from typing import Callable, cast
 import zmq
 
+from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
     TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
     AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets, WorkItemId
@@ -54,6 +55,10 @@ class MinedBlockParsingThread(threading.Thread):
         mined_tx_socket.connect("tcp://127.0.0.1:55555")
 
         try:
+            # Database flush thread
+            t = FlushConfirmedTransactionsThread(self.worker_id, self.confirmed_tx_flush_queue)
+            t.start()
+
             mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
             ipc_socket_client = IPCSocketClient()
 

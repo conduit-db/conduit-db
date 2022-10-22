@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import partial
 import zmq
 
+from .flush_mempool_thread import FlushMempoolTransactionsThread
 from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.database.mysql.types import MySQLFlushBatch
@@ -41,6 +42,10 @@ class MempoolParsingThread(threading.Thread):
                 self.logger.debug(f"Got initial block download signal. "
                     f"Starting mempool tx parsing thread.")
                 break
+
+        # Database flush threads
+        t = FlushMempoolTransactionsThread(self.worker_id, self.mempool_tx_flush_queue)
+        t.start()
 
         context2 = zmq.Context[zmq.Socket[bytes]]()
         mempool_tx_socket = context2.socket(zmq.PULL)

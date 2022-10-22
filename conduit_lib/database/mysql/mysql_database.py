@@ -132,8 +132,8 @@ def get_connection() -> Connection:
     password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
     database = os.getenv('MYSQL_DATABASE', 'conduitdb')
 
-    conn: MySQLdb.Connection = MySQLdb.connect(host=host, port=port, user=user, password=password, database=database,
-        local_infile=1)
+    conn: MySQLdb.Connection = MySQLdb.connect(host=host, port=port, user=user, password=password,
+        database=database, local_infile=1)
     return conn
 
 

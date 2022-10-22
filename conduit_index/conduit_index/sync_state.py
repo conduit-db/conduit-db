@@ -124,6 +124,9 @@ class SyncState:
         #  like ConduitRaw does...
         if self.is_post_ibd:  # cache result
             return self.is_post_ibd
+        # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
+        # which has the benefit of pre-filling the mempool to prepare for switching to the
+        # compact block protocol by the time it reaches the chain tip.
         conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
         our_tip = datetime.utcfromtimestamp(tip.timestamp)
         conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
