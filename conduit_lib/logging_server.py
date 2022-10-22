@@ -131,7 +131,7 @@ class TCPLoggingServer(multiprocessing.Process):
         context3 = zmq.Context[zmq.Socket[bytes]]()
 
         # Todo there is cross-talk of the stop_signal from ConduitIndex and ConduitRaw because
-        #  they both import this common library and use port: 63241
+        #  they both import this common library and use remote_port: 63241
         self.kill_worker_socket = context3.socket(zmq.SUB)
         self.kill_worker_socket.connect(f"tcp://127.0.0.1:{self.kill_port}")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")

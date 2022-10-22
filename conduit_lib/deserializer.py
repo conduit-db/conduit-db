@@ -1,11 +1,8 @@
 import logging
 from typing import cast
 
-import bitcoinx
-from bitcoinx import (
-    read_le_int32, read_le_uint64, read_le_int64, read_varbytes, read_le_uint32, read_varint,
-    read_le_uint16, hash_to_hex_str
-)
+from bitcoinx import (hash_to_hex_str, Header, read_le_int32, read_le_uint64, read_le_int64,
+    read_varbytes, read_le_uint32, read_varint, read_le_uint16, unpack_header, Tx)
 import socket
 import time
 
@@ -14,15 +11,14 @@ from .constants import CCODES
 from .utils import mapped_ipv6_to_ipv4
 from conduit_lib.deserializer_types import MessageHeader, Protoconf, Version
 from conduit_lib.networks import NetworkConfig
-from conduit_lib.store import Storage
 from io import BytesIO
 
 logger = logging.getLogger("deserializer")
 
+
 class Deserializer:
-    def __init__(self, net_config: NetworkConfig, storage: Storage) -> None:
+    def __init__(self, net_config: NetworkConfig) -> None:
         self.net_config = net_config
-        self.storage = storage
 
     def deserialize_message_header(self, stream: BytesIO) -> MessageHeader:
         magic = stream.read(4).hex()
@@ -33,6 +29,24 @@ class Deserializer:
             "magic": magic,
             "command": command,
             "length": length,
+            "checksum": checksum,
+        }
+        return decoded_header
+
+    def deserialize_extended_message_header(self, stream: BytesIO) -> MessageHeader:
+        magic = stream.read(4).hex()
+        command = stream.read(12).decode("ascii").strip("\x00")
+        length = read_le_uint32(stream.read)
+        checksum = stream.read(4).hex()
+        assert command == "extmsg"
+        assert length == 0xffffffff
+        assert checksum == 0x00000000
+        ext_command = stream.read(12).decode("ascii").strip("\x00")
+        ext_length = read_le_uint64(stream.read)
+        decoded_header: MessageHeader = {
+            "magic": magic,
+            "command": ext_command,
+            "length": ext_length,
             "checksum": checksum,
         }
         return decoded_header
@@ -113,6 +127,15 @@ class Deserializer:
             inv_vector.append(inv)
         return inv_vector
 
+    def headers(self, f: BytesIO) -> list[Header]:
+        count = read_varint(f.read)
+        headers = []
+        for i in range(count):
+            raw_header = f.read(80)
+            _tx_count = read_varint(f.read)
+            headers.append(unpack_header(raw_header))
+        return headers
+
     def getdata(self, f: BytesIO) -> list[Inv]:
         message = []
         count = read_varint(f.read)
@@ -134,5 +157,14 @@ class Deserializer:
         return BlockLocator(version=version, block_locator_hashes=block_locator_hashes,
             hash_stop=hash_stop)
 
-    def tx(self, f: BytesIO) -> bitcoinx.Tx:
-        return bitcoinx.Tx.read(f.read)
+    def tx(self, f: BytesIO) -> Tx:
+        return Tx.read(f.read)
+
+    def block(self, f: BytesIO) -> tuple[Header, list[Tx]]:
+        """This method is merely included for completion but is unlikely to be used"""
+        raw_header = f.read(80)
+        tx_count = read_varint(f.read)
+        transactions = []
+        for tx_pos in range(tx_count):
+            transactions.append(Tx.read(f.read))
+        return unpack_header(raw_header), transactions

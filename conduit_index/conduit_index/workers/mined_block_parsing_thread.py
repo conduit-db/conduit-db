@@ -209,9 +209,6 @@ class MinedBlockParsingThread(threading.Thread):
             for tx_hash in part_tx_hashes:
                 merged_tx_to_work_item_id_map[tx_hash] = work_item_id
 
-            # Todo - I don't like this re-allocation of raw_block_slice
-            raw_block_slice = array.array('B', raw_block_slice)
-
             batched_raw_block_slices.append(
                 (raw_block_slice, work_item_id, is_reorg, blk_num, first_tx_pos_batch))
 
@@ -241,11 +238,9 @@ class MinedBlockParsingThread(threading.Thread):
             all_tx_offsets_sorted = list(all_tx_offsets)
             all_tx_offsets_sorted.sort()
 
-            all_rows: MySQLFlushBatch = parse_txs(raw_block_slice,
+            tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block_slice,
                 all_tx_offsets_sorted, blk_num, True, first_tx_pos_batch,
                 already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
-
-            tx_rows, in_rows, out_rows, pd_rows = all_rows
             self.confirmed_tx_flush_queue.put(
                 (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks[work_item]))
 

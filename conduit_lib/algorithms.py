@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import array
+import io
 import logging
 import os
 import struct
 from hashlib import sha256
 from math import ceil, log
-from typing import cast, NamedTuple
+from typing import cast, NamedTuple, Tuple, List
+
+import bitcoinx
 from bitcoinx import double_sha256, hash_to_hex_str
 from struct import Struct
 
@@ -49,7 +52,7 @@ logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
 
 
-def unpack_varint(buf: memoryview | array.ArrayType[int], offset: int) -> tuple[int, int]:
+def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -> tuple[int, int]:
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -62,42 +65,56 @@ def unpack_varint(buf: memoryview | array.ArrayType[int], offset: int) -> tuple[
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(block_view: memoryview, tx_offsets_array: array.ArrayType[int],
-        block_offset: int=0) -> tuple[int, array.ArrayType[int]]:
-    block_offset += HEADER_OFFSET
-    count, block_offset = unpack_varint(block_view, block_offset)
-    cur_idx = 0
+def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool,
+        last_chunk: bool) -> tuple[list[int], int]:
+    """
+    Call this function iteratively as more slices of the raw block become available from the
+    p2p socket.
 
+    Goes until it hits a struct.error or IndexError to indicate it needs the next chunk.
+    """
+    # skip header bytes + tx_count and set first tx offset
+    tx_offsets = []
+    chunk_offset = 0
+    if first_chunk:
+        tx_count, chunk_offset = unpack_varint(next_chunk[80:89], chunk_offset)
+        chunk_offset = 80 + chunk_offset
+        tx_offsets.append(chunk_offset)
+
+    last_tx_offset_in_chunk = chunk_offset
     try:
-        tx_offsets_array[cur_idx], cur_shm_idx = block_offset, cur_idx + 1
-        for i in range(count - 1):
+        while chunk_offset < len(next_chunk):
+            last_tx_offset_in_chunk = chunk_offset
+
             # version
-            block_offset += 4
+            chunk_offset += 4
 
             # tx_in block
-            count_tx_in, block_offset = unpack_varint(block_view, block_offset)
+            count_tx_in, chunk_offset = unpack_varint(next_chunk, chunk_offset)
             for i in range(count_tx_in):
-                block_offset += 36  # prev_hash + prev_idx
-                script_sig_len, block_offset = unpack_varint(block_view, block_offset)
-                block_offset += script_sig_len
-                block_offset += 4  # sequence
+                chunk_offset += 36  # prev_hash + prev_idx
+                script_sig_len, chunk_offset = unpack_varint(next_chunk, chunk_offset)
+                chunk_offset += script_sig_len
+                chunk_offset += 4  # sequence
 
             # tx_out block
-            count_tx_out, block_offset = unpack_varint(block_view, block_offset)
+            count_tx_out, chunk_offset = unpack_varint(next_chunk, chunk_offset)
             for i in range(count_tx_out):
-                block_offset += 8  # value
-                script_pubkey_len, block_offset = unpack_varint(block_view, block_offset)  # script_pubkey
-                block_offset += script_pubkey_len  # script_sig
+                chunk_offset += 8  # value
+                script_pubkey_len, chunk_offset = unpack_varint(next_chunk, chunk_offset)  # script_pubkey
+                chunk_offset += script_pubkey_len  # script_sig
 
             # lock_time
-            block_offset += 4
-            tx_offsets_array[cur_shm_idx], cur_shm_idx = block_offset, cur_shm_idx + 1
-        return count, tx_offsets_array
-    except IndexError:
-        logger.error(f"likely overflowed size of tx_offsets_array; size={len(tx_offsets_array)}; "
-                     f"count of txs in block={count}")
-        logger.exception(f"cur_idx={cur_idx}; block_offset={block_offset}")
-        raise
+            chunk_offset += 4
+            end_of_tx_offset = chunk_offset + adjustment
+            last_tx_offset_in_chunk = end_of_tx_offset
+            tx_offsets.append(end_of_tx_offset)
+
+        if last_chunk:
+            tx_offsets.pop(-1)  # the last offset represents the very end of the raw block
+        return tx_offsets, last_tx_offset_in_chunk
+    except (struct.error, IndexError):
+        return tx_offsets, last_tx_offset_in_chunk
 
 
 # -------------------- PARSE BLOCK TXS -------------------- #
@@ -107,8 +124,7 @@ class PushdataMatch(NamedTuple):
 
 
 # Todo - unittest coverage
-# typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx: int,
+def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
         flags: PushdataMatchFlags, tx_pos: int, genesis_height: int) -> list[PushdataMatch]:
     i = 0
     all_pushdata: set[tuple[bytes, PushdataMatchFlags]] = set()
@@ -131,7 +147,7 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
                     i += 1
                     if unreachable_code:
                         flags |= PushdataMatchFlags.DATA
-                    all_pushdata.add((script[i: i + length].tobytes(), flags))
+                    all_pushdata.add((bytes(script[i: i + length]), flags))
                     i += length
                 elif script[i] in SET_OTHER_PUSH_OPS:
                     length = script[i]
@@ -187,9 +203,11 @@ def get_pk_and_pkh_from_script(script: array.ArrayType[int], tx_hash: bytes, idx
         raise
 
 
-def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayType[int],
+def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
         block_num_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0,
-        already_seen_offsets: set[int] | None=None) -> MySQLFlushBatch:
+        already_seen_offsets: set[int] | None=None) -> tuple[
+    list[MempoolTransactionRow | ConfirmedTransactionRow], list[InputRow], list[OutputRow], list[
+        PushdataRow]]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -209,10 +227,10 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
     a reorg or from mempool processing
     """
     genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
-    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow] = []
-    in_rows = set()
-    out_rows = set()
-    set_pd_rows = set()
+    tx_rows = []
+    in_rows = []
+    out_rows = []
+    set_pd_rows = []
     count_txs = len(tx_offsets)
     previously_processed = False
     if already_seen_offsets is None:
@@ -236,7 +254,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
             else:
                 next_tx_offset = len(buffer)
 
-            rawtx = buffer[tx_offset_start:next_tx_offset].tobytes()
+            rawtx = buffer[tx_offset_start:next_tx_offset]
             tx_hash = double_sha256(rawtx)
             tx_hashX = tx_hash[0:HashXLength]
 
@@ -250,37 +268,36 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
             count_tx_in, offset = unpack_varint(buffer, offset)
             # in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hashX = buffer[offset : offset + 32].tobytes()[0:HashXLength]
+                in_prevout_hashX = buffer[offset: offset + 32][0:HashXLength]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
                 script_sig_len, offset = unpack_varint(buffer, offset)
-                script_sig = buffer[offset : offset + script_sig_len]  # keep as array.array
+                # script_sig = buffer[offset : offset + script_sig_len]
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
                 if not previously_processed:
-                    in_rows.add(
-                        InputRow(in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
+                    in_rows.append(
+                        (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
-                # mempool txs will appear to have a tx_pos=0
-                if ((not tx_pos == 0 and confirmed) or not confirmed) and not previously_processed:
-
-                    pushdata_matches = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
-                        idx=in_idx, flags=PushdataMatchFlags.INPUT, tx_pos=tx_pos,
-                        genesis_height=genesis_height)
-                    if len(pushdata_matches):
-                        for in_pushdata_hashX, flags in pushdata_matches:
-                            set_pd_rows.add(
-                                PushdataRow(
-                                    in_pushdata_hashX.hex(),
-                                    tx_hashX.hex(),
-                                    in_idx,
-                                    int(flags),
-                                )
-                            )
+                # if ((not tx_pos == 0 and confirmed) or not confirmed) \
+                #         and not previously_processed:
+                #
+                #     pushdata_matches = get_pk_and_pkh_from_script(script_sig, tx_hash=tx_hash,
+                #         idx=in_idx, flags=PushdataMatchFlags.INPUT, tx_pos=tx_pos,
+                #         genesis_height=genesis_height)
+                #     if len(pushdata_matches):
+                #         for in_pushdata_hashX, flags in set(pushdata_matches):
+                #             set_pd_rows.append((
+                #                     in_pushdata_hashX.hex(),
+                #                     tx_hashX.hex(),
+                #                     in_idx,
+                #                     int(flags),
+                #                 )
+                #             )
 
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
@@ -295,9 +312,8 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                         idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
                         genesis_height=genesis_height)
                     if len(pushdata_matches):
-                        for out_pushdata_hashX, flags in pushdata_matches:
-                            set_pd_rows.add(
-                                PushdataRow(
+                        for out_pushdata_hashX, flags in set(pushdata_matches):
+                            set_pd_rows.append((
                                     out_pushdata_hashX.hex(),
                                     tx_hashX.hex(),
                                     out_idx,
@@ -307,7 +323,7 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
                 if not previously_processed:
-                    out_rows.add(OutputRow(tx_hashX.hex(), out_idx, out_value))
+                    out_rows.append((tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
             offset += 4
@@ -315,17 +331,16 @@ def parse_txs(buffer: array.ArrayType[int], tx_offsets: list[int] | array.ArrayT
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
                 block_num_or_timestamp = cast(int, block_num_or_timestamp)
-                tx_rows.append(ConfirmedTransactionRow(tx_hashX.hex(), block_num_or_timestamp, tx_pos))
+                tx_rows.append((tx_hashX.hex(), block_num_or_timestamp, tx_pos))
             else:
                 # Note mempool uses full length tx_hash
                 block_num_or_timestamp = cast(str, block_num_or_timestamp)
-                tx_rows.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
+                tx_rows.append((tx_hash.hex(), block_num_or_timestamp))
         assert len(tx_rows) == count_txs
-        return MySQLFlushBatch(
-            tx_rows,
-            cast(list[InputRow], list(in_rows)),
-            cast(list[OutputRow], list(out_rows)),
-            cast(list[PushdataRow], list(set_pd_rows)))
+        return cast(list[ConfirmedTransactionRow | MempoolTransactionRow], tx_rows), \
+            cast(list[InputRow], in_rows), \
+            cast(list[OutputRow], out_rows), \
+            cast(list[PushdataRow], set_pd_rows)
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -354,7 +369,7 @@ def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_
     return mtree
 
 
-def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> None:
+def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> MTree:
     """if there is an odd number of hashes at a given level -> raise IndexError
     then duplicate the last hash, concatenate and double_sha256 to continue."""
 
@@ -371,9 +386,10 @@ def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> None:
                 next_level_up.append(_hash)
         hashes = next_level_up
         mtree[current_level - 1] = hashes
+    return mtree
 
 
-def calc_mtree(raw_block: memoryview | bytes, tx_offsets: array.ArrayType[int]) -> MTree:
+def calc_mtree(raw_block: bytes, tx_offsets: array.ArrayType[int]) -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree: MTree = {}

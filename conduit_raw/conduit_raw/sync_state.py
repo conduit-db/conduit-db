@@ -6,7 +6,6 @@ from typing import cast
 
 import bitcoinx
 
-from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.constants import TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.store import Storage
@@ -39,28 +38,20 @@ class SyncState:
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, BlockCallback | bytes]] = \
+        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = \
             asyncio.Queue()
 
         # Accounting and ack'ing for block msgs
         self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
-        self.received_blocks = set[bytes]()  # received in network buffer - must process before buf reset
 
         # Done blocks Sets
         self.done_blocks_raw = set[bytes]()
-        self.done_blocks_mtree = set[bytes]()
-        self.done_blocks_preproc = set[bytes]()
-
-        # Done blocks Locks
         self.done_blocks_raw_lock = threading.Lock()
-        self.done_blocks_mtree_lock = threading.Lock()
-        self.done_blocks_preproc_lock = threading.Lock()
-
-        # Done blocks Events - Note initialization of logging tcp connection is expensive so
-        # a thread pool is unsuitable - as you pay the initialization overhead repeatedly
         self.done_blocks_raw_event: asyncio.Event = asyncio.Event()
+        self.done_blocks_mtree = set[bytes]()
+        self.done_blocks_mtree_lock = threading.Lock()
         self.done_blocks_mtree_event: asyncio.Event = asyncio.Event()
-        self.done_blocks_preproc_event: asyncio.Event = asyncio.Event()
+
         self.pending_blocks_inv_queue: asyncio.Queue[Inv] = asyncio.Queue()
 
     def get_local_tip(self) -> bitcoinx.Header:
@@ -108,9 +99,3 @@ class SyncState:
             self.all_pending_block_hashes.add(block_header.hash)
 
         return batch_count, self.all_pending_block_hashes, stop_header_height
-
-    def print_progress_info(self) -> None:
-        self.logger.debug(f"Count of received_blocks: {len(self.received_blocks)}")
-        self.logger.debug(f"Count of done_blocks_raw: {len(self.done_blocks_raw)}")
-        self.logger.debug(f"Count of done_blocks_mtree: {len(self.done_blocks_mtree)}")
-        self.logger.debug(f"Count of done_blocks_preproc: {len(self.done_blocks_preproc)}")

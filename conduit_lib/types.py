@@ -13,6 +13,14 @@ MultiprocessingQueue = Queue  # workaround for mypy: https://github.com/python/t
 Hash256 = bytes
 
 
+class DataLocation(NamedTuple):
+    """This metadata must be persisted elsewhere.
+    For example, a key-value store such as LMDB"""
+    file_path: str
+    start_offset: int
+    end_offset: int
+
+
 class TSCMerkleProof(TypedDict):
     index: int
     txOrId: str

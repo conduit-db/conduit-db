@@ -7,13 +7,16 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 import lmdb
+from readerwriterlock import rwlock
 import typing
+
 
 from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
+from ..ffdb.flat_file_db import DataLocation
 
 if typing.TYPE_CHECKING:
     import array
@@ -32,7 +35,7 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class LMDB_Database:
-    """simple interface to LMDB"""
+    """Simple interface to LMDB - This interface must be used at all times for thread-safety"""
 
     def __init__(self, storage_path: str | None=None, lock: bool=True) -> None:
         self.logger = logging.getLogger("lmdb-database")
@@ -57,15 +60,22 @@ class LMDB_Database:
         self.tx_offsets = LmdbTxOffsets(self)
         self.logger.debug(f"Opened LMDB database at {storage_path}")
 
-    def close(self) -> None:
-        if not self._opened:
-            return
+        # Thread-safety if the LMDB_Database instance is shared across multiple threads of the
+        # same Process.
+        rw_lock_creator = rwlock.RWLockFairD()
+        self.reader_lock = rw_lock_creator.gen_rlock()
+        self.writer_lock = rw_lock_creator.gen_wlock()
 
-        self.env.close()
-        self.env = None
-        self._db1 = None
-        self._db2 = None
-        self._opened = False
+    def close(self) -> None:
+        with self.writer_lock:
+            if not self._opened:
+                return
+
+            self.env.close()
+            self.env = None
+            self._db1 = None
+            self._db2 = None
+            self._opened = False
 
     def _make_reorg_tx_set(self, chain: ChainHashes) -> set[bytes]:
         chain_tx_hashes = set()
@@ -88,76 +98,88 @@ class LMDB_Database:
     # -------------------- EXTERNAL API  -------------------- #
 
     def sync(self) -> None:
-        self.env.sync(True)
+        with self.writer_lock:
+            self.env.sync(True)
 
     def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
-        return self.merkle_tree.get_tx_hash_by_loc(tx_loc, mtree_base_level)
+        with self.reader_lock:
+            return self.merkle_tree.get_tx_hash_by_loc(tx_loc, mtree_base_level)
 
     def get_mtree_node(self, block_hash: bytes, level: int, position: int) -> bytes:
-        with self.env.begin(db=self.merkle_tree.mtree_db, write=False, buffers=False) as txn:
-            cursor = txn.cursor()
-            return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
+        with self.reader_lock:
+            with self.env.begin(db=self.merkle_tree.mtree_db, write=False, buffers=False) as txn:
+                cursor = txn.cursor()
+                return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
 
     def get_mtree_row(self, blk_hash: bytes, level: int, cursor: lmdb.Cursor | None=None) \
             -> bytes | None:
-        return self.merkle_tree.get_mtree_row(blk_hash, level, cursor)
+        with self.reader_lock:
+            return self.merkle_tree.get_mtree_row(blk_hash, level, cursor)
 
     def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str] | None:
-        return self.merkle_tree.get_merkle_branch(tx_metadata)
+        with self.reader_lock:
+            return self.merkle_tree.get_merkle_branch(tx_metadata)
 
     def put_merkle_trees(self, batched_merkle_trees: list[MerkleTreeRow]) -> None:
-        self.merkle_tree.put_merkle_trees(batched_merkle_trees)
+        with self.writer_lock:
+            self.merkle_tree.put_merkle_trees(batched_merkle_trees)
 
     def get_rawtx_by_loc(self, tx_loc: TxLocation) -> bytes | None:
-        return self.tx_offsets.get_rawtx_by_loc(tx_loc)
+        with self.reader_lock:
+            return self.tx_offsets.get_rawtx_by_loc(tx_loc)
 
     async def get_rawtx_by_loc_async(self, executor: ThreadPoolExecutor, tx_loc: TxLocation) \
             -> bytes | None:
-        return await asyncio.get_running_loop().run_in_executor(executor,
-            self.get_rawtx_by_loc, tx_loc)
+        with self.reader_lock:
+            return await asyncio.get_running_loop().run_in_executor(executor,
+                self.get_rawtx_by_loc, tx_loc)
 
     def get_single_tx_slice(self, tx_loc: TxLocation) -> Slice | None:
-        return self.tx_offsets._get_single_tx_slice(tx_loc)
+        with self.reader_lock:
+            return self.tx_offsets._get_single_tx_slice(tx_loc)
 
     def get_tx_offsets(self, block_hash: bytes) -> bytes | None:
-        return self.tx_offsets.get_tx_offsets(block_hash)
+        with self.reader_lock:
+            return self.tx_offsets.get_tx_offsets(block_hash)
 
     def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, array.ArrayType[int]]]) \
             -> None:
-        return self.tx_offsets.put_tx_offsets(batched_tx_offsets)
+        with self.writer_lock:
+            return self.tx_offsets.put_tx_offsets(batched_tx_offsets)
 
     def get_block_num(self, block_hash: bytes) -> int | None:
-        return self.blocks.get_block_num(block_hash)
+        with self.reader_lock:
+            return self.blocks.get_block_num(block_hash)
 
     def check_block(self, block_hash: bytes) -> None:
-        if block_hash == hex_str_to_hash(os.environ["GENESIS_BLOCK_HASH"]):
-            return None
+        with self.reader_lock:
+            if block_hash == hex_str_to_hash(os.environ["GENESIS_BLOCK_HASH"]):
+                return None
 
-        block_num = self.blocks.get_block_num(block_hash)
-        assert block_num is not None
-        data_location = self.blocks.get_data_location(block_num)
-        assert data_location is not None
-        file_size = os.path.getsize(data_location.file_path)
-        assert data_location.end_offset <= file_size, \
-            f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
+            block_num = self.blocks.get_block_num(block_hash)
+            assert block_num is not None
+            data_location = self.blocks.get_data_location(block_num)
+            assert data_location is not None
+            file_size = os.path.getsize(data_location.file_path)
+            assert data_location.end_offset <= file_size, \
+                f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
 
-        # Ensure that the merkle tree table and tx offsets table are aligned to return the
-        # correct coinbase transaction from the raw block data.
-        block_metadata = self.get_block_metadata(block_hash)
-        assert block_metadata is not None
-        base_level = calc_depth(block_metadata.tx_count) - 1
-        with self.env.begin(write=False, buffers=False) as txn:
+            # Ensure that the merkle tree table and tx offsets table are aligned to return the
+            # correct coinbase transaction from the raw block data.
+            block_metadata = self.get_block_metadata(block_hash)
+            assert block_metadata is not None
+            base_level = calc_depth(block_metadata.tx_count) - 1
             coinbase_tx_hash = self.get_mtree_node(block_hash, level=base_level, position=0)
-
-        coinbase_tx_location = TxLocation(block_hash, block_num, tx_position=0)
-        rawtx = self.get_rawtx_by_loc(coinbase_tx_location)
-        assert double_sha256(rawtx) == coinbase_tx_hash
+            coinbase_tx_location = TxLocation(block_hash, block_num, tx_position=0)
+            rawtx = self.get_rawtx_by_loc(coinbase_tx_location)
+            assert double_sha256(rawtx) == coinbase_tx_hash
 
     def try_purge_block_data(self, block_hash: bytes) -> None:
         """Scrubs all records for this block hash.
 
         raises `AssertionError` if any of the checks fail"""
         try:
+            self.writer_lock.acquire()
             block_num = self.get_block_num(block_hash)
             assert block_num is not None
             with self.env.begin(write=True, buffers=False) as txn:
@@ -188,16 +210,24 @@ class LMDB_Database:
         except Exception:
             self.logger.exception(f"Failed to complete full purge of block data for block hash: "
                                   f"{hash_to_hex_str(block_hash)}")
+        finally:
+            self.writer_lock.release()
 
     def get_block(self, block_num: int, slice: Slice | None=None) -> bytes | None:
-        return self.blocks.get_block(block_num, slice)
+        with self.reader_lock:
+            return self.blocks.get_block(block_num, slice)
 
     def get_block_metadata(self, block_hash: bytes) -> BlockMetadata | None:
-        return self.blocks.get_block_metadata(block_hash)
+        with self.reader_lock:
+            return self.blocks.get_block_metadata(block_hash)
 
-    def put_blocks(self, batched_blocks: list[tuple[bytes, int, int]],
-            shared_mem_buffer: memoryview) -> None:
-        return self.blocks.put_blocks(batched_blocks, shared_mem_buffer)
+    def put_blocks(self, small_batched_blocks: list[bytes]) -> None:
+        with self.writer_lock:
+            return self.blocks.put_blocks(small_batched_blocks)
+
+    def put_big_block(self, big_block: tuple[bytes, DataLocation, int]) -> None:
+        with self.writer_lock:
+            return self.blocks.put_big_block(big_block)
 
     def get_reorg_differential(self, old_chain: ChainHashes, new_chain: ChainHashes) \
             -> tuple[set[bytes], set[bytes], set[bytes]]:
@@ -220,9 +250,10 @@ class LMDB_Database:
         # NOTE: This could in theory use a lot of memory but the reorg would have to be very
         # deep to cause problems. It wouldn't be too hard to run the same check in bite sized
         # chunks to avoid too much memory allocation but I don't want to spend the time on it.
-        old_chain_tx_hashes = self._make_reorg_tx_set(old_chain)
-        new_chain_tx_hashes = self._make_reorg_tx_set(new_chain)
-        additions_to_mempool = old_chain_tx_hashes - new_chain_tx_hashes
+        with self.reader_lock:
+            old_chain_tx_hashes = self._make_reorg_tx_set(old_chain)
+            new_chain_tx_hashes = self._make_reorg_tx_set(new_chain)
+            additions_to_mempool = old_chain_tx_hashes - new_chain_tx_hashes
 
-        removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
-        return removals_from_mempool, additions_to_mempool, old_chain_tx_hashes
+            removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
+            return removals_from_mempool, additions_to_mempool, old_chain_tx_hashes

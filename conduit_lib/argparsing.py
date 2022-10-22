@@ -6,17 +6,17 @@ from conduit_lib.constants import SCALINGTESTNET, REGTEST, MAINNET, TESTNET
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="run conduit_index chain-indexer")
     parser.add_argument(
-        "--host",
-        dest="host",
+        "--remote_host",
+        dest="remote_host",
         nargs=argparse.OPTIONAL,
-        help="specify a host bitcoin node to connect to (to override default)",
+        help="specify a remote_host bitcoin node to connect to (to override default)",
     )
     parser.add_argument(
-        "--port",
-        dest="port",
+        "--remote_port",
+        dest="remote_port",
         action="store",
         type=int,
-        help="port for remote daemon; defaults=[mainnet=8333, testnet=18333, "
+        help="remote_port for remote daemon; defaults=[mainnet=8333, testnet=18333, "
         "scaling-testnet=9333, regtest=18444]",
     )
     parser.add_argument(
@@ -55,7 +55,7 @@ def get_parser() -> argparse.ArgumentParser:
              "(for convenience when testing on RegTest)",
     )
     parser.add_argument(
-        "--mysql-host",
+        "--mysql-remote_host",
         action="store",
         dest="mysql_host",
         default="127.0.0.1:52525",
@@ -64,13 +64,13 @@ def get_parser() -> argparse.ArgumentParser:
              "mysql:3306 for use within docker",
     )
     parser.add_argument(
-        "--node-host",
+        "--node-remote_host",
         action="store",
         dest="node_host",
         default="127.0.0.1:18444",
         type=str,
         help="e.g. localhost:18444 for use outside of docker or "
-             "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC port)",
+             "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC remote_port)",
     )
     parser.add_argument(
         "--lmdb-path",

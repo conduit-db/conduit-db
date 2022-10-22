@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import bitcoinx
-from bitcoinx import (
-    read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header, Chain
-)
+from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header,
+    Chain, Network, sha256)
 from datetime import datetime
 import io
 import ipaddress
@@ -26,6 +25,7 @@ from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVIC
     GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .deserializer_types import NodeAddr
 from .types import ChainHashes
+
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -369,6 +369,7 @@ def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
     future.result()
 
 
+
 def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
     task = asyncio.create_task(coro)
     # Futures catch all exceptions that are raised and store them. A task is a future. By adding
@@ -421,3 +422,8 @@ def record_top_memory_consumers(snapshot: tracemalloc.Snapshot, key_type: str='l
         file.write(line4 + "\n")
 
     logger.debug("---------- Tracemalloc report end ---------- ")
+
+
+def address_to_pushdata_hash(p2pkh_address: str, network: Network):
+    address = bitcoinx.P2PKH_Address.from_string(p2pkh_address, network)
+    return sha256(address.hash160())

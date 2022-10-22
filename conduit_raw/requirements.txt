@@ -8,3 +8,4 @@ cbor2
 aiohttp
 fasteners
 pygments
+readerwriterlock

@@ -122,7 +122,7 @@ class DbRepairTool:
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s", raw_blocks_array,
                 0)
-            tx_rows, in_rows, out_rows, pd_rows = parse_txs(array.array('B', raw_block), tx_offsets,
+            tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
                 height, confirmed=True, first_tx_pos_batch=0)
 
             # Delete

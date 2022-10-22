@@ -13,7 +13,7 @@ from bitcoinx.networks import Header
 
 logger = logging.getLogger("networks")
 
-Peer = namedtuple("Peer", ["host", "port"])
+Peer = namedtuple("Peer", ["remote_host", "remote_port"])
 
 
 class HeadersRegTestMod(Headers):  # type: ignore[misc]
@@ -175,23 +175,17 @@ class NetworkConfig:
     def get_default_peers(self, network: AbstractNetwork) -> None:
         if isinstance(network, RegTestNet):
             self.peers = [Peer("127.0.0.1", 18444)]
-            # self.peers = [Peer("host.docker.internal", 18444)]
         if isinstance(network, TestNet):
-            self.peers = [
-                Peer("127.0.0.1", 18333),
-                # Peer("167.99.91.85", 18333),  # random node from WOC
-                # Peer("165.22.240.87", 18333),  # austecondevserver.app
-                # Peer("176.9.148.163", 18333),  # tsv.usebsv.com
-            ]
+            self.peers = [Peer("127.0.0.1", 18333)]
         if isinstance(network, ScalingTestNet):
             self.peers = [Peer("116.202.171.166", 9333)]
-            # self.peers = [Peer("95.217.108.109", 9333)]  #  stn-server.electrumsv.io
         elif isinstance(network, MainNet):
             self.peers = [Peer("127.0.0.1", 8333)]
 
     def set_peers(self, network: AbstractNetwork) -> None:
         if self.node_host:
-            host = cast_to_valid_ipv4(self.node_host)  # in docker a container name needs dns resolution
+            # in docker a container name needs dns resolution
+            host = cast_to_valid_ipv4(self.node_host)
             port = int(self.node_port)
             self.peers = [Peer(host, port)]
         else:

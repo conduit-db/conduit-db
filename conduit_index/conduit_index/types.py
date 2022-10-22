@@ -19,7 +19,7 @@ class ProcessedBlockAck(NamedTuple):
 WorkUnit = tuple[bool, int, int, bytes, int, int, int, 'array.ArrayType[int]']
 MainBatch = list[tuple[int, 'array.ArrayType[int]', bitcoinx.Header, int]]
 WorkPart = tuple[int, bytes, int, int, int, 'array.ArrayType[int]']
-BatchedRawBlockSlices = list[tuple['array.ArrayType[int]', int, int, int, int]]
+BatchedRawBlockSlices = list[tuple[bytes, int, int, int, int]]
 ProcessedBlockAcks = list[ProcessedBlockAck]
 TxHashRows = list[tuple[str]]
 TxHashes = list[bytes]

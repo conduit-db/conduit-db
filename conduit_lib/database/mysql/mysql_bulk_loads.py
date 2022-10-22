@@ -165,7 +165,7 @@ class MySQLBulkLoads:
             column_names = ['tx_hash', 'tx_block_num', 'tx_position']
             self._load_data_infile_batched("confirmed_transactions", string_rows, column_names,
                 binary_column_indices=[0])
-        except MySQLdb._exceptions.IntegrityError as e:
+        except MySQLdb.IntegrityError as e:
             self.logger.error(f"{e}")
             self.handle_coinbase_dup_tx_hash(tx_rows)
         t1 = time.time() - t0

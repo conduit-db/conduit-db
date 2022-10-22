@@ -11,10 +11,9 @@ import typing
 from typing import cast
 
 import bitcoinx
-from bitcoinx import unpack_header, double_sha256, hash_to_hex_str
+from bitcoinx import unpack_header, double_sha256
 from bitcoinx.networks import Header
 
-from conduit_lib.bitcoin_net_io import BlockCallback
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
@@ -60,7 +59,7 @@ class SyncState:
 
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: \
-            asyncio.Queue[tuple[bytes, bytes | BlockCallback]] = asyncio.Queue()
+            asyncio.Queue[tuple[bytes, bytes]] = asyncio.Queue()
 
         # Accounting and ack'ing for block msgs
         self.blocks_batch_set = set[bytes]()  # usually a set of 500 hashes
@@ -75,7 +74,7 @@ class SyncState:
 
         # Accounting and ack'ing for block msgs
         self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
-        self.received_blocks = set[bytes]()  # must process before network buffer reset
+
         self.done_blocks_tx_parser = set[bytes]()
         self.done_blocks_tx_parser_lock = threading.Lock()
         self.done_blocks_tx_parser_event = asyncio.Event()
@@ -118,10 +117,6 @@ class SyncState:
             return self.storage.block_headers.longest_chain().tip
 
     async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) -> bool:
-        # Todo - really instead of conduit_best_tip it should come from the node...
-        #  because it affects compact block protocol down the road...Other than that
-        #  the logic seems correct... to fix this would need to add back headers synchronization
-        #  like ConduitRaw does...
         if self.is_post_ibd:  # cache result
             return self.is_post_ibd
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
@@ -298,4 +293,5 @@ class SyncState:
         self.logger.debug(f"Count of all_pending_chip_away_work_item_ids: "
                           f"{len(self.all_pending_chip_away_work_item_ids)}")
         self.logger.debug(f"Missing work item ids: {self.all_pending_chip_away_work_item_ids}")
-
+        if self.is_post_ibd:
+            self.logger.debug(f"Mempool tx count: {self.controller.mempool_tx_count}")

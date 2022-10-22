@@ -27,7 +27,7 @@ class ReferenceServerWebSocket(web.View):
         try:
             client = ReferenceServerConnection(websocket_id, websocket_response)
             app_state.register_reference_server_connection(client)
-            self.logger.debug('%s connected, host=%s', client.websocket_id, self.request.host)
+            self.logger.debug('%s connected, remote_host=%s', client.websocket_id, self.request.host)
 
             async for message in client.websocket:
                 if message.type == WSMsgType.ERROR:

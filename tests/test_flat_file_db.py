@@ -16,8 +16,9 @@ from tests.conftest import remove_readonly
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger("test-flat-file-db")
 TEST_DATADIR = str(MODULE_DIR / "test_path")
-os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
+FFDB_LOCKFILE = os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
 
+os.makedirs(TEST_DATADIR, exist_ok=True)
 
 def _do_general_read_and_write_ops(ffdb: FlatFileDb):
     logging.basicConfig(level=logging.DEBUG)
@@ -122,4 +123,6 @@ def test_multiprocessing_access():
 def test_cleanup():
     if os.path.exists(TEST_DATADIR):
         shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
-        os.makedirs(TEST_DATADIR, exist_ok=True)
+
+    if os.path.exists(FFDB_LOCKFILE):
+        os.remove(FFDB_LOCKFILE)

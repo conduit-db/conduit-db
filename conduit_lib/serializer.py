@@ -3,7 +3,8 @@ import logging
 import math
 import random
 import time
-from typing import List, cast
+from os import urandom
+from typing import List, cast, Protocol
 
 from bitcoinx import (
     pack_le_uint32,
@@ -22,7 +23,6 @@ from .commands import (VERSION_BIN, VERACK_BIN, GETADDR_BIN, FILTERCLEAR_BIN, GE
     SENDCMPCT_BIN, FILTERLOAD_BIN, )
 from .deserializer_types import Inv
 from .networks import NetworkConfig
-from .store import Storage
 
 from .utils import (
     payload_to_checksum,
@@ -33,14 +33,14 @@ from .constants import ZERO_HASH
 
 logger = logging.getLogger("serializer")
 
+
 # ----- MESSAGES ----- #
 class Serializer:
     """Generates serialized messages for the 'outbound_queue'.
     - Only message types that make sense for a client are implemented here."""
 
-    def __init__(self, net_config: NetworkConfig, storage: Storage) -> None:
+    def __init__(self, net_config: NetworkConfig) -> None:
         self.net_config = net_config
-        self.storage = storage
 
     # ----- ADD HEADER ----- #
 
@@ -58,7 +58,7 @@ class Serializer:
         send_host: str,
         recv_port: int = 8333,
         send_port: int = 8333,
-        version: int=70015,
+        version: int=70016,
         relay: int=1,
     ) -> bytes:
         version = pack_le_uint32(version)
@@ -113,7 +113,7 @@ class Serializer:
 
     def getheaders(self, hash_count: int, block_locator_hashes: List[bytes],
             hash_stop: bytes=ZERO_HASH) -> bytes:
-        version = pack_le_uint32(70015)
+        version = pack_le_uint32(70016)
         hash_count = pack_varint(hash_count)
         hashes = bytearray()
         for _hash in block_locator_hashes:
@@ -123,7 +123,7 @@ class Serializer:
 
     def getblocks(self, hash_count: int, block_locator_hashes: List[bytes],
             hash_stop: bytes=ZERO_HASH) -> bytes:
-        version = pack_le_uint32(70015)
+        version = pack_le_uint32(70016)
         hash_count = pack_varint(hash_count)
         hashes = bytearray()
         for _hash in block_locator_hashes:
@@ -138,8 +138,7 @@ class Serializer:
         return self.payload_to_message(MEMPOOL_BIN, b"")
 
     def ping(self) -> bytes:
-        nonce = random.randint(0, 2 ** 64 - 1)
-        return self.payload_to_message(PING_BIN, pack_le_uint64(nonce))
+        return self.payload_to_message(PING_BIN, urandom(8))
 
     def pong(self, nonce: bytes) -> bytes:
         return self.payload_to_message(PONG_BIN, nonce)

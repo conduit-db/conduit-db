@@ -7,6 +7,7 @@ from pathlib import Path
 
 import bitcoinx
 import cbor2
+from bitcoinx import double_sha256
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
@@ -79,8 +80,7 @@ class LmdbBlocks:
         with self.ffdb:
             return self.ffdb.get(data_location, slice, lock_free_access=True)
 
-    def put_blocks(self, batched_blocks: list[tuple[bytes, int, int]],
-            shared_mem_buffer: memoryview) -> None:
+    def put_blocks(self, small_batched_blocks: list[bytes]) -> None:
         """write blocks in append-only mode to disc."""
         try:
             last_block_num = self._get_last_block_num()
@@ -91,12 +91,12 @@ class LmdbBlocks:
                 cursor_block_nums: Cursor = txn.cursor(db=self.block_nums_db)
                 cursor_block_metadata: Cursor = txn.cursor(db=self.block_metadata_db)
                 with self.ffdb:
-                    block_nums = range(next_block_num, (len(batched_blocks) + next_block_num))
+                    block_nums = range(next_block_num, (len(small_batched_blocks) + next_block_num))
                     raw_blocks_arr = bytearray()
-                    for block_num, block_row in zip(block_nums, batched_blocks):
-                        blk_hash, blk_start_pos, blk_end_pos = block_row
-                        raw_block = shared_mem_buffer[blk_start_pos: blk_end_pos].tobytes()
-                        stream = BytesIO(raw_block[80:89])
+                    for block_num, raw_block in zip(block_nums, small_batched_blocks):
+                        stream = BytesIO(raw_block[0:89])
+                        raw_header = stream.read(80)
+                        blk_hash = double_sha256(raw_header)
                         tx_count = bitcoinx.read_varint(stream.read)
                         raw_blocks_arr += raw_block
 
@@ -110,6 +110,31 @@ class LmdbBlocks:
                         cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
                         cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
 
+        except Exception as e:
+            self.logger.exception("Caught exception")
+
+    def put_big_block(self, big_block: tuple[bytes, DataLocation, int]) -> None:
+        """For big blocks that are larger than the network buffer size they are already streamed
+        to a temporary file and just need to be os.move'd into the correct resting place."""
+        try:
+            last_block_num = self._get_last_block_num()
+            next_block_num = last_block_num + 1
+
+            with self.db.env.begin(write=True, buffers=False) as txn:
+                cursor_blocks: Cursor = txn.cursor(db=self.blocks_db)
+                cursor_block_nums: Cursor = txn.cursor(db=self.block_nums_db)
+                cursor_block_metadata: Cursor = txn.cursor(db=self.block_metadata_db)
+                with self.ffdb:
+                    blk_hash, data_location, tx_count = big_block
+                    new_data_location: DataLocation = self.ffdb.put_big_block(data_location)
+                    block_size = data_location.end_offset - data_location.start_offset
+                    block_num_bytes = struct_be_I.pack(next_block_num)
+                    len_block_bytes = struct_le_Q.pack(block_size)
+                    tx_count_bytes = struct_le_Q.pack(tx_count)
+                    cursor_blocks.put(block_num_bytes, cbor2.dumps(new_data_location),
+                        append=True, overwrite=False)
+                    cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
+                    cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
         except Exception as e:
             self.logger.exception("Caught exception")
 

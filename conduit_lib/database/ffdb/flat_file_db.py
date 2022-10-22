@@ -6,13 +6,14 @@ NOTE: FlatFileDb should remain decoupled from LMDB. Updates will not be allowed.
 
 import logging
 import os
+import shutil
 import threading
 from pathlib import Path
 from types import TracebackType
-from typing import NamedTuple, Type
+from typing import Type
 from fasteners import InterProcessReaderWriterLock
 
-from conduit_lib.types import Slice
+from conduit_lib.types import Slice, DataLocation
 
 logger = logging.getLogger("lmdb-utils")
 
@@ -26,14 +27,6 @@ class FlatFileDbWriteFailedError(Exception):
 
 
 MAX_DAT_FILE_SIZE = 128 * (1024 ** 2)  # 128MB
-
-
-class DataLocation(NamedTuple):
-    """This metadata must be persisted elsewhere.
-    For example, a key-value store such as LMDB"""
-    file_path: str
-    start_offset: int
-    end_offset: int
 
 
 class FlatFileDb:
@@ -126,7 +119,7 @@ class FlatFileDb:
         filename = filename.removesuffix(".dat")
         return int(filename)
 
-    def _maybe_get_new_mutable_file(self) -> tuple[Path, int]:
+    def _maybe_get_new_mutable_file(self, force_new_file: bool=True) -> tuple[Path, int]:
         """This function is idempotent. Caller must use a Write lock"""
         assert self.mutable_file_path is not None
         def _mutable_file_is_full() -> bool:
@@ -135,7 +128,7 @@ class FlatFileDb:
             is_full = file_size >= MAX_DAT_FILE_SIZE
             return is_full
 
-        if _mutable_file_is_full():
+        if _mutable_file_is_full() or force_new_file:
             # If deletes and updates are allowed this needs to be more sophisticated
             # To ensure that the mutable file always has the highest number (no reuse of
             # lower mutable_file_num even if they get deleted)
@@ -175,6 +168,16 @@ class FlatFileDb:
                     os.fsync(file.fileno())
 
             return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
+
+
+    def put_big_block(self, data_location: DataLocation) -> DataLocation:
+        """This should return almost instantly because it's only renaming a file on the same disc"""
+        assert self.mutable_file_path is not None
+        with self.mutable_file_rwlock.write_lock():
+            self._maybe_get_new_mutable_file(force_new_file=True)
+            shutil.move(src=data_location.file_path, dst=self.mutable_file_path)
+            return DataLocation(str(self.mutable_file_path), data_location.start_offset,
+                data_location.end_offset)
 
     def get(self, data_location: DataLocation, slice: Slice | None = None,
             lock_free_access: bool=False) -> bytes:

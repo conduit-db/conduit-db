@@ -6,6 +6,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import cast, TYPE_CHECKING
 
+import MySQLdb
 import bitcoinx
 from aiohttp import web
 from aiohttp.web_response import StreamResponse
@@ -135,7 +136,7 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
             pushdata_hashXes = [h[0:HashXLength*2].lower() for h in pushdata_hashes]
             pushdata_hashX_map = dict(zip(pushdata_hashXes, pushdata_hashes))
         else:
-            return web.Response(status=400)
+            raise web.HTTPBadRequest(reason="empty body")
 
         if accept_type == 'application/octet-stream':
             headers = {'Content-Type': 'application/octet-stream', 'User-Agent': 'ConduitDB'}
@@ -143,7 +144,13 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
             headers = {'Content-Type': 'application/json', 'User-Agent': 'ConduitDB'}
 
         count = 0
-        result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+        try:
+            result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+        except MySQLdb.OperationalError:
+            # I have only seen this when MySQL is on spinning HDD during the midst of initial
+            # block download when it is under heavy strain
+            raise web.HTTPServiceUnavailable(reason="Database is potentially overloaded at present")
+
         response: StreamResponse | None = None
         for match in result_generator:
             if count == 0:

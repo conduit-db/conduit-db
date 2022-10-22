@@ -1,10 +1,12 @@
 import array
 import os
 import shutil
+import stat
 import struct
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 import bitcoinx
 from bitcoinx import double_sha256
@@ -17,13 +19,19 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
 from conduit_raw.conduit_raw.sock_server.ipc_sock_server import ThreadedTCPServer, \
     ThreadedTCPRequestHandler
-from tests.data.offsets import TX_OFFSETS
+from tests.conftest import TEST_RAW_BLOCK_413567, TEST_RAW_BLOCK_400000
+from tests.data.block413567_offsets import TX_OFFSETS
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
-os.environ['RAW_BLOCKS_LOCKFILE'] = "raw_blocks_ffdb.lock"
-os.environ['MERKLE_TREES_LOCKFILE'] = "merkle_trees_ffdb.lock"
-os.environ['TX_OFFSETS_LOCKFILE'] = "tx_offsets_ffdb.lock"
+RAW_BLOCKS_LOCKFILE = os.environ['RAW_BLOCKS_LOCKFILE'] = "raw_blocks_ffdb.lock"
+MERKLE_TREES_LOCKFILE = os.environ['MERKLE_TREES_LOCKFILE'] = "merkle_trees_ffdb.lock"
+TX_OFFSETS_LOCKFILE = os.environ['TX_OFFSETS_LOCKFILE'] = "tx_offsets_ffdb.lock"
+RAW_BLOCKS_DIR = Path(os.environ["RAW_BLOCKS_DIR"])
+MERKLE_TREES_DIR = Path(os.environ["MERKLE_TREES_DIR"])
+TX_OFFSETS_DIR = Path(os.environ["TX_OFFSETS_DIR"])
+
+TEST_HEADERS_FILE = MODULE_DIR / "test_headers.mmap"
 
 
 def ipc_sock_server_thread():
@@ -55,20 +63,29 @@ class TestLMDBDatabase:
         self.lmdb.close()
         if os.path.exists(LMDB_STORAGE_PATH):
             shutil.rmtree(LMDB_STORAGE_PATH)
+        if os.path.exists(RAW_BLOCKS_DIR):
+            shutil.rmtree(RAW_BLOCKS_DIR)
+        if os.path.exists(RAW_BLOCKS_LOCKFILE):
+            os.remove(RAW_BLOCKS_LOCKFILE)
+        if os.path.exists(MERKLE_TREES_DIR):
+            shutil.rmtree(MERKLE_TREES_DIR)
+        if os.path.exists(MERKLE_TREES_LOCKFILE):
+            os.remove(MERKLE_TREES_LOCKFILE)
+        if os.path.exists(TX_OFFSETS_DIR):
+            shutil.rmtree(TX_OFFSETS_DIR)
+        if os.path.exists(TX_OFFSETS_LOCKFILE):
+            os.remove(TX_OFFSETS_LOCKFILE)
+        if os.path.exists(TEST_HEADERS_FILE):
+            os.remove(TEST_HEADERS_FILE)
 
     def test_block_storage(self):
-        with open(MODULE_DIR / "data/block413567.raw", "rb") as f:
-            raw_block = array.array('B', f.read())
-
         expected_block_num = 1
-        expected_block_size = len(raw_block)
-        block_hash = double_sha256(raw_block[0:80])
-        expected_raw_block = raw_block
-        start_block_offset = 0
-        end_block_offset = len(raw_block)
+        expected_block_size = len(TEST_RAW_BLOCK_413567)
+        block_hash = double_sha256(TEST_RAW_BLOCK_413567[0:80])
+        expected_raw_block = TEST_RAW_BLOCK_413567
 
-        batched_blocks = [(block_hash, start_block_offset, end_block_offset)]
-        self.lmdb.put_blocks(batched_blocks, memoryview(expected_raw_block.tobytes()))
+        batched_blocks = [expected_raw_block]
+        self.lmdb.put_blocks(batched_blocks)
 
         actual_block_num = self.lmdb.get_block_num(block_hash)
         actual_block_num_ipc = self.ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
@@ -90,12 +107,38 @@ class TestLMDBDatabase:
         _block_num, _len_slice, raw_block_slice = struct.unpack_from(f"<IQ{len_slice}s", batched_block_slices, 0)
         actual_raw_block_ipc = raw_block_slice
 
-        assert expected_raw_block.tobytes() == actual_raw_block
-        assert expected_raw_block.tobytes() == actual_raw_block_ipc
+        assert expected_raw_block == actual_raw_block
+        assert expected_raw_block == actual_raw_block_ipc
 
-        # TODO - test writing multiple blocks in the batch
-        #  (which will be added to the same .dat file) - this complicates the offset calculations
-        #  So needs tests to ensure no regressions
+        # Second block
+        expected_block_num = 2
+        expected_block_size = len(TEST_RAW_BLOCK_400000)
+        block_hash = double_sha256(TEST_RAW_BLOCK_400000[0:80])
+        expected_raw_block = TEST_RAW_BLOCK_400000
+        batched_blocks = [expected_raw_block]
+        self.lmdb.put_blocks(batched_blocks)
+
+        actual_block_num = self.lmdb.get_block_num(block_hash)
+        actual_block_num_ipc = self.ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
+        assert expected_block_num == actual_block_num
+        assert expected_block_num == actual_block_num_ipc
+
+        actual_block_size = self.lmdb.get_block_metadata(block_hash).block_size
+        actual_block_size_ipc = self.ipc_sock_client.block_metadata_batched([block_hash]).block_metadata_batch[0].block_size
+        assert expected_block_size == actual_block_size
+        assert expected_block_size == actual_block_size_ipc
+
+        actual_raw_block = self.lmdb.get_block(expected_block_num)
+        block_requests: list[BlockSliceRequestType] = list([BlockSliceRequestType(expected_block_num, Slice(0, 0))])
+        batched_block_slices = self.ipc_sock_client.block_batched(block_requests)
+
+        block_num, len_slice = struct.unpack_from(f"<IQ", batched_block_slices, 0)
+        _block_num, _len_slice, raw_block_slice = struct.unpack_from(f"<IQ{len_slice}s",
+            batched_block_slices, 0)
+        actual_raw_block_ipc = raw_block_slice
+
+        assert expected_raw_block == actual_raw_block
+        assert expected_raw_block == actual_raw_block_ipc
 
     def test_merkle_tree_storage(self):
         block_hash = bytes.fromhex("ff" * 32)

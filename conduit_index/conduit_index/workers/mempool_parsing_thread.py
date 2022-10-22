@@ -78,10 +78,9 @@ class MempoolParsingThread(threading.Thread):
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
             dt = datetime.utcnow()
             tx_offsets = [0]
-            rawtx = array.array('B', rawtx)
             timestamp = dt.isoformat()
-            result: MySQLFlushBatch = parse_txs(rawtx, tx_offsets, timestamp, False, 0)
-            tx_rows, in_rows, out_rows, set_pd_rows = result
+            tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(rawtx, tx_offsets, timestamp,
+                False, 0)
             tx_rows_batched.extend(tx_rows)
             in_rows_batched.extend(in_rows)
             out_rows_batched.extend(out_rows)

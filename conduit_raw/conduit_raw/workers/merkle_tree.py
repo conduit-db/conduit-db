@@ -4,62 +4,100 @@ import multiprocessing
 import sys
 import threading
 import time
-from multiprocessing import shared_memory
 
 import cbor2
 import zmq
+from bitcoinx import double_sha256, hash_to_hex_str
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.logging_client import setup_tcp_logging
 
-from conduit_lib.algorithms import calc_mtree
+from conduit_lib.algorithms import build_mtree_from_base, calc_depth, unpack_varint
 from conduit_lib.types import MultiprocessingQueue
 
 
 class MTreeCalculator(multiprocessing.Process):
-    """
-    Single writer to mtree LMDB database (although LMDB handles concurrent writes internally so
-    we could spin up more than one of these)
+    """This worker type is a multiprocessing.Process because building merkle trees requires a ton of
+    sha256 hashing which we do not want on the main asyncio event loop of the controller
 
-    in: blk_hash, blk_start_pos, blk_end_pos, tx_positions
-    out: N/A - directly dumps to LMDB
-    ack: block_hash done
-
+    There are two types of messages corresponding to two different `threading.Thread` threads.:
+    - BIG_BLOCK
+        - These are streamed and processed in chunks equivalent to the BitcoinP2PClient
+        receive buffer
+    - SMALL_BLOCK
+        - These are streamed and processed wholesale as complete raw block messages over zmq
+        - They are concatenated together and written to spinning HDD in batches (multiple
+        raw blocks to a single file) to avoid the HDD 'stuttering' from too many IOPS.
     """
 
     def __init__(
-        self, worker_id: int, shm_name: str, worker_ack_queue_mtree: MultiprocessingQueue[bytes]
-    ) -> None:
+        self, worker_id: int, worker_ack_queue_mtree: MultiprocessingQueue[bytes]) -> None:
         super(MTreeCalculator, self).__init__()
-        self.BATCHING_RATE = 0.3
         self.worker_id = worker_id
-        self.shm = shared_memory.SharedMemory(shm_name, create=False)
         self.worker_ack_queue_mtree = worker_ack_queue_mtree
         self.logger = logging.getLogger(f"merkle-tree={self.worker_id}")
 
+        self.lmdb: LMDB_Database | None = None
+
+        # Small blocks are cleared processed every BATCHING_RATE seconds
+        self.BATCHING_RATE = 0.3
+        self.tx_hashes_map: dict[bytes, bytearray] = {}
+        self.tx_offsets_map: dict[bytes, array.ArrayType[int]] = {}
+        self.tx_count_map: dict[bytes, int] = {}  # purely for checking data integrity
+
+    # ------------------ BIG BLOCK STREAMING ---------------- #
+
     def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
         batched_merkle_trees: list[MerkleTreeRow] = []
-        batched_tx_offsets = []
         batched_acks = []
 
         t0 = time.perf_counter()
         for packed_msg in batch:
-            blk_hash, blk_start_pos, blk_end_pos, tx_offsets_bytes = cbor2.loads(packed_msg)
-            tx_offsets = array.array("Q", tx_offsets_bytes)
+            chunk_num, num_of_chunks, blk_hash, tx_offsets_bytes_for_chunk, raw_block_chunk = \
+                cbor2.loads(packed_msg)
 
-            mtree = calc_mtree(self.shm.buf[blk_start_pos:blk_end_pos], tx_offsets)
-            batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, len(tx_offsets)))
-            batched_tx_offsets.append((blk_hash, tx_offsets))
-            batched_acks.append(blk_hash)
+            tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
+
+            if not self.tx_hashes_map.get(blk_hash):
+                self.logger.debug(f"Got new big block: {hash_to_hex_str(blk_hash)}")
+                self.tx_hashes_map[blk_hash] = bytearray()
+
+            if chunk_num == 1:
+                total_tx_count, _ = unpack_varint(raw_block_chunk[80:89], offset=0)
+                self.tx_count_map[blk_hash] = total_tx_count
+
+            for i in range(len(tx_offsets_for_chunk)-1):
+                start_offset = tx_offsets_for_chunk[i]
+                if i + 1 <= len(tx_offsets_for_chunk):
+                    end_offset = tx_offsets_for_chunk[i+1]
+                    rawtx = raw_block_chunk[start_offset:end_offset]
+                else: # last tx in chunk
+                    rawtx = raw_block_chunk[start_offset:]
+                tx_hash = double_sha256(rawtx)
+                self.tx_hashes_map[blk_hash] += tx_hash
+
+            def tx_hashes_to_list(tx_hashes: bytearray) -> list[bytes]:
+                return [tx_hashes[i*32:(i+1)*32] for i in range(tx_count)]
+
+            # Final chunk received
+            if chunk_num == num_of_chunks:
+                tx_count = self.tx_count_map[blk_hash]
+                tx_hashes = self.tx_hashes_map[blk_hash]
+                base_level_index = calc_depth(leaves_count=tx_count) - 1
+                mtree = {base_level_index: tx_hashes_to_list(tx_hashes)}
+                mtree = build_mtree_from_base(base_level_index, mtree)
+                batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
+                batched_acks.append(blk_hash)
 
         lmdb.put_merkle_trees(batched_merkle_trees)
-        lmdb.put_tx_offsets(batched_tx_offsets)
         t1 = time.perf_counter() - t0
         self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
 
         for blk_hash in batched_acks:
             self.worker_ack_queue_mtree.put(blk_hash)
+
+    # ------------------------ SMALL BLOCK HANDLING --------------------- #
 
     def run(self) -> None:
         if sys.platform == "win32":
@@ -76,15 +114,15 @@ class MTreeCalculator(multiprocessing.Process):
         t1 = threading.Thread(target=self.kill_thread, daemon=True)
         t1.start()
 
-        lmdb = LMDB_Database()
+        lmdb = LMDB_Database(lock=True)
 
         batch = []
         prev_time_check = time.time()
 
+        BASE_PORT_NUM = 41830
         context2 = zmq.Context[zmq.Socket[bytes]]()
-        merkle_tree_socket = context2.socket(zmq.PULL)
-        merkle_tree_socket.connect("tcp://127.0.0.1:41835")
-
+        merkle_tree_socket = context2.socket(zmq.REP)
+        merkle_tree_socket.connect(f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
         try:
             while True:
                 try:
@@ -95,8 +133,6 @@ class MTreeCalculator(multiprocessing.Process):
                         batch.append(bytes(packed_msg))
                     else:
                         time_diff = time.time() - prev_time_check
-                        # Todo: This might be redundant with poll(1000)
-                        #  1 second is longer than self.BLOCK_BATCHING_RATE
                         if time_diff > self.BATCHING_RATE:
                             prev_time_check = time.time()
                             if batch:
@@ -121,7 +157,6 @@ class MTreeCalculator(multiprocessing.Process):
             while True:
                 message = self.kill_worker_socket.recv()
                 if message == b"stop_signal":
-                    self.shm.close()
                     self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)

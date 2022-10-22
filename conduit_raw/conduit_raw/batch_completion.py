@@ -4,7 +4,6 @@ from queue import Queue
 import threading
 import typing
 
-import bitcoinx
 from bitcoinx import hash_to_hex_str
 
 if typing.TYPE_CHECKING:
@@ -107,50 +106,6 @@ class BatchCompletionMtree(threading.Thread):
         while True:
             try:
                 blocks_batch_set = self.blocks_batch_set_queue_mtree.get()
-                self.wait_for_batch_completion(blocks_batch_set)
-                self.logger.debug(f"ACKs for batch {batch_id} received")
-                batch_id += 1
-            except Exception as e:
-                self.logger.exception("Caught exception")
-
-
-class BatchCompletionPreprocessor(threading.Thread):
-    """Only Processes ACK messages from the Preprocessor worker"""
-
-    def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_preproc: Queue[bytes],
-            blocks_batch_set_queue_preproc: Queue[set[bytes]], daemon: bool=True) -> None:
-        threading.Thread.__init__(self, daemon=daemon)
-        self.logger = logging.getLogger("batch-completion-preproc")
-        self.controller: Controller = controller
-        self.sync_state = sync_state
-        self.get_header_for_hash: typing.Callable[[bytes], bitcoinx.Header] = self.controller.get_header_for_hash
-        self.worker_ack_queue_preproc = worker_ack_queue_preproc
-        self.blocks_batch_set_queue_preproc = blocks_batch_set_queue_preproc
-        self.loop = asyncio.get_running_loop()
-
-    def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
-        while True:
-            block_hash = self.worker_ack_queue_preproc.get()
-            if block_hash in blocks_batch_set:
-                blocks_batch_set.remove(block_hash)
-                with self.sync_state.done_blocks_preproc_lock:
-                    self.sync_state.done_blocks_preproc.add(block_hash)
-            else:
-                header = self.get_header_for_hash(block_hash)
-                self.logger.error(f"also wrote unexpected block: {hash_to_hex_str(header.hash)}"
-                                  f" {header.height} to disc")
-
-            # all blocks in batch processed
-            if len(blocks_batch_set) == 0:
-                self.loop.call_soon_threadsafe(self.sync_state.done_blocks_preproc_event.set)
-                break
-
-    def run(self) -> None:
-        batch_id = 0
-        while True:
-            try:
-                blocks_batch_set = self.blocks_batch_set_queue_preproc.get()
                 self.wait_for_batch_completion(blocks_batch_set)
                 self.logger.debug(f"ACKs for batch {batch_id} received")
                 batch_id += 1

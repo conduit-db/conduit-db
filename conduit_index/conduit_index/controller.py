@@ -24,8 +24,8 @@ import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.bitcoin_net_io import BitcoinNetSocket, BlockCallback, get_bitcoin_p2p_socket
-from conduit_lib.commands import MEMPOOL, VERSION, TX_BIN
+from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient, get_bitcoin_p2p_socket
+from conduit_lib.commands import MEMPOOL, VERSION
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -62,14 +62,6 @@ def get_headers_dir_conduit_index() -> Path:
 
 
 class Controller(ControllerBase):
-    """Designed to sync the blockchain as fast as possible.
-
-    Coordinates:
-    - network via BitcoinNetIO
-    - outsources parsing of block data to workers in workers.py (which work in parallel reading
-    from a shared memory buffer)
-    - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks)
-    """
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: None=None) -> None:
@@ -90,7 +82,7 @@ class Controller(ControllerBase):
         self.peers = self.net_config.peers
         self.peer = self.get_peer()
         self.host = host  # bind address
-        self.port = port  # bind port
+        self.port = port  # bind remote_port
         self.protocol: BaseProtocol | None = None
         self.protocol_factory = None
         self.transport: BaseTransport | None = None
@@ -100,19 +92,15 @@ class Controller(ControllerBase):
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)
         self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer: Serializer = Serializer(self.net_config, self.storage)
-        self.deserializer: Deserializer = Deserializer(self.net_config, self.storage)
+        self.serializer: Serializer = Serializer(self.net_config)
+        self.deserializer: Deserializer = Deserializer(self.net_config)
         self.sync_state: SyncState = SyncState(self.storage, self)
 
         # Bitcoin Network Socket
-        self.bitcoin_net_io: BitcoinNetSocket | None = None
+        self.bitcoin_net_io: BitcoinP2PClient | None = None
 
         # Mempool and API state
         self.mempool_tx_hash_set: set[bytes] = set()
-
-        # Connection entry/exit
-        self.handshake_complete_event = asyncio.Event()
-        self.con_lost_event = asyncio.Event()
 
         # IPC from Controller to TxParser
         context1 = AsyncZMQContext.instance()
@@ -156,6 +144,8 @@ class Controller(ControllerBase):
         self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
         # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
 
+        self.mempool_tx_count: int = 0
+
         # Database Interfaces
         self.mysql_db: MySQLDatabase | None = None
         self.ipc_sock_client = IPCSocketClient()
@@ -183,16 +173,14 @@ class Controller(ControllerBase):
     async def maintain_node_connection(self) -> None:
         first_loop = True
         while True:
-            await wait_for_node(node_host=os.environ['NODE_HOST'],
-                node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
-                deserializer=self.deserializer)
+            await self.bitcoin_net_io.wait_for_connection()
             if not first_loop:
-                self.logger.debug(f"Bitcoin daemon disconnected. "
-                                  f"Reconnecting & Re-requesting mempool (as appropriate)...")
+                self.logger.debug(f"The bitcoin node disconnected but is now reconnected. "
+                                  f"Re-requesting mempool (as appropriate)...")
             await self.connect_session()  # on_connection_made callback -> starts jobs
             await self.send_version(self.peer.host, self.peer.port, self.host, self.port)
-            await self.handshake_complete_event.wait()
-            await self.con_lost_event.wait()
+            await self.bitcoin_net_io.handshake_complete_event.wait()
+            await self.bitcoin_net_io.connection_lost_event.wait()
             self.con_lost_event.clear()
             first_loop = False
 
@@ -231,32 +219,10 @@ class Controller(ControllerBase):
                 except asyncio.CancelledError:
                     pass
 
-        # Traceback (most recent call last):
-        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\run_conduit_index.py",
-        #       line 91, in main
-        #     await controller.stop()
-        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\conduit_index\controller.py",
-        #       line 241, in stop
-        #     self.shm_buffer.close()
-        #   File "C:\Users\R\AppData\Local\Programs\Python\Python310\lib\multiprocessing\"
-        #       "shared_memory.py", line 227, in close
-        #     self._mmap.close()
-        # BufferError: cannot close exported pointers exist
-        try:
-            self.shm_buffer.close()
-            self.shm_buffer.unlink()
-        except AttributeError:
-            self.logger.error("Controller doesn't have a `shm_buffer` attribute anymore")
-        except BufferError:
-            self.logger.error("Unable to clean up shared memory, exported points still exist")
-
     def get_peer(self) -> 'Peer':
         return self.peers[0]
 
     # ---------- Callbacks ---------- #
-    def on_msg(self, command: bytes, message: BlockCallback | bytes) -> None:
-        self.sync_state.incoming_msg_queue.put_nowait((command, message))
-
     def on_connection_made(self) -> None:
         pass
 
@@ -269,9 +235,8 @@ class Controller(ControllerBase):
         peer = self.get_peer()
         self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
         try:
-            self.bitcoin_net_io = await get_bitcoin_p2p_socket(peer.host, peer.port, self.on_msg,
-                self.on_connection_made, self.on_connection_lost)
-            self.shm_buffer = self.bitcoin_net_io.shm_buffer
+            self.bitcoin_net_io = BitcoinP2PClient(peer.host, peer.port, self.handlers)
+            await self.bitcoin_net_io.connect()
         except ConnectionResetError:
             await self.stop()
 
@@ -281,9 +246,6 @@ class Controller(ControllerBase):
             # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
             handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
             handler_func = getattr(self.handlers, handler_func_name)
-            if command == TX_BIN:
-                self.mempool_tx_count += 1
-
             await handler_func(message)
 
     async def spawn_handler_tasks(self) -> None:
@@ -291,10 +253,6 @@ class Controller(ControllerBase):
         another handler, progress will continue to be made."""
         for i in range(4):
             self.tasks.append(create_task(self.handle()))
-
-    async def send_request(self, command_name: str, message: bytes) -> None:
-        assert self.bitcoin_net_io is not None
-        await self.bitcoin_net_io.send_message(message)
 
     # Multiprocessing Workers
     def start_workers(self) -> None:
@@ -383,7 +341,7 @@ class Controller(ControllerBase):
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s",
                 raw_blocks_array, 0)
-            tx_rows, in_rows, out_rows, pd_rows = parse_txs(array.array('B', raw_block), tx_offsets,
+            tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
                 height, confirmed=True, first_tx_pos_batch=0)
             batched_tx_rows.extend(tx_rows)
             batched_in_rows.extend(in_rows)
@@ -406,7 +364,7 @@ class Controller(ControllerBase):
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
         self.logger.debug(f"Requesting mempool...")
-        await self.send_request(MEMPOOL, self.serializer.mempool())
+        await self.bitcoin_net_io.send_message(self.serializer.mempool())
 
     async def output_memory_usage_task_async(self) -> None:
         self.logger.debug("Tracemalloc Active")
@@ -587,7 +545,7 @@ class Controller(ControllerBase):
             await self.is_ibd_socket.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
             create_task(self.maintain_node_connection())
-            await self.handshake_complete_event.wait()
+            await self.bitcoin_net_io.handshake_complete_event.wait()
             await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
 
@@ -804,14 +762,6 @@ class Controller(ControllerBase):
             self.logger.debug(f"Controller Batch {batch_id} Complete. "
                                 f"New tip height: {best_flushed_tip_height}")
             batch_id += 1
-
-    # -- Message Types -- #
-    async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \
-            -> None:
-        message = self.serializer.version(
-            recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
-        )
-        await self.send_request(VERSION, message)
 
     async def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch

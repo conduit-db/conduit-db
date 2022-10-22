@@ -17,9 +17,8 @@ import logging
 import zmq
 
 from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
-    wait_for_node, NetworkConfig, Peer)
-from conduit_lib.bitcoin_net_io import BlockCallback, BitcoinNetSocket, get_bitcoin_p2p_socket
-from conduit_lib.commands import BLOCK_BIN, GETHEADERS, GETDATA, GETBLOCKS, VERSION
+    NetworkConfig, Peer)
+from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
@@ -29,12 +28,11 @@ from conduit_lib.utils import create_task, get_conduit_raw_host_and_port, get_he
 from conduit_lib.wait_for_dependencies import wait_for_mysql
 
 from .aiohttp_api import server_main
-from .batch_completion import BatchCompletionRaw, BatchCompletionMtree, BatchCompletionPreprocessor
+from .batch_completion import BatchCompletionMtree
 from .regtest_support import RegtestSupport
 from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
 from .sync_state import SyncState
-from .preprocessor import BlockPreProcessor  # threading.Thread
-from .workers import MTreeCalculator, BlockWriter  # multiprocessing.Process
+from .workers import MTreeCalculator
 
 T2 = TypeVar("T2")
 
@@ -46,15 +44,6 @@ def get_headers_dir_conduit_raw() -> Path:
 
 
 class Controller(ControllerBase):
-    """Designed to sync the blockchain as fast as possible.
-
-    Coordinates:
-    - network via BitcoinNetIO
-    - outsources parsing of block data to subordinate workers (which work in parallel reading
-    from a shared memory buffer)
-    - synchronizes the refreshing of the shared memory buffer which holds multiple raw blocks at
-    a time up to HIGH_WATER)
-    """
 
     def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
             loop_type: str | None=None) -> None:
@@ -74,26 +63,24 @@ class Controller(ControllerBase):
         self.peers = self.net_config.peers
         self.peer = self.get_peer()
         self.host = host  # bind address
-        self.port = port  # bind port
+        self.port = port  # bind remote_port
 
         headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
         self.handlers = Handlers(self, self.net_config, self.storage)
-        self.serializer = Serializer(self.net_config, self.storage)
-        self.deserializer = Deserializer(self.net_config, self.storage)
+        self.serializer = Serializer(self.net_config)
+        self.deserializer = Deserializer(self.net_config)
         self.sync_state = SyncState(self.storage, self)
         self.lmdb = self.storage.lmdb
         self.ipc_sock_client: IPCSocketClient | None = None
         self.ipc_sock_server: ThreadedTCPServer | None = None
-        self.general_executor = ThreadPoolExecutor(max_workers=1)
-
-        # Connection entry/exit
-        self.handshake_complete_event = asyncio.Event()
-        self.con_lost_event = asyncio.Event()
+        self.general_executor = ThreadPoolExecutor(max_workers=4)
 
         # Worker queues & events
         self.worker_in_queue_preproc: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
+
+        self.merkle_tree_worker_sockets: dict[int, zmq.SocketType] = {}
 
         # PUB-SUB from Controller to worker to kill the worker
         # Todo - PUB/SUB is unreliable with ZMQ. Need a better solution
@@ -101,19 +88,15 @@ class Controller(ControllerBase):
         self.kill_worker_socket = context.socket(zmq.PUB)
         self.kill_worker_socket.bind("tcp://127.0.0.1:46464")
 
-        self.worker_in_queue_blk_writer: MultiprocessingQueue[tuple[bytes, int, int]] = multiprocessing.Queue()
         self.worker_ack_queue_mtree: MultiprocessingQueue[bytes] = multiprocessing.Queue()
-        self.worker_ack_queue_blk_writer: MultiprocessingQueue[bytes] = multiprocessing.Queue()
 
-        self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
-        self.blocks_batch_set_queue_preproc = queue.Queue[set[bytes]]()
 
         # Database Interfaces
         # self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network Socket
-        self.bitcoin_net_io: BitcoinNetSocket | None = None
+        self.bitcoin_p2p_client: BitcoinP2PClient | None = None
 
         self.estimated_moving_av_block_size_mb = 0.1 if \
             self.sync_state.get_local_block_tip_height() < 2016 else 500
@@ -122,36 +105,21 @@ class Controller(ControllerBase):
 
     async def setup(self) -> None:
         self.regtest_support = RegtestSupport(self)
-        self.batch_completion_raw = BatchCompletionRaw(
-            self,
-            self.sync_state,
-            self.worker_ack_queue_blk_writer,
-            self.blocks_batch_set_queue_raw
-        )
         self.batch_completion_mtree = BatchCompletionMtree(
             self,
             self.sync_state,
             self.worker_ack_queue_mtree,
             self.blocks_batch_set_queue_mtree
         )
-        self.batch_completion_preprocessor = BatchCompletionPreprocessor(
-            self,
-            self.sync_state,
-            self.worker_ack_queue_preproc,
-            self.blocks_batch_set_queue_preproc
-        )
-
-        self.batch_completion_raw.start()
         self.batch_completion_mtree.start()
-        self.batch_completion_preprocessor.start()
 
     async def connect_session(self) -> None:
         peer = self.get_peer()
-        self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
+        self.logger.debug("Connecting to (%s, %s) [%s]", peer.remote_host, peer.remote_port, self.net_config.NET)
         try:
-            self.bitcoin_net_io = await get_bitcoin_p2p_socket(peer.host, peer.port, self.on_msg,
-                self.on_connection_made, self.on_connection_lost)
-            self.shm_buffer = self.bitcoin_net_io.shm_buffer
+            self.bitcoin_p2p_client = BitcoinP2PClient(peer.remote_host, peer.remote_port,
+                self.handlers, self.net_config)
+            await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
             await self.stop()
 
@@ -159,23 +127,18 @@ class Controller(ControllerBase):
         self.running = True
         await self._get_aiohttp_client_session()
         await self.setup()
-        await wait_for_node(node_host=os.environ['NODE_HOST'],
-            node_port=int(os.environ['NODE_PORT']), serializer=self.serializer,
-            deserializer=self.deserializer)
         wait_for_mysql()
-        await self.connect_session()  # on_connection_made callback -> starts jobs
-        init_handshake = create_task(self.send_version(self.peer.host, self.peer.port,
-            self.host, self.port))
-        self.tasks.append(init_handshake)
-        wait_until_conn_lost = create_task(self.con_lost_event.wait())
-        self.tasks.append(wait_until_conn_lost)
-        await asyncio.gather(init_handshake, wait_until_conn_lost)
+        await self.connect_session()
+        self.tasks.append(create_task(self.start_jobs()))
+        wait_until_connection_lost = create_task(self.bitcoin_p2p_client.connection_lost_event.wait())
+        self.tasks.append(wait_until_connection_lost)
+        await asyncio.gather(wait_until_connection_lost)
 
     async def stop(self) -> None:
         self.running = False
         await self._close_aiohttp_client_session()
-        if self.bitcoin_net_io:
-            self.bitcoin_net_io.close_connection()
+        if self.bitcoin_p2p_client:
+            await self.bitcoin_p2p_client.close_connection()
         if self.storage:
             await self.storage.close()
         with self.kill_worker_socket as sock:
@@ -211,39 +174,8 @@ class Controller(ControllerBase):
             except asyncio.CancelledError:
                 pass
 
-        # Traceback (most recent call last):
-        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\run_conduit_index.py",
-        #       line 91, in main
-        #     await controller.stop()
-        #   File "C:\Data\Git\_zzz_r\conduit-db\conduit_index\conduit_index\controller.py",
-        #       line 241, in stop
-        #     self.shm_buffer.close()
-        #   File "C:\Users\R\AppData\Local\Programs\Python\Python310\lib\multiprocessing\"
-        #       "shared_memory.py", line 227, in close
-        #     self._mmap.close()
-        # BufferError: cannot close exported pointers exist
-        try:
-            self.shm_buffer.close()
-            self.shm_buffer.unlink()
-        except AttributeError:
-            self.logger.error("Controller doesn't have a `shm_buffer` attribute anymore")
-        except BufferError:
-            self.logger.error("Unable to clean up shared memory, exported points still exist")
-
     def get_peer(self) -> Peer:
         return self.peers[0]
-
-    # ---------- Callbacks ---------- #
-    def on_msg(self, command: bytes, message: BlockCallback | bytes) -> None:
-        self.sync_state.incoming_msg_queue.put_nowait((command, message))
-
-    def on_connection_made(self) -> None:
-        self.tasks.append(create_task(self.start_jobs()))
-
-    def on_connection_lost(self) -> None:
-        self.con_lost_event.set()
-
-    # ---------- end callbacks ---------- #
 
     def run_coro_threadsafe(self, coro: Callable[..., Coroutine[Any, Any, T2]],
             *args: Sequence[str], **kwargs: dict[Any, Any]) -> None:
@@ -261,36 +193,14 @@ class Controller(ControllerBase):
                 self.logger.exception("Handler exception")
                 raise
 
-    async def send_request(self, command_name: str, message: bytes) -> None:
-        assert self.bitcoin_net_io is not None
-        await self.bitcoin_net_io.send_message(message)
-
     def start_workers(self) -> None:
-        # Thread (lightweight task -> lower latency this way)
-        t = BlockPreProcessor(self.shm_buffer.name, self.worker_in_queue_preproc,
-            self.worker_ack_queue_preproc)
-        t.start()
-
         # Processes
         WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
         for i in range(WORKER_COUNT_MTREE_CALCULATORS):
             worker_id = i+1
-            mtree_proc = MTreeCalculator(worker_id, self.shm_buffer.name, self.worker_ack_queue_mtree)
+            mtree_proc = MTreeCalculator(worker_id, self.worker_ack_queue_mtree)
             mtree_proc.start()
             self.processes.append(mtree_proc)
-
-        WORKER_COUNT_BLOCK_WRITER = int(os.getenv('WORKER_COUNT_BLOCK_WRITER', '1'))
-        for i in range(WORKER_COUNT_BLOCK_WRITER):
-            block_writer_proc = BlockWriter(self.shm_buffer.name, self.worker_in_queue_blk_writer,
-                self.worker_ack_queue_blk_writer)
-            block_writer_proc.start()
-            self.processes.append(block_writer_proc)
-
-    async def spawn_handler_tasks(self) -> None:
-        """spawn 4 tasks so that if one handler is waiting on an event that depends on
-        another handler, progress will continue to be made."""
-        for i in range(4):
-            self.tasks.append(create_task(self.handle()))
 
     async def spawn_sync_headers_task(self) -> None:
         self.tasks.append(create_task(self.sync_headers_job()))
@@ -341,7 +251,7 @@ class Controller(ControllerBase):
         thread.start()
         await self.spawn_aiohttp_api()
         await self.spawn_handler_tasks()
-        await self.handshake_complete_event.wait()
+        await self.bitcoin_p2p_client.handshake_complete_event.wait()
 
         self.start_workers()
 
@@ -353,13 +263,6 @@ class Controller(ControllerBase):
         await self.spawn_sync_headers_task()
         await self.sync_state.headers_event_initial_sync.wait()  # one-off
         self.tasks.append(create_task(self.sync_all_blocks_job()))
-        # await self.sync_state.initial_block_download_event.wait()
-        # await self.request_mempool()
-
-    # async def request_mempool(self):
-    #     # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
-    #     self.logger.debug("Requesting mempool...")
-    #     await self.send_request(MEMPOOL, self.serializer.mempool())
 
     async def _get_max_headers(self) -> None:
         tip = self.sync_state.get_local_tip()
@@ -370,9 +273,8 @@ class Controller(ControllerBase):
                 locator_hash = self.get_header_for_height(height).hash
                 block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
-        await self.send_request(
-            GETHEADERS, self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
-        )
+        await self.bitcoin_p2p_client.send_message(
+            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
 
     async def _get_aiohttp_client_session(self) -> aiohttp.ClientSession:
         if not self.aiohttp_client_session:
@@ -450,9 +352,7 @@ class Controller(ControllerBase):
                 else:
                     continue
 
-            await self.send_request(
-                GETDATA, self.serializer.getdata([inv]),
-            )
+            await self.bitcoin_p2p_client.send_message(self.serializer.getdata([inv]))
 
             count_requested += 1
             count_pending -= 1
@@ -515,17 +415,11 @@ class Controller(ControllerBase):
             await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
                 stop_header_height)
 
-            self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
             self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
-            self.blocks_batch_set_queue_preproc.put_nowait(all_pending_block_hashes.copy())
 
             # Wait for batch completion for all worker types (via ACK messages)
-            await self.sync_state.done_blocks_raw_event.wait()
             await self.sync_state.done_blocks_mtree_event.wait()
-            await self.sync_state.done_blocks_preproc_event.wait()
-            self.sync_state.done_blocks_raw_event.clear()
             self.sync_state.done_blocks_mtree_event.clear()
-            self.sync_state.done_blocks_preproc_event.clear()
 
             await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
             await self.connect_done_block_headers(all_pending_block_hashes.copy())
@@ -576,7 +470,7 @@ class Controller(ControllerBase):
             batch_count, all_pending_block_hashes, stop_header_height = next_batch
             hash_stop = self.get_hash_stop(stop_header_height)
 
-            await self.send_request(GETBLOCKS,
+            await self.bitcoin_p2p_client.send_message(
                 self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
 
             # Workers are loaded by Handlers.on_block handler as messages are received
@@ -636,17 +530,6 @@ class Controller(ControllerBase):
             raise
 
     # -- Message Types -- #
-    async def send_version(self, recv_host: str, recv_port: int, send_host: str, send_port: int) \
-            -> None:
-        try:
-            message = self.serializer.version(
-                recv_host=recv_host, recv_port=recv_port, send_host=send_host, send_port=send_port,
-            )
-            await self.send_request(VERSION, message)
-        except Exception:
-            self.logger.exception("Unexpected exception")
-            raise
-
     async def send_inv(self, inv_vects: list[Inv]) -> None:
         await self.serializer.inv(inv_vects)
 

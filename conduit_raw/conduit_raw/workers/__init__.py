@@ -1,4 +1,3 @@
-__all__ = ['MTreeCalculator', 'BlockWriter']
+__all__ = ['MTreeCalculator']
 
 from .merkle_tree import MTreeCalculator
-from .raw_blocks import BlockWriter

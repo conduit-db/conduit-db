@@ -2,6 +2,7 @@ import struct
 
 VERSION = "version"
 VERACK = "verack"
+PROTOCONF = "protoconf"
 INV = "inv"
 ADDR = "addr"
 GETDATA = "getdata"
@@ -27,6 +28,7 @@ FEEFILTER = "feefilter"
 GETBLOCKTXN = "getblocktxn"
 BLOCKTXN = "blocktxn"
 SENDCMPCT = "sendcmpct"
+EXTMSG = "extmsg"
 
 
 VERSION_BIN = struct.pack("12s", "version".encode("ASCII"))
@@ -59,3 +61,4 @@ FEEFILTER_BIN = struct.pack("12s", "feefilter".encode("ASCII"))
 GETBLOCKTXN_BIN = struct.pack("12s", "getblocktxn".encode("ASCII"))
 BLOCKTXN_BIN = struct.pack("12s", "blocktxn".encode("ASCII"))
 SENDCMPCT_BIN = struct.pack("12s", "sendcmpct".encode("ASCII"))
+EXTMSG_BIN = struct.pack("12s", "extmsg".encode("ASCII"))
