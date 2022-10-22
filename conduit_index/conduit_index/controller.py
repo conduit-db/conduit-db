@@ -594,6 +594,7 @@ class Controller(ControllerBase):
     async def long_poll_conduit_raw_chain_tip(self) -> tuple[bool, Header, Header,
             ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+        await self.check_for_ibd_status(conduit_best_tip=conduit_best_tip)
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         old_hashes = None
@@ -639,7 +640,6 @@ class Controller(ControllerBase):
                 if stop_header:
                     self.logger.debug(f"Got new tip from ConduitRaw service for "
                                       f"parsing at height: {stop_header.height}")
-                    await self.check_for_ibd_status(conduit_best_tip=conduit_best_tip)
                     return is_reorg, start_header, stop_header, old_hashes, new_hashes
                 else:
                     continue
