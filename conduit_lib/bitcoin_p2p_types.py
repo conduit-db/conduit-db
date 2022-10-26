@@ -1,10 +1,9 @@
-import array
 import asyncio
 import enum
 from pathlib import Path
 from typing import NamedTuple
 
-from conduit_lib.database.ffdb.flat_file_db import DataLocation
+from conduit_lib.types import DataLocation
 
 
 class ExtendedP2PHeader(NamedTuple):
@@ -27,8 +26,8 @@ class ExtendedP2PHeader(NamedTuple):
 
 
 class BlockType(enum.IntEnum):
-    SMALL_BLOCK = 1 << 0  # fits in the network buffer -> write in batches periodically
-    BIG_BLOCK = 1 << 1  # overflows network buffer -> use temp file to write to disc in chunks
+    SMALL_BLOCK: int = 1 << 0  # fits in the network buffer -> write in batches periodically
+    BIG_BLOCK: int = 1 << 1  # overflows network buffer -> use temp file to write to disc in chunks
 
 
 class BlockChunkData(NamedTuple):
@@ -65,5 +64,5 @@ class BitcoinPeerInstance(NamedTuple):
     host: str
     port: int
 
-    async def send_message(self, message: bytes):
+    async def send_message(self, message: bytes) -> None:
         self.writer.write(message)

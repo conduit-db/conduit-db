@@ -366,7 +366,10 @@ T1 = TypeVar("T1")
 def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
     if future.cancelled():
         return
-    future.result()
+    try:
+        future.result()
+    except Exception:
+        logger.exception(f"Unexpected exception in task")
 
 
 
@@ -424,6 +427,6 @@ def record_top_memory_consumers(snapshot: tracemalloc.Snapshot, key_type: str='l
     logger.debug("---------- Tracemalloc report end ---------- ")
 
 
-def address_to_pushdata_hash(p2pkh_address: str, network: Network):
+def address_to_pushdata_hash(p2pkh_address: str, network: Network) -> bytes:
     address = bitcoinx.P2PKH_Address.from_string(p2pkh_address, network)
-    return sha256(address.hash160())
+    return cast(bytes, sha256(address.hash160()))

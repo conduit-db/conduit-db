@@ -1,12 +1,8 @@
-import array
+import gc
 import io
-from io import BytesIO
-import struct
-from io import SEEK_CUR
 import os
 import time
 from pathlib import Path
-from typing import Tuple, List
 
 import bitcoinx
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
@@ -131,7 +127,8 @@ def test_parse_txs():
     t0 = time.perf_counter()
     REPEAT_N_TIMES = 10
     for i in range(REPEAT_N_TIMES):
-        tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets, 413567, True, 0)
+        tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
+            413567, True, 0)
     t1 = time.perf_counter() - t0
     print_results(len(tx_rows), t1/REPEAT_N_TIMES, raw_block)
 

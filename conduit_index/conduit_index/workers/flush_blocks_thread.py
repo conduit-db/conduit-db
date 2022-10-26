@@ -57,7 +57,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        txs, ins, outs, pds, acks = reset_rows()
+        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
@@ -68,24 +68,25 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     if not confirmed_rows:  # poison pill
                         break
 
-                    txs, ins, outs, pds = extend_batched_rows(confirmed_rows, txs, ins, outs, pds)
+                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(confirmed_rows, txs, txs_mempool,
+                        ins, outs, pds)
                     acks.extend(new_acks)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
-                        mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
-                            mysql_db=mysql_db)
-                        txs, ins, outs, pds, acks = reset_rows()
+                        mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, txs_mempool,
+                            ins, outs, pds, acks), mysql_db=mysql_db)
+                        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
 
                 # Post-IBD
                 except queue.Empty:
                     if len(txs) != 0:
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
-                        mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, ins, outs, pds, acks),
-                            mysql_db=mysql_db)
-                        txs, ins, outs, pds, acks = reset_rows()
+                        mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, txs_mempool,
+                            ins, outs, pds, acks), mysql_db=mysql_db)
+                        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
                     continue
         except KeyboardInterrupt:
             return

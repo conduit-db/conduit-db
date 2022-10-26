@@ -29,7 +29,8 @@ BlockSliceOffsets = tuple[int, int]  # i.e. start and end byte offset for the sl
 
 
 class MySQLFlushBatchWithAcks(NamedTuple):
-    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
+    tx_rows: list[ConfirmedTransactionRow]
+    tx_rows_mempool: list[MempoolTransactionRow]
     in_rows: list[InputRow]
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
@@ -38,7 +39,8 @@ class MySQLFlushBatchWithAcks(NamedTuple):
 
 MempoolTxAck = int
 class MySQLFlushBatchWithAcksMempool(NamedTuple):
-    tx_rows: list[MempoolTransactionRow | ConfirmedTransactionRow]
+    tx_rows: list[ConfirmedTransactionRow]
+    tx_rows_mempool: list[MempoolTransactionRow]
     in_rows: list[InputRow]
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]

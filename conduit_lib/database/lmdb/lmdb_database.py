@@ -16,15 +16,15 @@ from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
-from ..ffdb.flat_file_db import DataLocation
+
 
 if typing.TYPE_CHECKING:
     import array
 
 from conduit_lib.algorithms import calc_depth
 from conduit_lib.database.lmdb.types import MerkleTreeRow
-from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, ChainHashes, \
-    Slice
+from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, ChainHashes, Slice, \
+    DataLocation
 
 try:
     from ...constants import PROFILING

@@ -50,7 +50,6 @@ class MockHandlers(MessageHandlerProtocol):
 
     `got_message_queue` would not be a part of this handler class under normal circumstances"""
 
-    p2p_socket: 'BitcoinP2PClient'
     net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
     serializer = Serializer(net_config)
     deserializer = Deserializer(net_config)

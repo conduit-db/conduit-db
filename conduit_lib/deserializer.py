@@ -40,7 +40,7 @@ class Deserializer:
         checksum = stream.read(4).hex()
         assert command == "extmsg"
         assert length == 0xffffffff
-        assert checksum == 0x00000000
+        assert checksum == "00000000"
         ext_command = stream.read(12).decode("ascii").strip("\x00")
         ext_length = read_le_uint64(stream.read)
         decoded_header: MessageHeader = {

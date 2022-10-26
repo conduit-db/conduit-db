@@ -229,7 +229,7 @@ class MinedBlockParsingThread(threading.Thread):
 
         for raw_block_slice, work_item, _is_reorg, blk_num, first_tx_pos_batch \
                 in batched_raw_block_slices:
-            tx_rows, in_rows, out_rows, pd_rows, _ = reset_rows()
+            tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, _ = reset_rows()
 
             # Mempool and Reorg txs already have entries for inputs, pushdata and output tables
             # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
@@ -238,11 +238,11 @@ class MinedBlockParsingThread(threading.Thread):
             all_tx_offsets_sorted = list(all_tx_offsets)
             all_tx_offsets_sorted.sort()
 
-            tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block_slice,
+            tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block_slice,
                 all_tx_offsets_sorted, blk_num, True, first_tx_pos_batch,
                 already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
             self.confirmed_tx_flush_queue.put(
-                (MySQLFlushBatch(tx_rows, in_rows, out_rows, pd_rows), acks[work_item]))
+                (MySQLFlushBatch(tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows), acks[work_item]))
 
     def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
             merged_offsets_map: dict[bytes, int],

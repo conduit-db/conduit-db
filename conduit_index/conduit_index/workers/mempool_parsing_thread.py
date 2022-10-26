@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import array
 import logging
-import queue
 import struct
 import threading
+import time
 from datetime import datetime
 from functools import partial
+from queue import Queue
+
 import zmq
 
 from .flush_mempool_thread import FlushMempoolTransactionsThread
@@ -19,7 +20,7 @@ from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 class MempoolParsingThread(threading.Thread):
 
     def __init__(self, worker_id: int,
-            mempool_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, MempoolTxAck]],
+            mempool_tx_flush_queue: Queue[tuple[MySQLFlushBatch, MempoolTxAck]],
             daemon: bool=True) -> None:
         self.logger = logging.getLogger(f"mempool-parsing-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
@@ -78,10 +79,11 @@ class MempoolParsingThread(threading.Thread):
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
             dt = datetime.utcnow()
             tx_offsets = [0]
-            timestamp = dt.isoformat()
-            tx_rows, in_rows, out_rows, set_pd_rows = parse_txs(rawtx, tx_offsets, timestamp,
+            timestamp = int(time.time())
+            tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = parse_txs(rawtx,
+                tx_offsets, timestamp,
                 False, 0)
-            tx_rows_batched.extend(tx_rows)
+            tx_rows_batched.extend(tx_rows_mempool)
             in_rows_batched.extend(in_rows)
             out_rows_batched.extend(out_rows)
             set_pd_rows_batched.extend(set_pd_rows)
@@ -89,7 +91,7 @@ class MempoolParsingThread(threading.Thread):
         num_mempool_txs_processed = len(tx_rows_batched)
         # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")
         self.mempool_tx_flush_queue.put(
-            (MySQLFlushBatch(tx_rows_batched, in_rows_batched, out_rows_batched,
+            (MySQLFlushBatch([], tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched),
             num_mempool_txs_processed)
         )

@@ -2,22 +2,23 @@
 from __future__ import annotations
 
 import array
-import io
+import hashlib
 import logging
 import os
 import struct
-from hashlib import sha256
+import typing
 from math import ceil, log
-from typing import cast, NamedTuple, Tuple, List
+from typing import cast, NamedTuple, Callable
 
-import bitcoinx
-from bitcoinx import double_sha256, hash_to_hex_str
+from bitcoinx import hash_to_hex_str
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.mysql.types import ConfirmedTransactionRow, InputRow, OutputRow, \
-    PushdataRow, MempoolTransactionRow, MySQLFlushBatch
+    PushdataRow, MempoolTransactionRow
 from conduit_lib.types import PushdataMatchFlags
+
+_sha256 = hashlib.sha256
 
 MTreeLevel = int
 MTreeNodeArray = list[bytes]
@@ -50,6 +51,14 @@ OP_PUSHDATA4 = 0x4E
 
 logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
+
+
+def sha256(x: bytes) -> bytes:
+    return _sha256(x).digest()
+
+
+def double_sha256(x: bytes) -> bytes:
+    return sha256(sha256(x))
 
 
 def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -> tuple[int, int]:
@@ -194,7 +203,7 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
                     f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, flags, tx_pos)
 
         for pushdata, flags in all_pushdata:
-            pd_matches.append(PushdataMatch(sha256(pushdata).digest()[0:HashXLength], flags))
+            pd_matches.append(PushdataMatch(sha256(pushdata)[0:HashXLength], flags))
 
         return pd_matches
     except Exception as e:
@@ -204,10 +213,9 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
 
 
 def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
-        block_num_or_timestamp: int | str, confirmed: bool, first_tx_pos_batch: int=0,
-        already_seen_offsets: set[int] | None=None) -> tuple[
-    list[MempoolTransactionRow | ConfirmedTransactionRow], list[InputRow], list[OutputRow], list[
-        PushdataRow]]:
+        block_num_or_timestamp: int, confirmed: bool, first_tx_pos_batch: int=0,
+        already_seen_offsets: set[int] | None=None) -> tuple[list[ConfirmedTransactionRow],
+            list[MempoolTransactionRow], list[InputRow], list[OutputRow], list[PushdataRow]]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -216,18 +224,13 @@ def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
     This obviates the need for duplicated code and makes it possible to do batch processing of
     mempool transactions at a later date (where buffer=contiguous array of rawtxs)
 
-    returns
-        tx_rows =       [(tx_hash, height, position, offset_start, offset_end)...]
-        in_rows =       [(prevout_hash, out_idx, tx_hash, in_idx, in_offset_start, in_offset_end)...)...]
-        out_rows =      [(out_tx_hash, idx, value, out_offset_start, out_offset_end)...)]
-        pd_rows =       [(pushdata_hash, tx_hash, idx, ref_type=0 or 1)...]
-
     `already_seen_offsets` is to exclude inputs, outputs and pushdata rows from the end
     result because these have already been flushed to disc earlier - this could be from either
     a reorg or from mempool processing
     """
     genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
-    tx_rows = []
+    tx_rows_confirmed = []
+    tx_rows_mempool = []
     in_rows = []
     out_rows = []
     set_pd_rows = []
@@ -330,14 +333,13 @@ def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
 
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
-                block_num_or_timestamp = cast(int, block_num_or_timestamp)
-                tx_rows.append((tx_hashX.hex(), block_num_or_timestamp, tx_pos))
+                tx_rows_confirmed.append((tx_hashX.hex(), block_num_or_timestamp, tx_pos))
             else:
                 # Note mempool uses full length tx_hash
-                block_num_or_timestamp = cast(str, block_num_or_timestamp)
-                tx_rows.append((tx_hash.hex(), block_num_or_timestamp))
-        assert len(tx_rows) == count_txs
-        return cast(list[ConfirmedTransactionRow | MempoolTransactionRow], tx_rows), \
+                tx_rows_mempool.append((tx_hash.hex(), block_num_or_timestamp))
+        assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
+        return cast(list[ConfirmedTransactionRow], tx_rows_confirmed), \
+            cast(list[MempoolTransactionRow], tx_rows_mempool), \
             cast(list[InputRow], in_rows), \
             cast(list[OutputRow], out_rows), \
             cast(list[PushdataRow], set_pd_rows)

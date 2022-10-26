@@ -3,12 +3,12 @@ from __future__ import annotations
 import array
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from bitcoinx import double_sha256, hash_to_hex_str
+from bitcoinx import double_sha256
 import math
 import os
-from asyncio import StreamReader, StreamWriter
+from asyncio import StreamReader, StreamWriter, Task
 from pathlib import Path
-from typing import BinaryIO, Tuple, List
+from typing import BinaryIO, cast, Any
 import logging
 import struct
 
@@ -40,8 +40,8 @@ logger.setLevel(logging.DEBUG)
 
 def unpack_msg_header(header: bytes) -> ExtendedP2PHeader:
     magic, command, length, checksum = struct.unpack_from("<4s12sI4s", header, offset=0)
-    ext_command = None
-    ext_length = None
+    ext_command: bytes | None = None
+    ext_length: int | None = None
     return ExtendedP2PHeader(magic=magic, command=command, payload_size=length, checksum=checksum,
         ext_command=ext_command, ext_length=ext_length)
 
@@ -88,7 +88,7 @@ class BitcoinP2PClient:
         self.connection_lost_event = asyncio.Event()
         self.handshake_complete_event = asyncio.Event()
 
-        self.tasks = []
+        self.tasks: list[Task[Any]] = []
 
         # Network Buffer Manipulation
         try:
@@ -96,7 +96,7 @@ class BitcoinP2PClient:
         except KeyError:
             raise BitcoinP2PClientError("The environment variable 'NETWORK_BUFFER_SIZE' "
                 "needs to be set")
-        self.network_buffer = bytearray(self.BUFFER_SIZE)
+        self.network_buffer: bytearray = bytearray(self.BUFFER_SIZE)
         self.cur_msg_end_pos = 0
         self.cur_msg_start_pos = 0
         self.pos = 0
@@ -107,8 +107,6 @@ class BitcoinP2PClient:
         self.tx_offsets_array = array.array("Q", bytes(0))
         self.tx_count_done: int = 0
         self.file_write_executor = ThreadPoolExecutor(max_workers=4)
-
-        self.connected_clients = []
 
     async def connect(self) -> None:
         """raises `ConnectionResetError`"""
@@ -133,6 +131,7 @@ class BitcoinP2PClient:
                 await asyncio.sleep(5)
 
     async def send_message(self, message: bytes) -> None:
+        assert self.writer is not None
         self.writer.write(message)
 
     async def close_connection(self) -> None:
@@ -179,6 +178,7 @@ class BitcoinP2PClient:
         return self.pos - self.last_msg_end_pos >= EXTENDED_HEADER_LENGTH + self.cur_header.payload_size
 
     async def read_block_chunk(self, total_block_bytes_read: int) -> bytes:
+        assert self.reader is not None
         remaining_bytes = self.cur_header.payload_size - total_block_bytes_read
         if remaining_bytes >= self.BUFFER_SIZE:
             n_to_read = self.BUFFER_SIZE
@@ -225,7 +225,7 @@ class BitcoinP2PClient:
         total_block_bytes_read = 0
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         block_hash = bytes()
-        tx_offsets_all = []
+        tx_offsets_all: list[int] = []
         expected_tx_count_for_block = 0
         chunk_num = 0
         adjustment = 0
@@ -233,6 +233,7 @@ class BitcoinP2PClient:
         file = None
         last_chunk = False
         try:
+            assert self.reader is not None
             while total_block_bytes_read < self.cur_header.payload_size:
                 chunk_num += 1
                 if chunk_num == 1:
@@ -242,7 +243,7 @@ class BitcoinP2PClient:
                     # Fill the buffer entirely with the first block chunk
                     data = await self.reader.readexactly(self.BUFFER_SIZE - self.pos)
                     self.network_buffer[self.pos:] = data
-                    next_chunk = self.network_buffer[0:self.BUFFER_SIZE]
+                    next_chunk: bytes = cast(bytes, self.network_buffer[0:self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
                     self.pos, self.last_msg_end_pos = self.rotate_buffer()
 
@@ -336,13 +337,13 @@ class BitcoinP2PClient:
         create_task(self.send_version(local_host, local_port))
         await self.handshake_complete_event.wait()
 
-    async def _start_session(self):
+    async def _start_session(self) -> None:
         try:
             await self.start_session()
         except ConnectionResetError:
             logger.error(f"Bitcoin node disconnected")
         finally:
-            if not self.writer.is_closing():
+            if self.writer and not self.writer.is_closing():
                 await self.close_connection()
 
     async def start_session(self) -> None:

@@ -155,7 +155,7 @@ class MySQLTables:
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS mempool_transactions (
                     mp_tx_hash BINARY(32) PRIMARY KEY,
-                    mp_tx_timestamp TIMESTAMP
+                    mp_tx_timestamp INTEGER
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;"""
             )
         except Exception:

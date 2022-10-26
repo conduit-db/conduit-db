@@ -15,12 +15,12 @@ import logging
 import struct
 
 from .constants import MsgType
-from .database.ffdb.flat_file_db import DataLocation
 from .deserializer import Deserializer
 from .deserializer_types import Inv
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
+from .types import DataLocation
 from .utils import connect_headers_reorg_safe
 from .bitcoin_p2p_types import BigBlock, SmallBlocks, BlockMsgData, BlockType, BlockChunkData, \
     BitcoinPeerInstance
@@ -38,8 +38,6 @@ if typing.TYPE_CHECKING:
 class MessageHandlerProtocol(typing.Protocol):
     """For many use-cases, it's not necessary to flesh out all of these handlers but the version,
     verack, protoconf, ping and pong are the bare minimum just to connect and stay connected"""
-
-    p2p_socket: 'BitcoinP2PClient'
 
     async def on_version(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         ...
@@ -119,7 +117,7 @@ class Handlers(MessageHandlerProtocol):
 
     async def on_verack(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         ping_message = self.serializer.ping()
-        await self.p2p_socket.send_message(ping_message)
+        await peer.send_message(ping_message)
 
     async def on_protoconf(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         protoconf = self.deserializer.protoconf(io.BytesIO(message))
@@ -129,12 +127,12 @@ class Handlers(MessageHandlerProtocol):
 
     async def on_sendcmpct(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         sendcmpct = self.serializer.sendcmpct()
-        await self.p2p_socket.send_message(sendcmpct)
+        await peer.send_message(sendcmpct)
 
     async def on_ping(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         # logger.debug("handling ping...")
         pong_message = self.serializer.pong(message)
-        await self.p2p_socket.send_message(pong_message)
+        await peer.send_message(pong_message)
 
     async def on_pong(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         pass
@@ -218,8 +216,7 @@ class Handlers(MessageHandlerProtocol):
             self.current_mtree_worker_id = 1  # keep cycling around 1 -> 4
 
     def pack_message_for_worker(self, block_chunk_data: BlockChunkData) -> bytes:
-        assert len(block_chunk_data.tx_offsets_array) == block_chunk_data.tx_count_done
-        tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_array.tobytes()
+        tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_for_chunk
         return cast(bytes, cbor2.dumps((block_chunk_data.chunk_num, block_chunk_data.num_chunks,
             block_chunk_data.block_hash, tx_offsets_bytes_for_chunk,
             block_chunk_data.raw_block_chunk)))
@@ -242,6 +239,7 @@ class Handlers(MessageHandlerProtocol):
             logger.debug(f"got an unsolicited block: {hash_to_hex_str(block_msg_data.block_hash)}, "
                          f"height={blk_height}. Discarding...")
             if block_msg_data.block_type & BlockType.BIG_BLOCK:
+                assert block_msg_data.big_block_filepath is not None
                 os.remove(block_msg_data.big_block_filepath)
             return
 
@@ -249,7 +247,7 @@ class Handlers(MessageHandlerProtocol):
             data_location = DataLocation(str(block_msg_data.big_block_filepath), start_offset=0,
                 end_offset=block_msg_data.block_size)
             self.big_block = BigBlock(block_msg_data.block_hash, data_location,
-                block_msg_data.tx_count)
+                len(block_msg_data.tx_offsets))
             await self._lmdb_put_big_block_in_thread(big_block=self.big_block)
         else:
             # These are batched up to prevent HDD stutter

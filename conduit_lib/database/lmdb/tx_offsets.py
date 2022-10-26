@@ -7,8 +7,8 @@ import bitcoinx
 import cbor2
 from bitcoinx import hash_to_hex_str
 
-from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, DataLocation
-from conduit_lib.types import TxLocation, Slice
+from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
+from conduit_lib.types import TxLocation, Slice, DataLocation
 
 if typing.TYPE_CHECKING:
     from conduit_lib import LMDB_Database

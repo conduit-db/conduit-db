@@ -154,9 +154,9 @@ class CompositeProof(enum.IntEnum):
 
 
 class PushdataMatchFlags(enum.IntFlag):
-    OUTPUT = 1 << 0
-    INPUT = 1 << 1
-    DATA = 1 << 2
+    OUTPUT: int = 1 << 0
+    INPUT: int = 1 << 1
+    DATA: int = 1 << 2
 
 
 def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,

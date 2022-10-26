@@ -10,9 +10,9 @@ from bitcoinx import hash_to_hex_str
 
 from conduit_lib.algorithms import get_mtree_node_counts_per_level, calc_depth
 from conduit_lib.constants import PROFILING
-from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, DataLocation
+from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.database.lmdb.types import MerkleTree, MerkleTreeRow
-from conduit_lib.types import MerkleTreeArrayLocation, TxMetadata, TxLocation, Slice
+from conduit_lib.types import MerkleTreeArrayLocation, TxMetadata, TxLocation, Slice, DataLocation
 
 if typing.TYPE_CHECKING:
     from conduit_lib import LMDB_Database

@@ -24,8 +24,7 @@ import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient, get_bitcoin_p2p_socket
-from conduit_lib.commands import MEMPOOL, VERSION
+from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -97,7 +96,7 @@ class Controller(ControllerBase):
         self.sync_state: SyncState = SyncState(self.storage, self)
 
         # Bitcoin Network Socket
-        self.bitcoin_net_io: BitcoinP2PClient | None = None
+        self.bitcoin_p2p_client: BitcoinP2PClient | None = None
 
         # Mempool and API state
         self.mempool_tx_hash_set: set[bytes] = set()
@@ -171,17 +170,17 @@ class Controller(ControllerBase):
             await asyncio.sleep(5)
 
     async def maintain_node_connection(self) -> None:
+        assert self.bitcoin_p2p_client is not None
         first_loop = True
         while True:
-            await self.bitcoin_net_io.wait_for_connection()
+            await self.bitcoin_p2p_client.wait_for_connection()
             if not first_loop:
                 self.logger.debug(f"The bitcoin node disconnected but is now reconnected. "
                                   f"Re-requesting mempool (as appropriate)...")
-            await self.connect_session()  # on_connection_made callback -> starts jobs
-            await self.send_version(self.peer.host, self.peer.port, self.host, self.port)
-            await self.bitcoin_net_io.handshake_complete_event.wait()
-            await self.bitcoin_net_io.connection_lost_event.wait()
-            self.con_lost_event.clear()
+            await self.connect_session()
+            await self.bitcoin_p2p_client.handshake_complete_event.wait()
+            await self.bitcoin_p2p_client.connection_lost_event.wait()
+            self.bitcoin_p2p_client.connection_lost_event.clear()
             first_loop = False
 
     async def stop(self) -> None:
@@ -222,37 +221,16 @@ class Controller(ControllerBase):
     def get_peer(self) -> 'Peer':
         return self.peers[0]
 
-    # ---------- Callbacks ---------- #
-    def on_connection_made(self) -> None:
-        pass
-
-    def on_connection_lost(self) -> None:
-        self.con_lost_event.set()
-
-    # ---------- end callbacks ---------- #
-
     async def connect_session(self) -> None:
         peer = self.get_peer()
-        self.logger.debug("Connecting to (%s, %s) [%s]", peer.host, peer.port, self.net_config.NET)
+        self.logger.debug("Connecting to (%s, %s) [%s]", peer.remote_host, peer.remote_port,
+            self.net_config.NET)
         try:
-            self.bitcoin_net_io = BitcoinP2PClient(peer.host, peer.port, self.handlers)
-            await self.bitcoin_net_io.connect()
+            self.bitcoin_p2p_client = BitcoinP2PClient(peer.remote_host, peer.remote_port,
+                self.handlers, self.net_config)
+            await self.bitcoin_p2p_client.connect()
         except ConnectionResetError:
             await self.stop()
-
-    async def handle(self) -> None:
-        while True:
-            command, message = await self.sync_state.incoming_msg_queue.get()
-            # self.logger.debug("command=%s", command.rstrip(b'\0').decode('ascii'))
-            handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
-            handler_func = getattr(self.handlers, handler_func_name)
-            await handler_func(message)
-
-    async def spawn_handler_tasks(self) -> None:
-        """spawn 4 tasks so that if one handler is waiting on an event that depends on
-        another handler, progress will continue to be made."""
-        for i in range(4):
-            self.tasks.append(create_task(self.handle()))
 
     # Multiprocessing Workers
     def start_workers(self) -> None:
@@ -341,7 +319,7 @@ class Controller(ControllerBase):
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s",
                 raw_blocks_array, 0)
-            tx_rows, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
+            tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
                 height, confirmed=True, first_tx_pos_batch=0)
             batched_tx_rows.extend(tx_rows)
             batched_in_rows.extend(in_rows)
@@ -364,7 +342,8 @@ class Controller(ControllerBase):
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
         self.logger.debug(f"Requesting mempool...")
-        await self.bitcoin_net_io.send_message(self.serializer.mempool())
+        assert self.bitcoin_p2p_client is not None
+        await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
     async def output_memory_usage_task_async(self) -> None:
         self.logger.debug("Tracemalloc Active")
@@ -378,7 +357,6 @@ class Controller(ControllerBase):
         if os.environ.get('TRACEMALLOC', '0') == '1':
             self.tasks.append(create_task(self.output_memory_usage_task_async()))
         self.mysql_db = self.storage.mysql_database
-        await self.spawn_handler_tasks()
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
@@ -536,6 +514,7 @@ class Controller(ControllerBase):
                 raise
 
     async def check_for_ibd_status(self, conduit_best_tip: Header) -> None:
+        assert self.bitcoin_p2p_client is not None
         with self.storage.headers_lock:
             local_tip = self.storage.headers.longest_chain().tip
         if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
@@ -545,7 +524,7 @@ class Controller(ControllerBase):
             await self.is_ibd_socket.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
             create_task(self.maintain_node_connection())
-            await self.bitcoin_net_io.handshake_complete_event.wait()
+            await self.bitcoin_p2p_client.handshake_complete_event.wait()
             await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
 

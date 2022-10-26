@@ -4,7 +4,7 @@ import math
 import random
 import time
 from os import urandom
-from typing import List, cast, Protocol
+from typing import List, cast
 
 from bitcoinx import (
     pack_le_uint32,

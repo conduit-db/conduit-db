@@ -129,6 +129,7 @@ class Controller(ControllerBase):
         await self.setup()
         wait_for_mysql()
         await self.connect_session()
+        assert self.bitcoin_p2p_client is not None
         self.tasks.append(create_task(self.start_jobs()))
         wait_until_connection_lost = create_task(self.bitcoin_p2p_client.connection_lost_event.wait())
         self.tasks.append(wait_until_connection_lost)
@@ -246,11 +247,11 @@ class Controller(ControllerBase):
                 height -= 1
 
     async def start_jobs(self) -> None:
+        assert self.bitcoin_p2p_client is not None
         self.database_integrity_check()
         thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
         thread.start()
         await self.spawn_aiohttp_api()
-        await self.spawn_handler_tasks()
         await self.bitcoin_p2p_client.handshake_complete_event.wait()
 
         self.start_workers()
@@ -265,6 +266,7 @@ class Controller(ControllerBase):
         self.tasks.append(create_task(self.sync_all_blocks_job()))
 
     async def _get_max_headers(self) -> None:
+        assert self.bitcoin_p2p_client is not None
         tip = self.sync_state.get_local_tip()
         block_locator_hashes = []
         for i in range(0, 25, 2):
@@ -329,6 +331,7 @@ class Controller(ControllerBase):
         This method relies on the node responding to the prior getblocks request with up to 500
         inv messages.
         """
+        assert self.bitcoin_p2p_client is not None
         count_pending = len(blocks_batch_set)
         count_requested = 0
         while True:
@@ -443,6 +446,7 @@ class Controller(ControllerBase):
 
     async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
             -> None:
+        assert self.bitcoin_p2p_client is not None
         original_stop_height = stop_header.height
         while True:
             first_locator = self.get_header_for_height(start_header.height - 1)
