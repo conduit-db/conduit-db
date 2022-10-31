@@ -334,9 +334,3 @@ async def test_big_block_exceeding_network_buffer_capacity():
     finally:
         if client:
             await client.close_connection()
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass

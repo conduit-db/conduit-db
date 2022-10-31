@@ -126,7 +126,7 @@ def test_parse_txs():
         last_chunk=True)
 
     t0 = time.perf_counter()
-    REPEAT_N_TIMES = 10
+    REPEAT_N_TIMES = 1
     for i in range(REPEAT_N_TIMES):
         tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
             413567, True, 0)

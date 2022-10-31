@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 import logging
 import os
 import threading
@@ -10,13 +11,10 @@ from pathlib import Path
 import lmdb
 import typing
 
-
-from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
-
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
+
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
-from ...bitcoin_p2p_types import BlockDataMsg
 
 if typing.TYPE_CHECKING:
     import array

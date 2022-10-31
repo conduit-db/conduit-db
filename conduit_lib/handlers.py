@@ -295,6 +295,7 @@ class Handlers(MessageHandlerProtocol):
                 self.batched_tx_offsets.append((block_data_msg.block_hash, block_data_msg.tx_offsets))
 
             with self.small_blocks_lock:
+                assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)
                 packed_message = self.pack_block_data_message_for_worker(block_data_msg)
                 await self.send_to_worker_async(packed_message)

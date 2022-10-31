@@ -139,6 +139,13 @@ class BitcoinP2PClient:
         if self.writer and not self.writer.is_closing():
             self.writer.close()
         self.connection_lost_event.set()
+        for task in self.tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
 
     async def handle_message_task(self) -> None:
         while True:
