@@ -195,11 +195,12 @@ class Controller(ControllerBase):
             self.lmdb.close()
 
         for task in self.tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
     def get_peer(self) -> Peer:
         return self.peers[0]
@@ -234,9 +235,9 @@ class Controller(ControllerBase):
         assert self.lmdb is not None
         host, port = get_conduit_raw_host_and_port()
         self.ipc_sock_server = ThreadedTCPServer(addr=(host, port),
-            handler=ThreadedTCPRequestHandler, storage_path=Path(self.lmdb._storage_path),
+            handler=ThreadedTCPRequestHandler,
             block_headers=self.storage.block_headers,
-            block_headers_lock=self.storage.block_headers_lock)
+            block_headers_lock=self.storage.block_headers_lock, lmdb=self.lmdb)
         self.ipc_sock_server.serve_forever()
 
     def database_integrity_check(self) -> None:

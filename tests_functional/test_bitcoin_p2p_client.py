@@ -33,6 +33,7 @@ os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
 os.environ['NETWORK_BUFFER_SIZE'] = "1000000"
 os.environ['DATADIR'] = str(MODULE_DIR)
 BIG_BLOCK_WRITE_DIRECTORY = Path(os.environ["DATADIR"]) / "big_blocks"
+os.makedirs(BIG_BLOCK_WRITE_DIRECTORY)
 
 
 
@@ -268,6 +269,7 @@ async def test_getblocks_request_and_blocks_response():
 
 @pytest.mark.asyncio
 async def test_big_block_exceeding_network_buffer_capacity():
+    os.environ['NETWORK_BUFFER_SIZE'] = "500000"
     client = None
     task = None
     try:
@@ -305,21 +307,30 @@ async def test_big_block_exceeding_network_buffer_capacity():
             if msg_count == 1:
                 assert isinstance(message, BlockChunkData)
                 assert message.chunk_num == 1
-                assert message.num_chunks == 2
+                assert message.num_chunks == 3
                 assert message.block_hash == block_hash
-                assert len(message.raw_block_chunk) == 999976
-                assert message.tx_offsets_for_chunk.tolist() == [81, 65829, 131577, 197325, 263073, 328821,
-                    394569, 460317, 526065, 591813, 657561, 723309, 789057, 854805, 920553, 986301]
+                assert len(message.raw_block_chunk) == 499976
+                assert message.tx_offsets_for_chunk.tolist() == [81, 65829, 131577, 197325, 263073,
+                    328821, 394569, 460317]
 
             if msg_count == 2:
                 assert isinstance(message, BlockChunkData)
                 assert message.chunk_num == 2
-                assert message.num_chunks == 2
+                assert message.num_chunks == 3
+                assert message.block_hash == block_hash
+                assert len(message.raw_block_chunk) == 500000
+                assert message.tx_offsets_for_chunk.tolist() == [526065, 591813, 657561, 723309,
+                    789057, 854805, 920553, 986301]
+
+            if msg_count == 3:
+                assert isinstance(message, BlockChunkData)
+                assert message.chunk_num == 3
+                assert message.num_chunks == 3
                 assert message.block_hash == block_hash
                 assert len(message.raw_block_chunk) == 52073
                 assert message.tx_offsets_for_chunk.tolist() == []
 
-            if msg_count == 3:
+            if msg_count == 4:
                 assert isinstance(message, BlockDataMsg)
                 assert message.block_type == BlockType.BIG_BLOCK
                 assert message.block_hash == block_hash

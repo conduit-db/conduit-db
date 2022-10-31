@@ -140,11 +140,12 @@ class BitcoinP2PClient:
             self.writer.close()
         self.connection_lost_event.set()
         for task in self.tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
     async def handle_message_task(self) -> None:
@@ -219,6 +220,8 @@ class BitcoinP2PClient:
                 self.cur_header.payload_size, raw_block, big_block_filepath=None)
             await self.message_handler.on_block(block_data_msg, self.peer)
             return
+
+        logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
 
         # Init local variables - Keeping them local avoids polluting instance state
         big_block_filepath = None

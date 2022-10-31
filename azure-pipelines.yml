@@ -60,13 +60,14 @@ steps:
   displayName: 'Run dockerized services'
 
 - script: |
+    python3 -m pip install electrumsv_node
+    python3 -m pip install pytest-asyncio
     pytest tests --verbose
   timeoutInMinutes: 10
   continueOnError: false
   displayName: 'Pytest'
 
 - script: |
-    python3 -m pip install electrumsv_node
     pytest tests_functional --verbose
   timeoutInMinutes: 10
   continueOnError: false

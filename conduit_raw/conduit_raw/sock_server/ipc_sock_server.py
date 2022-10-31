@@ -291,12 +291,11 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     is_running = True
 
     def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
-            storage_path: Path, block_headers: bitcoinx.Headers,
-            block_headers_lock: threading.RLock) -> None:
+            block_headers: bitcoinx.Headers,
+            block_headers_lock: threading.RLock, lmdb: LMDB_Database) -> None:
         super(ThreadedTCPServer, self).__init__(addr, handler)
 
-        logger.debug(f"ThreadedTCPServer LMDB_Database storage_path={storage_path}")
-        self.lmdb = LMDB_Database(storage_path=str(storage_path), lock=True)
+        self.lmdb = lmdb
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
 
@@ -339,12 +338,13 @@ if __name__ == "__main__":
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
+    lmdb = LMDB_Database(str(storage_path), lock=True)
     net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
     block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()
 
-    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler, storage_path, block_headers,
-        block_headers_lock)
+    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler, block_headers,
+        block_headers_lock, lmdb=lmdb)
     with server:
         ip, port = server.server_address
         server.serve_forever()

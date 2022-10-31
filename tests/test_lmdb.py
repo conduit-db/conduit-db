@@ -33,15 +33,15 @@ TX_OFFSETS_DIR = Path(os.environ["TX_OFFSETS_DIR"])
 TEST_HEADERS_FILE = MODULE_DIR / "test_headers.mmap"
 
 
-def ipc_sock_server_thread():
+def ipc_sock_server_thread(lmdb: LMDB_Database):
     from conduit_lib.store import setup_headers_store
     HOST, PORT = "127.0.0.1", 34586
     net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
     block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()
     ipc_sock_server = ThreadedTCPServer(addr=(HOST, PORT),
-        handler=ThreadedTCPRequestHandler, storage_path=LMDB_STORAGE_PATH,
-        block_headers=block_headers, block_headers_lock=block_headers_lock)
+        handler=ThreadedTCPRequestHandler,
+        block_headers=block_headers, block_headers_lock=block_headers_lock, lmdb=lmdb)
     ipc_sock_server.serve_forever()
 
 
@@ -49,7 +49,8 @@ class TestLMDBDatabase:
 
     def setup_class(self):
         self.lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
-        self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread)
+        self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread,
+            args=[self.lmdb])
         self.ipc_sock_server_thread.start()
         os.environ['CONDUIT_RAW_API_HOST'] = 'localhost'
         os.environ['CONDUIT_RAW_API_PORT'] = '34586'
