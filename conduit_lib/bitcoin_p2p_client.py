@@ -368,11 +368,12 @@ class BitcoinP2PClient:
             while self.next_header_available():
                 self.cur_header = self.get_next_p2p_header()
                 next_payload_available = self.next_payload_available()
-
                 if self.cur_header.command == EXTMSG_BIN:
                     if self.next_extended_header_available():
                         self.cur_header = self.get_next_extended_p2p_header()
                         next_payload_available = self.next_extended_payload_available()
+                    else:
+                        break  # read more data -> try to get enough for the full next header
 
                 if next_payload_available:
                     self.cur_msg_start_pos = self.last_msg_end_pos + HEADER_LENGTH

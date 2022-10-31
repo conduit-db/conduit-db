@@ -6,13 +6,13 @@ from conduit_lib.constants import SCALINGTESTNET, REGTEST, MAINNET, TESTNET
 def get_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="run conduit_index chain-indexer")
     parser.add_argument(
-        "--remote_host",
+        "--host",
         dest="remote_host",
         nargs=argparse.OPTIONAL,
         help="specify a remote_host bitcoin node to connect to (to override default)",
     )
     parser.add_argument(
-        "--remote_port",
+        "--port",
         dest="remote_port",
         action="store",
         type=int,
@@ -55,7 +55,7 @@ def get_parser() -> argparse.ArgumentParser:
              "(for convenience when testing on RegTest)",
     )
     parser.add_argument(
-        "--mysql-remote_host",
+        "--mysql-host",
         action="store",
         dest="mysql_host",
         default="127.0.0.1:52525",
@@ -64,7 +64,7 @@ def get_parser() -> argparse.ArgumentParser:
              "mysql:3306 for use within docker",
     )
     parser.add_argument(
-        "--node-remote_host",
+        "--node-host",
         action="store",
         dest="node_host",
         default="127.0.0.1:18444",

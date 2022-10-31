@@ -80,8 +80,7 @@ class MempoolParsingThread(threading.Thread):
             tx_offsets = [0]
             timestamp = int(time.time())
             tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = parse_txs(rawtx,
-                tx_offsets, timestamp,
-                False, 0)
+                tx_offsets, timestamp, False, 0)
             tx_rows_batched.extend(tx_rows_mempool)
             in_rows_batched.extend(in_rows)
             out_rows_batched.extend(out_rows)

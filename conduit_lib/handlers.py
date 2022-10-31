@@ -283,6 +283,10 @@ class Handlers(MessageHandlerProtocol):
                 os.remove(block_data_msg.big_block_filepath)
             return
 
+        # These are batched up to prevent HDD stutter
+        with self.batched_tx_offsets_lock:
+            self.batched_tx_offsets.append((block_data_msg.block_hash, block_data_msg.tx_offsets))
+
         if block_data_msg.block_type & BlockType.BIG_BLOCK:
             data_location = DataLocation(str(block_data_msg.big_block_filepath), start_offset=0,
                 end_offset=block_data_msg.block_size)
@@ -290,10 +294,6 @@ class Handlers(MessageHandlerProtocol):
                 len(block_data_msg.tx_offsets))
             await self._lmdb_put_big_block_in_thread(big_block=self.big_block)
         else:
-            # These are batched up to prevent HDD stutter
-            with self.batched_tx_offsets_lock:
-                self.batched_tx_offsets.append((block_data_msg.block_hash, block_data_msg.tx_offsets))
-
             with self.small_blocks_lock:
                 assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)

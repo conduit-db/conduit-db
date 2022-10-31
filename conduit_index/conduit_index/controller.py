@@ -14,7 +14,6 @@ from pathlib import Path
 import socket
 import struct
 import time
-import tracemalloc
 import typing
 from typing import Any, cast
 import zmq
@@ -33,7 +32,6 @@ from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
     CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
-from conduit_lib.utils import record_top_memory_consumers
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
     get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
@@ -64,10 +62,11 @@ class ZMQSocketListeners:
 
         # Controller to TxParser Workers
         self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
+        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
+
         self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
         self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
 
-        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
         self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
         self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
 
@@ -325,17 +324,7 @@ class Controller(ControllerBase):
         assert self.bitcoin_p2p_client is not None
         await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
-    async def output_memory_usage_task_async(self) -> None:
-        self.logger.debug("Tracemalloc Active")
-        TRACEMALLOC_INTERVAL = int(os.environ.get('TRACEMALLOC_INTERVAL', '300'))
-        while True:
-            await asyncio.sleep(TRACEMALLOC_INTERVAL)
-            snapshot = tracemalloc.take_snapshot()
-            record_top_memory_consumers(snapshot, suffix='conduit_index')
-
     async def start_jobs(self) -> None:
-        if os.environ.get('TRACEMALLOC', '0') == '1':
-            self.tasks.append(create_task(self.output_memory_usage_task_async()))
         self.mysql_db = self.storage.mysql_database
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
