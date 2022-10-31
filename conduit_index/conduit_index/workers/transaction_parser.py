@@ -13,7 +13,6 @@ import zmq
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.logging_client import setup_tcp_logging
-from conduit_lib.stack_tracer import trace_start, trace_stop
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
 from ..types import ProcessedBlockAcks, MempoolTxAck
@@ -53,8 +52,6 @@ class TxParser(multiprocessing.Process):
         self.confirmed_tx_flush_queue = queue.Queue()
         self.mempool_tx_flush_queue = queue.Queue()
         try:
-            if int(os.environ.get('RUN_STACK_TRACER', '0')):
-                trace_start(str(MODULE_DIR / f"stack_tracing_{os.urandom(4).hex()}.html"))
             main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
 
@@ -73,9 +70,6 @@ class TxParser(multiprocessing.Process):
         except Exception:
             self.logger.exception("Caught exception")
             raise
-        finally:
-            if int(os.environ.get('RUN_STACK_TRACER', '0')):
-                trace_stop()
 
     def main_thread(self) -> None:
         try:

@@ -119,7 +119,7 @@ class FlatFileDb:
         filename = filename.removesuffix(".dat")
         return int(filename)
 
-    def _maybe_get_new_mutable_file(self, force_new_file: bool=True) -> tuple[Path, int]:
+    def _maybe_get_new_mutable_file(self, force_new_file: bool=False) -> tuple[Path, int]:
         """This function is idempotent. Caller must use a Write lock"""
         assert self.mutable_file_path is not None
         def _mutable_file_is_full() -> bool:

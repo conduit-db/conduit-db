@@ -1,3 +1,4 @@
+import array
 import asyncio
 import enum
 from pathlib import Path
@@ -26,8 +27,8 @@ class ExtendedP2PHeader(NamedTuple):
 
 
 class BlockType(enum.IntEnum):
-    SMALL_BLOCK: int = 1 << 0  # fits in the network buffer -> write in batches periodically
-    BIG_BLOCK: int = 1 << 1  # overflows network buffer -> use temp file to write to disc in chunks
+    SMALL_BLOCK = 1 << 0  # fits in the network buffer -> write in batches periodically
+    BIG_BLOCK = 1 << 1  # overflows network buffer -> use temp file to write to disc in chunks
 
 
 class BlockChunkData(NamedTuple):
@@ -35,13 +36,13 @@ class BlockChunkData(NamedTuple):
     num_chunks: int
     block_hash: bytes
     raw_block_chunk: bytes
-    tx_offsets_for_chunk: list[int]
+    tx_offsets_for_chunk: 'array.ArrayType[int]'
 
 
-class BlockMsgData(NamedTuple):
+class BlockDataMsg(NamedTuple):
     block_type: BlockType
     block_hash: bytes
-    tx_offsets: list[int]
+    tx_offsets: 'array.ArrayType[int]'
     block_size: int
     # SMALL BLOCK
     small_block_data: bytes | None

@@ -1,14 +1,8 @@
-import logging
+import bitcoinx
 import os
 from pathlib import Path
 
-import MySQLdb
-import bitcoinx
-import pytest
-
-from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.networks import NetworkConfig
-from conduit_lib.store import setup_storage, Storage
 from conduit_lib.utils import get_network_type
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))

@@ -6,9 +6,8 @@ import hashlib
 import logging
 import os
 import struct
-import typing
 from math import ceil, log
-from typing import cast, NamedTuple, Callable
+from typing import cast, NamedTuple
 
 from bitcoinx import hash_to_hex_str
 from struct import Struct
@@ -75,7 +74,7 @@ def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -
 
 
 def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool,
-        last_chunk: bool) -> tuple[list[int], int]:
+        last_chunk: bool) -> tuple[array.ArrayType[int], int]:
     """
     Call this function iteratively as more slices of the raw block become available from the
     p2p socket.
@@ -83,7 +82,7 @@ def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool,
     Goes until it hits a struct.error or IndexError to indicate it needs the next chunk.
     """
     # skip header bytes + tx_count and set first tx offset
-    tx_offsets = []
+    tx_offsets: array.ArrayType[int] = array.array('Q')
     chunk_offset = 0
     if first_chunk:
         tx_count, chunk_offset = unpack_varint(next_chunk[80:89], chunk_offset)

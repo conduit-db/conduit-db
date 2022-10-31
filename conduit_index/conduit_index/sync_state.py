@@ -55,7 +55,6 @@ class SyncState:
         self.target_header_height: int | None = None
         self.target_block_header_height: int | None = None
         self.local_block_tip_height: int = self.get_local_block_tip_height()
-        self.initial_block_download_event = asyncio.Event()  # start requesting mempool txs
 
         # Accounting and ack'ing for non-block msgs
         self.incoming_msg_queue: \
@@ -80,7 +79,6 @@ class SyncState:
         self.done_blocks_tx_parser_event = asyncio.Event()
 
         self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
-        self.initial_block_download_event_mp = multiprocessing.Event()
 
         self.total_time_allocating_work = 0.
         self.is_post_ibd = False
@@ -116,7 +114,7 @@ class SyncState:
         with self.storage.block_headers_lock:
             return self.storage.block_headers.longest_chain().tip
 
-    async def is_ibd(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) -> bool:
+    async def is_post_ibd_state(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) -> bool:
         if self.is_post_ibd:  # cache result
             return self.is_post_ibd
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
@@ -279,15 +277,6 @@ class SyncState:
         self._work_item_progress_counter = {}
 
     # ----- AVOID MEMPOOL-INDUCED THRASHING DURING IBD ----- #
-
-    def is_post_IBD(self) -> bool:
-        """has initial block download been completed?
-        (to syncronize all blocks with all initially fetched headers)"""
-        return self.initial_block_download_event.is_set()
-
-    def set_post_IBD_mode(self) -> None:
-        self.initial_block_download_event.set()  # once set the first time will stay set
-        self.initial_block_download_event_mp.set()
 
     def print_progress_info(self) -> None:
         self.logger.debug(f"Count of all_pending_chip_away_work_item_ids: "

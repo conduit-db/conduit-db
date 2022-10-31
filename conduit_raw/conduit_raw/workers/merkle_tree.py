@@ -60,20 +60,20 @@ class MTreeCalculator(multiprocessing.Process):
             tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
 
             if not self.tx_hashes_map.get(blk_hash):
-                self.logger.debug(f"Got new big block: {hash_to_hex_str(blk_hash)}")
+                # self.logger.debug(f"Got new block: {hash_to_hex_str(blk_hash)}")
                 self.tx_hashes_map[blk_hash] = bytearray()
 
             if chunk_num == 1:
                 total_tx_count, _ = unpack_varint(raw_block_chunk[80:89], offset=0)
                 self.tx_count_map[blk_hash] = total_tx_count
 
-            for i in range(len(tx_offsets_for_chunk)-1):
+            for i in range(len(tx_offsets_for_chunk)):
                 start_offset = tx_offsets_for_chunk[i]
-                if i + 1 <= len(tx_offsets_for_chunk):
-                    end_offset = tx_offsets_for_chunk[i+1]
-                    rawtx = raw_block_chunk[start_offset:end_offset]
-                else: # last tx in chunk
+                if i == (len(tx_offsets_for_chunk) - 1):  # last tx in chunk
                     rawtx = raw_block_chunk[start_offset:]
+                else:  # last tx in chunk
+                    end_offset = tx_offsets_for_chunk[i + 1]
+                    rawtx = raw_block_chunk[start_offset:end_offset]
                 tx_hash = double_sha256(rawtx)
                 self.tx_hashes_map[blk_hash] += tx_hash
 
@@ -90,6 +90,7 @@ class MTreeCalculator(multiprocessing.Process):
                 batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
                 batched_acks.append(blk_hash)
 
+        # self.logger.debug(f"batched_merkle_trees={batched_merkle_trees}")
         lmdb.put_merkle_trees(batched_merkle_trees)
         t1 = time.perf_counter() - t0
         self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
@@ -100,14 +101,14 @@ class MTreeCalculator(multiprocessing.Process):
     # ------------------------ SMALL BLOCK HANDLING --------------------- #
 
     def run(self) -> None:
+        self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
         if sys.platform == "win32":
             setup_tcp_logging(port=54545)
         self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Starting {self.__class__.__name__}...")
 
         # PUB-SUB from Controller to worker to kill the worker
-        context1 = zmq.Context[zmq.Socket[bytes]]()
-        self.kill_worker_socket = context1.socket(zmq.SUB)
+        self.kill_worker_socket = self.zmq_context.socket(zmq.SUB)
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 
@@ -120,14 +121,15 @@ class MTreeCalculator(multiprocessing.Process):
         prev_time_check = time.time()
 
         BASE_PORT_NUM = 41830
-        context2 = zmq.Context[zmq.Socket[bytes]]()
-        merkle_tree_socket = context2.socket(zmq.REP)
-        merkle_tree_socket.connect(f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
+        self.merkle_tree_socket = self.zmq_context.socket(zmq.PULL)
+        self.merkle_tree_socket.connect(f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
+        self.logger.debug(f"Connected merkle tree ZMQ socket on: "
+                          f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
         try:
             while True:
                 try:
-                    if merkle_tree_socket.poll(1000, zmq.POLLIN):
-                        packed_msg = merkle_tree_socket.recv(zmq.NOBLOCK)
+                    if self.merkle_tree_socket.poll(1000, zmq.POLLIN):
+                        packed_msg = self.merkle_tree_socket.recv(zmq.NOBLOCK)
                         if not packed_msg:
                             return  # poison pill stop command
                         batch.append(bytes(packed_msg))
@@ -148,9 +150,12 @@ class MTreeCalculator(multiprocessing.Process):
         except Exception as e:
             self.logger.exception("Caught exception")
         finally:
-            self.logger.info("Closing merkle tree thread")
-            merkle_tree_socket.close()
-            # merkle_tree_socket.term()
+            self.logger.info("Closing merkle tree Process")
+            try:
+                self.kill_worker_socket.close()
+                self.merkle_tree_socket.close()
+            except Exception:
+                self.logger.exception("Caught exception")
 
     def kill_thread(self) -> None:
         try:
@@ -160,8 +165,16 @@ class MTreeCalculator(multiprocessing.Process):
                     self.logger.info(f"Process Stopped")
                     break
                 time.sleep(0.2)
+        except KeyboardInterrupt:
+            # This will get logged by the multi-processing if we raise it. The expected behaviour
+            # is therefore that we catch this and recognise it as an exit condition.
+            return
         except Exception as e:
             self.logger.exception("Caught exception")
         finally:
-            self.logger.info(f"Process Stopped")
-            sys.exit(0)
+            try:
+                self.kill_worker_socket.close()
+                self.merkle_tree_socket.close()
+            except Exception:
+                self.logger.exception("Caught exception")
+            self.logger.info(f"MTreeCalculator process stopped")

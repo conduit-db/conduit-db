@@ -16,7 +16,7 @@ import logging
 import os
 
 from conduit_lib.algorithms import unpack_varint
-from conduit_lib.bitcoin_p2p_types import BlockChunkData, BlockMsgData, BitcoinPeerInstance, \
+from conduit_lib.bitcoin_p2p_types import BlockChunkData, BlockDataMsg, BitcoinPeerInstance, \
     BlockType
 from conduit_lib.commands import INV, BLOCK_BIN
 from conduit_lib.constants import REGTEST, ZERO_HASH
@@ -134,8 +134,8 @@ class MockHandlers(MessageHandlerProtocol):
     async def on_block_chunk(self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance) -> None:
         self.got_message_queue.put_nowait((commands.BLOCK, block_chunk_data))
 
-    async def on_block(self, block_msg_data: BlockMsgData, peer: BitcoinPeerInstance) -> None:
-        self.got_message_queue.put_nowait((commands.BLOCK, block_msg_data))
+    async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinPeerInstance) -> None:
+        self.got_message_queue.put_nowait((commands.BLOCK, block_data_msg))
 
 
 async def _drain_handshake_messages(client: BitcoinP2PClient, message_handler: MockHandlers):
@@ -249,7 +249,7 @@ async def test_getblocks_request_and_blocks_response():
             if command == INV:
                 continue
 
-            message = cast(BlockMsgData, message)
+            message = cast(BlockDataMsg, message)
             raw_header = message.small_block_data[0:80]
             block_hash = double_sha256(raw_header)
             node_rpc_result = electrumsv_node.call_any('getblock', hash_to_hex_str(block_hash)).json()['result']
@@ -296,7 +296,7 @@ async def test_big_block_exceeding_network_buffer_capacity():
         client.peer = unittest.mock.Mock()
 
         task = create_task(client.start_session())
-        expected_msg_count = 3  # 2 x BlockChunkData; 1 x BlockMsgData for the full block
+        expected_msg_count = 3  # 2 x BlockChunkData; 1 x BlockDataMsg for the full block
         msg_count = 0
         for i in range(expected_msg_count):
             command, message = await message_handler.got_message_queue.get()
@@ -308,7 +308,7 @@ async def test_big_block_exceeding_network_buffer_capacity():
                 assert message.num_chunks == 2
                 assert message.block_hash == block_hash
                 assert len(message.raw_block_chunk) == 999976
-                assert message.tx_offsets_for_chunk == [81, 65829, 131577, 197325, 263073, 328821,
+                assert message.tx_offsets_for_chunk.tolist() == [81, 65829, 131577, 197325, 263073, 328821,
                     394569, 460317, 526065, 591813, 657561, 723309, 789057, 854805, 920553, 986301]
 
             if msg_count == 2:
@@ -317,13 +317,13 @@ async def test_big_block_exceeding_network_buffer_capacity():
                 assert message.num_chunks == 2
                 assert message.block_hash == block_hash
                 assert len(message.raw_block_chunk) == 52073
-                assert message.tx_offsets_for_chunk == []
+                assert message.tx_offsets_for_chunk.tolist() == []
 
             if msg_count == 3:
-                assert isinstance(message, BlockMsgData)
+                assert isinstance(message, BlockDataMsg)
                 assert message.block_type == BlockType.BIG_BLOCK
                 assert message.block_hash == block_hash
-                assert message.tx_offsets == [81, 65829, 131577, 197325, 263073, 328821, 394569,
+                assert message.tx_offsets.tolist() == [81, 65829, 131577, 197325, 263073, 328821, 394569,
                     460317, 526065, 591813, 657561, 723309, 789057, 854805, 920553, 986301]
                 assert message.block_size == 1052049
                 assert message.small_block_data == None

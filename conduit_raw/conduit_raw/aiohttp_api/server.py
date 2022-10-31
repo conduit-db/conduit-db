@@ -47,7 +47,7 @@ class ApplicationState(object):
 
         context6 = zmq.asyncio.Context.instance()
         self._reorg_event_socket = context6.socket(zmq.PULL)
-        self._reorg_event_socket.bind("tcp://127.0.0.1:51495")
+        self._reorg_event_socket.connect("tcp://127.0.0.1:51495")
 
         self._reference_server_connections = dict[str, ReferenceServerConnection]()
         self._reference_server_connections_lock: threading.RLock = threading.RLock()

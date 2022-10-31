@@ -20,24 +20,25 @@ FFDB_LOCKFILE = os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
 
 os.makedirs(TEST_DATADIR, exist_ok=True)
 
+
 def _do_general_read_and_write_ops(ffdb: FlatFileDb):
     logging.basicConfig(level=logging.DEBUG)
     # NOTE The use case of a chain indexer does not require fsync because we can always
     # re-sync from the node if we crash...
     with ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
-        # print(data_location_aa)
+        # logger.debug(data_location_aa)
         data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))
-        # print(data_location_bb)
+        # logger.debug(data_location_bb)
 
         # Read
         data_aa = ffdb.get(data_location_aa)
         assert data_aa == b"a" * (MAX_DAT_FILE_SIZE // 16), data_aa
-        # print(data_aa)
+        # logger.debug(data_aa)
 
         data_bb = ffdb.get(data_location_bb)
         assert data_bb == b"b" * (MAX_DAT_FILE_SIZE // 16), data_bb
-        # print(data_bb)
+        # logger.debug(data_bb)
 
         with ffdb.mutable_file_rwlock.write_lock():
             ffdb._maybe_get_new_mutable_file()
@@ -60,7 +61,9 @@ def test_delete():
             mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
             fsync=True) as ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
+        # logger.debug(f"Put to {data_location_aa.file_path}")
         ffdb.delete_file(Path(data_location_aa.file_path))
+        # logger.debug(f"Deleted from {data_location_aa.file_path}")
         with pytest.raises(FileNotFoundError):
             ffdb.get(data_location_aa)
 

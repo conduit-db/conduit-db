@@ -1,10 +1,8 @@
+import cbor2
 import logging
+from MySQLdb import _mysql
 import time
 import typing
-from typing import cast
-
-import cbor2
-from MySQLdb import _mysql
 
 from conduit_lib.utils import zmq_send_no_block
 from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks, MySQLFlushBatchWithAcksMempool, \
@@ -42,25 +40,21 @@ def mysql_flush_rows_confirmed(worker: 'FlushConfirmedTransactionsThread',
         flush_batch_with_acks: MySQLFlushBatchWithAcks, mysql_db: MySQLDatabase) -> None:
     tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, acks = flush_batch_with_acks
     try:
-        # TODO `mysql_bulk_load_confirmed_tx_rows` should raise if the database
-        #  is overloaded and the `acks` should be pushed to a different error
-        #  handling queue for the controller to re-enqueue the work items.
-        #  There should be database tables for workitem ids -> WorkUnits for
-        #  re-scheduling the work
         mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
         mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
 
         # Ack for all flushed blocks
-        assert worker.ack_for_mined_tx_socket is not None
+        assert worker.socket_mined_tx_ack is not None
+        assert worker.socket_mined_tx_parsed_ack is not None
         for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
             msg = cbor2.dumps({blk_num: part_tx_hashes})
-            zmq_send_no_block(worker.ack_for_mined_tx_socket, msg,
+            zmq_send_no_block(worker.socket_mined_tx_ack, msg,
                 on_blocked_msg="Mined Transaction ACK receiver is busy")
 
             tx_count = len(part_tx_hashes)
 
             msg2 = cbor2.dumps((worker.worker_id, work_item_id, blk_hash, tx_count))
-            zmq_send_no_block(worker.tx_parse_ack_socket, msg2,
+            zmq_send_no_block(worker.socket_mined_tx_parsed_ack, msg2,
                 on_blocked_msg="Tx parse ACK receiver is busy")
     except _mysql.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")

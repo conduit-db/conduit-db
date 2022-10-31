@@ -368,6 +368,8 @@ def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
         return
     try:
         future.result()
+    except asyncio.CancelledError:
+        pass
     except Exception:
         logger.exception(f"Unexpected exception in task")
 

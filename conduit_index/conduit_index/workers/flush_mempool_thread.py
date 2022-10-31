@@ -29,7 +29,6 @@ class FlushMempoolTransactionsThread(threading.Thread):
 
         self.last_mysql_activity = int(time.time())
         self.worker_id = worker_id
-        # self.worker_ack_queue_tx_parse_mempool = worker_ack_queue_tx_parse_mempool
         self.mempool_tx_flush_queue = mempool_tx_flush_queue
 
     def run(self) -> None:

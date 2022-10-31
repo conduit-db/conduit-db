@@ -84,7 +84,7 @@ async def main() -> None:
             node_port=int(os.environ['NODE_PORT']))
         os.environ['GENESIS_ACTIVATION_HEIGHT'] = str(net_config.GENESIS_ACTIVATION_HEIGHT)
         controller = Controller(
-            net_config=net_config, host="127.0.0.1", port=8000, loop_type=loop_type,
+            net_config=net_config, loop_type=loop_type,
         )
         try:
             await controller.run()

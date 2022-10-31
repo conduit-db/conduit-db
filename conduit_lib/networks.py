@@ -1,4 +1,5 @@
 import logging
+import random
 from collections import namedtuple
 from typing import cast
 
@@ -171,6 +172,9 @@ class NetworkConfig:
 
         self.peers: list[Peer] = []
         self.set_peers(network)
+
+    def get_peer(self) -> 'Peer':
+        return self.peers[random.randint(0, len(self.peers)-1)]
 
     def get_default_peers(self, network: AbstractNetwork) -> None:
         if isinstance(network, RegTestNet):

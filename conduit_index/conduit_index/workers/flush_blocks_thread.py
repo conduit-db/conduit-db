@@ -13,13 +13,9 @@ from ..workers.common import reset_rows, maybe_refresh_mysql_connection, \
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib import MySQLDatabase
 from conduit_lib.database.mysql.mysql_database import mysql_connect
+from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 
-# accumulate x seconds worth of txs or MAX_TX_BATCH_SIZE (whichever comes first)
-# TODO - during initial block download - should NOT rely on a timeout at all
-#  Should just keep on pumping the entire batch of blocks as fast as possible to
-#  Max out CPU.
-#  This ideally requires reliable PUB/SUB to do properly
 BLOCKS_MAX_TX_BATCH_LIMIT = 200_000
 BLOCK_BATCHING_RATE = 0.3
 
@@ -37,25 +33,21 @@ class FlushConfirmedTransactionsThread(threading.Thread):
         self.confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]] = \
             confirmed_tx_flush_queue
 
-        self.ack_for_mined_tx_socket: zmq.Socket[bytes] | None = None
-
-        context = zmq.Context[zmq.Socket[bytes]]()
-        self.tx_parse_ack_socket = context.socket(zmq.PUSH)
-        self.tx_parse_ack_socket.setsockopt(zmq.SNDHWM, 10000)
-        self.tx_parse_ack_socket.connect("tcp://127.0.0.1:54214")
-
-        context2 = zmq.Context[zmq.Socket[bytes]]()
-        self.ack_for_mined_tx_socket = context2.socket(zmq.PUSH)
-        self.ack_for_mined_tx_socket.setsockopt(zmq.SNDHWM, 10000)
-        self.ack_for_mined_tx_socket.connect("tcp://127.0.0.1:55889")
+        self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
+        self.socket_mined_tx_ack: zmq.Socket[bytes] | None = None
+        self.socket_mined_tx_parsed_ack: zmq.Socket[bytes] | None = None
 
         # A dedicated in-memory only table exclusive to this worker
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
-
         self.last_mysql_activity: int = int(time.time())
 
     def run(self) -> None:
+        self.socket_mined_tx_ack = connect_non_async_zmq_socket(self.zmq_context,
+            'tcp://127.0.0.1:55889', zmq.SocketType.PUSH, [(zmq.SocketOption.SNDHWM, 10000)])
+        self.socket_mined_tx_parsed_ack = connect_non_async_zmq_socket(self.zmq_context,
+            'tcp://127.0.0.1:54214', zmq.SocketType.PUSH, [(zmq.SocketOption.SNDHWM, 10000)])
+
         assert self.confirmed_tx_flush_queue is not None
         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
@@ -95,6 +87,8 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             raise e
         finally:
             mysql_db.close()
-            assert self.ack_for_mined_tx_socket is not None
-            self.ack_for_mined_tx_socket.close()
+            if self.socket_mined_tx_ack:
+                self.socket_mined_tx_ack.close()
+            if self.socket_mined_tx_parsed_ack:
+                self.socket_mined_tx_parsed_ack.close()
 

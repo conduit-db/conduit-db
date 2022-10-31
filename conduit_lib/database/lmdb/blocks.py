@@ -11,6 +11,7 @@ from bitcoinx import double_sha256
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
+from conduit_lib.bitcoin_p2p_types import BlockDataMsg
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.types import BlockMetadata, Slice, DataLocation
 

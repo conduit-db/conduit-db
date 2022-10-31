@@ -1,17 +1,16 @@
 import array
 import os
 import shutil
-import stat
 import struct
 import threading
 import time
 from pathlib import Path
-from typing import Callable
 
 import bitcoinx
 from bitcoinx import double_sha256
 
 from conduit_lib import NetworkConfig
+from conduit_lib.bitcoin_p2p_types import BlockDataMsg, BlockType
 from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -83,8 +82,7 @@ class TestLMDBDatabase:
         expected_block_size = len(TEST_RAW_BLOCK_413567)
         block_hash = double_sha256(TEST_RAW_BLOCK_413567[0:80])
         expected_raw_block = TEST_RAW_BLOCK_413567
-
-        batched_blocks = [expected_raw_block]
+        batched_blocks = [TEST_RAW_BLOCK_413567]
         self.lmdb.put_blocks(batched_blocks)
 
         actual_block_num = self.lmdb.get_block_num(block_hash)
@@ -115,7 +113,7 @@ class TestLMDBDatabase:
         expected_block_size = len(TEST_RAW_BLOCK_400000)
         block_hash = double_sha256(TEST_RAW_BLOCK_400000[0:80])
         expected_raw_block = TEST_RAW_BLOCK_400000
-        batched_blocks = [expected_raw_block]
+        batched_blocks = [TEST_RAW_BLOCK_400000]
         self.lmdb.put_blocks(batched_blocks)
 
         actual_block_num = self.lmdb.get_block_num(block_hash)

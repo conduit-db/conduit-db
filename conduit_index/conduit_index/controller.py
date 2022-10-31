@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import array
 import asyncio
-import tracemalloc
-from asyncio import BaseTransport, BaseProtocol
+import bitcoinx
+import cbor2
+from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
 from concurrent.futures.thread import ThreadPoolExecutor
 from io import BytesIO
 import logging
@@ -14,12 +14,9 @@ from pathlib import Path
 import socket
 import struct
 import time
+import tracemalloc
 import typing
 from typing import Any, cast
-
-import bitcoinx
-import cbor2
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
 import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
@@ -40,13 +37,12 @@ from conduit_lib.utils import record_top_memory_consumers
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
     get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api, \
-    wait_for_node
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api
 
 from .sync_state import SyncState
 from .types import WorkUnit
 from .workers.transaction_parser import TxParser
-
+from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -60,9 +56,40 @@ def get_headers_dir_conduit_index() -> Path:
     return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
 
 
+class ZMQSocketListeners:
+
+    def __init__(self) -> None:
+        self.zmq_async_context = AsyncZMQContext.instance()
+        self.zmq_sockets: list[zmq.asyncio.Socket] = []
+
+        # Controller to TxParser Workers
+        self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
+        self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
+        self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
+
+        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
+        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
+        self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
+
+        # Controller to Aiohttp API
+        self.reorg_event_socket = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:51495', zmq.SocketType.PUSH)
+
+    def bind_async_zmq_socket(self, context: AsyncZMQContext, uri: str,
+            zmq_socket_type: zmq.SocketType,
+            options: list[tuple[zmq.SocketOption, int | bytes]] | None = None) \
+            -> zmq.asyncio.Socket:
+        zmq_socket = bind_async_zmq_socket(context, uri, zmq_socket_type, options)
+        self.zmq_sockets.append(zmq_socket)
+        return zmq_socket
+
+    def close(self) -> None:
+        for zmq_socket in self.zmq_sockets:
+            zmq_socket.close()
+
+
 class Controller(ControllerBase):
 
-    def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
+    def __init__(self, net_config: NetworkConfig,
             loop_type: None=None) -> None:
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
@@ -78,13 +105,9 @@ class Controller(ControllerBase):
 
         # Bitcoin network/peer net_config
         self.net_config = net_config
-        self.peers = self.net_config.peers
-        self.peer = self.get_peer()
-        self.host = host  # bind address
-        self.port = port  # bind remote_port
-        self.protocol: BaseProtocol | None = None
-        self.protocol_factory = None
-        self.transport: BaseTransport | None = None
+        self.peer = self.net_config.get_peer()
+
+        self.general_executor = ThreadPoolExecutor(max_workers=4)
 
         wait_for_conduit_raw_api()
         wait_for_mysql()
@@ -95,65 +118,28 @@ class Controller(ControllerBase):
         self.deserializer: Deserializer = Deserializer(self.net_config)
         self.sync_state: SyncState = SyncState(self.storage, self)
 
+        self.zmq_socket_listeners = ZMQSocketListeners()
+
         # Bitcoin Network Socket
         self.bitcoin_p2p_client: BitcoinP2PClient | None = None
 
         # Mempool and API state
         self.mempool_tx_hash_set: set[bytes] = set()
 
-        # IPC from Controller to TxParser
-        context1 = AsyncZMQContext.instance()
-        self.mined_tx_socket = context1.socket(zmq.PUSH)
-        self.mined_tx_socket.bind("tcp://127.0.0.1:55555")
-
-        # IPC from Controller to TxParser
-        context2 = AsyncZMQContext.instance()
-        self.mempool_tx_socket = context2.socket(zmq.PUSH)
-        self.mempool_tx_socket.bind("tcp://127.0.0.1:55556")
-
-        # PUB-SUB from Controller to worker to kill the worker
-        context3 = AsyncZMQContext.instance()
-        self.kill_worker_socket = context3.socket(zmq.PUB)
-        self.kill_worker_socket.bind("tcp://127.0.0.1:63241")
-
-        # PUB-SUB from Controller to worker to signal when initial block download is in effect
-        # Defined as when the local chain tip is within 24 hours of the best known chain tip
-        # This is the same definition that the reference bitcoin-sv node uses.
-        context4 = AsyncZMQContext.instance()
-        self.is_ibd_socket = context4.socket(zmq.PUB)
-        self.is_ibd_socket.bind("tcp://127.0.0.1:52841")
         self.ibd_signal_sent = False
-
-        context5 = AsyncZMQContext.instance()
-        self.ack_for_mined_tx_socket = context5.socket(zmq.PULL)
-        self.ack_for_mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
-        self.ack_for_mined_tx_socket.bind("tcp://127.0.0.1:55889")
-
-        context6 = AsyncZMQContext.instance()
-        self.reorg_event_socket = context6.socket(zmq.PUSH)
-        self.reorg_event_socket.connect("tcp://127.0.0.1:51495")
-
-        context6 = AsyncZMQContext.instance()
-        self.tx_parse_ack_socket = context6.socket(zmq.PULL)
-        self.tx_parse_ack_socket.bind("tcp://127.0.0.1:54214")
 
         # Batch Completion
         self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
         self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
-        # self.worker_ack_queue_tx_parse_mempool = multiprocessing.Queue()  # tx_count
-
         self.mempool_tx_count: int = 0
 
         # Database Interfaces
         self.mysql_db: MySQLDatabase | None = None
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.
-        self.general_executor = ThreadPoolExecutor(max_workers=1)
         self.estimated_moving_av_block_size_mb = 0.1 if \
             self.sync_state.get_local_block_tip_height() < 2016 else 500
-
-        self.mempool_tx_count = 0
 
     def setup(self) -> None:
         self.mysql_db = load_mysql_database()
@@ -171,17 +157,13 @@ class Controller(ControllerBase):
 
     async def maintain_node_connection(self) -> None:
         assert self.bitcoin_p2p_client is not None
-        first_loop = True
         while True:
-            await self.bitcoin_p2p_client.wait_for_connection()
-            if not first_loop:
-                self.logger.debug(f"The bitcoin node disconnected but is now reconnected. "
-                                  f"Re-requesting mempool (as appropriate)...")
-            await self.connect_session()
             await self.bitcoin_p2p_client.handshake_complete_event.wait()
             await self.bitcoin_p2p_client.connection_lost_event.wait()
             self.bitcoin_p2p_client.connection_lost_event.clear()
-            first_loop = False
+            await self.connect_session(self.peer)
+            self.logger.debug(f"The bitcoin node disconnected but is now reconnected. "
+                              f"Re-requesting mempool (as appropriate)...")
 
     async def stop(self) -> None:
         self.running = False
@@ -195,20 +177,22 @@ class Controller(ControllerBase):
         self.ipc_sock_client.close()
         self.general_executor.shutdown(wait=False, cancel_futures=True)
 
-        if self.transport:
-            self.transport.close()
         if self.storage:
             await self.storage.close()
 
-        with self.kill_worker_socket as sock:
-            await sock.send(b"stop_signal")
-
-        await asyncio.sleep(1)
+        if self.zmq_socket_listeners:
+            with self.zmq_socket_listeners.socket_kill_workers as sock:
+                try:
+                    await sock.send(b"stop_signal")
+                except zmq.error.ZMQError as zmq_error:
+                    # We silence the error if this socket is already closed. But other cases we want
+                    # to know about them and maybe fix them or add them to this list.
+                    if str(zmq_error) != "not a socket":
+                        raise
+            await asyncio.sleep(1)
+            self.zmq_socket_listeners.close()
 
         self.sync_state._batched_blocks_exec.shutdown(wait=False)
-
-        self.mempool_tx_socket.close()
-        self.is_ibd_socket.close()
 
         for task in self.tasks:
             if not task.done():
@@ -218,17 +202,13 @@ class Controller(ControllerBase):
                 except asyncio.CancelledError:
                     pass
 
-    def get_peer(self) -> 'Peer':
-        return self.peers[0]
-
-    async def connect_session(self) -> None:
-        peer = self.get_peer()
+    async def connect_session(self, peer: Peer) -> None:
         self.logger.debug("Connecting to (%s, %s) [%s]", peer.remote_host, peer.remote_port,
             self.net_config.NET)
         try:
             self.bitcoin_p2p_client = BitcoinP2PClient(peer.remote_host, peer.remote_port,
                 self.handlers, self.net_config)
-            await self.bitcoin_p2p_client.connect()
+            await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
             await self.stop()
 
@@ -388,7 +368,7 @@ class Controller(ControllerBase):
 
     async def wait_for_mined_tx_acks_task(self) -> None:
         while True:
-            message = await self.ack_for_mined_tx_socket.recv()
+            message = await self.zmq_socket_listeners.socket_mined_tx_ack.recv()
             new_mined_tx_hashes = cbor2.loads(message)
 
             for blk_num, new_hashes in new_mined_tx_hashes.items():
@@ -441,11 +421,11 @@ class Controller(ControllerBase):
 
         # Update API tip for filtering of queries in the internal aiohttp API
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        if await self.sync_state.is_ibd(checkpoint_tip, conduit_best_tip):
+        if await self.sync_state.is_post_ibd_state(checkpoint_tip, conduit_best_tip):
             await self.update_mempool_and_checkpoint_tip_atomic(checkpoint_tip, is_reorg)
 
         else:
-            # No txs in mempool until is_ibd == True
+            # No txs in mempool until is_post_ibd == True
             self.mysql_db.mysql_update_checkpoint_tip(checkpoint_tip)
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
@@ -513,17 +493,16 @@ class Controller(ControllerBase):
                 self.logger.exception("Caught exception")
                 raise
 
-    async def check_for_ibd_status(self, conduit_best_tip: Header) -> None:
-        assert self.bitcoin_p2p_client is not None
-        with self.storage.headers_lock:
-            local_tip = self.storage.headers.longest_chain().tip
-        if await self.sync_state.is_ibd(local_tip, conduit_best_tip=conduit_best_tip) \
-                and not self.ibd_signal_sent:
+    async def maybe_start_processing_mempool_txs(self) -> None:
+        if not self.ibd_signal_sent:
             self.logger.debug(f"Initial block download mode completed. "
                 f"Activating mempool tx processing...")
-            await self.is_ibd_socket.send(b"is_ibd_signal")
+            await self.connect_session(self.peer)
+            await self.zmq_socket_listeners.socket_is_post_ibd.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
             create_task(self.maintain_node_connection())
+            assert self.bitcoin_p2p_client is not None
+            await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
             await self.bitcoin_p2p_client.handshake_complete_event.wait()
             await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
@@ -531,7 +510,10 @@ class Controller(ControllerBase):
     async def long_poll_conduit_raw_chain_tip(self) -> tuple[bool, Header, Header,
             ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        await self.check_for_ibd_status(conduit_best_tip=conduit_best_tip)
+        with self.storage.headers_lock:
+            local_tip = self.storage.headers.longest_chain().tip
+        if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
+            await self.maybe_start_processing_mempool_txs()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         old_hashes = None
@@ -603,7 +585,7 @@ class Controller(ControllerBase):
             packed_array = tx_offsets_array.tobytes()
             packed_msg = struct.pack(f"<IIII32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
                 work_item_id, is_reorg, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
-            await self.mined_tx_socket.send(packed_msg)
+            await self.zmq_socket_listeners.socket_mined_tx.send(packed_msg)
 
     async def chip_away(self, remaining_work_units: list[WorkUnit]) -> list[WorkUnit]:
         """This breaks up blocks into smaller 'WorkUnits'. This allows tailoring workloads and
@@ -643,6 +625,17 @@ class Controller(ControllerBase):
             self.logger.exception("unexpected exception in "
                 "'wait_for_batched_blocks_completion' ")
 
+    async def load_temp_tables_for_reorg_handling(self, old_hashes: ChainHashes,
+            new_hashes: ChainHashes) -> None:
+        assert self.mysql_db is not None
+        self.mysql_db.queries.mysql_update_orphaned_headers(old_hashes)
+        removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
+            await self._get_differential_post_reorg(old_hashes, new_hashes)
+
+        self.mysql_db.queries.mysql_load_temp_mempool_additions(additions_to_mempool)
+        self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
+        self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+
     async def index_blocks(self, is_reorg: bool, start_header: bitcoinx.Header,
             stop_header: bitcoinx.Header, old_hashes: ChainHashes | None,
             new_hashes: ChainHashes | None) -> int:
@@ -651,13 +644,7 @@ class Controller(ControllerBase):
         if is_reorg:
             assert old_hashes is not None
             assert new_hashes is not None
-            self.mysql_db.queries.mysql_update_orphaned_headers(old_hashes)
-            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
-                await self._get_differential_post_reorg(old_hashes, new_hashes)
-
-            self.mysql_db.queries.mysql_load_temp_mempool_additions(additions_to_mempool)
-            self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
-            self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+            await self.load_temp_tables_for_reorg_handling(old_hashes, new_hashes)
 
         conduit_tip = await self.sync_state.get_conduit_best_tip()
         remaining = conduit_tip.height - (start_header.height - 1)
@@ -696,7 +683,7 @@ class Controller(ControllerBase):
         await self.wait_for_batched_blocks_completion(all_pending_block_hashes)
         if is_reorg:
             reorg_handling_complete = False
-            await self.reorg_event_socket.send(
+            await self.zmq_socket_listeners.reorg_event_socket.send(
                 cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
@@ -708,7 +695,7 @@ class Controller(ControllerBase):
 
         if is_reorg:
             reorg_handling_complete = True
-            await self.reorg_event_socket.send(
+            await self.zmq_socket_listeners.reorg_event_socket.send(
                 cbor2.dumps((reorg_handling_complete, start_header.hash, stop_header.hash)))
         return best_flushed_tip_height
 
@@ -746,7 +733,7 @@ class Controller(ControllerBase):
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch
         is done"""
         while True:
-            msg = await self.tx_parse_ack_socket.recv()
+            msg = await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv()
             worker_id, work_item_id, block_hash, txs_done_count = cbor2.loads(msg)
             try:
                 self.sync_state._work_item_progress_counter[work_item_id] += txs_done_count

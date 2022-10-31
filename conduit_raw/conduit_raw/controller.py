@@ -15,6 +15,7 @@ from multiprocessing.process import BaseProcess
 from pathlib import Path
 import logging
 import zmq
+from zmq.asyncio import Socket as AsyncZMQSocket
 
 from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
     NetworkConfig, Peer)
@@ -26,9 +27,10 @@ from conduit_lib.types import HeaderSpan, MultiprocessingQueue
 from conduit_lib.utils import create_task, get_conduit_raw_host_and_port, get_header_for_hash, \
     get_header_for_height
 from conduit_lib.wait_for_dependencies import wait_for_mysql
+from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .aiohttp_api import server_main
-from .batch_completion import BatchCompletionMtree
+from .batch_completion import BatchCompletionMtree, BatchCompletionRaw
 from .regtest_support import RegtestSupport
 from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
 from .sync_state import SyncState
@@ -45,8 +47,7 @@ def get_headers_dir_conduit_raw() -> Path:
 
 class Controller(ControllerBase):
 
-    def __init__(self, net_config: NetworkConfig, host: str="127.0.0.1", port: int=8000,
-            loop_type: str | None=None) -> None:
+    def __init__(self, net_config: NetworkConfig, loop_type: str | None=None) -> None:
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -62,8 +63,17 @@ class Controller(ControllerBase):
         self.net_config = net_config
         self.peers = self.net_config.peers
         self.peer = self.get_peer()
-        self.host = host  # bind address
-        self.port = port  # bind remote_port
+
+        self.general_executor = ThreadPoolExecutor(max_workers=4)
+
+        # ZMQ
+        self.zmq_async_context = zmq.asyncio.Context.instance()
+        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:46464',
+            zmq.SocketType.PUB)
+        self.merkle_tree_worker_sockets: dict[int, AsyncZMQSocket] = {}  # worker_id: zmq_socket
+        self.WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
+        self.bind_merkle_tree_worker_zmq_listeners()
+        self.current_mtree_worker_id = 1  # rotate through them evenly 1 -> 4
 
         headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
@@ -74,26 +84,14 @@ class Controller(ControllerBase):
         self.lmdb = self.storage.lmdb
         self.ipc_sock_client: IPCSocketClient | None = None
         self.ipc_sock_server: ThreadedTCPServer | None = None
-        self.general_executor = ThreadPoolExecutor(max_workers=4)
 
         # Worker queues & events
         self.worker_in_queue_preproc: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
-
-        self.merkle_tree_worker_sockets: dict[int, zmq.SocketType] = {}
-
-        # PUB-SUB from Controller to worker to kill the worker
-        # Todo - PUB/SUB is unreliable with ZMQ. Need a better solution
-        context = zmq.Context[zmq.Socket[bytes]]()
-        self.kill_worker_socket = context.socket(zmq.PUB)
-        self.kill_worker_socket.bind("tcp://127.0.0.1:46464")
-
+        self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_mtree: MultiprocessingQueue[bytes] = multiprocessing.Queue()
-
+        self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
-
-        # Database Interfaces
-        # self.mysql_db: Optional[MySQLDatabase] = None
 
         # Bitcoin Network Socket
         self.bitcoin_p2p_client: BitcoinP2PClient | None = None
@@ -103,8 +101,25 @@ class Controller(ControllerBase):
         self.aiohttp_client_session: aiohttp.ClientSession | None = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
+    def bind_merkle_tree_worker_zmq_listeners(self) -> None:
+        # The Merkle Tree worker needs individual ZMQ sockets so we can ensure that
+        # subsequent chunks for a large block go to the same worker for processing
+        BASE_PORT_NUM = 41830
+        for worker_id in range(1, self.WORKER_COUNT_MTREE_CALCULATORS + 1):
+            uri = f"tcp://127.0.0.1:{BASE_PORT_NUM + worker_id}"
+            self.logger.debug(f"Binding ZMQ merkle tree worker listener on: {uri}")
+            zmq_socket = bind_async_zmq_socket(self.zmq_async_context, uri,
+                zmq.SocketType.PUSH)
+            self.merkle_tree_worker_sockets[worker_id] = zmq_socket
+
     async def setup(self) -> None:
         self.regtest_support = RegtestSupport(self)
+        self.batch_completion_raw = BatchCompletionRaw(
+            self,
+            self.sync_state,
+            self.worker_ack_queue_blk_writer,
+            self.blocks_batch_set_queue_raw
+        )
         self.batch_completion_mtree = BatchCompletionMtree(
             self,
             self.sync_state,
@@ -112,6 +127,7 @@ class Controller(ControllerBase):
             self.blocks_batch_set_queue_mtree
         )
         self.batch_completion_mtree.start()
+        self.batch_completion_raw.start()
 
     async def connect_session(self) -> None:
         peer = self.get_peer()
@@ -128,9 +144,10 @@ class Controller(ControllerBase):
         await self._get_aiohttp_client_session()
         await self.setup()
         wait_for_mysql()
+        self.tasks.append(create_task(self.start_jobs()))
         await self.connect_session()
         assert self.bitcoin_p2p_client is not None
-        self.tasks.append(create_task(self.start_jobs()))
+        await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
         wait_until_connection_lost = create_task(self.bitcoin_p2p_client.connection_lost_event.wait())
         self.tasks.append(wait_until_connection_lost)
         await asyncio.gather(wait_until_connection_lost)
@@ -142,16 +159,25 @@ class Controller(ControllerBase):
             await self.bitcoin_p2p_client.close_connection()
         if self.storage:
             await self.storage.close()
-        with self.kill_worker_socket as sock:
-            try:
-                sock.send(b"stop_signal")
-            except zmq.error.ZMQError as zmq_error:
-                # We silence the error if this socket is already closed. But other cases we want
-                # to know about them and maybe fix them or add them to this list.
-                if str(zmq_error) != "not a socket":
-                    raise
 
-        await asyncio.sleep(1)
+        self.general_executor.shutdown(wait=False, cancel_futures=True)
+
+        if self.socket_kill_workers:
+            with self.socket_kill_workers as sock:
+                try:
+                    await sock.send(b"stop_signal")
+                except zmq.error.ZMQError as zmq_error:
+                    # We silence the error if this socket is already closed. But other cases we want
+                    # to know about them and maybe fix them or add them to this list.
+                    if str(zmq_error) != "not a socket":
+                        raise
+
+            await asyncio.sleep(1)
+            self.socket_kill_workers.close()
+
+        if self.merkle_tree_worker_sockets:
+            for zmq_socket in self.merkle_tree_worker_sockets.values():
+                zmq_socket.close()
 
         for p in self.processes:
             p.terminate()
@@ -195,9 +221,7 @@ class Controller(ControllerBase):
                 raise
 
     def start_workers(self) -> None:
-        # Processes
-        WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
-        for i in range(WORKER_COUNT_MTREE_CALCULATORS):
+        for i in range(self.WORKER_COUNT_MTREE_CALCULATORS):
             worker_id = i+1
             mtree_proc = MTreeCalculator(worker_id, self.worker_ack_queue_mtree)
             mtree_proc.start()
@@ -253,7 +277,6 @@ class Controller(ControllerBase):
         thread.start()
         await self.spawn_aiohttp_api()
         await self.bitcoin_p2p_client.handshake_complete_event.wait()
-
         self.start_workers()
 
         # In regtest old block timestamps (submitted to node) will not take the node out of IBD

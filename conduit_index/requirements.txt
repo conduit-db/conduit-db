@@ -7,4 +7,3 @@ pyzmq
 cbor2
 aiohttp
 fasteners
-pygments

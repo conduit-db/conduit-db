@@ -22,6 +22,7 @@ from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.types import BlockSliceRequestType
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
+from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 
 class MinedBlockParsingThread(threading.Thread):
@@ -36,6 +37,8 @@ class MinedBlockParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.confirmed_tx_flush_queue = confirmed_tx_flush_queue
 
+        self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
+
         # A dedicated in-memory only table exclusive to this worker
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
@@ -49,10 +52,8 @@ class MinedBlockParsingThread(threading.Thread):
         self.last_ipc_sock_time = 0.
 
     def run(self) -> None:
-        context = zmq.Context[zmq.Socket[bytes]]()
-        mined_tx_socket = context.socket(zmq.PULL)
-        mined_tx_socket.setsockopt(zmq.RCVHWM, 10000)
-        mined_tx_socket.connect("tcp://127.0.0.1:55555")
+        socket_mined_tx = connect_non_async_zmq_socket(self.zmq_context, 'tcp://127.0.0.1:55555',
+            zmq.SocketType.PULL, options=[(zmq.SocketOption.RCVHWM, 10000)])
 
         try:
             # Database flush thread
@@ -66,7 +67,7 @@ class MinedBlockParsingThread(threading.Thread):
                 ipc_socket_client=ipc_socket_client, mysql_db=mysql_db)
 
             zmq_recv_and_process_batchwise_no_block(
-                sock=mined_tx_socket,
+                sock=socket_mined_tx,
                 process_batch_func=process_batch_func,
                 on_blocked_msg=None,
                 batching_rate=0.3,
@@ -78,8 +79,7 @@ class MinedBlockParsingThread(threading.Thread):
             self.logger.exception("Caught exception")
         finally:
             self.logger.info("Closing mined_blocks_thread")
-            mined_tx_socket.close()
-            context.term()
+            socket_mined_tx.close()
 
     def get_block_slices(self, block_hashes: list[bytes],
             block_slice_offsets: list[tuple[int, int]],

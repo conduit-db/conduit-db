@@ -38,6 +38,7 @@ class BatchCompletionRaw(threading.Thread):
     def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_blk_writer.get()
+            self.logger.debug(f"worker_ack_queue_blk_writer got ack: {hash_to_hex_str(block_hash)}")
             if block_hash in blocks_batch_set:
                 blocks_batch_set.remove(block_hash)
                 with self.sync_state.done_blocks_raw_lock:

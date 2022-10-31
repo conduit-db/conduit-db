@@ -10,6 +10,7 @@ from queue import Queue
 
 import zmq
 
+from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 from .flush_mempool_thread import FlushMempoolTransactionsThread
 from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
@@ -29,16 +30,18 @@ class MempoolParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.mempool_tx_flush_queue = mempool_tx_flush_queue
 
-        context4 = zmq.Context[zmq.Socket[bytes]]()
-        self.is_ibd_socket = context4.socket(zmq.SUB)
-        self.is_ibd_socket.connect("tcp://127.0.0.1:52841")
-        self.is_ibd_socket.setsockopt(zmq.SUBSCRIBE, b"is_ibd_signal")
+        self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
+        self.socket_mempool_tx = connect_non_async_zmq_socket(self.zmq_context,
+            'tcp://127.0.0.1:55556', zmq.SocketType.PULL)
+        self.socket_is_post_ibd = connect_non_async_zmq_socket(self.zmq_context,
+            'tcp://127.0.0.1:52841', zmq.SocketType.SUB,
+            options=[(zmq.SocketOption.SUBSCRIBE, b"is_ibd_signal")])
 
     def run(self) -> None:
         while True:
             # For some reason I am unable to catch a KeyboardInterrupt or SIGINT here so
             # need to rely on an overt "stop_signal" from the Controller for graceful shutdown
-            message = self.is_ibd_socket.recv()
+            message = self.socket_is_post_ibd.recv()
             if message == b"is_ibd_signal":
                 self.logger.debug(f"Got initial block download signal. "
                     f"Starting mempool tx parsing thread.")
@@ -48,14 +51,11 @@ class MempoolParsingThread(threading.Thread):
         t = FlushMempoolTransactionsThread(self.worker_id, self.mempool_tx_flush_queue)
         t.start()
 
-        context2 = zmq.Context[zmq.Socket[bytes]]()
-        mempool_tx_socket = context2.socket(zmq.PULL)
-        mempool_tx_socket.connect("tcp://127.0.0.1:55556")
         try:
             process_batch_func = partial(self.process_mempool_batch)
 
             zmq_recv_and_process_batchwise_no_block(
-                sock=mempool_tx_socket,
+                sock=self.socket_mempool_tx,
                 process_batch_func=process_batch_func,
                 on_blocked_msg=None,
                 batching_rate=0.3,
@@ -67,8 +67,7 @@ class MempoolParsingThread(threading.Thread):
             self.logger.exception("Caught exception")
         finally:
             self.logger.info("Closing mined_blocks_thread")
-            mempool_tx_socket.close()
-            # mempool_tx_socket.term()
+            self.socket_mempool_tx.close()
 
     def process_mempool_batch(self, batch: list[bytes]) -> None:
         assert self.mempool_tx_flush_queue is not None

@@ -14,7 +14,7 @@ import struct
 
 from . import NetworkConfig, Serializer
 from .algorithms import unpack_varint, preprocessor
-from .bitcoin_p2p_types import BlockType, BlockChunkData, BlockMsgData, \
+from .bitcoin_p2p_types import BlockType, BlockChunkData, BlockDataMsg, \
     BitcoinPeerInstance, ExtendedP2PHeader
 from .commands import BLOCK_BIN, VERACK_BIN, EXTMSG_BIN
 from .constants import HEADER_LENGTH, EXTENDED_HEADER_LENGTH
@@ -136,16 +136,9 @@ class BitcoinP2PClient:
 
     async def close_connection(self) -> None:
         logger.info("Closing bitcoin p2p socket connection gracefully")
-        if self.writer:
+        if self.writer and not self.writer.is_closing():
             self.writer.close()
         self.connection_lost_event.set()
-        if self.tasks:
-            for task in self.tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
 
     async def handle_message_task(self) -> None:
         while True:
@@ -215,9 +208,9 @@ class BitcoinP2PClient:
             tx_offsets, offset_before_raise = preprocessor(raw_block, adjustment=0,
                 first_chunk=True, last_chunk=True)
             assert offset_before_raise == len(raw_block) == self.cur_header.payload_size
-            block_msg_data = BlockMsgData(block_type, block_hash, tx_offsets,
+            block_data_msg = BlockDataMsg(block_type, block_hash, array.array('Q', tx_offsets),
                 self.cur_header.payload_size, raw_block, big_block_filepath=None)
-            await self.message_handler.on_block(block_msg_data, self.peer)
+            await self.message_handler.on_block(block_data_msg, self.peer)
             return
 
         # Init local variables - Keeping them local avoids polluting instance state
@@ -225,7 +218,7 @@ class BitcoinP2PClient:
         total_block_bytes_read = 0
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         block_hash = bytes()
-        tx_offsets_all: list[int] = []
+        tx_offsets_all: array.ArrayType[int] = array.array('Q')
         expected_tx_count_for_block = 0
         chunk_num = 0
         adjustment = 0
@@ -296,10 +289,10 @@ class BitcoinP2PClient:
         assert self.pos == self.BUFFER_SIZE, "Buffer should be perfectly full"
         assert len(tx_offsets_all) == expected_tx_count_for_block
 
-        block_msg_data = BlockMsgData(block_type, block_hash, tx_offsets_all,
+        block_data_msg = BlockDataMsg(block_type, block_hash, tx_offsets_all,
             self.cur_header.payload_size, small_block_data=None,
             big_block_filepath=big_block_filepath)
-        await self.message_handler.on_block(block_msg_data, self.peer)
+        await self.message_handler.on_block(block_data_msg, self.peer)
         self.rotate_buffer()
 
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:

@@ -48,9 +48,10 @@ def test_preprocessor_whole_block_as_a_single_chunk():
         tx_offsets, last_tx_offset_in_chunk = preprocessor(next_chunk,
                 adjustment=0, first_chunk=True, last_chunk=True)
     t1 = time.perf_counter() - t0
+
     print_results(len(tx_offsets), t1/REPEAT_N_TIMES, next_chunk)
 
-    assert tx_offsets == TX_OFFSETS
+    assert tx_offsets.tolist() == TX_OFFSETS
     assert last_tx_offset_in_chunk == len(next_chunk)
 
 

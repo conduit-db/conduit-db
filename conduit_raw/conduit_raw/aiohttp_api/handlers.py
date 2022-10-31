@@ -161,7 +161,6 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
             # logger.debug(f"Sending {match}")
 
             # Get Full tx hashes and pushdata hashes for response object
-
             full_tx_hash = hash_to_hex_str(_get_full_tx_hash(match.tx_location, lmdb))
             assert full_tx_hash is not None
             full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()

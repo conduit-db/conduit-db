@@ -77,9 +77,7 @@ async def main() -> None:
         net_config = NetworkConfig(os.environ["NETWORK"], node_host=os.environ['NODE_HOST'],
             node_port=int(os.environ['NODE_PORT']))
         os.environ['GENESIS_BLOCK_HASH'] = net_config.GENESIS_BLOCK_HASH
-        controller = Controller(
-            net_config=net_config, host="127.0.0.1", port=8000, loop_type=loop_type,
-        )
+        controller = Controller(net_config=net_config, loop_type=loop_type)
         try:
             await controller.run()
         finally:
