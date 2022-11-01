@@ -45,11 +45,7 @@ class SyncState:
         self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
 
         # Done blocks Sets
-        self.done_blocks_raw = set[bytes]()
-        self.done_blocks_raw_lock = threading.Lock()
         self.done_blocks_raw_event: asyncio.Event = asyncio.Event()
-        self.done_blocks_mtree = set[bytes]()
-        self.done_blocks_mtree_lock = threading.Lock()
         self.done_blocks_mtree_event: asyncio.Event = asyncio.Event()
 
         self.pending_blocks_inv_queue: asyncio.Queue[Inv] = asyncio.Queue()

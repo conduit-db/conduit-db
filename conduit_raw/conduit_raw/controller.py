@@ -443,10 +443,11 @@ class Controller(ControllerBase):
                 stop_header_height)
 
             self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
-
-            # Wait for batch completion for all worker types (via ACK messages)
+            self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
             await self.sync_state.done_blocks_mtree_event.wait()
+            await self.sync_state.done_blocks_raw_event.wait()
             self.sync_state.done_blocks_mtree_event.clear()
+            self.sync_state.done_blocks_raw_event.clear()
 
             await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
             await self.connect_done_block_headers(all_pending_block_hashes.copy())

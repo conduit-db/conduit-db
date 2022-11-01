@@ -60,7 +60,7 @@ def double_sha256(x: bytes) -> bytes:
     return sha256(sha256(x))
 
 
-def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -> tuple[int, int]:
+def unpack_varint(buf: bytes | memoryview, offset: int) -> tuple[int, int]:
     n = buf[offset]
     if n < 253:
         return n, offset + 1
@@ -73,53 +73,52 @@ def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool) \
-        -> tuple[array.ArrayType[int], int]:
+def skip_one_tx(buffer: bytes, offset: int) -> int:
+    # version
+    offset += 4
+
+    # tx_in block
+    count_tx_in, offset = unpack_varint(buffer, offset)
+    for i in range(count_tx_in):
+        offset += 36  # prev_hash + prev_idx
+        script_sig_len, offset = unpack_varint(buffer, offset)
+        offset += script_sig_len
+        offset += 4  # sequence
+
+    # tx_out block
+    count_tx_out, offset = unpack_varint(buffer, offset)
+    for i in range(count_tx_out):
+        offset += 8  # value
+        script_pubkey_len, offset = unpack_varint(buffer,
+            offset)  # script_pubkey
+        offset += script_pubkey_len  # script_sig
+
+    # lock_time
+    offset += 4
+    return offset
+
+
+def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple[array.ArrayType[int], int]:
     """
     Call this function iteratively as more slices of the raw block become available from the
     p2p socket.
 
     Goes until it hits a struct.error or IndexError to indicate it needs the next chunk.
+
+    `offset` is the offset WITHIN the chunk
+    `adjustment` shifts the final set of tx_offsets up by this amount
     """
     tx_offsets: array.ArrayType[int] = array.array('Q')
-    if adjustment != 0 and not first_chunk:
-        tx_offsets.append(adjustment)
-
-    # skip header bytes + tx_count and set first tx offset (likely to be 81, 83 or 85 bytes)
-    chunk_offset = 0
-    if first_chunk:
-        tx_count, chunk_offset = unpack_varint(next_chunk[80:89], chunk_offset)
-        chunk_offset = 80 + chunk_offset
-        tx_offsets.append(chunk_offset)
-
-    last_tx_offset_in_chunk = chunk_offset
+    tx_offsets.append(offset + adjustment)
+    last_tx_offset_in_chunk = offset
     try:
-        while chunk_offset < len(next_chunk):
-            last_tx_offset_in_chunk = chunk_offset
-
-            # version
-            chunk_offset += 4
-
-            # tx_in block
-            count_tx_in, chunk_offset = unpack_varint(next_chunk, chunk_offset)
-            for i in range(count_tx_in):
-                chunk_offset += 36  # prev_hash + prev_idx
-                script_sig_len, chunk_offset = unpack_varint(next_chunk, chunk_offset)
-                chunk_offset += script_sig_len
-                chunk_offset += 4  # sequence
-
-            # tx_out block
-            count_tx_out, chunk_offset = unpack_varint(next_chunk, chunk_offset)
-            for i in range(count_tx_out):
-                chunk_offset += 8  # value
-                script_pubkey_len, chunk_offset = unpack_varint(next_chunk, chunk_offset)  # script_pubkey
-                chunk_offset += script_pubkey_len  # script_sig
-
-            # lock_time
-            chunk_offset += 4
-            end_of_tx_offset = chunk_offset + adjustment
-            last_tx_offset_in_chunk = end_of_tx_offset
-            tx_offsets.append(end_of_tx_offset)
+        buffer_len = len(buffer)
+        while True:
+            offset = skip_one_tx(buffer, offset)
+            if offset > buffer_len:
+                break
+            last_tx_offset_in_chunk = offset + adjustment
+            tx_offsets.append(offset + adjustment)
 
         tx_offsets.pop(-1)  # the last offset represents the end of the last tx for the chunk
         return tx_offsets, last_tx_offset_in_chunk

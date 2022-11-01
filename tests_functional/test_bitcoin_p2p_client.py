@@ -1,10 +1,9 @@
 import asyncio
+import bitcoinx
+from bitcoinx import double_sha256, hash_to_hex_str, pack_varint
 import shutil
 import stat
 import time
-
-import bitcoinx
-from bitcoinx import double_sha256, hash_to_hex_str, pack_varint
 import io
 import unittest
 from math import ceil
@@ -272,6 +271,7 @@ async def test_getblocks_request_and_blocks_response():
 
 
 def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
+    correct_tx_hash = bitcoinx.double_sha256(bytes.fromhex(DATA_CARRIER_TX))
     size_data_carrier_tx = len(bytes.fromhex(DATA_CARRIER_TX))
     normalizer = 0
     if message.chunk_num != 1:
@@ -286,6 +286,7 @@ def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
             tx = bitcoinx.Tx.from_bytes(message.raw_block_chunk[offset_start:])
         print(len(tx.to_bytes()))
         assert len(tx.to_bytes()) == size_data_carrier_tx
+        assert tx.hash() == correct_tx_hash
 
 
 @pytest.mark.asyncio

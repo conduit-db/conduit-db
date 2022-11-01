@@ -264,6 +264,7 @@ class Handlers(MessageHandlerProtocol):
 
                 with self.small_blocks_lock:
                     if self.small_blocks:
+                        logger.debug(f"Acking for {len(self.small_blocks)} loaded small blocks")
                         await self._lmdb_put_small_blocks_in_thread(self.small_blocks)
                         self.ack_for_loaded_blocks(self.small_blocks)
                         self.small_blocks = []

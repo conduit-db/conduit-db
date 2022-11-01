@@ -190,6 +190,21 @@ class BitcoinP2PClient:
             raise ConnectionResetError
         return data
 
+    async def read_until_buffer_full(self) -> bytes:
+        assert self.reader is not None
+        data = await self.reader.readexactly(self.BUFFER_SIZE - self.pos)
+        if not data:
+            raise ConnectionResetError
+        self.network_buffer[self.pos:] = data
+        self.pos += len(data)
+        assert self.pos == self.BUFFER_SIZE
+        return data
+
+    def clip_p2p_header_from_front_of_buffer(self) -> None:
+        self.network_buffer[:-self.cur_header.length()] = self.network_buffer[
+        self.cur_header.length():]
+        self.pos = self.pos - self.cur_header.length()
+
     async def handle_block(self, block_type: BlockType) -> None:
         """
         If `block_type` is BlockType.SMALL_BLOCK, process as a single chunk in memory and
@@ -209,86 +224,77 @@ class BitcoinP2PClient:
 
         raises `ConnectionResetError`
         """
+        # Init local variables - Keeping them local avoids polluting instance state
+        tx_offsets_all: array.ArrayType[int] = array.array('Q')
+        big_block_filepath = None
+        total_block_bytes_read = 0
+        block_hash = bytes()
+        expected_tx_count_for_block = 0
+        chunk_num = 0
+        file = None
+        remainder = b""  # the bit left over due to a tx going off the end of the current chunk
+        last_tx_offset_in_chunk: int | None = None
+        num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
+        adjustment = 0
         if block_type & BlockType.SMALL_BLOCK:
             raw_block = self.get_next_payload()
             raw_block_header = raw_block[0:80]
             block_hash = double_sha256(raw_block_header)
-            tx_offsets, offset_before_raise = preprocessor(raw_block, adjustment=0,
-                first_chunk=True)
-            assert offset_before_raise == len(raw_block) == self.cur_header.payload_size
-            block_data_msg = BlockDataMsg(block_type, block_hash, array.array('Q', tx_offsets),
+            tx_count, var_int_size = unpack_varint(raw_block[80:89], 0)
+            offset = 80 + var_int_size
+            tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(raw_block, offset,
+                adjustment)
+            tx_offsets_all.extend(tx_offsets_for_chunk)
+            assert last_tx_offset_in_chunk == len(raw_block) == self.cur_header.payload_size
+            block_data_msg = BlockDataMsg(block_type, block_hash, array.array('Q', tx_offsets_all),
                 self.cur_header.payload_size, raw_block, big_block_filepath=None)
             await self.message_handler.on_block(block_data_msg, self.peer)
             return
 
         logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
-
-        # Init local variables - Keeping them local avoids polluting instance state
-        big_block_filepath = None
-        total_block_bytes_read = 0
-        remainder = b""  # the bit left over due to a tx going off the end of the current chunk
-        block_hash = bytes()
-        tx_offsets_all: array.ArrayType[int] = array.array('Q')
-        expected_tx_count_for_block = 0
-        chunk_num = 0
-        adjustment = 0
-        num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
-        file = None
-        tx_offsets_for_chunk: array.ArrayType[int] = array.array('Q')
-        last_tx_offset_in_chunk: int | None = None
-        first_chunk = True
         try:
             assert self.reader is not None
             while total_block_bytes_read < self.cur_header.payload_size:
                 chunk_num += 1
                 if chunk_num == 1:
-                    # Clip p2p message header from front of buffer
-                    self.network_buffer[:-self.cur_header.length()] = self.network_buffer[self.cur_header.length():]
-                    self.pos = self.pos - self.cur_header.length()
-
-                    # Fill the buffer entirely with the first block chunk
-                    data = await self.reader.readexactly(self.BUFFER_SIZE - self.pos)
-                    self.network_buffer[self.pos:] = data
-                    self.pos += len(data)
-                    assert self.pos == self.BUFFER_SIZE
-
+                    self.clip_p2p_header_from_front_of_buffer()
+                    _data = await self.read_until_buffer_full()
+                    self.pos, self.last_msg_end_pos = self.rotate_buffer()
                     next_chunk: bytes = cast(bytes, self.network_buffer[0:self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
                     logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
-                    self.pos, self.last_msg_end_pos = self.rotate_buffer()
 
-                    raw_block_header = next_chunk[0:80]
-                    block_hash = double_sha256(raw_block_header)
-                    expected_tx_count_for_block, _ = unpack_varint(next_chunk[80:89], 0)
-                    if num_chunks > 1:  # Big block
-                        big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
-                        file = open(big_block_filepath, 'ab')
+                    big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
+                    file = open(big_block_filepath, 'ab')
                 else:
                     next_chunk = await self.read_block_chunk(total_block_bytes_read)
                     total_block_bytes_read += len(next_chunk)
                     logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
-                    if tx_offsets_all:
-                        assert last_tx_offset_in_chunk is not None
-                        adjustment = last_tx_offset_in_chunk
-                        # first chunk has a ~81 byte block header but we don't want to include that
-                        if tx_offsets_for_chunk and not first_chunk:
-                            adjustment += tx_offsets_for_chunk[0]
-                    first_chunk = False
+
+
+                # ---------- TxOffsets logic start ---------- #
+                if chunk_num == 1:
+                    raw_block_header = next_chunk[0:80]
+                    block_hash = double_sha256(raw_block_header)
+                    expected_tx_count_for_block, var_int_size = unpack_varint(next_chunk[80:89], 0)
+                    offset = 80 + var_int_size
+                else:
+                    offset = 0
+                    assert last_tx_offset_in_chunk is not None
+                    adjustment = last_tx_offset_in_chunk
 
                 modified_chunk = remainder + next_chunk
-
-                # NOTE: last_tx_offset_in_chunk needs to be prepended to tx_offsets_for_chunk
-                # but not on the first chunk because there wasn't a prior chunk in that case
                 tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-                    adjustment=adjustment, first_chunk=first_chunk)
+                    offset, adjustment)
                 tx_offsets_all.extend(tx_offsets_for_chunk)
-                remainder = modified_chunk[last_tx_offset_in_chunk:]
+                remainder = modified_chunk[last_tx_offset_in_chunk - adjustment:]
+                # ---------- TxOffsets logic end ---------- #
 
                 # Big blocks use a file for writing to incrementally
                 if file:
                     await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash,
-                        modified_chunk[:last_tx_offset_in_chunk], tx_offsets_for_chunk)
+                        modified_chunk[:last_tx_offset_in_chunk - adjustment], tx_offsets_for_chunk)
                     await self.message_handler.on_block_chunk(block_chunk_data, self.peer)
 
                 if chunk_num == num_chunks:

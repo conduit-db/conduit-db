@@ -38,11 +38,8 @@ class BatchCompletionRaw(threading.Thread):
     def wait_for_batch_completion(self, blocks_batch_set: set[bytes]) -> None:
         while True:
             block_hash = self.worker_ack_queue_blk_writer.get()
-            self.logger.debug(f"worker_ack_queue_blk_writer got ack: {hash_to_hex_str(block_hash)}")
             if block_hash in blocks_batch_set:
                 blocks_batch_set.remove(block_hash)
-                with self.sync_state.done_blocks_raw_lock:
-                    self.sync_state.done_blocks_raw.add(block_hash)
             else:
                 header = self.get_header_for_hash(block_hash)
                 self.logger.error(f"also wrote unexpected block: {hash_to_hex_str(header.hash)}"
@@ -90,8 +87,6 @@ class BatchCompletionMtree(threading.Thread):
             block_hash = self.worker_ack_queue_mtree.get()
             if block_hash in blocks_batch_set:
                 blocks_batch_set.remove(block_hash)
-                with self.sync_state.done_blocks_mtree_lock:
-                    self.sync_state.done_blocks_mtree.add(block_hash)
             else:
                 header = self.get_header_for_hash(block_hash)
                 self.logger.error(f"also wrote unexpected block: {hash_to_hex_str(header.hash)}"
