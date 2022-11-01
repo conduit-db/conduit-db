@@ -7,7 +7,7 @@ import time
 
 import cbor2
 import zmq
-from bitcoinx import double_sha256, hash_to_hex_str
+from bitcoinx import double_sha256
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.lmdb.types import MerkleTreeRow

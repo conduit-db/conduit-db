@@ -214,7 +214,7 @@ class BitcoinP2PClient:
             raw_block_header = raw_block[0:80]
             block_hash = double_sha256(raw_block_header)
             tx_offsets, offset_before_raise = preprocessor(raw_block, adjustment=0,
-                first_chunk=True, last_chunk=True)
+                first_chunk=True)
             assert offset_before_raise == len(raw_block) == self.cur_header.payload_size
             block_data_msg = BlockDataMsg(block_type, block_hash, array.array('Q', tx_offsets),
                 self.cur_header.payload_size, raw_block, big_block_filepath=None)
@@ -234,20 +234,27 @@ class BitcoinP2PClient:
         adjustment = 0
         num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
         file = None
-        last_chunk = False
+        tx_offsets_for_chunk: array.ArrayType[int] = array.array('Q')
+        last_tx_offset_in_chunk: int | None = None
+        first_chunk = True
         try:
             assert self.reader is not None
             while total_block_bytes_read < self.cur_header.payload_size:
                 chunk_num += 1
                 if chunk_num == 1:
                     # Clip p2p message header from front of buffer
-                    self.network_buffer = self.network_buffer[self.cur_header.length():]
+                    self.network_buffer[:-self.cur_header.length()] = self.network_buffer[self.cur_header.length():]
+                    self.pos = self.pos - self.cur_header.length()
 
                     # Fill the buffer entirely with the first block chunk
                     data = await self.reader.readexactly(self.BUFFER_SIZE - self.pos)
                     self.network_buffer[self.pos:] = data
+                    self.pos += len(data)
+                    assert self.pos == self.BUFFER_SIZE
+
                     next_chunk: bytes = cast(bytes, self.network_buffer[0:self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
+                    logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
                     self.pos, self.last_msg_end_pos = self.rotate_buffer()
 
                     raw_block_header = next_chunk[0:80]
@@ -256,20 +263,24 @@ class BitcoinP2PClient:
                     if num_chunks > 1:  # Big block
                         big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
                         file = open(big_block_filepath, 'ab')
-                    first_chunk = True
                 else:
                     next_chunk = await self.read_block_chunk(total_block_bytes_read)
                     total_block_bytes_read += len(next_chunk)
-                    first_chunk = False
+                    logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
                     if tx_offsets_all:
-                        adjustment = tx_offsets_all[-1]
-
-                if chunk_num == num_chunks:
-                    last_chunk = True
+                        assert last_tx_offset_in_chunk is not None
+                        adjustment = last_tx_offset_in_chunk
+                        # first chunk has a ~81 byte block header but we don't want to include that
+                        if tx_offsets_for_chunk and not first_chunk:
+                            adjustment += tx_offsets_for_chunk[0]
+                    first_chunk = False
 
                 modified_chunk = remainder + next_chunk
+
+                # NOTE: last_tx_offset_in_chunk needs to be prepended to tx_offsets_for_chunk
+                # but not on the first chunk because there wasn't a prior chunk in that case
                 tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-                    adjustment=adjustment, first_chunk=first_chunk, last_chunk=last_chunk)
+                    adjustment=adjustment, first_chunk=first_chunk)
                 tx_offsets_all.extend(tx_offsets_for_chunk)
                 remainder = modified_chunk[last_tx_offset_in_chunk:]
 
@@ -277,7 +288,7 @@ class BitcoinP2PClient:
                 if file:
                     await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash,
-                        next_chunk, tx_offsets_for_chunk)
+                        modified_chunk[:last_tx_offset_in_chunk], tx_offsets_for_chunk)
                     await self.message_handler.on_block_chunk(block_chunk_data, self.peer)
 
                 if chunk_num == num_chunks:

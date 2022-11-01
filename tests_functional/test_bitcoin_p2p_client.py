@@ -3,6 +3,7 @@ import shutil
 import stat
 import time
 
+import bitcoinx
 from bitcoinx import double_sha256, hash_to_hex_str, pack_varint
 import io
 import unittest
@@ -33,7 +34,7 @@ os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
 os.environ['NETWORK_BUFFER_SIZE'] = "1000000"
 os.environ['DATADIR'] = str(MODULE_DIR)
 BIG_BLOCK_WRITE_DIRECTORY = Path(os.environ["DATADIR"]) / "big_blocks"
-os.makedirs(BIG_BLOCK_WRITE_DIRECTORY)
+os.makedirs(BIG_BLOCK_WRITE_DIRECTORY, exist_ok=True)
 
 
 
@@ -191,6 +192,9 @@ async def test_handshake():
 
 @pytest.mark.asyncio
 async def test_getheaders_request_and_headers_response():
+    # Otherwise the node might still be in initial block download mode (ignores header requests)
+    electrumsv_node.call_any('generate', 1)
+
     client = None
     try:
         got_message_queue = asyncio.Queue()
@@ -267,6 +271,23 @@ async def test_getblocks_request_and_blocks_response():
             await client.close_connection()
 
 
+def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
+    size_data_carrier_tx = len(bytes.fromhex(DATA_CARRIER_TX))
+    normalizer = 0
+    if message.chunk_num != 1:
+        normalizer = message.tx_offsets_for_chunk[0]
+    for i in range(len(message.tx_offsets_for_chunk)):
+        if i < len(message.tx_offsets_for_chunk) - 1:
+            offset_start = message.tx_offsets_for_chunk[i] - normalizer
+            offset_end = message.tx_offsets_for_chunk[i + 1] - normalizer
+            tx = bitcoinx.Tx.from_bytes(message.raw_block_chunk[offset_start:offset_end])
+        else:
+            offset_start = message.tx_offsets_for_chunk[i] - normalizer
+            tx = bitcoinx.Tx.from_bytes(message.raw_block_chunk[offset_start:])
+        print(len(tx.to_bytes()))
+        assert len(tx.to_bytes()) == size_data_carrier_tx
+
+
 @pytest.mark.asyncio
 async def test_big_block_exceeding_network_buffer_capacity():
     os.environ['NETWORK_BUFFER_SIZE'] = "500000"
@@ -309,26 +330,34 @@ async def test_big_block_exceeding_network_buffer_capacity():
                 assert message.chunk_num == 1
                 assert message.num_chunks == 3
                 assert message.block_hash == block_hash
-                assert len(message.raw_block_chunk) == 499976
+                assert len(message.raw_block_chunk) == 460317
                 assert message.tx_offsets_for_chunk.tolist() == [81, 65829, 131577, 197325, 263073,
-                    328821, 394569, 460317]
+                    328821, 394569]
+
+                _parse_txs_with_bitcoinx(message)
 
             if msg_count == 2:
                 assert isinstance(message, BlockChunkData)
                 assert message.chunk_num == 2
                 assert message.num_chunks == 3
                 assert message.block_hash == block_hash
-                assert len(message.raw_block_chunk) == 500000
-                assert message.tx_offsets_for_chunk.tolist() == [526065, 591813, 657561, 723309,
-                    789057, 854805, 920553, 986301]
+
+                # This chunk should be 525984 bytes due to the remainder of the previous chunk
+                assert len(message.raw_block_chunk) == (986301 - 460317)
+                assert message.tx_offsets_for_chunk.tolist() == [460317, 526065, 591813, 657561, 723309,
+                    789057, 854805, 920553]
+
+                _parse_txs_with_bitcoinx(message)
 
             if msg_count == 3:
                 assert isinstance(message, BlockChunkData)
                 assert message.chunk_num == 3
                 assert message.num_chunks == 3
                 assert message.block_hash == block_hash
-                assert len(message.raw_block_chunk) == 52073
-                assert message.tx_offsets_for_chunk.tolist() == []
+                assert len(message.raw_block_chunk) == 65748
+                assert message.tx_offsets_for_chunk.tolist() == [986301]
+
+                _parse_txs_with_bitcoinx(message)
 
             if msg_count == 4:
                 assert isinstance(message, BlockDataMsg)

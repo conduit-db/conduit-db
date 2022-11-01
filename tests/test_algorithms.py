@@ -46,7 +46,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     t0 = time.perf_counter()
     for i in range(REPEAT_N_TIMES):
         tx_offsets, last_tx_offset_in_chunk = preprocessor(next_chunk,
-                adjustment=0, first_chunk=True, last_chunk=True)
+                adjustment=0, first_chunk=True)
     t1 = time.perf_counter() - t0
 
     print_results(len(tx_offsets), t1/REPEAT_N_TIMES, next_chunk)
@@ -70,36 +70,44 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     remainder = b""
     adjustment = 0
     t0 = time.perf_counter()
-    last_chunk = False
+    tx_offsets_for_chunk = None
+    last_tx_offset_in_chunk = None
+    first_chunk = True
     for idx, chunk in enumerate(chunks):
         if idx == 0:
             first_chunk = True
         else:
-            first_chunk = False
             if tx_offsets_all:
-                adjustment = tx_offsets_all[-1]
-
-        if idx == (len(chunks) - 1):
-            last_chunk = True
+                assert last_tx_offset_in_chunk is not None
+                adjustment = last_tx_offset_in_chunk
+                # first chunk has a ~81 byte block header but we don't want to include that
+                if tx_offsets_for_chunk and not first_chunk:
+                    adjustment += tx_offsets_for_chunk[0]
+            first_chunk = False
 
         modified_chunk = remainder + chunk
-        tx_offsets, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-                adjustment=adjustment, first_chunk=first_chunk, last_chunk=last_chunk)
-        tx_offsets_all.extend(tx_offsets)
+
+        # NOTE: last_tx_offset_in_chunk needs to be prepended to tx_offsets_for_chunk
+        # but not on the first chunk because there wasn't a prior chunk in that case
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
+            adjustment=adjustment, first_chunk=first_chunk)
+        tx_offsets_all.extend(tx_offsets_for_chunk)
         remainder = modified_chunk[last_tx_offset_in_chunk:]
 
         if idx == 0:
-            assert tx_offsets[0] == 83
-            assert tx_offsets[-1] == 249138
+            assert tx_offsets_for_chunk[0] == 83
+            assert tx_offsets_for_chunk[-1] == 248948
         if idx == 1:
-            assert tx_offsets[0] == 257471
-            assert tx_offsets[-1] == 482309
+            assert tx_offsets_for_chunk[0] == 249138
+            assert tx_offsets_for_chunk[-1] == 423160
         if idx == 2:
-            assert tx_offsets[0] == 541517
-            assert tx_offsets[-1] == 749909
+            assert tx_offsets_for_chunk[0] == 482309
+            assert tx_offsets_for_chunk[-1] == 749719
         if idx == 3:
-            assert tx_offsets[0] == 750134
-            assert tx_offsets[-1] == 999367
+            assert tx_offsets_for_chunk[0] == 749909
+            assert tx_offsets_for_chunk[-1] == 999367
+            assert last_tx_offset_in_chunk == 999887
+            assert last_tx_offset_in_chunk == len(TEST_RAW_BLOCK_413567)
 
     t1 = time.perf_counter() - t0
     print_results(len(tx_offsets_all), t1, full_block)
@@ -122,8 +130,7 @@ def test_parse_txs():
     print("Check for varint parsing (pure python): PASSED")
 
     raw_block = bytearray(TEST_RAW_BLOCK_413567)
-    tx_offsets, offset_before_raise = preprocessor(raw_block, adjustment=0, first_chunk=True,
-        last_chunk=True)
+    tx_offsets, offset_before_raise = preprocessor(raw_block, adjustment=0, first_chunk=True)
 
     t0 = time.perf_counter()
     REPEAT_N_TIMES = 1

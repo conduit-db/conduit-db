@@ -73,16 +73,19 @@ def unpack_varint(buf: bytes | memoryview | array.ArrayType[int], offset: int) -
 # -------------------- PREPROCESSOR -------------------- #
 
 
-def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool,
-        last_chunk: bool) -> tuple[array.ArrayType[int], int]:
+def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool) \
+        -> tuple[array.ArrayType[int], int]:
     """
     Call this function iteratively as more slices of the raw block become available from the
     p2p socket.
 
     Goes until it hits a struct.error or IndexError to indicate it needs the next chunk.
     """
-    # skip header bytes + tx_count and set first tx offset
     tx_offsets: array.ArrayType[int] = array.array('Q')
+    if adjustment != 0 and not first_chunk:
+        tx_offsets.append(adjustment)
+
+    # skip header bytes + tx_count and set first tx offset (likely to be 81, 83 or 85 bytes)
     chunk_offset = 0
     if first_chunk:
         tx_count, chunk_offset = unpack_varint(next_chunk[80:89], chunk_offset)
@@ -118,10 +121,10 @@ def preprocessor(next_chunk: bytes, adjustment: int, first_chunk: bool,
             last_tx_offset_in_chunk = end_of_tx_offset
             tx_offsets.append(end_of_tx_offset)
 
-        if last_chunk:
-            tx_offsets.pop(-1)  # the last offset represents the very end of the raw block
+        tx_offsets.pop(-1)  # the last offset represents the end of the last tx for the chunk
         return tx_offsets, last_tx_offset_in_chunk
     except (struct.error, IndexError):
+        tx_offsets.pop(-1)  # the last offset represents the end of the last tx for the chunk
         return tx_offsets, last_tx_offset_in_chunk
 
 

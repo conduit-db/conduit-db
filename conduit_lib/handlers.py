@@ -215,14 +215,14 @@ class Handlers(MessageHandlerProtocol):
     def pack_block_chunk_message_for_worker(self, block_chunk_data: BlockChunkData) -> bytes:
         tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_for_chunk
         return cast(bytes, cbor2.dumps((block_chunk_data.chunk_num, block_chunk_data.num_chunks,
-            block_chunk_data.block_hash, tx_offsets_bytes_for_chunk,
+            block_chunk_data.block_hash, tx_offsets_bytes_for_chunk.tobytes(),
             block_chunk_data.raw_block_chunk)))
 
     def pack_block_data_message_for_worker(self, block_chunk_data: BlockDataMsg) -> bytes:
         chunk_num = 1
         num_chunks = 1
         return cast(bytes, cbor2.dumps((chunk_num, num_chunks,
-            block_chunk_data.block_hash, block_chunk_data.tx_offsets.tolist(),
+            block_chunk_data.block_hash, block_chunk_data.tx_offsets.tobytes(),
             block_chunk_data.small_block_data)))
 
     async def send_to_worker_async(self, packed_message: bytes) -> None:
