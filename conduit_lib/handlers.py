@@ -260,6 +260,7 @@ class Handlers(MessageHandlerProtocol):
                         # no specific ack'ing needs to be done for tx_offsets
                         # because the acks for writing raw blocks to disc has this covered
                         await self._lmdb_put_tx_offsets_in_thread(self.batched_tx_offsets)
+                        self.batched_tx_offsets = []
 
                 with self.small_blocks_lock:
                     if self.small_blocks:
@@ -282,18 +283,20 @@ class Handlers(MessageHandlerProtocol):
                 assert block_data_msg.big_block_filepath is not None
                 os.remove(block_data_msg.big_block_filepath)
             return
-
-        # These are batched up to prevent HDD stutter
-        with self.batched_tx_offsets_lock:
-            self.batched_tx_offsets.append((block_data_msg.block_hash, block_data_msg.tx_offsets))
-
         if block_data_msg.block_type & BlockType.BIG_BLOCK:
             data_location = DataLocation(str(block_data_msg.big_block_filepath), start_offset=0,
                 end_offset=block_data_msg.block_size)
-            self.big_block = BigBlock(block_data_msg.block_hash, data_location,
+            big_block_location = BigBlock(block_data_msg.block_hash, data_location,
                 len(block_data_msg.tx_offsets))
-            await self._lmdb_put_big_block_in_thread(big_block=self.big_block)
+            await self._lmdb_put_big_block_in_thread(big_block_location)
+            await self._lmdb_put_tx_offsets_in_thread([(block_data_msg.block_hash,
+                block_data_msg.tx_offsets)])
         else:
+            # These are batched up to prevent HDD stutter
+            with self.batched_tx_offsets_lock:
+                self.batched_tx_offsets.append(
+                    (block_data_msg.block_hash, block_data_msg.tx_offsets))
+
             with self.small_blocks_lock:
                 assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)

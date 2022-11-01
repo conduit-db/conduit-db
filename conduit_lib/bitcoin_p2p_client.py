@@ -287,18 +287,24 @@ class BitcoinP2PClient:
                 tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
                     offset, adjustment)
                 tx_offsets_all.extend(tx_offsets_for_chunk)
-                remainder = modified_chunk[last_tx_offset_in_chunk - adjustment:]
+                len_slice = last_tx_offset_in_chunk - adjustment
+                remainder = modified_chunk[len_slice:]
+
+                # `tx_offsets_for_chunk` corresponds exactly to `slice_for_worker`
+                slice_for_worker = modified_chunk[:len_slice]
                 # ---------- TxOffsets logic end ---------- #
 
                 # Big blocks use a file for writing to incrementally
                 if file:
+
                     await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash,
-                        modified_chunk[:last_tx_offset_in_chunk - adjustment], tx_offsets_for_chunk)
+                        slice_for_worker, tx_offsets_for_chunk)
                     await self.message_handler.on_block_chunk(block_chunk_data, self.peer)
 
                 if chunk_num == num_chunks:
                     self.last_msg_end_pos = len(next_chunk)
+                    self.pos = len(next_chunk)
                     break
 
             assert len(block_hash) == 32
@@ -313,14 +319,12 @@ class BitcoinP2PClient:
         # Sanity checks and reset buffer, to be ready to receive the next p2p message
         assert total_block_bytes_read == self.cur_header.payload_size
         assert len(remainder) == 0
-        assert self.pos == self.BUFFER_SIZE, "Buffer should be perfectly full"
         assert len(tx_offsets_all) == expected_tx_count_for_block
 
         block_data_msg = BlockDataMsg(block_type, block_hash, tx_offsets_all,
             self.cur_header.payload_size, small_block_data=None,
             big_block_filepath=big_block_filepath)
         await self.message_handler.on_block(block_data_msg, self.peer)
-        self.rotate_buffer()
 
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:
         await asyncio.get_running_loop().run_in_executor(self.file_write_executor,
@@ -378,6 +382,7 @@ class BitcoinP2PClient:
         self.pos = 0  # how many bytes have been read into the buffer
         self.last_msg_end_pos = 0
         while True:
+            assert (self.BUFFER_SIZE - self.pos) != 0, "Tried to read zero bytes from socket"
             data = await self.reader.read(self.BUFFER_SIZE - self.pos)
             if not data:
                 raise ConnectionResetError
