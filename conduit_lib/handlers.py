@@ -193,7 +193,6 @@ class Handlers(MessageHandlerProtocol):
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
         await asyncio.get_running_loop().run_in_executor(self.executor,
             self.controller.lmdb.put_big_block, big_block)
-        os.remove(self.big_block.temp_file_location.file_path)
 
     async def _lmdb_put_small_blocks_in_thread(self, small_blocks: list[bytes]) -> None:
         with self.small_blocks_lock:
