@@ -293,9 +293,9 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
             block_headers: bitcoinx.Headers,
             block_headers_lock: threading.RLock, lmdb: LMDB_Database) -> None:
+        self.allow_reuse_address = True
         super(ThreadedTCPServer, self).__init__(addr, handler)
         logger.info(f"Started IPC Socket Server on tcp://{addr[0]}:{addr[1]}")
-
         self.lmdb = lmdb
         self.block_headers = block_headers
         self.block_headers_lock = block_headers_lock
