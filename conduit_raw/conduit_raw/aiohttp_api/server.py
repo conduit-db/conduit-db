@@ -14,7 +14,7 @@ import zmq.asyncio
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
-from conduit_lib.utils import create_task
+from conduit_lib.utils import create_task, network_str_to_bitcoinx_network
 
 from .constants import SERVER_HOST, SERVER_PORT
 from . import handlers
@@ -34,12 +34,13 @@ requests_logger.setLevel(logging.WARNING)
 
 class ApplicationState(object):
 
-    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database) \
-            -> None:
+    def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database,
+            network: str='mainnet') -> None:
         self._logger = logging.getLogger('app_state')
         self._app = app
         self._loop = loop
         self._exit_event = asyncio.Event()
+        self.BITCOINX_COIN = network_str_to_bitcoinx_network(network)
 
         self.mysql_db = load_mysql_database()
         self.lmdb = lmdb
@@ -118,11 +119,11 @@ async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['client_session'].close()
 
 
-def get_aiohttp_app(lmdb: LMDB_Database) -> tuple[web.Application, ApplicationState]:
+def get_aiohttp_app(lmdb: LMDB_Database, network: str='mainnet') -> tuple[web.Application, ApplicationState]:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)
-    app_state = ApplicationState(app, loop, lmdb)
+    app_state = ApplicationState(app, loop, lmdb, network)
 
     # This is the standard aiohttp way of managing state within the handlers
     app['app_state'] = app_state
@@ -134,6 +135,7 @@ def get_aiohttp_app(lmdb: LMDB_Database) -> tuple[web.Application, ApplicationSt
 
         web.view("/ws", ReferenceServerWebSocket),
         web.post("/api/v1/restoration/search", handlers.get_pushdata_filter_matches),
+        web.post("/api/v1/restoration/search_p2pkh", handlers.get_p2pkh_address_filter_matches),
         web.get("/api/v1/transaction/{txid}", handlers.get_transaction),
         web.get("/api/v1/merkle-proof/{txid}", handlers.get_tsc_merkle_proof),
     ])

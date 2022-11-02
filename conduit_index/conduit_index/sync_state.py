@@ -280,7 +280,6 @@ class SyncState:
 
     def print_progress_info(self) -> None:
         self.logger.debug(f"Count of all_pending_chip_away_work_item_ids: "
-                          f"{len(self.all_pending_chip_away_work_item_ids)}")
-        self.logger.debug(f"Missing work item ids: {self.all_pending_chip_away_work_item_ids}")
+            f"{len(self.all_pending_chip_away_work_item_ids)}")
         if self.is_post_ibd:
             self.logger.debug(f"Mempool tx count: {self.controller.mempool_tx_count}")

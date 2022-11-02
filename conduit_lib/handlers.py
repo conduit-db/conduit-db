@@ -247,11 +247,14 @@ class Handlers(MessageHandlerProtocol):
         for raw_block in small_blocks:
             total_batch_size += len(raw_block)
             block_hash = double_sha256(raw_block[0:80])
-            self.controller.worker_ack_queue_blk_writer.put_nowait(block_hash)
+            self.ack_for_block(block_hash)
 
         if total_batch_size > 0:
             logger.debug(f"total batch size for raw blocks="
                 f"{round(total_batch_size/1024/1024, 3)} MB")
+
+    def ack_for_block(self, block_hash: bytes) -> None:
+        self.controller.worker_ack_queue_blk_writer.put_nowait(block_hash)
 
     async def blocks_flush_task_async(self) -> None:
         assert self.small_blocks is not None
@@ -294,6 +297,7 @@ class Handlers(MessageHandlerProtocol):
             await self._lmdb_put_big_block_in_thread(big_block_location)
             await self._lmdb_put_tx_offsets_in_thread(
                 [(block_data_msg.block_hash, block_data_msg.tx_offsets)])
+            self.ack_for_block(block_data_msg.block_hash)
         else:
             # These are batched up to prevent HDD stutter
             async with self.batched_tx_offsets_lock:

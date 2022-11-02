@@ -387,3 +387,16 @@ def bin_p2p_command_to_ascii(bin_command: bytes) -> str:
 def address_to_pushdata_hash(p2pkh_address: str, network: Network) -> bytes:
     address = bitcoinx.P2PKH_Address.from_string(p2pkh_address, network)
     return cast(bytes, sha256(address.hash160()))
+
+
+def network_str_to_bitcoinx_network(network: str) -> bitcoinx.Network:
+    if network == MAINNET:
+        return bitcoinx.Bitcoin
+    elif network == TESTNET:
+        return bitcoinx.BitcoinTestnet
+    elif network == SCALINGTESTNET:
+        return bitcoinx.BitcoinScalingTestnet
+    elif network == REGTEST:
+        return bitcoinx.BitcoinRegtest
+    else:
+        raise NotImplementedError(f"Unrecognized network type: '{network}'")

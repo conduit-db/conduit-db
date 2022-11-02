@@ -59,8 +59,8 @@ class AiohttpServer:
         await self._runner.cleanup()
 
 
-async def main(lmdb: LMDB_Database) -> None:
-    app, app_state = get_aiohttp_app(lmdb)
+async def main(lmdb: LMDB_Database, network: str='mainnet') -> None:
+    app, app_state = get_aiohttp_app(lmdb, network)
     server = AiohttpServer(app)
     await server.start()
     try:

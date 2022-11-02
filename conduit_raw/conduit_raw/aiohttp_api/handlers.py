@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from enum import IntEnum
 from typing import cast, TYPE_CHECKING
 
 import MySQLdb
@@ -19,12 +20,18 @@ from conduit_lib.database.mysql.mysql_database import MySQLDatabase
 from conduit_lib.types import TxMetadata, TxLocation, RestorationFilterRequest, \
     FILTER_RESPONSE_SIZE, filter_response_struct, tsc_merkle_proof_json_to_binary, BlockHeaderRow, \
     TSCMerkleProof, _pack_pushdata_match_response_bin, _pack_pushdata_match_response_json
+from conduit_lib.utils import address_to_pushdata_hash
 
 if TYPE_CHECKING:
     from .server import ApplicationState
 
 
 logger = logging.getLogger('handlers')
+
+
+class MatchFormat(IntEnum):
+    PUSHDATA = 1 << 0
+    P2PKH = 1 << 1
 
 
 async def ping(request: web.Request) -> web.Response:
@@ -122,26 +129,41 @@ async def _get_tsc_merkle_proof_async(executor: ThreadPoolExecutor,
     return tsc_merkle_proof
 
 
-async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
-    """This the main endpoint for the rapid restoration API"""
-    app_state: 'ApplicationState' = request.app['app_state']
-    mysql_db: MySQLDatabase = app_state.mysql_db
-    lmdb: LMDB_Database = app_state.lmdb
-    accept_type = request.headers.get('Accept')
-
+async def _get_pushdata_filter_matches(request: web.Request, match_format: MatchFormat) -> StreamResponse:
     try:
+        app_state: 'ApplicationState' = request.app['app_state']
+        mysql_db: MySQLDatabase = app_state.mysql_db
+        lmdb: LMDB_Database = app_state.lmdb
+        accept_type = request.headers.get('Accept')
         body = await request.content.read()
         if body:
-            pushdata_hashes: RestorationFilterRequest = json.loads(body.decode('utf-8'))['filterKeys']
-            pushdata_hashXes = [h[0:HashXLength*2].lower() for h in pushdata_hashes]
-            pushdata_hashX_map = dict(zip(pushdata_hashXes, pushdata_hashes))
+            request_body: RestorationFilterRequest = json.loads(body.decode('utf-8'))
+            if match_format & MatchFormat.PUSHDATA:
+                pushdata_hashes: list[str] = request_body['filterKeys']
+
+            # Conversion to the universal MatchFormat.PUSHDATA format
+            elif match_format & MatchFormat.P2PKH:
+                p2pkh_addresses: list[str] = request_body['filterKeys']
+                pushdata_hashes = []
+                for p2pkh_address in p2pkh_addresses:
+                    try:
+                        pushdata_hash = address_to_pushdata_hash(p2pkh_address, app_state.BITCOINX_COIN)
+                    except (ValueError, bitcoinx.Base58Error):
+                        return web.HTTPBadRequest(reason=f"bad address '{p2pkh_address}'")
+                    pushdata_hashes.append(pushdata_hash.hex())
+            else:
+                return web.HTTPInternalServerError(
+                    reason='Used a match format that was not recognized')
         else:
-            raise web.HTTPBadRequest(reason="empty body")
+            return web.HTTPBadRequest(reason="empty body")
 
         if accept_type == 'application/octet-stream':
             headers = {'Content-Type': 'application/octet-stream', 'User-Agent': 'ConduitDB'}
         else:
             headers = {'Content-Type': 'application/json', 'User-Agent': 'ConduitDB'}
+
+        pushdata_hashXes = [h[0:HashXLength * 2].lower() for h in pushdata_hashes]
+        pushdata_hashX_map = dict(zip(pushdata_hashXes, pushdata_hashes))
 
         count = 0
         try:
@@ -149,7 +171,7 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
         except MySQLdb.OperationalError:
             # I have only seen this when MySQL is on spinning HDD during the midst of initial
             # block download when it is under heavy strain
-            raise web.HTTPServiceUnavailable(reason="Database is potentially overloaded at present")
+            return web.HTTPServiceUnavailable(reason="Database is potentially overloaded at present")
 
         response: StreamResponse | None = None
         for match in result_generator:
@@ -206,6 +228,17 @@ async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
         # Todo - maybe we need a flag to indicate an error occurred mid-way through streaming
         logger.exception("Unexpected exception in get_pushdata_filter_matches")
         return web.HTTPInternalServerError()
+
+
+async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
+    """This the main endpoint for the rapid restoration API"""
+    return await _get_pushdata_filter_matches(request, MatchFormat.PUSHDATA)
+
+
+async def get_p2pkh_address_filter_matches(request: web.Request) -> StreamResponse:
+    """A convenience endpoint that accepts legacy P2PKH addresses instead of pushdata hashes.
+    Internally, it is just a conversion to the universal pushdata hash format."""
+    return await _get_pushdata_filter_matches(request, MatchFormat.P2PKH)
 
 
 async def get_transaction(request: web.Request) -> web.Response:

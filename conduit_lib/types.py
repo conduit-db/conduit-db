@@ -100,7 +100,7 @@ class RestorationFilterQueryResult(NamedTuple):
 
 
 class RestorationFilterRequest(typing.TypedDict):
-    filterKeys: typing.List[str]
+    filterKeys: list[str]
 
 
 class RestorationFilterJSONResponse(TypedDict):
