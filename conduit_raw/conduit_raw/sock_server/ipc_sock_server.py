@@ -294,6 +294,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             block_headers: bitcoinx.Headers,
             block_headers_lock: threading.RLock, lmdb: LMDB_Database) -> None:
         super(ThreadedTCPServer, self).__init__(addr, handler)
+        logger.info(f"Started IPC Socket Server on {addr}")
 
         self.lmdb = lmdb
         self.block_headers = block_headers

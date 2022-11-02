@@ -148,7 +148,7 @@ class BitcoinP2PClient:
                     pass
 
 
-    async def handle_message_task(self) -> None:
+    async def handle_message_task_async(self) -> None:
         while True:
             command, message = await self.message_queue.get()
             handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
@@ -377,7 +377,7 @@ class BitcoinP2PClient:
         assert self.peer is not None
 
         for i in range(self.message_handler_task_count):
-            self.tasks.append(create_task(self.handle_message_task()))
+            self.tasks.append(create_task(self.handle_message_task_async()))
 
         self.pos = 0  # how many bytes have been read into the buffer
         self.last_msg_end_pos = 0

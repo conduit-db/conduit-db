@@ -1,6 +1,5 @@
 import array
 import asyncio
-import threading
 from math import ceil
 
 import bitcoinx
@@ -93,9 +92,15 @@ class Handlers(MessageHandlerProtocol):
         self.storage = storage
         self.server_type = os.environ['SERVER_TYPE']
         self.small_blocks: list[bytes] = []
-        self.small_blocks_lock = threading.RLock()  # uses ThreadPoolExecutor to flush to disc
         self.batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']] = []
-        self.batched_tx_offsets_lock = threading.RLock()  # uses ThreadPoolExecutor to flush to disc
+
+        # A ThreadPoolExecutor is used to flush to disc. These locks avoid
+        # `blocks_flush_task_async` from emptying out newly appended `self.small_blocks` and
+        # `self.batched_tx_offsets` when the await`ed threadpool returns. Bear in mind there are
+        # multiple `handle_message_task_async` tasks running concurrently and calling `on_block`.
+        self.small_blocks_lock = asyncio.Lock()
+        self.batched_tx_offsets_lock = asyncio.Lock()  # uses ThreadPoolExecutor to flush to disc
+
         self.executor = self.controller.general_executor
 
     async def on_version(self, message: bytes, peer: BitcoinPeerInstance) -> None:
@@ -195,15 +200,13 @@ class Handlers(MessageHandlerProtocol):
             self.controller.lmdb.put_big_block, big_block)
 
     async def _lmdb_put_small_blocks_in_thread(self, small_blocks: list[bytes]) -> None:
-        with self.small_blocks_lock:
-            await asyncio.get_running_loop().run_in_executor(self.executor,
-                self.controller.lmdb.put_blocks, small_blocks)
+        await asyncio.get_running_loop().run_in_executor(self.executor,
+            self.controller.lmdb.put_blocks, small_blocks)
 
     async def _lmdb_put_tx_offsets_in_thread(self,
             batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) -> None:
-        with self.batched_tx_offsets_lock:
-            await asyncio.get_running_loop().run_in_executor(self.executor,
-                self.controller.lmdb.put_tx_offsets, batched_tx_offsets)
+        await asyncio.get_running_loop().run_in_executor(self.executor,
+            self.controller.lmdb.put_tx_offsets, batched_tx_offsets)
 
     def get_next_mtree_worker_id(self) -> None:
         self.controller.current_mtree_worker_id += 1
@@ -255,14 +258,14 @@ class Handlers(MessageHandlerProtocol):
         assert self.small_blocks_lock is not None
         try:
             while True:
-                with self.batched_tx_offsets_lock:
+                async with self.batched_tx_offsets_lock:
                     if self.batched_tx_offsets:
                         # no specific ack'ing needs to be done for tx_offsets
                         # because the acks for writing raw blocks to disc has this covered
                         await self._lmdb_put_tx_offsets_in_thread(self.batched_tx_offsets)
                         self.batched_tx_offsets = []
 
-                with self.small_blocks_lock:
+                async with self.small_blocks_lock:
                     if self.small_blocks:
                         logger.debug(f"Acking for {len(self.small_blocks)} loaded small blocks")
                         await self._lmdb_put_small_blocks_in_thread(self.small_blocks)
@@ -289,15 +292,15 @@ class Handlers(MessageHandlerProtocol):
             big_block_location = BigBlock(block_data_msg.block_hash, data_location,
                 len(block_data_msg.tx_offsets))
             await self._lmdb_put_big_block_in_thread(big_block_location)
-            await self._lmdb_put_tx_offsets_in_thread([(block_data_msg.block_hash,
-                block_data_msg.tx_offsets)])
+            await self._lmdb_put_tx_offsets_in_thread(
+                [(block_data_msg.block_hash, block_data_msg.tx_offsets)])
         else:
             # These are batched up to prevent HDD stutter
-            with self.batched_tx_offsets_lock:
+            async with self.batched_tx_offsets_lock:
                 self.batched_tx_offsets.append(
                     (block_data_msg.block_hash, block_data_msg.tx_offsets))
 
-            with self.small_blocks_lock:
+            async with self.small_blocks_lock:
                 assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)
                 packed_message = self.pack_block_data_message_for_worker(block_data_msg)
