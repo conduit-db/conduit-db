@@ -147,7 +147,8 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
                 pushdata_hashes = []
                 for p2pkh_address in p2pkh_addresses:
                     try:
-                        pushdata_hash = address_to_pushdata_hash(p2pkh_address, app_state.BITCOINX_COIN)
+                        pushdata_hash = address_to_pushdata_hash(p2pkh_address,
+                            app_state.BITCOINX_COIN)
                     except (ValueError, bitcoinx.Base58Error):
                         return web.HTTPBadRequest(reason=f"bad address '{p2pkh_address}'")
                     pushdata_hashes.append(pushdata_hash.hex())
