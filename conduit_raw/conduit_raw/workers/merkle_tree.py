@@ -40,18 +40,18 @@ class MTreeCalculator(multiprocessing.Process):
 
         self.lmdb: LMDB_Database | None = None
 
-        # Small blocks are cleared processed every BATCHING_RATE seconds
         self.BATCHING_RATE = 0.3
         self.tx_hashes_map: dict[bytes, bytearray] = {}
         self.tx_offsets_map: dict[bytes, array.ArrayType[int]] = {}
         self.tx_count_map: dict[bytes, int] = {}  # purely for checking data integrity
 
-    # ------------------ BIG BLOCK STREAMING ---------------- #
+        self.batched_merkle_trees: list[MerkleTreeRow] = []
+        self.batched_acks = []
 
     def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
-        batched_merkle_trees: list[MerkleTreeRow] = []
-        batched_acks = []
-
+        """If the batch is for a 'BIG BLOCK' then it will accumulate the tx_hashes and counts
+        in `tx_hashes_map` and `tx_count_map` and wait for subsequent batches until it receives
+        the last batch where `chunk_num == num_of_chunks`."""
         t0 = time.perf_counter()
         for packed_msg in batch:
             chunk_num, num_of_chunks, blk_hash, tx_offsets_bytes_for_chunk, raw_block_chunk = \
@@ -87,18 +87,20 @@ class MTreeCalculator(multiprocessing.Process):
                 base_level_index = calc_depth(leaves_count=tx_count) - 1
                 mtree = {base_level_index: tx_hashes_to_list(tx_hashes)}
                 mtree = build_mtree_from_base(base_level_index, mtree)
-                batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
-                batched_acks.append(blk_hash)
+                self.batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
+                self.batched_acks.append(blk_hash)
 
         # self.logger.debug(f"batched_merkle_trees={batched_merkle_trees}")
-        lmdb.put_merkle_trees(batched_merkle_trees)
-        t1 = time.perf_counter() - t0
-        self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
+        if self.batched_merkle_trees:
+            lmdb.put_merkle_trees(self.batched_merkle_trees)
+            t1 = time.perf_counter() - t0
+            self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
+            self.batched_merkle_trees: list[MerkleTreeRow] = []
 
-        for blk_hash in batched_acks:
-            self.worker_ack_queue_mtree.put(blk_hash)
-
-    # ------------------------ SMALL BLOCK HANDLING --------------------- #
+        if self.batched_acks:
+            for blk_hash in self.batched_acks:
+                self.worker_ack_queue_mtree.put(blk_hash)
+            self.batched_acks = []
 
     def run(self) -> None:
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
