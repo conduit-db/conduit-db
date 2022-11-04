@@ -141,24 +141,27 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
     all_pushdata: set[tuple[bytes, PushdataMatchFlags]] = set()
     pd_matches: list[PushdataMatch] = []
     len_script = len(script)
-    unreachable_code = False
+    post_op_return = False
     try:
         while i < len_script:
             try:
                 # Todo - this should ideally check for OP_FALSE OP_RETURN post genesis activation
                 if script[i] == OP_RETURN:
-                    unreachable_code = True
+                    post_op_return = True
                     i += 1
                 # Todo - unittest; I have not given this enough scrutiny to have confidence in it
                 elif script[i] == OP_ELSE:
-                    unreachable_code = False
+                    post_op_return = False
                     i += 1
                 elif script[i] in {OP_PUSH_20, OP_PUSH_32, OP_PUSH_33, OP_PUSH_65}:
                     length = script[i]
                     i += 1
-                    if unreachable_code:
-                        flags |= PushdataMatchFlags.DATA
-                    all_pushdata.add((bytes(script[i: i + length]), flags))
+                    if not post_op_return:
+                        all_pushdata.add((bytes(script[i: i + length]), flags))
+                    # else:
+                    #     flags |= PushdataMatchFlags.DATA
+                    #     all_pushdata.add((bytes(script[i: i + length]),
+                    #         flags | PushdataMatchFlags.DATA))
                     i += length
                 elif script[i] in SET_OTHER_PUSH_OPS:
                     length = script[i]
