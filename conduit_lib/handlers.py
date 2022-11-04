@@ -29,6 +29,7 @@ logger = logging.getLogger("handlers")
 
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
+    from conduit_index.conduit_index.controller import Controller as ConduitIndexController
 
 
 class MessageHandlerProtocol(typing.Protocol):
@@ -192,8 +193,11 @@ class Handlers(MessageHandlerProtocol):
         # logger.debug(f"Got mempool tx")
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx)
-        if hasattr(self.controller, 'socket_mempool_tx'):  # Only conduit_index has this
-            await self.controller.socket_mempool_tx.send(packed_message)
+        if typing.TYPE_CHECKING:
+            self.controller = cast(ConduitIndexController, self.controller)
+        if hasattr(self.controller.zmq_socket_listeners, 'socket_mempool_tx'):  # Only conduit_index has this
+            await self.controller.zmq_socket_listeners.socket_mempool_tx.send(packed_message)
+            self.controller.mempool_tx_count += 1
 
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
         await asyncio.get_running_loop().run_in_executor(self.executor,
