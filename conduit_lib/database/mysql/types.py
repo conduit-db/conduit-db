@@ -5,6 +5,7 @@ from typing import NamedTuple
 
 class PushdataRow(NamedTuple):
     pushdata_hash: str
+    paging_key: str
     tx_hash: str
     idx: int
     ref_type: int

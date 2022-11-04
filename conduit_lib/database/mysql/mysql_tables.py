@@ -213,14 +213,10 @@ class MySQLTables:
                 CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
                 """)
 
-            # I think I can get away with not storing full pushdata hashes
-            # unless they collide because the client provides the full pushdata_hash
-            # TODO: If rocksdb were used directly could have all of this as the key, value as null
-            #  and use the fixed slice length prefix extractor to get all of the entries for a given
-            #  pushdata_hash.
             self.mysql_conn.query(f"""
                 CREATE TABLE IF NOT EXISTS pushdata (
                     pushdata_hash BINARY({HashXLength}),
+                    paging_key BINARY(8),
                     tx_hash BINARY ({HashXLength}),
                     idx INT,
                     ref_type SMALLINT
@@ -228,7 +224,7 @@ class MySQLTables:
                 """)
 
             self.mysql_conn.query("""
-                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
+                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash, paging_key);
             """)
 
             self.mysql_conn.query("""

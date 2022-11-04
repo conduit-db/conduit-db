@@ -208,10 +208,10 @@ class MySQLBulkLoads:
 
     def mysql_bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
         t0 = time.time()
-        string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
-        column_names = ['pushdata_hash', 'tx_hash', 'idx', 'ref_type']
+        string_rows = ["%s,%s,%s,%s,%s\n" % (row) for row in pd_rows]
+        column_names = ['pushdata_hash', 'paging_key', 'tx_hash', 'idx', 'ref_type']
         self._load_data_infile_batched("pushdata", string_rows, column_names,
-            binary_column_indices=[0, 1])
+            binary_column_indices=[0, 1, 2])
         t1 = time.time() - t0
         self.logger.log(PROFILING,
             f"elapsed time for mysql_bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"

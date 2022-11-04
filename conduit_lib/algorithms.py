@@ -6,10 +6,11 @@ import hashlib
 import logging
 import os
 import struct
+import time
 from math import ceil, log
 from typing import cast, NamedTuple
 
-from bitcoinx import hash_to_hex_str
+from bitcoinx import hash_to_hex_str, pack_le_int32
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
@@ -317,8 +318,10 @@ def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
                         genesis_height=genesis_height)
                     if len(pushdata_matches):
                         for out_pushdata_hashX, flags in set(pushdata_matches):
+                            paging_key = pack_le_int32(int(time.time())) + os.urandom(4)
                             set_pd_rows.append((
                                     out_pushdata_hashX.hex(),
+                                    paging_key.hex(),
                                     tx_hashX.hex(),
                                     out_idx,
                                     int(flags),

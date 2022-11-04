@@ -104,7 +104,7 @@ class MySQLAPIQueries:
         try:
             query_format_pushdata_hashes = [f"X'{pd_hashX}'" for pd_hashX in pushdata_hashXes]
             sql = f"""
-                SELECT PD.pushdata_hash, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx,
+                SELECT PD.pushdata_hash, PD.paging_key, PD.tx_hash, PD.idx, PD.ref_type, IT.in_tx_hash, IT.in_idx,
                     HD.block_hash, HD.block_num, CT.tx_position
                 FROM pushdata PD
                 LEFT JOIN inputs_table IT
@@ -120,16 +120,17 @@ class MySQLAPIQueries:
             result = self.mysql_conn.store_result()
             for row in result.fetch_row(0):
                 pushdata_hashX: bytes = row[0]
-                tx_hash: bytes = row[1]
-                idx: int = row[2]
-                ref_type: int = row[3]
-                in_tx_hash: bytes = row[4]  # Can be null
+                paging_key: bytes = row[1]
+                tx_hash: bytes = row[2]
+                idx: int = row[3]
+                ref_type: int = row[4]
+                in_tx_hash: bytes = row[5]  # Can be null
                 in_idx: int = MAX_UINT32
                 if row[5] is not None:
-                    in_idx = row[5]
-                block_hash: bytes = row[6]
-                block_num: int = row[7]
-                tx_position: int = row[8]
+                    in_idx = row[6]
+                block_hash: bytes = row[7]
+                block_num: int = row[8]
+                tx_position: int = row[9]
                 tx_location = TxLocation(block_hash, block_num, tx_position)
                 yield RestorationFilterQueryResult(
                     ref_type=ref_type,
