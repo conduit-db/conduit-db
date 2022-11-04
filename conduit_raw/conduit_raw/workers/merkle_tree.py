@@ -46,7 +46,7 @@ class MTreeCalculator(multiprocessing.Process):
         self.tx_count_map: dict[bytes, int] = {}  # purely for checking data integrity
 
         self.batched_merkle_trees: list[MerkleTreeRow] = []
-        self.batched_acks = []
+        self.batched_acks: list[bytes] = []
 
     def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
         """If the batch is for a 'BIG BLOCK' then it will accumulate the tx_hashes and counts
@@ -95,7 +95,7 @@ class MTreeCalculator(multiprocessing.Process):
             lmdb.put_merkle_trees(self.batched_merkle_trees)
             t1 = time.perf_counter() - t0
             self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
-            self.batched_merkle_trees: list[MerkleTreeRow] = []
+            self.batched_merkle_trees = []
 
         if self.batched_acks:
             for blk_hash in self.batched_acks:

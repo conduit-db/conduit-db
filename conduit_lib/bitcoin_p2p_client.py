@@ -106,7 +106,10 @@ class BitcoinP2PClient:
         # Preprocessing of tx byte offsets in each raw block
         self.tx_offsets_array = array.array("Q", bytes(0))
         self.tx_count_done: int = 0
-        self.file_write_executor = ThreadPoolExecutor(max_workers=4)
+
+        # There must only be a single write thread! Otherwise appending to the same file for
+        # big blocks will cause corruption
+        self.file_write_executor = ThreadPoolExecutor(max_workers=1)
 
     async def connect(self) -> None:
         """raises `ConnectionResetError`"""
@@ -226,15 +229,8 @@ class BitcoinP2PClient:
         """
         # Init local variables - Keeping them local avoids polluting instance state
         tx_offsets_all: array.ArrayType[int] = array.array('Q')
-        big_block_filepath = None
-        total_block_bytes_read = 0
         block_hash = bytes()
-        expected_tx_count_for_block = 0
-        chunk_num = 0
-        file = None
-        remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         last_tx_offset_in_chunk: int | None = None
-        num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
         adjustment = 0
         if block_type & BlockType.SMALL_BLOCK:
             raw_block = self.get_next_payload()
@@ -252,6 +248,13 @@ class BitcoinP2PClient:
             return
 
         logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
+        chunk_num = 0
+        num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
+        expected_tx_count_for_block = 0
+        total_block_bytes_read = 0
+        remainder = b""  # the bit left over due to a tx going off the end of the current chunk
+        big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
+        file = open(big_block_filepath, 'ab')
         try:
             assert self.reader is not None
             while total_block_bytes_read < self.cur_header.payload_size:
@@ -263,9 +266,6 @@ class BitcoinP2PClient:
                     next_chunk: bytes = cast(bytes, self.network_buffer[0:self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
                     logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
-
-                    big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
-                    file = open(big_block_filepath, 'ab')
                 else:
                     next_chunk = await self.read_block_chunk(total_block_bytes_read)
                     total_block_bytes_read += len(next_chunk)
@@ -296,7 +296,6 @@ class BitcoinP2PClient:
 
                 # Big blocks use a file for writing to incrementally
                 if file:
-
                     await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash,
                         slice_for_worker, tx_offsets_for_chunk)
@@ -309,6 +308,7 @@ class BitcoinP2PClient:
 
             assert len(block_hash) == 32
             assert total_block_bytes_read == self.cur_header.payload_size
+            assert file.tell() == self.cur_header.payload_size
         finally:
             if file:
                 file.close()
