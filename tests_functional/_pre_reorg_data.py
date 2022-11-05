@@ -10,7 +10,7 @@ TRANSACTIONS = {
 
 MERKLE_PROOFS_TARGET_AS_HASH = {
  '0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721': {'index': 2,
-                                                                      'nodes': ['*',
+                                                                      'nodes': ['0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721',
                                                                                 'da66ad04201d0312e2f2a04d49fcd82c94fe0032f3cac76d4ea1fca9d53776b3'],
                                                                       'target': '00317993c4c75e8d06467cdba38d9a1a21dfa283024182ce2347658f3d0882e6',
                                                                       'txOrId': '0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721',
@@ -53,7 +53,7 @@ MERKLE_PROOFS_TARGET_AS_HASH = {
 
 MERKLE_PROOFS_TARGET_AS_MERKLE_ROOT = {
  '0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721': {'index': 2,
-                                                                      'nodes': ['*',
+                                                                      'nodes': ['0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721',
                                                                                 'da66ad04201d0312e2f2a04d49fcd82c94fe0032f3cac76d4ea1fca9d53776b3'],
                                                                       'target': '1836c495e82194086e365729db446250dbb22103720ba963af96b24183d8257d',
                                                                       'targetType': 'merkleroot',
@@ -96,7 +96,7 @@ MERKLE_PROOFS_TARGET_AS_MERKLE_ROOT = {
 
 MERKLE_PROOFS_TARGET_AS_HEADER = {
  '0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721': {'index': 2,
-                                                                      'nodes': ['*',
+                                                                      'nodes': ['0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721',
                                                                                 'da66ad04201d0312e2f2a04d49fcd82c94fe0032f3cac76d4ea1fca9d53776b3'],
                                                                       'target': '0000002034293c067c70e1c808f472bf0b21a321d95e26ffb14006ef2acb39ffdfaff9507d25d88341b296af63a90b720321b2db506244db2957366e089421e895c436188dcc4261ffff7f2002000000',
                                                                       'targetType': 'header',
@@ -139,7 +139,7 @@ MERKLE_PROOFS_TARGET_AS_HEADER = {
 
 MERKLE_PROOFS_INCLUDE_RAWTX = {
  '0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721': {'index': 2,
-                                                                      'nodes': ['*',
+                                                                      'nodes': ['0120eae6dc11459fe79fbad26f998f4f8c5b75fa6f0fff5b0beca4f35ea7d721',
                                                                                 'da66ad04201d0312e2f2a04d49fcd82c94fe0032f3cac76d4ea1fca9d53776b3'],
                                                                       'target': '00317993c4c75e8d06467cdba38d9a1a21dfa283024182ce2347658f3d0882e6',
                                                                       'txOrId': '0100000001e23fd7bf2b0c42d773e743d5b9e8eaea224d92883ad2f9d60c00d149ff339847020000009100473044022001c9590f03d4b89a30ee208815488bf116f9f16b08803ffa4eb12af83e5cdd5a022026c9f0f77089a0d7e656b622e00601711c42ef5cfbc88b758ed0d406fb467337414730440220552a2aae78b89fac4b7567590645ac2057a0a7cbd12da3034ccd16e40624e9100220750cfd750b48a8ed53f01ba675d79d786e018b0dc8e47f7b9e920084a2c64ddc41ffffffff014ce6ce07000000001976a914b09fd19a150e770833bd4970ab53f3a01a60c2ce88ac00000000',

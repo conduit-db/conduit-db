@@ -32,6 +32,21 @@ if typing.TYPE_CHECKING:
     from conduit_index.conduit_index.controller import Controller as ConduitIndexController
 
 
+def pack_block_chunk_message_for_worker(block_chunk_data: BlockChunkData) -> bytes:
+    tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_for_chunk
+    return cast(bytes, cbor2.dumps((block_chunk_data.chunk_num, block_chunk_data.num_chunks,
+        block_chunk_data.block_hash, tx_offsets_bytes_for_chunk.tobytes(),
+        block_chunk_data.raw_block_chunk)))
+
+
+def pack_block_data_message_for_worker(block_chunk_data: BlockDataMsg) -> bytes:
+    chunk_num = 1
+    num_chunks = 1
+    return cast(bytes, cbor2.dumps((chunk_num, num_chunks,
+        block_chunk_data.block_hash, block_chunk_data.tx_offsets.tobytes(),
+        block_chunk_data.small_block_data)))
+
+
 class MessageHandlerProtocol(typing.Protocol):
     """For many use-cases, it's not necessary to flesh out all of these handlers but the version,
     verack, protoconf, ping and pong are the bare minimum just to connect and stay connected"""
@@ -218,19 +233,6 @@ class Handlers(MessageHandlerProtocol):
                 self.controller.WORKER_COUNT_MTREE_CALCULATORS:
             self.controller.current_mtree_worker_id = 1  # keep cycling around 1 -> 4
 
-    def pack_block_chunk_message_for_worker(self, block_chunk_data: BlockChunkData) -> bytes:
-        tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_for_chunk
-        return cast(bytes, cbor2.dumps((block_chunk_data.chunk_num, block_chunk_data.num_chunks,
-            block_chunk_data.block_hash, tx_offsets_bytes_for_chunk.tobytes(),
-            block_chunk_data.raw_block_chunk)))
-
-    def pack_block_data_message_for_worker(self, block_chunk_data: BlockDataMsg) -> bytes:
-        chunk_num = 1
-        num_chunks = 1
-        return cast(bytes, cbor2.dumps((chunk_num, num_chunks,
-            block_chunk_data.block_hash, block_chunk_data.tx_offsets.tobytes(),
-            block_chunk_data.small_block_data)))
-
     async def send_to_worker_async(self, packed_message: bytes) -> None:
         merkle_tree_socket = self.controller.merkle_tree_worker_sockets[self.controller.current_mtree_worker_id]
         if merkle_tree_socket:
@@ -240,7 +242,7 @@ class Handlers(MessageHandlerProtocol):
         """Any blocks that exceed the size of the network buffer are written to file but
         while the chunk of data is still in memory, it can be intercepted here to send to worker
         processes."""
-        packed_message = self.pack_block_chunk_message_for_worker(block_chunk_data)
+        packed_message = pack_block_chunk_message_for_worker(block_chunk_data)
         await self.send_to_worker_async(packed_message)
 
     def ack_for_loaded_blocks(self, small_blocks: list[bytes]) -> None:
@@ -311,6 +313,6 @@ class Handlers(MessageHandlerProtocol):
             async with self.small_blocks_lock:
                 assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)
-                packed_message = self.pack_block_data_message_for_worker(block_data_msg)
+                packed_message = pack_block_data_message_for_worker(block_data_msg)
                 await self.send_to_worker_async(packed_message)
         self.get_next_mtree_worker_id()

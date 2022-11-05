@@ -93,16 +93,6 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
     else:
         txid_or_tx_field = hash_to_hex_str(_get_full_tx_hash(tx_location, lmdb))
 
-    # Target Type
-    if target_type == 'header':
-        header_row: BlockHeaderRow = cast(BlockHeaderRow,
-            mysql_db.api_queries.get_header_data(tx_metadata.block_hash, raw_header_data=True))
-        target = header_row.block_header  # as hex
-    elif target_type == 'merkleroot':
-        target = merkle_root
-    else:  # target == 'hash'
-        target = hash_to_hex_str(tx_metadata.block_hash)
-
     # Sanity check - Todo: remove when satisfied
     header_row = cast(BlockHeaderRow, mysql_db.api_queries.get_header_data(tx_metadata.block_hash,
         raw_header_data=True))
@@ -111,6 +101,14 @@ def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb
         logger.debug(f"merkleroot: {merkle_root}; "
                      f"root_from_header: {hash_to_hex_str(root_from_header)} ")
         raise ValueError("Merkle root does not match expected value from header")
+
+    # Target Type
+    if target_type == 'header':
+        target = header_row.block_header  # as hex
+    elif target_type == 'merkleroot':
+        target = merkle_root
+    else:  # target == 'hash'
+        target = hash_to_hex_str(tx_metadata.block_hash)
 
     return TSCMerkleProof(
         index=tx_metadata.tx_position,

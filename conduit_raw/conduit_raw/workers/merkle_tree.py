@@ -68,11 +68,23 @@ class MTreeCalculator(multiprocessing.Process):
                 self.tx_count_map[blk_hash] = total_tx_count
 
             for i in range(len(tx_offsets_for_chunk)):
-                start_offset = tx_offsets_for_chunk[i]
-                if i == (len(tx_offsets_for_chunk) - 1):  # last tx in chunk
+                is_last_tx_in_chunk = (i == (len(tx_offsets_for_chunk) - 1))
+                if chunk_num == 1:
+                    start_offset = tx_offsets_for_chunk[i]
+                else:
+                    # Need to subtract the first tx's byte offset from all of the other tx offsets
+                    # to adjust it to get the correct offset for the chunk
+                    start_offset = tx_offsets_for_chunk[i] - tx_offsets_for_chunk[0]
+                # start_offset = tx_offsets_for_chunk[i]
+                if is_last_tx_in_chunk:  # last tx in chunk
                     rawtx = raw_block_chunk[start_offset:]
-                else:  # last tx in chunk
-                    end_offset = tx_offsets_for_chunk[i + 1]
+                else:
+                    if chunk_num == 1:
+                        end_offset = tx_offsets_for_chunk[i + 1]
+                    else:
+                        # Need to subtract the first tx's byte offset from all of the other tx offsets
+                        # to adjust it to get the correct offset for the chunk
+                        end_offset = tx_offsets_for_chunk[i + 1] - tx_offsets_for_chunk[0]
                     rawtx = raw_block_chunk[start_offset:end_offset]
                 tx_hash = double_sha256(rawtx)
                 self.tx_hashes_map[blk_hash] += tx_hash
@@ -89,6 +101,8 @@ class MTreeCalculator(multiprocessing.Process):
                 mtree = build_mtree_from_base(base_level_index, mtree)
                 self.batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
                 self.batched_acks.append(blk_hash)
+                del self.tx_count_map[blk_hash]
+                del self.tx_hashes_map[blk_hash]
 
         # self.logger.debug(f"batched_merkle_trees={batched_merkle_trees}")
         if self.batched_merkle_trees:

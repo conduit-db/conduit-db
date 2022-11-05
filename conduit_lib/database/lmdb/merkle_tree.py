@@ -170,10 +170,12 @@ class LmdbMerkleTree:
                 if odd_node_count_for_level(current_level_node_count):
                     current_level_node_count += 1  # to account for the duplicate hash
 
-                    # Asterix in place of "duplicated" hashes in TSC format (derivable by client)
                     is_last_node_in_level = (index ^ 1 == current_level_node_count - 1)
                     if is_last_node_in_level:
-                        branch.append("*")
+                        # # Asterix in place of "duplicated" hashes in TSC format (derivable by client)
+                        # branch.append("*")
+                        branch_node = self.get_mtree_node(block_hash, level, index, cur)
+                        branch.append(hash_to_hex_str(branch_node))
                     else:
                         branch_node = self.get_mtree_node(block_hash, level, pair_index, cur)
                         branch.append(hash_to_hex_str(branch_node))
