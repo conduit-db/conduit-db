@@ -1,9 +1,9 @@
 import json
+import shutil
 
 import MySQLdb.connections
 import bitcoinx
-import electrumsv_node
-from bitcoinx import hash_to_hex_str, hex_str_to_hash
+from bitcoinx import hash_to_hex_str
 import io
 import multiprocessing
 import os
@@ -15,8 +15,10 @@ from conduit_lib import LMDB_Database, MySQLDatabase
 from conduit_lib.bitcoin_p2p_types import BlockChunkData
 from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
+from conduit_lib.utils import remove_readonly
 from conduit_raw.conduit_raw.aiohttp_api.handlers import _get_tsc_merkle_proof
 from conduit_raw.conduit_raw.workers import MTreeCalculator
+from conduit_raw.conduit_raw.workers.merkle_tree import process_merkle_tree_batch
 from .conftest import TEST_RAW_BLOCK_413567
 from .data.block413567_offsets import TX_OFFSETS
 
@@ -26,15 +28,8 @@ from conduit_lib.algorithms import unpack_varint, preprocessor
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
-
-LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
-RAW_BLOCKS_LOCKFILE = os.environ['RAW_BLOCKS_LOCKFILE'] = "raw_blocks_ffdb.lock"
-MERKLE_TREES_LOCKFILE = os.environ['MERKLE_TREES_LOCKFILE'] = "merkle_trees_ffdb.lock"
-TX_OFFSETS_LOCKFILE = os.environ['TX_OFFSETS_LOCKFILE'] = "tx_offsets_ffdb.lock"
-RAW_BLOCKS_DIR = Path(os.environ["RAW_BLOCKS_DIR"])
-MERKLE_TREES_DIR = Path(os.environ["MERKLE_TREES_DIR"])
-TX_OFFSETS_DIR = Path(os.environ["TX_OFFSETS_DIR"])
-os.environ["TEMP_FILES_DIR"] = "temp_files_dir"
+DATADIR_HDD = os.environ['DATADIR_HDD'] = str(MODULE_DIR / 'test_datadir_hdd')
+DATADIR_SSD = os.environ['DATADIR_SSD'] = str(MODULE_DIR / 'test_datadir_ssd')
 
 # BITCOINX
 full_block = TEST_RAW_BLOCK_413567
@@ -53,10 +48,17 @@ assert len(bitcoinx_tx_offsets) == tx_count + 1
 assert len(BITCOINX_TX_HASHES) == tx_count
 
 
+def teardown_module(module) -> None:
+    if Path(DATADIR_HDD).exists():
+        shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
+    if Path(DATADIR_SSD).exists():
+        shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
+
+
 def test_preprocessor_whole_block_as_a_single_chunk():
     worker_ack_queue_mtree = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
-    lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
+    lmdb = LMDB_Database(lock=True)
     mock_mysql_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
     mysql_db: MySQLDatabase = MySQLDatabase(mock_mysql_conn, worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
@@ -108,7 +110,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     # Up until here, this was just setup to obtain the block chunks for testing.
     for block_chunk_data in block_chunks:
         packed_msg_for_zmq = pack_block_chunk_message_for_worker(block_chunk_data)
-        worker.process_merkle_tree_batch([packed_msg_for_zmq], lmdb)
+        process_merkle_tree_batch(worker, [packed_msg_for_zmq], lmdb)
 
     ack = worker.worker_ack_queue_mtree.get()
     assert ack == block_hash
@@ -130,11 +132,15 @@ def test_preprocessor_whole_block_as_a_single_chunk():
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof
 
+    lmdb.close()
+    worker.close()
+    del worker
+
 
 def test_preprocessor_with_block_divided_into_four_chunks():
     worker_ack_queue_mtree = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
-    lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
+    lmdb = LMDB_Database(lock=True)
     mock_mysql_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
     mysql_db: MySQLDatabase = MySQLDatabase(mock_mysql_conn, worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
@@ -186,7 +192,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
             tx_offsets_for_chunk)
 
         packed_msg_for_zmq = pack_block_chunk_message_for_worker(block_chunk_data)
-        worker.process_merkle_tree_batch([packed_msg_for_zmq], lmdb)
+        process_merkle_tree_batch(worker, [packed_msg_for_zmq], lmdb)
 
         if idx == 0:
             assert tx_offsets_for_chunk[0] == 83
@@ -225,3 +231,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
         txid = hash_to_hex_str(tx_hash)
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof
+
+    lmdb.close()
+    worker.close()
+    del worker

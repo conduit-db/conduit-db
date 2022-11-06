@@ -34,8 +34,8 @@ class LmdbBlocks:
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
 
-        raw_blocks_dir = Path(os.environ["RAW_BLOCKS_DIR"])
-        raw_blocks_lockfile = Path(os.environ['RAW_BLOCKS_LOCKFILE'])
+        raw_blocks_dir = Path(os.environ["DATADIR_HDD"]) / 'raw_blocks'
+        raw_blocks_lockfile = Path(os.environ['DATADIR_SSD']) / 'raw_blocks.lock'
 
         self.ffdb = FlatFileDb(raw_blocks_dir, raw_blocks_lockfile)
         self.blocks_db = self.db.env.open_db(self.BLOCKS_DB)

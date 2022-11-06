@@ -320,15 +320,8 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 if __name__ == "__main__":
-    os.environ["LMDB_DATABASE_DIR"] = "test_lmdb"
-    os.environ["RAW_BLOCKS_DIR"] = "test_rawblocks"
-    os.environ["RAW_BLOCKS_LOCKFILE"] = "test_rawblocks.lock"
-
-    os.environ["MERKLE_TREES_DIR"] = "test_merkle_trees"
-    os.environ["MERKLE_TREES_LOCKFILE"] = "test_merkle_trees.lock"
-
-    os.environ["TX_OFFSETS_DIR"] = "test_tx_offsets"
-    os.environ["TX_OFFSETS_LOCKFILE"] = "test_tx_offsets.lock"
+    os.environ["DATADIR_HDD"] = "test_datadir_hdd"
+    os.environ["DATADIR_SSD"] = "test_datadir_ssd"
 
     logging.basicConfig(level=logging.DEBUG)
     # Port 0 means to select an arbitrary unused remote_port
@@ -338,8 +331,7 @@ if __name__ == "__main__":
     from conduit_lib.networks import NetworkConfig
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-    storage_path = MODULE_DIR / "test_lmdb"
-    lmdb = LMDB_Database(str(storage_path), lock=True)
+    lmdb = LMDB_Database(lock=True)
     net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
     block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()

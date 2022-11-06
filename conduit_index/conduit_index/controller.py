@@ -35,7 +35,7 @@ from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_L
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
 from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
     get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
-from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_conduit_raw_api
+from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_ipc_socket_server
 
 from .sync_state import SyncState
 from .types import WorkUnit
@@ -51,7 +51,7 @@ if typing.TYPE_CHECKING:
 
 
 def get_headers_dir_conduit_index() -> Path:
-    return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
+    return Path(os.getenv("DATADIR_SSD", str(MODULE_DIR.parent))) / 'headers_conduit_index'
 
 
 class ZMQSocketListeners:
@@ -108,7 +108,7 @@ class Controller(ControllerBase):
 
         self.general_executor = ThreadPoolExecutor(max_workers=4)
 
-        wait_for_conduit_raw_api()
+        wait_for_ipc_socket_server()
         wait_for_mysql()
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)

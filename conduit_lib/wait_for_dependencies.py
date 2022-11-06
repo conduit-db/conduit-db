@@ -82,13 +82,13 @@ def wait_for_mysql() -> None:
                 time.sleep(5)
 
 
-def wait_for_conduit_raw_api() -> None:
+def wait_for_ipc_socket_server() -> None:
     """There are currently two components to this:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-    host: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
-    port: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
+    host: str = os.environ.get('IPC_SOCKET_SERVER_HOST', '127.0.0.1')
+    port: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
 
     was_waiting = False
     while True:
@@ -105,7 +105,7 @@ def wait_for_conduit_raw_api() -> None:
                          f"unavailable - waiting...")
             time.sleep(5)
         except Exception:
-            logger.exception("unexpected exception in 'wait_for_conduit_raw_api'")
+            logger.exception("unexpected exception in 'wait_for_ipc_socket_server'")
 
     logger.info(f"ConduitRawAPI on:  http://{host}:{port} is available")
     if was_waiting:

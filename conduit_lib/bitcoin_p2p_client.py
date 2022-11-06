@@ -76,7 +76,7 @@ class BitcoinP2PClient:
         self.serializer = Serializer(net_config)
 
         # Any blocks that exceed the size of the network buffer are instead writted to file
-        self.big_block_write_directory = Path(os.environ.get("DATADIR", MODULE_DIR)) / "big_blocks"
+        self.big_block_write_directory = Path(os.environ.get("DATADIR_HDD", MODULE_DIR)) / "big_blocks"
         if not self.big_block_write_directory.exists():
             os.makedirs(self.big_block_write_directory, exist_ok=True)
 

@@ -23,7 +23,7 @@ from conduit_lib.constants import REGTEST, ZERO_HASH
 from conduit_lib import commands
 from conduit_lib.handlers import MessageHandlerProtocol
 from conduit_lib import BitcoinP2PClient, NetworkConfig, Serializer, Deserializer
-from conduit_lib.utils import create_task
+from conduit_lib.utils import create_task, remove_readonly
 from contrib.scripts.import_blocks import import_blocks
 
 from .data.big_data_carrier_tx import DATA_CARRIER_TX
@@ -31,9 +31,8 @@ from .data.big_data_carrier_tx import DATA_CARRIER_TX
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
 os.environ['NETWORK_BUFFER_SIZE'] = "1000000"
-os.environ['DATADIR'] = str(MODULE_DIR)
-BIG_BLOCK_WRITE_DIRECTORY = Path(os.environ["DATADIR"]) / "big_blocks"
-os.makedirs(BIG_BLOCK_WRITE_DIRECTORY, exist_ok=True)
+DATADIR_HDD = os.environ['DATADIR_HDD'] = str(MODULE_DIR / 'test_datadir_hdd')
+DATADIR_SSD = os.environ['DATADIR_SSD'] = str(MODULE_DIR / 'test_datadir_ssd')
 
 
 
@@ -155,14 +154,11 @@ def setup_module(module) -> None:
     time.sleep(5)
 
 
-def remove_readonly(func: Callable[[Path], None], path: Path,
-        excinfo: BaseException | None) -> None:
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
-
-
 def teardown_module(module) -> None:
-    shutil.rmtree(BIG_BLOCK_WRITE_DIRECTORY, onerror=remove_readonly)
+    if Path(DATADIR_HDD).exists():
+        shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
+    if Path(DATADIR_SSD).exists():
+        shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 
 
 @pytest.mark.asyncio

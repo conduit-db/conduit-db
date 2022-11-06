@@ -35,8 +35,8 @@ class IPCSocketClient:
     is_open = True
 
     def __init__(self) -> None:
-        self.HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', '127.0.0.1')
-        self.PORT: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
+        self.HOST: str = os.environ.get('IPC_SOCKET_SERVER_HOST', '127.0.0.1')
+        self.PORT: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
         self.logger: logging.Logger = logging.getLogger('raw-socket-client')
         self.wait_for_connection()
 

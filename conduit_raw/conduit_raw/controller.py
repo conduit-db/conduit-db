@@ -42,7 +42,7 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_headers_dir_conduit_raw() -> Path:
-    return Path(os.getenv("HEADERS_DIR_CONDUIT_RAW", str(MODULE_DIR.parent)))
+    return Path(os.getenv("DATADIR_SSD", str(MODULE_DIR.parent))) / 'headers_conduit_raw'
 
 
 class Controller(ControllerBase):

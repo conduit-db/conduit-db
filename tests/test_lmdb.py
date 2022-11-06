@@ -10,7 +10,6 @@ import bitcoinx
 from bitcoinx import double_sha256
 
 from conduit_lib import NetworkConfig
-from conduit_lib.bitcoin_p2p_types import BlockDataMsg, BlockType
 from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -22,15 +21,8 @@ from tests.conftest import TEST_RAW_BLOCK_413567, TEST_RAW_BLOCK_400000
 from tests.data.block413567_offsets import TX_OFFSETS
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-LMDB_STORAGE_PATH = MODULE_DIR / "test_db"
-RAW_BLOCKS_LOCKFILE = os.environ['RAW_BLOCKS_LOCKFILE'] = "raw_blocks_ffdb.lock"
-MERKLE_TREES_LOCKFILE = os.environ['MERKLE_TREES_LOCKFILE'] = "merkle_trees_ffdb.lock"
-TX_OFFSETS_LOCKFILE = os.environ['TX_OFFSETS_LOCKFILE'] = "tx_offsets_ffdb.lock"
-RAW_BLOCKS_DIR = Path(os.environ["RAW_BLOCKS_DIR"])
-MERKLE_TREES_DIR = Path(os.environ["MERKLE_TREES_DIR"])
-TX_OFFSETS_DIR = Path(os.environ["TX_OFFSETS_DIR"])
-
-TEST_HEADERS_FILE = MODULE_DIR / "test_headers.mmap"
+DATADIR_HDD = os.environ['DATADIR_HDD'] = str(MODULE_DIR / 'test_datadir_hdd')
+DATADIR_SSD = os.environ['DATADIR_SSD'] = str(MODULE_DIR / 'test_datadir_ssd')
 
 
 def ipc_sock_server_thread(lmdb: LMDB_Database):
@@ -48,12 +40,12 @@ def ipc_sock_server_thread(lmdb: LMDB_Database):
 class TestLMDBDatabase:
 
     def setup_class(self):
-        self.lmdb = LMDB_Database(storage_path=str(LMDB_STORAGE_PATH))
+        self.lmdb = LMDB_Database(lock=True)  # uses DATADIR_SSD environment variable above
         self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread,
             args=[self.lmdb])
         self.ipc_sock_server_thread.start()
-        os.environ['CONDUIT_RAW_API_HOST'] = 'localhost'
-        os.environ['CONDUIT_RAW_API_PORT'] = '34586'
+        os.environ['IPC_SOCKET_SERVER_HOST'] = 'localhost'
+        os.environ['IPC_SOCKET_SERVER_PORT'] = '34586'
         self.ipc_sock_client = IPCSocketClient()
 
     def teardown_class(self):
@@ -61,22 +53,12 @@ class TestLMDBDatabase:
         time.sleep(5)  # allow time for server to stop (and close lmdb handle)
         self.ipc_sock_client.close()  # closes client channel
         self.lmdb.close()
-        if os.path.exists(LMDB_STORAGE_PATH):
-            shutil.rmtree(LMDB_STORAGE_PATH)
-        if os.path.exists(RAW_BLOCKS_DIR):
-            shutil.rmtree(RAW_BLOCKS_DIR)
-        if os.path.exists(RAW_BLOCKS_LOCKFILE):
-            os.remove(RAW_BLOCKS_LOCKFILE)
-        if os.path.exists(MERKLE_TREES_DIR):
-            shutil.rmtree(MERKLE_TREES_DIR)
-        if os.path.exists(MERKLE_TREES_LOCKFILE):
-            os.remove(MERKLE_TREES_LOCKFILE)
-        if os.path.exists(TX_OFFSETS_DIR):
-            shutil.rmtree(TX_OFFSETS_DIR)
-        if os.path.exists(TX_OFFSETS_LOCKFILE):
-            os.remove(TX_OFFSETS_LOCKFILE)
-        if os.path.exists(TEST_HEADERS_FILE):
-            os.remove(TEST_HEADERS_FILE)
+        if os.path.exists(DATADIR_HDD):
+            shutil.rmtree(DATADIR_HDD)
+        if os.path.exists(DATADIR_SSD):
+            shutil.rmtree(DATADIR_SSD)
+        if os.path.exists('test_headers.mmap'):
+            os.remove('test_headers.mmap')
 
     def test_block_storage(self):
         expected_block_num = 1

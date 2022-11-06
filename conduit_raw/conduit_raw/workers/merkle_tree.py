@@ -48,74 +48,6 @@ class MTreeCalculator(multiprocessing.Process):
         self.batched_merkle_trees: list[MerkleTreeRow] = []
         self.batched_acks: list[bytes] = []
 
-    def process_merkle_tree_batch(self, batch: list[bytes], lmdb: LMDB_Database) -> None:
-        """If the batch is for a 'BIG BLOCK' then it will accumulate the tx_hashes and counts
-        in `tx_hashes_map` and `tx_count_map` and wait for subsequent batches until it receives
-        the last batch where `chunk_num == num_of_chunks`."""
-        t0 = time.perf_counter()
-        for packed_msg in batch:
-            chunk_num, num_of_chunks, blk_hash, tx_offsets_bytes_for_chunk, raw_block_chunk = \
-                cbor2.loads(packed_msg)
-
-            tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
-
-            if not self.tx_hashes_map.get(blk_hash):
-                # self.logger.debug(f"Got new block: {hash_to_hex_str(blk_hash)}")
-                self.tx_hashes_map[blk_hash] = bytearray()
-
-            if chunk_num == 1:
-                total_tx_count, _ = unpack_varint(raw_block_chunk[80:89], offset=0)
-                self.tx_count_map[blk_hash] = total_tx_count
-
-            for i in range(len(tx_offsets_for_chunk)):
-                is_last_tx_in_chunk = (i == (len(tx_offsets_for_chunk) - 1))
-                if chunk_num == 1:
-                    start_offset = tx_offsets_for_chunk[i]
-                else:
-                    # Need to subtract the first tx's byte offset from all of the other tx offsets
-                    # to adjust it to get the correct offset for the chunk
-                    start_offset = tx_offsets_for_chunk[i] - tx_offsets_for_chunk[0]
-                # start_offset = tx_offsets_for_chunk[i]
-                if is_last_tx_in_chunk:  # last tx in chunk
-                    rawtx = raw_block_chunk[start_offset:]
-                else:
-                    if chunk_num == 1:
-                        end_offset = tx_offsets_for_chunk[i + 1]
-                    else:
-                        # Need to subtract the first tx's byte offset from all of the other tx offsets
-                        # to adjust it to get the correct offset for the chunk
-                        end_offset = tx_offsets_for_chunk[i + 1] - tx_offsets_for_chunk[0]
-                    rawtx = raw_block_chunk[start_offset:end_offset]
-                tx_hash = double_sha256(rawtx)
-                self.tx_hashes_map[blk_hash] += tx_hash
-
-            def tx_hashes_to_list(tx_hashes: bytearray) -> list[bytes]:
-                return [tx_hashes[i*32:(i+1)*32] for i in range(tx_count)]
-
-            # Final chunk received
-            if chunk_num == num_of_chunks:
-                tx_count = self.tx_count_map[blk_hash]
-                tx_hashes = self.tx_hashes_map[blk_hash]
-                base_level_index = calc_depth(leaves_count=tx_count) - 1
-                mtree = {base_level_index: tx_hashes_to_list(tx_hashes)}
-                mtree = build_mtree_from_base(base_level_index, mtree)
-                self.batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
-                self.batched_acks.append(blk_hash)
-                del self.tx_count_map[blk_hash]
-                del self.tx_hashes_map[blk_hash]
-
-        # self.logger.debug(f"batched_merkle_trees={batched_merkle_trees}")
-        if self.batched_merkle_trees:
-            lmdb.put_merkle_trees(self.batched_merkle_trees)
-            t1 = time.perf_counter() - t0
-            self.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
-            self.batched_merkle_trees = []
-
-        if self.batched_acks:
-            for blk_hash in self.batched_acks:
-                self.worker_ack_queue_mtree.put(blk_hash)
-            self.batched_acks = []
-
     def run(self) -> None:
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
         if sys.platform == "win32":
@@ -154,7 +86,7 @@ class MTreeCalculator(multiprocessing.Process):
                         if time_diff > self.BATCHING_RATE:
                             prev_time_check = time.time()
                             if batch:
-                                self.process_merkle_tree_batch(batch, lmdb)
+                                process_merkle_tree_batch(self, batch, lmdb)
                             batch = []
                 except zmq.error.Again:
                     self.logger.debug(f"zmq.error.Again")
@@ -194,3 +126,76 @@ class MTreeCalculator(multiprocessing.Process):
             except Exception:
                 self.logger.exception("Caught exception")
             self.logger.info(f"MTreeCalculator process stopped")
+
+
+def process_merkle_tree_batch(worker: MTreeCalculator, batch: list[bytes], lmdb: LMDB_Database) -> None:
+    """This is lifted out of MTreeCalculator to facilitate testing. The LMDB_Database handle
+    cannot be used from two different processes...
+
+    If the batch is for a 'BIG BLOCK' then it will accumulate the tx_hashes and counts
+    in `tx_hashes_map` and `tx_count_map` and wait for subsequent batches until it receives
+    the last batch where `chunk_num == num_of_chunks`.
+    """
+    t0 = time.perf_counter()
+    for packed_msg in batch:
+        chunk_num, num_of_chunks, blk_hash, tx_offsets_bytes_for_chunk, raw_block_chunk = cbor2.loads(
+            packed_msg)
+
+        tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
+
+        if not worker.tx_hashes_map.get(blk_hash):
+            # worker.logger.debug(f"Got new block: {hash_to_hex_str(blk_hash)}")
+            worker.tx_hashes_map[blk_hash] = bytearray()
+
+        if chunk_num == 1:
+            total_tx_count, _ = unpack_varint(raw_block_chunk[80:89], offset=0)
+            worker.tx_count_map[blk_hash] = total_tx_count
+
+        for i in range(len(tx_offsets_for_chunk)):
+            is_last_tx_in_chunk = (i == (len(tx_offsets_for_chunk) - 1))
+            if chunk_num == 1:
+                start_offset = tx_offsets_for_chunk[i]
+            else:
+                # Need to subtract the first tx's byte offset from all of the other tx offsets
+                # to adjust it to get the correct offset for the chunk
+                start_offset = tx_offsets_for_chunk[i] - tx_offsets_for_chunk[0]
+            # start_offset = tx_offsets_for_chunk[i]
+            if is_last_tx_in_chunk:  # last tx in chunk
+                rawtx = raw_block_chunk[start_offset:]
+            else:
+                if chunk_num == 1:
+                    end_offset = tx_offsets_for_chunk[i + 1]
+                else:
+                    # Need to subtract the first tx's byte offset from all of the other tx offsets
+                    # to adjust it to get the correct offset for the chunk
+                    end_offset = tx_offsets_for_chunk[i + 1] - tx_offsets_for_chunk[0]
+                rawtx = raw_block_chunk[start_offset:end_offset]
+            tx_hash = double_sha256(rawtx)
+            worker.tx_hashes_map[blk_hash] += tx_hash
+
+        def tx_hashes_to_list(tx_hashes: bytearray) -> list[bytes]:
+            return [tx_hashes[i * 32:(i + 1) * 32] for i in range(tx_count)]
+
+        # Final chunk received
+        if chunk_num == num_of_chunks:
+            tx_count = worker.tx_count_map[blk_hash]
+            tx_hashes = worker.tx_hashes_map[blk_hash]
+            base_level_index = calc_depth(leaves_count=tx_count) - 1
+            mtree = {base_level_index: tx_hashes_to_list(tx_hashes)}
+            mtree = build_mtree_from_base(base_level_index, mtree)
+            worker.batched_merkle_trees.append(MerkleTreeRow(blk_hash, mtree, tx_count))
+            worker.batched_acks.append(blk_hash)
+            del worker.tx_count_map[blk_hash]
+            del worker.tx_hashes_map[blk_hash]
+
+    # worker.logger.debug(f"batched_merkle_trees={batched_merkle_trees}")
+    if worker.batched_merkle_trees:
+        lmdb.put_merkle_trees(worker.batched_merkle_trees)
+        t1 = time.perf_counter() - t0
+        worker.logger.debug(f"mtree & transaction offsets batch flush took {t1} seconds")
+        worker.batched_merkle_trees = []
+
+    if worker.batched_acks:
+        for blk_hash in worker.batched_acks:
+            worker.worker_ack_queue_mtree.put(blk_hash)
+        worker.batched_acks = []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import array
 import logging
 import struct
 import threading
@@ -76,8 +77,7 @@ class MempoolParsingThread(threading.Thread):
             msg_type, size_tx = struct.unpack_from(f"<II", msg)
             msg_type, size_tx, rawtx = struct.unpack(f"<II{size_tx}s", msg)
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
-            dt = datetime.utcnow()
-            tx_offsets = [0]
+            tx_offsets = array.array('Q', [0])
             timestamp = int(time.time())
             tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = parse_txs(rawtx,
                 tx_offsets, timestamp, False, 0)

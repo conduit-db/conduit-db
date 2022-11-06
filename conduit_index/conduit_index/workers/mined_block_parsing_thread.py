@@ -235,8 +235,7 @@ class MinedBlockParsingThread(threading.Thread):
             # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
             all_tx_offsets: set[int] = new_tx_offsets.get(work_item, set()) | \
                 not_new_tx_offsets.get(work_item, set())
-            all_tx_offsets_sorted = list(all_tx_offsets)
-            all_tx_offsets_sorted.sort()
+            all_tx_offsets_sorted = array.array('Q', sorted(all_tx_offsets))
 
             tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block_slice,
                 all_tx_offsets_sorted, blk_num, True, first_tx_pos_batch,

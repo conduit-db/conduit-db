@@ -143,6 +143,6 @@ def get_aiohttp_app(lmdb: LMDB_Database, network: str='mainnet') -> tuple[web.Ap
 
 
 if __name__ == "__main__":
-    lmdb = LMDB_Database()
+    lmdb = LMDB_Database(lock=True)
     app, app_state = get_aiohttp_app(lmdb)
     web.run_app(app, host=SERVER_HOST, port=SERVER_PORT)

@@ -29,8 +29,8 @@ class LmdbTxOffsets:
     def __init__(self, db: 'LMDB_Database'):
         self.db = db
 
-        tx_offsets_dir = Path(os.environ["TX_OFFSETS_DIR"])
-        tx_offsets_lockfile = Path(os.environ['TX_OFFSETS_LOCKFILE'])
+        tx_offsets_dir = Path(os.environ["DATADIR_HDD"]) / 'tx_offsets'
+        tx_offsets_lockfile = Path(os.environ['DATADIR_SSD']) / 'tx_offsets.lock'
 
         self.ffdb = FlatFileDb(tx_offsets_dir, tx_offsets_lockfile)
         self.tx_offsets_db = self.db.env.open_db(self.TX_OFFSETS_DB)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import stat
+
 import bitcoinx
 from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header,
     Chain, Network, sha256)
@@ -110,9 +112,9 @@ def get_log_level(service_name: str) -> int:
 
 
 def get_conduit_raw_host_and_port() -> tuple[str, int]:
-    CONDUIT_RAW_API_HOST: str = os.environ.get('CONDUIT_RAW_API_HOST', 'localhost')
-    CONDUIT_RAW_API_PORT: int = int(os.environ.get('CONDUIT_RAW_API_PORT', '50000'))
-    return CONDUIT_RAW_API_HOST, CONDUIT_RAW_API_PORT
+    IPC_SOCKET_SERVER_HOST: str = os.environ.get('IPC_SOCKET_SERVER_HOST', 'localhost')
+    IPC_SOCKET_SERVER_PORT: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
+    return IPC_SOCKET_SERVER_HOST, IPC_SOCKET_SERVER_PORT
 
 
 def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
@@ -353,10 +355,6 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket[bytes],
         sock.close()
 
 
-def get_headers_dir_conduit_index() -> Path:
-    return Path(os.getenv("HEADERS_DIR_CONDUIT_INDEX", str(MODULE_DIR.parent)))
-
-
 T1 = TypeVar("T1")
 
 
@@ -400,3 +398,9 @@ def network_str_to_bitcoinx_network(network: str) -> bitcoinx.Network:
         return bitcoinx.BitcoinRegtest
     else:
         raise NotImplementedError(f"Unrecognized network type: '{network}'")
+
+
+def remove_readonly(func: Callable[[Path], None], path: Path,
+        excinfo: BaseException | None) -> None:
+    os.chmod(path, stat.S_IWRITE)
+    func(path)

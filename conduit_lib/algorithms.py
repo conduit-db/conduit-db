@@ -213,7 +213,7 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
         raise
 
 
-def parse_txs(buffer: bytes, tx_offsets: list[int] | array.ArrayType[int],
+def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
         block_num_or_timestamp: int, confirmed: bool, first_tx_pos_batch: int=0,
         already_seen_offsets: set[int] | None=None) -> tuple[list[ConfirmedTransactionRow],
             list[MempoolTransactionRow], list[InputRow], list[OutputRow], list[PushdataRow]]:

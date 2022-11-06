@@ -56,7 +56,7 @@ def cast_to_valid_ipv4(ipv4: str) -> str:
 
 def resolve_hosts_and_update_env_vars() -> None:
     for key in os.environ:
-        if key in {"MYSQL_HOST", "NODE_HOST", "CONDUIT_RAW_API_HOST"}:
+        if key in {"MYSQL_HOST", "NODE_HOST", "IPC_SOCKET_SERVER_HOST"}:
             logger.debug(f"Checking environment variable: {key}")
             logger.debug(f"os.environ[key] before: {os.environ[key]}")
             # Resolve the IP address (particularly important for docker container names)

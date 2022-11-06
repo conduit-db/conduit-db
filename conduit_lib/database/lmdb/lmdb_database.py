@@ -39,7 +39,7 @@ class LMDB_Database:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
-        lmdb_database_dir: str = os.environ["LMDB_DATABASE_DIR"]
+        lmdb_database_dir: str = str(Path(os.environ["DATADIR_SSD"]) / 'lmdb_data')
 
         if not storage_path:
             storage_path = lmdb_database_dir

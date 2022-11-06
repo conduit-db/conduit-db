@@ -11,7 +11,8 @@ import pytest
 
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE
 from conduit_lib.types import Slice
-from tests.conftest import remove_readonly
+from conduit_lib.utils import remove_readonly
+
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger("test-flat-file-db")

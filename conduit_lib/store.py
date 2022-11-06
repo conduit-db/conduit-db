@@ -1,20 +1,18 @@
+import bitcoinx
+from bitcoinx import Headers
 import logging
 import os
 import shutil
-import stat
 import mmap
 import sys
 import threading
 from pathlib import Path
-from typing import Callable
-
-import bitcoinx
-from bitcoinx import Headers
 
 from .database.lmdb.lmdb_database import LMDB_Database
 from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database, mysql_connect
 from .constants import REGTEST
 from .networks import HeadersRegTestMod, NetworkConfig
+from .utils import remove_readonly
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 MMAP_SIZE = 2_000_000  # count of headers
@@ -88,8 +86,6 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     # remove headers - memory-mapped so need to do it this way to free memory immediately...
 
-    reset_headers(headers_path, block_headers_path)
-
     # remove postgres tables
     if os.environ['SERVER_TYPE'] == "ConduitIndex":
         mysql_database = mysql_connect()
@@ -100,32 +96,15 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
             mysql_database.close()
 
     if os.environ['SERVER_TYPE'] == "ConduitRaw":
-        def remove_readonly(func: Callable[[Path], None], path: Path,
-                excinfo: BaseException | None) -> None:
-            lmdb_db = LMDB_Database()
-            lmdb_db.close()
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
+        DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
+        if DATADIR_SSD.exists():
+            shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 
-        lmdb_path = Path(MODULE_DIR).parent.parent.parent.joinpath('lmdb_data')
-        if os.path.exists(lmdb_path):
-            shutil.rmtree(lmdb_path, onerror=remove_readonly)
+        DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
+        if DATADIR_HDD.exists():
+            shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
 
-        LMDB_DATABASE_DIR: str = os.environ["LMDB_DATABASE_DIR"]
-        if os.path.exists(LMDB_DATABASE_DIR):
-            shutil.rmtree(LMDB_DATABASE_DIR, onerror=remove_readonly)
-
-        RAW_BLOCKS_DIR = os.environ["RAW_BLOCKS_DIR"]
-        if os.path.exists(RAW_BLOCKS_DIR):
-            shutil.rmtree(RAW_BLOCKS_DIR, onerror=remove_readonly)
-
-        MERKLE_TREES_DIR = os.environ["MERKLE_TREES_DIR"]
-        if os.path.exists(MERKLE_TREES_DIR):
-            shutil.rmtree(MERKLE_TREES_DIR, onerror=remove_readonly)
-
-        TX_OFFSETS_DIR = os.environ["TX_OFFSETS_DIR"]
-        if os.path.exists(TX_OFFSETS_DIR):
-            shutil.rmtree(TX_OFFSETS_DIR, onerror=remove_readonly)
+    reset_headers(headers_path, block_headers_path)
 
 
 def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
