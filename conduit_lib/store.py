@@ -60,6 +60,8 @@ def setup_headers_store(net_config: NetworkConfig, mmap_filename: str | Path) ->
 
 
 def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
+    os.makedirs(headers_path.parent, exist_ok=True)
+    os.makedirs(block_headers_path.parent, exist_ok=True)
     if sys.platform == 'win32':
         if os.path.exists(headers_path):
             with open(str(headers_path), 'w+') as f:
@@ -95,15 +97,17 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
         finally:
             mysql_database.close()
 
+    DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
+    DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
     if os.environ['SERVER_TYPE'] == "ConduitRaw":
-        DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
         if DATADIR_SSD.exists():
             shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 
-        DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
         if DATADIR_HDD.exists():
             shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
 
+    os.makedirs(DATADIR_SSD, exist_ok=True)
+    os.makedirs(DATADIR_HDD, exist_ok=True)
     reset_headers(headers_path, block_headers_path)
 
 
