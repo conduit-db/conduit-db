@@ -26,7 +26,7 @@ resolve_hosts_and_update_env_vars()
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
 else:
-    from conduit_raw.controller import Controller
+    from conduit_raw.controller import Controller  # type: ignore
 
 CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(0, str(CONDUIT_ROOT_PATH))

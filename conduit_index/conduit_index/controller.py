@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import bitcoinx
 import cbor2
@@ -26,6 +24,7 @@ from conduit_lib.database.mysql.types import MinedTxHashes
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
+from conduit_lib import Peer
 from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
@@ -39,15 +38,15 @@ from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_ipc_socke
 
 from .sync_state import SyncState
 from .types import WorkUnit
+from .workers.common import convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 from .workers.transaction_parser import TxParser
-from conduit_lib.zmq_sockets import bind_async_zmq_socket
+from conduit_lib.zmq_sockets import bind_async_zmq_socket, connect_async_zmq_socket
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 if typing.TYPE_CHECKING:
     from conduit_lib.networks import NetworkConfig
-    from conduit_lib import Peer
 
 
 def get_headers_dir_conduit_index() -> Path:
@@ -71,7 +70,8 @@ class ZMQSocketListeners:
         self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
 
         # Controller to Aiohttp API
-        self.reorg_event_socket = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:51495', zmq.SocketType.PUSH)
+        self.reorg_event_socket = connect_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:51495', zmq.SocketType.PUSH)
 
     def bind_async_zmq_socket(self, context: AsyncZMQContext, uri: str,
             zmq_socket_type: zmq.SocketType,
@@ -88,7 +88,7 @@ class ZMQSocketListeners:
 
 class Controller(ControllerBase):
 
-    def __init__(self, net_config: NetworkConfig,
+    def __init__(self, net_config: 'NetworkConfig',
             loop_type: None=None) -> None:
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
@@ -300,10 +300,13 @@ class Controller(ControllerBase):
                 raw_blocks_array, 0)
             tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
                 height, confirmed=True, first_tx_pos_batch=0)
+            pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
+            input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
+
             batched_tx_rows.extend(tx_rows)
-            batched_in_rows.extend(in_rows)
+            batched_in_rows.extend(input_rows_for_flushing)
             batched_out_rows.extend(out_rows)
-            batched_pd_rows.extend(pd_rows)
+            batched_pd_rows.extend(pushdata_rows_for_flushing)
             batched_header_hashes.append(block_hash)
 
         # Delete All

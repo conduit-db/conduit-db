@@ -95,7 +95,6 @@ def _task(x):
         mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
         fsync=True
     )
-    print("hi", flush=True)
     _do_general_read_and_write_ops(ffdb)
 
 

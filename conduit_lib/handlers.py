@@ -99,7 +99,7 @@ class MessageHandlerProtocol(typing.Protocol):
 
 class Handlers(MessageHandlerProtocol):
     def __init__(
-        self, controller: 'Controller', net_config: NetworkConfig, storage: Storage
+        self, controller: 'Controller | ConduitIndexController', net_config: NetworkConfig, storage: Storage
     ) -> None:
         self.net_config = net_config
         self.controller = controller
@@ -210,20 +210,23 @@ class Handlers(MessageHandlerProtocol):
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx)
         if typing.TYPE_CHECKING:
             self.controller = cast(ConduitIndexController, self.controller)
-        if hasattr(self.controller.zmq_socket_listeners, 'socket_mempool_tx'):  # Only conduit_index has this
+        if hasattr(self.controller.zmq_socket_listeners, 'socket_mempool_tx'):
             await self.controller.zmq_socket_listeners.socket_mempool_tx.send(packed_message)
             self.controller.mempool_tx_count += 1
 
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
+        assert self.controller.lmdb
         await asyncio.get_running_loop().run_in_executor(self.executor,
             self.controller.lmdb.put_big_block, big_block)
 
     async def _lmdb_put_small_blocks_in_thread(self, small_blocks: list[bytes]) -> None:
+        assert self.controller.lmdb
         await asyncio.get_running_loop().run_in_executor(self.executor,
             self.controller.lmdb.put_blocks, small_blocks)
 
     async def _lmdb_put_tx_offsets_in_thread(self,
             batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) -> None:
+        assert self.controller.lmdb
         await asyncio.get_running_loop().run_in_executor(self.executor,
             self.controller.lmdb.put_tx_offsets, batched_tx_offsets)
 

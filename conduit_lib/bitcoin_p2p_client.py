@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import array
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -228,7 +226,7 @@ class BitcoinP2PClient:
         raises `ConnectionResetError`
         """
         # Init local variables - Keeping them local avoids polluting instance state
-        tx_offsets_all: array.ArrayType[int] = array.array('Q')
+        tx_offsets_all: 'array.ArrayType[int]' = array.array('Q')
         block_hash = bytes()
         last_tx_offset_in_chunk: int | None = None
         adjustment = 0

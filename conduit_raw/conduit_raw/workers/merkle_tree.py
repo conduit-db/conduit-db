@@ -1,18 +1,16 @@
 import array
+from bitcoinx import double_sha256
+import cbor2
 import logging
 import multiprocessing
 import sys
 import threading
 import time
-
-import cbor2
 import zmq
-from bitcoinx import double_sha256
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.logging_client import setup_tcp_logging
-
 from conduit_lib.algorithms import build_mtree_from_base, calc_depth, unpack_varint
 from conduit_lib.types import MultiprocessingQueue
 
@@ -42,7 +40,7 @@ class MTreeCalculator(multiprocessing.Process):
 
         self.BATCHING_RATE = 0.3
         self.tx_hashes_map: dict[bytes, bytearray] = {}
-        self.tx_offsets_map: dict[bytes, array.ArrayType[int]] = {}
+        self.tx_offsets_map: dict[bytes, 'array.ArrayType[int]'] = {}  # pylint: disable=E1136
         self.tx_count_map: dict[bytes, int] = {}  # purely for checking data integrity
 
         self.batched_merkle_trees: list[MerkleTreeRow] = []

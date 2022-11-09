@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import queue
 from queue import Queue
@@ -8,7 +6,8 @@ import time
 
 from ..types import MySQLFlushBatchWithAcksMempool, MempoolTxAck
 from ..workers.common import maybe_refresh_mysql_connection, mysql_flush_rows_mempool, \
-    extend_batched_rows, reset_rows_mempool
+    extend_batched_rows, reset_rows_mempool, convert_pushdata_rows_for_flush, \
+    convert_input_rows_for_flush
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib import MySQLDatabase
@@ -51,8 +50,11 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         mysql_db, self.last_mysql_activity = \
                             maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity,
                                 self.logger)
+
                         mysql_flush_rows_mempool(self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks), mysql_db=mysql_db)
+                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool,
+                                ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
 
                 except queue.Empty:
@@ -61,7 +63,9 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
                         mysql_flush_rows_mempool(self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks), mysql_db=mysql_db)
+                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool,
+                                ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
                         self.last_mysql_activity = int(time.time())
                     continue

@@ -1,16 +1,17 @@
-from __future__ import annotations
-
 import logging
 import queue
 import threading
 import time
+from typing import cast
+
 import zmq
 
+from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import MySQLTipFilterQueries
 from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks
-from ..workers.common import reset_rows, maybe_refresh_mysql_connection, \
-    mysql_flush_rows_confirmed, extend_batched_rows
+from ..workers.common import reset_rows, maybe_refresh_mysql_connection, mysql_flush_rows_confirmed, \
+    extend_batched_rows, convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 
-from conduit_lib.database.mysql.types import MySQLFlushBatch
+from conduit_lib.database.mysql.types import MySQLFlushBatch, MempoolTransactionRow
 from conduit_lib import MySQLDatabase
 from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
@@ -43,14 +44,13 @@ class FlushConfirmedTransactionsThread(threading.Thread):
         self.last_mysql_activity: int = int(time.time())
 
     def run(self) -> None:
+        assert self.confirmed_tx_flush_queue is not None
+        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(self.zmq_context,
             'tcp://127.0.0.1:55889', zmq.SocketType.PUSH, [(zmq.SocketOption.SNDHWM, 10000)])
         self.socket_mined_tx_parsed_ack = connect_non_async_zmq_socket(self.zmq_context,
             'tcp://127.0.0.1:54214', zmq.SocketType.PUSH, [(zmq.SocketOption.SNDHWM, 10000)])
-
-        assert self.confirmed_tx_flush_queue is not None
         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
                 try:
@@ -60,15 +60,16 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     if not confirmed_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(confirmed_rows, txs, txs_mempool,
-                        ins, outs, pds)
+                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(confirmed_rows, txs,
+                        txs_mempool, ins, outs, pds)
                     acks.extend(new_acks)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
                         mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, txs_mempool,
-                            ins, outs, pds, acks), mysql_db=mysql_db)
+                            ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
 
                 # Post-IBD
@@ -77,7 +78,8 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
                         mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, txs_mempool,
-                            ins, outs, pds, acks), mysql_db=mysql_db)
+                            ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
                     continue
         except KeyboardInterrupt:

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 import logging

@@ -1,5 +1,5 @@
 # Object types
-import enum
+from enum import IntEnum
 import os
 
 ERROR = 0
@@ -56,7 +56,7 @@ else:
     TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX = int((1024 ** 3) * 2)
 
 
-class MsgType(enum.IntEnum):
+class MsgType(IntEnum):
     ERROR = 0
     MSG_TX = 1
     MSG_BLOCK = 2

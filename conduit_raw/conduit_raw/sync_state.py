@@ -1,15 +1,13 @@
 import asyncio
+import bitcoinx
+from bitcoinx.networks import Header
 import logging
-import threading
 import typing
 from typing import cast
-
-import bitcoinx
 
 from conduit_lib.constants import TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.store import Storage
-from bitcoinx.networks import Header
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -28,7 +26,8 @@ class SyncState:
         self.storage = storage
         self.controller = controller
 
-        self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
+        self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header] | None] \
+            = asyncio.Queue()
         self.headers_new_tip_queue: asyncio.Queue[Inv] = asyncio.Queue()
         self.headers_event_initial_sync: asyncio.Event = asyncio.Event()
         self.blocks_event_new_tip: asyncio.Event = asyncio.Event()

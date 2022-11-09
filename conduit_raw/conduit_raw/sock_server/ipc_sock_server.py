@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import os
 import threading
@@ -43,7 +41,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     This provides type safety without bringing in a heavy-weight dependency like protobufs.
     """
 
-    server: ThreadedTCPServer
+    server: 'ThreadedTCPServer'
     request: socket.socket
 
     def recvall(self, n: int) -> bytearray | None:

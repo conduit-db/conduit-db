@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import array
 import logging
 import math
@@ -16,7 +14,7 @@ logger = logging.getLogger("distribute_load")
 
 
 def distribute_load(blk_hash: bytes, blk_height: int, count_added: int, block_size: int,
-        tx_offsets_array: array.ArrayType[int]) -> list[WorkPart]:
+        tx_offsets_array: 'array.ArrayType[int]') -> list[WorkPart]:
     """tx_offsets_array must be all the tx_offsets in a full raw block
     Todo - This very badly needs unittest coverage - and TDD for working around the risk of a
         freakishly large transaction in the batch.

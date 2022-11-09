@@ -1,20 +1,18 @@
 """slower pure python alternative"""
-from __future__ import annotations
-
 import array
 import hashlib
 import logging
 import os
 import struct
 from math import ceil, log
-from typing import cast, NamedTuple
+from typing import NamedTuple
 
 from bitcoinx import hash_to_hex_str
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.database.mysql.types import ConfirmedTransactionRow, InputRow, OutputRow, \
-    PushdataRow, MempoolTransactionRow
+from conduit_lib.database.mysql.types import ConfirmedTransactionRow, OutputRow, \
+    MempoolTransactionRow, PushdataRowParsed, InputRowParsed
 from conduit_lib.types import PushdataMatchFlags
 
 _sha256 = hashlib.sha256
@@ -98,7 +96,7 @@ def skip_one_tx(buffer: bytes, offset: int) -> int:
     return offset
 
 
-def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple[array.ArrayType[int], int]:
+def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple['array.ArrayType[int]', int]:
     """
     Call this function iteratively as more slices of the raw block become available from the
     p2p socket.
@@ -108,7 +106,7 @@ def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple[array.Arr
     `offset` is the offset WITHIN the chunk
     `adjustment` shifts the final set of tx_offsets up by this amount
     """
-    tx_offsets: array.ArrayType[int] = array.array('Q')
+    tx_offsets: 'array.ArrayType[int]' = array.array('Q')
     tx_offsets.append(offset + adjustment)
     last_tx_offset_in_chunk = offset
     try:
@@ -204,7 +202,7 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
                     f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, flags, tx_pos)
 
         for pushdata, flags in all_pushdata:
-            pd_matches.append(PushdataMatch(sha256(pushdata)[0:HashXLength], flags))
+            pd_matches.append(PushdataMatch(sha256(pushdata), flags))
 
         return pd_matches
     except Exception as e:
@@ -213,10 +211,11 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
         raise
 
 
-def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
+def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
         block_num_or_timestamp: int, confirmed: bool, first_tx_pos_batch: int=0,
         already_seen_offsets: set[int] | None=None) -> tuple[list[ConfirmedTransactionRow],
-            list[MempoolTransactionRow], list[InputRow], list[OutputRow], list[PushdataRow]]:
+            list[MempoolTransactionRow], list[InputRowParsed], list[OutputRow],
+            list[PushdataRowParsed]]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -272,7 +271,7 @@ def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
             count_tx_in, offset = unpack_varint(buffer, offset)
             # in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hashX = buffer[offset: offset + 32][0:HashXLength]
+                in_prevout_hash = buffer[offset: offset + 32]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
@@ -282,8 +281,7 @@ def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
                 offset += 4  # skip sequence
 
                 if not previously_processed:
-                    in_rows.append(
-                        (in_prevout_hashX.hex(), in_prevout_idx, tx_hashX.hex(), in_idx))
+                    in_rows.append(InputRowParsed(in_prevout_hash, in_prevout_idx, tx_hash, in_idx))
 
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
@@ -316,10 +314,10 @@ def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
                         idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
                         genesis_height=genesis_height)
                     if len(pushdata_matches):
-                        for out_pushdata_hashX, flags in set(pushdata_matches):
-                            set_pd_rows.append((
-                                    out_pushdata_hashX.hex(),
-                                    tx_hashX.hex(),
+                        for out_pushdata_hash, flags in set(pushdata_matches):
+                            set_pd_rows.append(PushdataRowParsed(
+                                    out_pushdata_hash,
+                                    tx_hash,
                                     out_idx,
                                     int(flags),
                                 )
@@ -327,23 +325,20 @@ def parse_txs(buffer: bytes, tx_offsets: array.ArrayType[int],
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
                 if not previously_processed:
-                    out_rows.append((tx_hashX.hex(), out_idx, out_value))
+                    out_rows.append(OutputRow(tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
             offset += 4
 
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
-                tx_rows_confirmed.append((tx_hashX.hex(), block_num_or_timestamp, tx_pos))
+                tx_rows_confirmed.append(ConfirmedTransactionRow(tx_hashX.hex(),
+                    block_num_or_timestamp, tx_pos))
             else:
                 # Note mempool uses full length tx_hash
-                tx_rows_mempool.append((tx_hash.hex(), block_num_or_timestamp))
+                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
         assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
-        return cast(list[ConfirmedTransactionRow], tx_rows_confirmed), \
-            cast(list[MempoolTransactionRow], tx_rows_mempool), \
-            cast(list[InputRow], in_rows), \
-            cast(list[OutputRow], out_rows), \
-            cast(list[PushdataRow], set_pd_rows)
+        return tx_rows_confirmed, tx_rows_mempool, in_rows, out_rows, set_pd_rows
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -360,7 +355,7 @@ def calc_depth(leaves_count: int) -> int:
 
 
 def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_block: bytes,
-        tx_offsets: array.ArrayType[int]) -> MTree:
+        tx_offsets: 'array.ArrayType[int]') -> MTree:
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
@@ -392,7 +387,7 @@ def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> MTree:
     return mtree
 
 
-def calc_mtree(raw_block: bytes, tx_offsets: array.ArrayType[int]) -> MTree:
+def calc_mtree(raw_block: bytes, tx_offsets: 'array.ArrayType[int]') -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree: MTree = {}

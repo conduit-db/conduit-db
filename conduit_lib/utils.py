@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import asyncio
-import stat
-
 import bitcoinx
 from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header,
     Chain, Network, sha256)
+import stat
+import concurrent.futures
 import io
 import ipaddress
 import logging
@@ -18,13 +16,14 @@ import threading
 import time
 from typing import Any, cast, Callable, Coroutine, Optional, TypeVar
 import zmq
+from zmq.asyncio import Socket as AsyncZMQSocket
+
 
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .deserializer_types import NodeAddr
-from .types import ChainHashes
-
+from .types import ChainHashes, PushdataMatchFlags
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -302,14 +301,34 @@ def get_network_type() -> str:
     raise ValueError("There is no 'NETWORK' key in os.environ")
 
 
-def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str) -> None:
+def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str | None = None,
+        timeout: float | None = None) -> None:
+    start_time = time.time()
     while True:
         try:
             sock.send(msg, zmq.NOBLOCK)
             break
         except zmq.error.Again:
-            logger.debug(on_blocked_msg)
+            if timeout and (time.time() - start_time) > timeout:
+                raise TimeoutError("failed sending zmq message")
+            if on_blocked_msg:
+                logger.debug(on_blocked_msg)
             time.sleep(0.1)
+
+
+async def zmq_send_no_block_async(sock: 'AsyncZMQSocket', msg: bytes,
+        on_blocked_msg: str | None = None, timeout: float | None = None) -> None:
+    start_time = time.time()
+    while True:
+        try:
+            await sock.send(msg, zmq.NOBLOCK)
+            break
+        except zmq.error.Again:
+            if timeout and (time.time() - start_time) > timeout:
+                raise TimeoutError("failed sending zmq message")
+            if on_blocked_msg:
+                logger.debug(on_blocked_msg)
+            await asyncio.sleep(0.1)
 
 
 def maybe_process_batch(process_batch_func: Callable[[list[bytes]], None],
@@ -369,6 +388,11 @@ def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
         logger.exception(f"Unexpected exception in task")
 
 
+def future_callback(future: concurrent.futures.Future[None]) -> None:
+    if future.cancelled():
+        return
+    future.result()
+
 
 def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
     task = asyncio.create_task(coro)
@@ -404,3 +428,13 @@ def remove_readonly(func: Callable[[Path], None], path: Path,
         excinfo: BaseException | None) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
+
+def get_pushdata_match_flag(ref_type: int) -> int:
+    if ref_type == 0:
+        return PushdataMatchFlags.OUTPUT
+    elif ref_type == 1:
+        return PushdataMatchFlags.INPUT
+    elif ref_type == 2:
+        return PushdataMatchFlags.DATA
+    raise NotImplementedError

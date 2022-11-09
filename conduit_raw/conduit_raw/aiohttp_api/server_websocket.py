@@ -1,4 +1,3 @@
-from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 import uuid
@@ -9,7 +8,7 @@ if TYPE_CHECKING:
     from .server import ApplicationState
 
 
-class ReferenceServerConnection(object):
+class WSClient(object):
     def __init__(self, websocket_id: str, websocket: web.WebSocketResponse) -> None:
         self.websocket_id = websocket_id
         self.websocket = websocket
@@ -25,9 +24,10 @@ class ReferenceServerWebSocket(web.View):
 
         app_state: ApplicationState = self.request.app['app_state']
         try:
-            client = ReferenceServerConnection(websocket_id, websocket_response)
-            app_state.register_reference_server_connection(client)
-            self.logger.debug('%s connected, remote_host=%s', client.websocket_id, self.request.host)
+            client = WSClient(websocket_id, websocket_response)
+            app_state.add_ws_client(client)
+            self.logger.debug('%s connected, remote_host=%s', client.websocket_id,
+                self.request.host)
 
             async for message in client.websocket:
                 if message.type == WSMsgType.ERROR:
@@ -41,4 +41,4 @@ class ReferenceServerWebSocket(web.View):
         finally:
             await websocket_response.close()
             self.logger.debug("removing websocket id: %s", websocket_id)
-            app_state.unregister_reference_server_connection(websocket_id)
+            app_state.remove_ws_client_by_id(websocket_id)
