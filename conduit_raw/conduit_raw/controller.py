@@ -21,9 +21,9 @@ from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.types import HeaderSpan, MultiprocessingQueue
-from conduit_lib.utils import create_task, get_conduit_raw_host_and_port, get_header_for_hash, \
-    get_header_for_height
+from conduit_lib.utils import create_task, get_conduit_raw_host_and_port
 from conduit_lib.wait_for_dependencies import wait_for_mysql
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
@@ -75,6 +75,10 @@ class Controller(ControllerBase):
 
         headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
+        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers,
+            self.storage.headers_lock)
+        self.headers_threadsafe_blocks = HeadersAPIThreadsafe(self.storage.block_headers,
+            self.storage.block_headers_lock)
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config)
         self.deserializer = Deserializer(self.net_config)
@@ -234,8 +238,8 @@ class Controller(ControllerBase):
         host, port = get_conduit_raw_host_and_port()
         self.ipc_sock_server = ThreadedTCPServer(addr=(host, port),
             handler=ThreadedTCPRequestHandler,
-            block_headers=self.storage.block_headers,
-            block_headers_lock=self.storage.block_headers_lock, lmdb=self.lmdb)
+            headers_threadsafe_blocks=self.headers_threadsafe_blocks,
+            lmdb=self.lmdb)
         self.ipc_sock_server.serve_forever()
 
     def database_integrity_check(self) -> None:
@@ -244,7 +248,7 @@ class Controller(ControllerBase):
         tip_height = self.sync_state.get_local_block_tip_height()
         height = tip_height
         while True:
-            header = self.get_header_for_height(height)
+            header = self.headers_threadsafe.get_header_for_height(height)
             try:
                 self.logger.info(f"Checking database integrity...")
                 self.lmdb.check_block(header.hash)
@@ -258,8 +262,8 @@ class Controller(ControllerBase):
                 if height < tip_height:
                     self.logger.debug(f"Re-synchronising blocks from from: "
                                       f"{height} to {tip_height}")
-                    start_header = self.get_header_for_height(height)
-                    stop_header = self.get_header_for_height(tip_height)
+                    start_header = self.headers_threadsafe.get_header_for_height(height)
+                    stop_header = self.headers_threadsafe.get_header_for_height(tip_height)
                     self.new_headers_queue.put_nowait(HeaderSpan(is_reorg=False,
                         start_header=start_header, stop_header=stop_header))
                 return None
@@ -294,7 +298,7 @@ class Controller(ControllerBase):
         for i in range(0, 25, 2):
             height = tip.height - i**2
             if i == 0 or height > 0:
-                locator_hash = self.get_header_for_height(height).hash
+                locator_hash = self.headers_threadsafe.get_header_for_height(height).hash
                 block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
         await self.bitcoin_p2p_client.send_message(
@@ -341,12 +345,6 @@ class Controller(ControllerBase):
         except Exception as e:
             self.logger.exception(f"Unexpected exception in sync_headers_job")
 
-    def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
-
-    def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
-
     async def request_all_batch_block_data(self, _batch_id: int, blocks_batch_set: set[bytes],
             stop_header_height: int) -> None:
         """
@@ -360,7 +358,8 @@ class Controller(ControllerBase):
             inv = await self.sync_state.pending_blocks_inv_queue.get()
             # self.logger.debug(f"got block inv: {inv}, batch_id={_batch_id}")
             try:
-                header = self.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
+                header = self.headers_threadsafe.get_header_for_hash(
+                    hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
                 if self.sync_state.pending_blocks_inv_queue.empty() and count_requested != 0:
                     self.logger.exception(f"An unsolicited block "
@@ -387,15 +386,15 @@ class Controller(ControllerBase):
 
         assert count_requested == len(blocks_batch_set)
 
-    def backfill_headers(self, first_missing_header: int, reorg_tip_height: int) -> None:
-        for height in range(first_missing_header, reorg_tip_height + 1):
-            header = self.get_header_for_height(height)
+    def backfill_headers(self, first_missing_header_height: int, reorg_tip_height: int) -> None:
+        for height in range(first_missing_header_height, reorg_tip_height + 1):
+            header = self.headers_threadsafe.get_header_for_height(height, lock=False)
             self.storage.block_headers.connect(header.raw)
         self.storage.block_headers.flush()
 
     async def connect_done_block_headers(self, blocks_batch_set: set[bytes]) -> None:
         """If this returns False, it means a reorg happened"""
-        sorted_headers = sorted([(self.get_header_for_hash(h).height, h) for h in
+        sorted_headers = sorted([(self.headers_threadsafe.get_header_for_hash(h).height, h) for h in
             blocks_batch_set])
         sorted_heights = [height for height, h in sorted_headers]
         # Assert the resultant blocks are consecutive with no gaps
@@ -406,7 +405,7 @@ class Controller(ControllerBase):
         block_headers: bitcoinx.Headers = self.storage.block_headers
 
         for height, _hash in sorted_headers:
-            header = self.get_header_for_hash(_hash)
+            header = self.headers_threadsafe.get_header_for_hash(_hash)
             try:
                 block_headers.connect(header.raw)
             except bitcoinx.errors.MissingHeader as e:
@@ -463,8 +462,8 @@ class Controller(ControllerBase):
 
         # We only care about the longest chain headers at this point so
         # lookups by height is fine
-        start_header = self.get_header_for_height(start_header_height)
-        stop_header = self.get_header_for_height(stop_header_height)
+        start_header = self.headers_threadsafe.get_header_for_height(start_header_height)
+        stop_header = self.headers_threadsafe.get_header_for_height(stop_header_height)
         return HeaderSpan(is_reorg, start_header, stop_header)
 
     async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
@@ -472,7 +471,7 @@ class Controller(ControllerBase):
         assert self.bitcoin_p2p_client is not None
         original_stop_height = stop_header.height
         while True:
-            first_locator = self.get_header_for_height(start_header.height - 1)
+            first_locator = self.headers_threadsafe.get_header_for_height(start_header.height - 1)
 
             if batch_id == 0:
                 self.logger.info(f"Starting Initial Block Download")
@@ -490,7 +489,8 @@ class Controller(ControllerBase):
                 if chain.tip.height > 2016:
                     await self.update_moving_average(chain.tip.height)
 
-                from_height = self.get_header_for_hash(start_header.hash).height - 1
+                from_height = self.headers_threadsafe.get_header_for_hash(
+                    start_header.hash).height - 1
                 to_height = stop_header.height
 
             next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
@@ -512,7 +512,8 @@ class Controller(ControllerBase):
             if self.sync_state.get_local_block_tip_height() == original_stop_height:
                 break
             else:
-                start_header = self.get_header_for_height(start_header.height + batch_count)
+                start_header = self.headers_threadsafe.get_header_for_height(
+                    start_header.height + batch_count)
 
     async def sync_all_blocks_job(self) -> None:
         """supervises completion of syncing all blocks to target height"""
@@ -570,7 +571,8 @@ class Controller(ControllerBase):
 
     async def spawn_aiohttp_api(self) -> None:
         assert self.lmdb is not None
-        self.tasks.append(create_task(server_main.main(self.lmdb, self.net_config.NET)))
+        self.tasks.append(create_task(server_main.main(self.lmdb, self.headers_threadsafe,
+            self.net_config.NET)))
 
     async def spawn_poll_node_for_header_job(self) -> None:
         self.tasks.append(create_task(self.regtest_support.regtest_poll_node_for_tip_job()))

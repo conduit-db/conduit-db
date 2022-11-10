@@ -86,10 +86,8 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
 
 
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
-    # remove headers - memory-mapped so need to do it this way to free memory immediately...
-
-    # remove postgres tables
-    if os.environ['SERVER_TYPE'] == "ConduitIndex":
+    if os.environ['SERVER_TYPE'] == "ConduitIndex" and \
+            int(os.environ.get('RESET_CONDUIT_INDEX', 0)) == 1:
         mysql_database = mysql_connect()
         try:
             mysql_database.tables.mysql_drop_indices()
@@ -99,7 +97,8 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
 
     DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
     DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
-    if os.environ['SERVER_TYPE'] == "ConduitRaw":
+    if os.environ['SERVER_TYPE'] == "ConduitRaw" and \
+            int(os.environ.get('RESET_CONDUIT_RAW', 0)) == 1:
         if DATADIR_SSD.exists():
             shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 

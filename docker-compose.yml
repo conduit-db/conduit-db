@@ -27,6 +27,36 @@ services:
       MYSQL_USER: conduitadmin
       MYSQL_PASSWORD: conduitpass
 
+  reference_server:
+    container_name: reference_server
+    depends_on:
+      - "conduit-raw"
+      - "conduit-index"
+    build:
+      context: .
+      dockerfile: ./contrib/reference_server/Dockerfile
+    ports:
+      - "47124:47124"
+      - "47126:47126"
+    environment:
+      SKIP_DOTENV_FILE: 1  # Allows us to overrride all of the defaults in the .env file
+      EXTERNAL_HOST: "0.0.0.0"
+      EXTERNAL_PORT: 47124
+      INTERNAL_HOST: "0.0.0.0"
+      INTERNAL_PORT: 47126
+      EXPOSE_HEADER_SV_APIS: 1
+      HEADER_SV_URL: 'http://host.docker.internal:34525'
+      EXPOSE_PAYMAIL_APIS: 1
+      EXPOSE_INDEXER_APIS: 1
+      INDEXER_URL: 'http://host.docker.internal:34525'
+      NOTIFICATION_TEXT_NEW_MESSAGE: New message arrived
+      MAX_MESSAGE_CONTENT_LENGTH: 65536
+      CHUNKED_BUFFER_SIZE: 1024
+      NETWORK: regtest
+      ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    command:
+      sh -c 'python3 /reference_server/server.py'
+
   conduit-raw:
     build:
       context: .
@@ -37,7 +67,7 @@ services:
     depends_on:
       - node
     environment:
-      - CONDUIT_RAW_API_HOST=0.0.0.0:50000
+      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
       - BITCOIN_HOST=node
       - BITCOIN_RPC_PORT=18332
       - LMDB_READONLY=0
@@ -54,8 +84,7 @@ services:
       - mysql
       - conduit-raw
     environment:
-      - CONDUIT_RAW_API_HOST=conduit-raw:50000
-      - CONDUIT_INDEX_HOST=conduit-index
+      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 #    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/run_conduit_index.py'

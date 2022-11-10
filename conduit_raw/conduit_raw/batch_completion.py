@@ -30,7 +30,7 @@ class BatchCompletionRaw(threading.Thread):
         self.logger = logging.getLogger("batch-completion-raw")
         self.controller: Controller = controller
         self.sync_state = sync_state
-        self.get_header_for_hash = self.controller.get_header_for_hash
+        self.get_header_for_hash = self.controller.headers_threadsafe.get_header_for_hash
         self.worker_ack_queue_blk_writer: Queue[bytes] = worker_ack_queue_blk_writer
         self.blocks_batch_set_queue_raw = blocks_batch_set_queue_raw
         self.loop = asyncio.get_running_loop()
@@ -77,7 +77,7 @@ class BatchCompletionMtree(threading.Thread):
         self.logger = logging.getLogger("batch-completion-mtree")
         self.controller: Controller = controller
         self.sync_state = sync_state
-        self.get_header_for_hash = self.controller.get_header_for_hash
+        self.get_header_for_hash = self.controller.headers_threadsafe.get_header_for_hash
         self.worker_ack_queue_mtree: Queue[bytes] = worker_ack_queue_mtree
         self.blocks_batch_set_queue_mtree = blocks_batch_set_queue_mtree
         self.loop = asyncio.get_running_loop()

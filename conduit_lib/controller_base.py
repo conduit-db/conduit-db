@@ -21,7 +21,7 @@ class ControllerBase:
     def get_header_for_height(self, height: int) -> Header:
         raise NotImplementedError()
 
-    def get_ideal_block_batch_count(self, target_bytes: int, local_tip_height: int) -> int:
+    def get_ideal_block_batch_count(self, target_bytes: int) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point
         of requesting 1 block at a time.
 

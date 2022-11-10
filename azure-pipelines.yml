@@ -44,9 +44,9 @@ steps:
     }
     python3 -m pip install mypy
     yes | python3 -m mypy --install-types
-    python3 -m mypy --config-file mypy.ini ./conduit_raw --python-version 3.10 || error_exit "mypy failed"
-    python3 -m mypy --config-file mypy.ini ./conduit_lib --python-version 3.10 || error_exit "mypy failed"
-    python3 -m mypy --config-file mypy.ini ./conduit_index --python-version 3.10 || error_exit "mypy failed"
+    python3 -m mypy --config-file mypy.ini ./conduit_raw --python-version 3.10 --namespace-packages --explicit-package-bases || error_exit "mypy failed"
+    python3 -m mypy --config-file mypy.ini ./conduit_lib --python-version 3.10 --namespace-packages --explicit-package-bases || error_exit "mypy failed"
+    python3 -m mypy --config-file mypy.ini ./conduit_index --python-version 3.10 --namespace-packages --explicit-package-bases || error_exit "mypy failed"
   continueOnError: true
   displayName: 'Mypy static analysis'
 

@@ -16,11 +16,12 @@ from .algorithms import double_sha256
 from .constants import MsgType
 from .deserializer import Deserializer
 from .deserializer_types import Inv
+from .headers_api_threadsafe import HeadersAPIThreadsafe
 from .networks import NetworkConfig
 from .serializer import Serializer
 from .store import Storage
 from .types import DataLocation
-from .utils import connect_headers_reorg_safe, create_task
+from .utils import create_task
 from .bitcoin_p2p_types import BigBlock, BlockDataMsg, BlockType, BlockChunkData, \
     BitcoinPeerInstance
 
@@ -29,7 +30,6 @@ logger = logging.getLogger("handlers")
 
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
-    from conduit_index.conduit_index.controller import Controller as ConduitIndexController
 
 
 def pack_block_chunk_message_for_worker(block_chunk_data: BlockChunkData) -> bytes:
@@ -98,14 +98,13 @@ class MessageHandlerProtocol(typing.Protocol):
 
 
 class Handlers(MessageHandlerProtocol):
-    def __init__(
-        self, controller: 'Controller | ConduitIndexController', net_config: NetworkConfig, storage: Storage
-    ) -> None:
+    def __init__(self, controller: 'Controller', net_config: NetworkConfig, storage: Storage) -> None:
         self.net_config = net_config
         self.controller = controller
         self.serializer = Serializer(self.net_config)
         self.deserializer = Deserializer(self.net_config)
         self.storage = storage
+        self.headers_api_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
         self.server_type = os.environ['SERVER_TYPE']
         self.small_blocks: list[bytes] = []
         self.batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']] = []
@@ -159,7 +158,7 @@ class Handlers(MessageHandlerProtocol):
 
         def have_header(inv: Inv) -> bool:
             try:
-                self.storage.headers.lookup(hex_str_to_hash(inv['inv_hash']))
+                self.headers_api_threadsafe.get_header_for_hash(hex_str_to_hash(inv['inv_hash']))
                 return True
             except bitcoinx.MissingHeader:
                 return False
@@ -176,7 +175,7 @@ class Handlers(MessageHandlerProtocol):
                     self.controller.sync_state.headers_new_tip_queue.put_nowait(inv)
 
                 if hex_str_to_hash(inv["inv_hash"]) in \
-                        self.controller.sync_state.all_pending_block_hashes:
+                        self.controller.sync_state.all_pending_block_hashes:  # type: ignore
                     self.controller.sync_state.pending_blocks_inv_queue.put_nowait(inv)
 
         if tx_inv_vect and self.server_type == "ConduitIndex":
@@ -198,8 +197,8 @@ class Handlers(MessageHandlerProtocol):
 
         # message always includes headers far back enough to include common parent in the
         # event of a reorg
-        is_reorg, start_header, stop_header, old_hashes, new_hashes = connect_headers_reorg_safe(
-            message_bytes, self.storage.headers, headers_lock=self.storage.headers_lock)
+        is_reorg, start_header, stop_header, old_hashes, new_hashes = \
+            self.headers_api_threadsafe.connect_headers_reorg_safe(message_bytes)
         self.controller.sync_state.headers_msg_processed_queue.put_nowait((is_reorg, start_header, stop_header))
 
     # ----- Special case messages ----- #  # Todo - should probably be registered callbacks
@@ -208,11 +207,9 @@ class Handlers(MessageHandlerProtocol):
         # logger.debug(f"Got mempool tx")
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx)
-        if typing.TYPE_CHECKING:
-            self.controller = cast(ConduitIndexController, self.controller)
-        if hasattr(self.controller.zmq_socket_listeners, 'socket_mempool_tx'):
-            await self.controller.zmq_socket_listeners.socket_mempool_tx.send(packed_message)
-            self.controller.mempool_tx_count += 1
+        if hasattr(self.controller.zmq_socket_listeners, 'socket_mempool_tx'):  # type: ignore
+            await self.controller.zmq_socket_listeners.socket_mempool_tx.send(packed_message)  # type: ignore
+            self.controller.mempool_tx_count += 1  # type: ignore
 
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
         assert self.controller.lmdb
@@ -290,8 +287,8 @@ class Handlers(MessageHandlerProtocol):
 
     async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinPeerInstance) -> None:
         """Any blocks that exceed the size of the network buffer are instead written to file"""
-        blk_height = self.storage.headers.lookup(block_data_msg.block_hash)[0].height
-        if block_data_msg.block_hash not in self.controller.sync_state.all_pending_block_hashes:
+        blk_height = self.headers_api_threadsafe.get_header_for_hash(block_data_msg.block_hash).height
+        if block_data_msg.block_hash not in self.controller.sync_state.all_pending_block_hashes:  # type: ignore
             logger.debug(f"got an unsolicited block: {hash_to_hex_str(block_data_msg.block_hash)}, "
                          f"height={blk_height}. Discarding...")
             if block_data_msg.block_type & BlockType.BIG_BLOCK:

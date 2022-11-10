@@ -423,9 +423,9 @@ class MinedBlockParsingThread(threading.Thread):
                 #  below should not be allowed to occur which will result in a redo of the same
                 #  blocks on startup when it performs a "repair"
                 # ZMQ send over websocket fitler_matches
-                notification = PushdataFilterStateUpdate('ffffffff',
+                notification_pushdata = PushdataFilterStateUpdate('ffffffff',
                     PushdataFilterMessageType.NOTIFICATION, [], filter_matches, blk_hash)
-                self.socket_pushdata_notifications.send(cbor2.dumps(notification))
+                self.socket_pushdata_notifications.send(cbor2.dumps(notification_pushdata))
 
             # -----------------  TIP FILTERING SERVICE  --------------------- #
 

@@ -40,7 +40,7 @@ class MySQLTables:
             queries = []
             for table_name in result:
                 # table = row[0].decode()
-                queries.append(f"DROP TABLE {table_name};")
+                queries.append(f"DROP TABLE IF EXISTS {table_name}")
             for query in queries:
                 self.mysql_conn.query(query)
         except Exception as e:

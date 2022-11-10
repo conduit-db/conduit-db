@@ -20,13 +20,14 @@ import zmq.asyncio
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from conduit_lib.database.mysql.types import PushdataRowParsed
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.utils import create_task, network_str_to_bitcoinx_network, future_callback, \
     get_pushdata_match_flag
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .constants import SERVER_HOST, SERVER_PORT, REFERENCE_SERVER_SCHEME, REFERENCE_SERVER_HOST, \
     REFERENCE_SERVER_PORT, OutboundDataFlag
-from . import handlers_restoration, handlers_tip_filter
+from . import handlers_restoration, handlers_tip_filter, handlers_headers
 from .mysql_db_tip_filtering import MySQLTipFilterQueries
 from .server_websocket import WSClient, ReferenceServerWebSocket
 from .types import OutboundDataRow, TipFilterNotificationEntry, \
@@ -47,7 +48,7 @@ requests_logger.setLevel(logging.WARNING)
 class ApplicationState(object):
 
     def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database,
-            network: str='mainnet') -> None:
+            headers_threadsafe: HeadersAPIThreadsafe, network: str='mainnet') -> None:
         self.logger = logging.getLogger('app_state')
         self._app = app
         self._loop = loop
@@ -58,6 +59,7 @@ class ApplicationState(object):
         self.mysql_db_tip_filter_queries = MySQLTipFilterQueries(self.mysql_db)
         self.mysql_db_tip_filter_queries.setup()
         self.lmdb = lmdb
+        self.headers_threadsafe = headers_threadsafe
         self.executor = ThreadPoolExecutor(max_workers=1)
 
         self.zmq_context = zmq.asyncio.Context.instance()
@@ -357,12 +359,12 @@ async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
     await app['client_session'].close()
 
 
-def get_aiohttp_app(lmdb: LMDB_Database, network: str='mainnet') \
-        -> tuple[web.Application, ApplicationState]:
+def get_aiohttp_app(lmdb: LMDB_Database, headers_threadsafe: HeadersAPIThreadsafe,
+        network: str='mainnet') -> tuple[web.Application, ApplicationState]:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)
-    app_state = ApplicationState(app, loop, lmdb, network)
+    app_state = ApplicationState(app, loop, lmdb, headers_threadsafe, network)
 
     # This is the standard aiohttp way of managing state within the handlers
     app['app_state'] = app_state
@@ -372,6 +374,10 @@ def get_aiohttp_app(lmdb: LMDB_Database, network: str='mainnet') \
         web.get("/", handlers_restoration.ping),
         web.get("/error", handlers_restoration.error),
         web.view("/ws", ReferenceServerWebSocket),
+
+        web.get("/api/v1/chain/tips", handlers_headers.get_chain_tips),
+        web.get("/api/v1/chain/header/byHeight", handlers_headers.get_headers_by_height),
+        web.get("/api/v1/chain/header/{hash}", handlers_headers.get_header),
 
         # These need to be registered before "/transaction/{txid}" to avoid clashes.
         web.post("/api/v1/transaction/filter",
@@ -394,9 +400,3 @@ def get_aiohttp_app(lmdb: LMDB_Database, network: str='mainnet') \
 
     ])
     return app, app_state
-
-
-if __name__ == "__main__":
-    lmdb = LMDB_Database(lock=True)
-    app, app_state = get_aiohttp_app(lmdb)
-    web.run_app(app, host=SERVER_HOST, port=SERVER_PORT)

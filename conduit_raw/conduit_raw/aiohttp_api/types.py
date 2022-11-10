@@ -1,8 +1,10 @@
+from dataclasses import dataclass
+
 import bitcoinx
 import enum
 from enum import IntEnum
 import struct
-from typing import Any, Optional, NamedTuple, TypedDict
+from typing import Any, Optional, NamedTuple, TypedDict, Literal
 
 from bitcoinx import hash_to_hex_str
 
@@ -268,3 +270,29 @@ class OutboundDataRow(NamedTuple):
     outbound_data_flags: OutboundDataFlag
     date_created: int
     date_last_tried: int
+
+class HeaderJSONType(TypedDict):
+    """Compatible with 'HeaderSV' service json response object"""
+    hash: str
+    version: int
+    prevBlockHash: str
+    merkleRoot: str
+    creationTimestamp: int
+    difficultyTarget: int
+    nonce: int
+    transactionCount: int
+    work: int
+
+
+@dataclass
+class HeaderTipState:
+    LONGEST_CHAIN = "LONGEST_CHAIN"
+    STALE = "STALE"
+
+class HeaderTipJSONType(TypedDict):
+    """Compatible with 'HeaderSV' service json response object"""
+    header: HeaderJSONType
+    state: str
+    chainWork: int
+    height: int
+    # confirmations: int  # never not 1 - I think this field was included in error in HeaderSV

@@ -8,8 +8,6 @@ import os
 import sys
 from asyncio import AbstractEventLoop
 from pathlib import Path
-
-import typing
 from typing import Any
 
 # The loading of environment variables must occur before importing any other
@@ -24,10 +22,6 @@ load_dotenv(dotenv_path)
 resolve_hosts_and_update_env_vars()
 
 
-if typing.TYPE_CHECKING:
-    from conduit_index.conduit_index.controller import Controller
-else:
-    from conduit_index.controller import Controller
 
 CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(1, str(CONDUIT_ROOT_PATH))
@@ -37,6 +31,7 @@ from conduit_lib.logging_client import setup_tcp_logging, set_logging_level, tea
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.utils import get_log_level
 
+from conduit_index.controller import Controller
 
 loop_type = None
 if sys.platform == 'win32':

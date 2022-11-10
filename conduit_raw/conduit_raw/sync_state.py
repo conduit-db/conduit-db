@@ -25,6 +25,8 @@ class SyncState:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
+        self.headers_threadsafe = self.controller.headers_threadsafe
+        self.headers_threadsafe_blocks = self.controller.headers_threadsafe_blocks
 
         self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header] | None] \
             = asyncio.Queue()
@@ -50,24 +52,20 @@ class SyncState:
         self.pending_blocks_inv_queue: asyncio.Queue[Inv] = asyncio.Queue()
 
     def get_local_tip(self) -> bitcoinx.Header:
-        with self.storage.headers_lock:
-            return self.storage.headers.longest_chain().tip
+        return self.headers_threadsafe.tip()
 
     def get_local_tip_height(self) -> int:
-        with self.storage.headers_lock:
-            return self.local_tip_height
-
-    def get_local_block_tip_height(self) -> int:
-        with self.storage.block_headers_lock:
-            return cast(int, self.storage.block_headers.longest_chain().tip.height)
+        return cast(int, self.headers_threadsafe.tip().height)
 
     def get_local_block_tip(self) -> bitcoinx.Header:
-        with self.storage.block_headers_lock:
-            return self.storage.block_headers.longest_chain().tip
+        return self.headers_threadsafe_blocks.tip()
+
+    def get_local_block_tip_height(self) -> int:
+        return cast(int, self.headers_threadsafe_blocks.tip().height)
 
     def update_local_tip_height(self) -> int:
         with self.storage.headers_lock:
-            self.local_tip_height = self.storage.headers.longest_chain().tip.height
+            self.local_tip_height = self.get_local_tip_height()
             return self.local_tip_height
 
     def set_target_header_height(self, height: int) -> None:
@@ -79,18 +77,17 @@ class SyncState:
         - stop_header_height
         - all_pending_block_hashes
         """
-        self.all_pending_block_hashes = set()
+        self.all_pending_block_hashes = set[bytes]()
         block_height_deficit = to_height - from_height
 
-        local_tip_height = self.get_local_block_tip_height()
         estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
-            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW, local_tip_height)
+            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count + 1
 
         for i in range(1, batch_count + 1):
-            block_header = self.controller.get_header_for_height(from_height + i)
+            block_header = self.headers_threadsafe.get_header_for_height(from_height + i)
             self.all_pending_block_hashes.add(block_header.hash)
 
         return batch_count, self.all_pending_block_hashes, stop_header_height

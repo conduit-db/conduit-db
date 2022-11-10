@@ -1,4 +1,7 @@
 import asyncio
+import bitcoinx
+from bitcoinx import unpack_header, double_sha256
+from bitcoinx.networks import Header
 from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime, timedelta
 import logging
@@ -6,10 +9,6 @@ import threading
 import time
 import typing
 from typing import cast
-
-import bitcoinx
-from bitcoinx import unpack_header, double_sha256
-from bitcoinx.networks import Header
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
@@ -44,6 +43,8 @@ class SyncState:
         self.storage = storage
         self.controller = controller
         self.ipc_sock_client: IPCSocketClient | None = None
+        self.headers_threadsafe = self.controller.headers_threadsafe
+        self.headers_threadsafe_blocks = self.controller.headers_threadsafe_blocks
 
         self.conduit_raw_header_tip: bitcoinx.Header | None = None
         self.conduit_raw_header_tip_lock: threading.Lock = threading.Lock()
@@ -94,24 +95,20 @@ class SyncState:
         finally:
             if ipc_sock_client:
                 ipc_sock_client.close()
-
     def get_local_tip(self) -> Header:
-        """In ConduitIndex, this set of headers is used differently. We only fetch and connect
-        what is needed to assist us with processing the next set of raw blocks. This is in contrast
-        to ConduitRaw which fetches ALL headers before doing anything else."""
-        with self.storage.headers_lock:
-            return self.storage.headers.longest_chain().tip
+        return self.headers_threadsafe.tip()
 
-    # Block Headers
-    def get_local_block_tip_height(self) -> int:
-        with self.storage.block_headers_lock:
-            return cast(int, self.storage.block_headers.longest_chain().tip.height)
+    def get_local_tip_height(self) -> int:
+        return cast(int, self.get_local_tip().height)
 
     def get_local_block_tip(self) -> bitcoinx.Header:
-        with self.storage.block_headers_lock:
-            return self.storage.block_headers.longest_chain().tip
+        return self.headers_threadsafe_blocks.tip()
 
-    async def is_post_ibd_state(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) -> bool:
+    def get_local_block_tip_height(self) -> int:
+        return cast(int, self.get_local_block_tip().height)
+
+    async def is_post_ibd_state(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) \
+            -> bool:
         if self.is_post_ibd:  # cache result
             return self.is_post_ibd
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
@@ -215,7 +212,8 @@ class SyncState:
                 # May need to use block_hash not height to be more correct
                 block_headers: list[bitcoinx.Header] = []
                 for i in range(1, block_height_deficit + 1):
-                    block_header = self.controller.get_header_for_height(start_header.height - 1 + i)
+                    block_header = self.headers_threadsafe.get_header_for_height(
+                        start_header.height - 1 + i, lock=False)
                     block_headers.append(block_header)
 
                 header_hashes = [block_header.hash for block_header in block_headers]
