@@ -60,14 +60,20 @@ class ZMQSocketListeners:
         self.zmq_sockets: list[zmq.asyncio.Socket] = []
 
         # Controller to TxParser Workers
-        self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
-        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
+        self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
+        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
 
-        self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
-        self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
+        self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
+        self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
 
-        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
-        self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
+        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
+        self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
 
         # Controller to Aiohttp API
         self.reorg_event_socket = connect_async_zmq_socket(self.zmq_async_context,
@@ -188,8 +194,9 @@ class Controller(ControllerBase):
                 try:
                     await sock.send(b"stop_signal")
                 except zmq.error.ZMQError as zmq_error:
-                    # We silence the error if this socket is already closed. But other cases we want
-                    # to know about them and maybe fix them or add them to this list.
+                    # We silence the error if this socket is already closed.
+                    # But other cases we want to know about them and maybe fix
+                    # them or add them to this list.
                     if str(zmq_error) != "not a socket":
                         raise
             await asyncio.sleep(1)
@@ -348,7 +355,8 @@ class Controller(ControllerBase):
 
     def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]) -> bool:
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
-        expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes).block_numbers
+        expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes)\
+            .block_numbers
         block_hash_to_num_map = dict(zip(expected_block_hashes, expected_block_nums))
 
         for block_hash in expected_block_hashes:
@@ -453,7 +461,8 @@ class Controller(ControllerBase):
         sorted_hashes = [h.hash for h in sorted_headers]
         block_numbers = ipc_socket_client.block_number_batched(sorted_hashes).block_numbers
         block_hash_to_num_map = dict(zip(sorted_hashes, block_numbers))
-        sorted_block_metadata_batch = ipc_socket_client.block_metadata_batched(sorted_hashes).block_metadata_batch
+        sorted_block_metadata_batch = ipc_socket_client.block_metadata_batched(sorted_hashes)\
+            .block_metadata_batch
 
         header_rows: list[BlockHeaderRow] = []
         for header, block_metadata in zip(sorted_headers, sorted_block_metadata_batch):
@@ -524,8 +533,10 @@ class Controller(ControllerBase):
                     TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
 
                 # Long-polling
-                ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
-                result: HeadersBatchedResponse = await self.loop.run_in_executor(self.general_executor,
+                ipc_sock_client = await self.loop.run_in_executor(
+                    self.general_executor, IPCSocketClient)
+                result: HeadersBatchedResponse = await self.loop.run_in_executor(
+                    self.general_executor,
                     ipc_sock_client.headers_batched, start_height, estimated_ideal_block_count)
 
                 headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
@@ -606,7 +617,8 @@ class Controller(ControllerBase):
                           f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)})")
         return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
 
-    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) -> None:
+    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) \
+            -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
             self.logger.debug(f"Waiting for main batch to complete")
@@ -745,7 +757,7 @@ class Controller(ControllerBase):
                     header = self.headers_threadsafe.get_header_for_hash(block_hash, lock=False)
                     if not block_hash in blocks_batch_set:
                         self.logger.exception(f"also wrote unexpected block: "
-                                              f"{hash_to_hex_str(header.hash)} {header.height} to disc")
+                            f"{hash_to_hex_str(header.hash)} {header.height} to disc")
                         continue
 
                     blocks_batch_set.remove(block_hash)

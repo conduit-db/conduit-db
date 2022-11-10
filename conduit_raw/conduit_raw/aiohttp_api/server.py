@@ -25,8 +25,8 @@ from conduit_lib.utils import create_task, network_str_to_bitcoinx_network, futu
     get_pushdata_match_flag
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
-from .constants import SERVER_HOST, SERVER_PORT, REFERENCE_SERVER_SCHEME, REFERENCE_SERVER_HOST, \
-    REFERENCE_SERVER_PORT, OutboundDataFlag
+from .constants import REFERENCE_SERVER_SCHEME, REFERENCE_SERVER_HOST, REFERENCE_SERVER_PORT, \
+    OutboundDataFlag
 from . import handlers_restoration, handlers_tip_filter, handlers_headers
 from .mysql_db_tip_filtering import MySQLTipFilterQueries
 from .server_websocket import WSClient, ReferenceServerWebSocket

@@ -1,6 +1,6 @@
+import MySQLdb
 import cbor2
 import logging
-from MySQLdb import _mysql
 import time
 import typing
 
@@ -57,7 +57,7 @@ def mysql_flush_rows_confirmed(worker: 'FlushConfirmedTransactionsThread',
             msg2 = cbor2.dumps((worker.worker_id, work_item_id, blk_hash, tx_count))
             zmq_send_no_block(worker.socket_mined_tx_parsed_ack, msg2,
                 on_blocked_msg="Tx parse ACK receiver is busy")
-    except _mysql.IntegrityError as e:
+    except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise
 
@@ -68,7 +68,7 @@ def mysql_flush_rows_mempool(worker: 'FlushMempoolTransactionsThread',
     try:
         mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows_mempool)
         mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
-    except _mysql.IntegrityError as e:
+    except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise
 

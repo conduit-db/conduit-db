@@ -97,8 +97,8 @@ class WorkerStateManager:
                         return
                 except asyncio.QueueEmpty:
                     if time.time() - start_time > timeout:
-                        raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                            "the state update, but got no response" % timeout)
+                        raise BackendWorkerOfflineError("Waited over %s seconds for workers "
+                            "to acknowkedge the state update, but got no response" % timeout)
                     await asyncio.sleep(0.1)
                     logger.debug(f"Waiting for worker ACKs for new utxo registrations")
 
@@ -156,7 +156,7 @@ class WorkerStateManager:
                 UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg),
                 timeout=timeout)
         except TimeoutError:
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
+            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge                    "
                 "the state update, but got no response" % timeout)
 
         # Fake outpoints are to make the ack accounting work in `wait_for_output_spend_worker_acks`
@@ -184,8 +184,6 @@ class WorkerStateManager:
                     # so the PUB/SUB messages could contain notifications for different request_ids
                     self.expected_ack_pushdata_count_map[notification.request_id] -= \
                         len(notification.entries)
-                    logger.debug(f"wait_for_pushdata_worker_acks: self.expected_ack_pushdata_count_map[notification.request_id]="
-                                 f"{self.expected_ack_pushdata_count_map[notification.request_id]}")
                     if notification.request_id == request_id:
                         for entry in notification.entries:
                             entry_obj = TipFilterRegistrationEntry(*entry)

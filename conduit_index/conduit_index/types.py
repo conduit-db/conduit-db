@@ -1,12 +1,15 @@
-import array
-from typing import NamedTuple, TypedDict
+import typing
 
 import bitcoinx
+from typing import NamedTuple
 
 # NOTE(typing) For some reason we can't embed `array.ArrayType[int]` here:
 #   TypeError: 'type' object is not subscriptable
 from conduit_lib.database.mysql.types import MempoolTransactionRow, ConfirmedTransactionRow, \
     InputRow, OutputRow, PushdataRow
+
+if typing.TYPE_CHECKING:
+    import array
 
 
 class ProcessedBlockAck(NamedTuple):

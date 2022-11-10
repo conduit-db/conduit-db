@@ -1,14 +1,13 @@
-from dataclasses import dataclass
-
 import bitcoinx
+from bitcoinx import hash_to_hex_str
+from dataclasses import dataclass
 import enum
 from enum import IntEnum
 import struct
-from typing import Any, Optional, NamedTuple, TypedDict, Literal
-
-from bitcoinx import hash_to_hex_str
+from typing import Any, Optional, NamedTuple, TypedDict
 
 from conduit_lib.database.mysql.types import PushdataRowParsed
+
 from .constants import AccountFlag, OutboundDataFlag
 
 OutpointJSONType = tuple[str, int]

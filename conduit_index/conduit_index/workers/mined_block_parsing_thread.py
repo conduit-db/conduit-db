@@ -11,7 +11,7 @@ import cbor2
 import refcuckoo
 import zmq
 
-from conduit_lib.constants import ZERO_HASH, HashXLength
+from conduit_lib.constants import ZERO_HASH
 from conduit_raw.conduit_raw.aiohttp_api.constants import UTXO_REGISTRATION_TOPIC, \
     PUSHDATA_REGISTRATION_TOPIC
 from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import MySQLTipFilterQueries
@@ -23,14 +23,14 @@ from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
     TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
     AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets, WorkItemId
-from ..workers.common import reset_rows, maybe_refresh_mysql_connection, \
+from ..workers.common import maybe_refresh_mysql_connection, \
     convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 
 from conduit_lib import IPCSocketClient, MySQLDatabase
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.database.mysql.mysql_database import mysql_connect
-from conduit_lib.database.mysql.types import MySQLFlushBatch, PushdataRow, PushdataRowParsed, \
-    InputRow, ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, InputRowParsed
+from conduit_lib.database.mysql.types import MySQLFlushBatch, PushdataRowParsed, \
+    ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, InputRowParsed
 from conduit_lib.types import BlockSliceRequestType
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
@@ -135,7 +135,7 @@ class MinedBlockParsingThread(threading.Thread):
         # filter handles duplicate registrations, and it is a lot easier to just register them
         # and unregister them for every account, than try and manage duplicates.
         # Note that at the time of writing the bits per item is 12 (compiled into `refcuckoo`).
-        self._common_cuckoo = refcuckoo.CuckooFilter(500000)
+        self._common_cuckoo = refcuckoo.CuckooFilter(500000)  # pylint: disable=I1101
         self._filter_expiry_next_time = int(time.time()) + 30
         registration_entries = mysql_db_tip_filter_queries.read_tip_filter_registrations(
             mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,

@@ -29,7 +29,7 @@ from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.utils import get_log_level
 
-from conduit_raw.controller import Controller
+from conduit_raw.controller import Controller  # pylint: disable=E0401,E0611
 
 loop_type = None
 if sys.platform == 'win32':

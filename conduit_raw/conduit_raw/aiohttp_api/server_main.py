@@ -1,18 +1,13 @@
 from aiohttp import web
-import asyncio
 from conduit_lib import LMDB_Database
 import logging
 import os
 from pathlib import Path
-import sys
 
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
-# try:
+
 from .constants import SERVER_HOST, SERVER_PORT
 from .server import get_aiohttp_app, ApplicationState
-# except ImportError:
-#     from conduit_lib.constants import SERVER_HOST, SERVER_PORT  # type: ignore
-#     from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app  # type: ignore
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))

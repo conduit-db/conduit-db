@@ -6,8 +6,7 @@ import time
 
 from ..types import MySQLFlushBatchWithAcksMempool, MempoolTxAck
 from ..workers.common import maybe_refresh_mysql_connection, mysql_flush_rows_mempool, \
-    extend_batched_rows, reset_rows_mempool, convert_pushdata_rows_for_flush, \
-    convert_input_rows_for_flush
+    extend_batched_rows, reset_rows_mempool
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib import MySQLDatabase
@@ -42,7 +41,8 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     if not mempool_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(mempool_rows, txs, txs_mempool, ins, outs, pds)
+                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(mempool_rows, txs,
+                        txs_mempool, ins, outs, pds)
                     acks += new_acks
 
                     if len(txs_mempool) > MEMPOOL_MAX_TX_BATCH_LIMIT - 1:

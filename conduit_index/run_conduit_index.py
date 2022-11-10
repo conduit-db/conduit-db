@@ -21,8 +21,6 @@ if is_docker():
 load_dotenv(dotenv_path)
 resolve_hosts_and_update_env_vars()
 
-
-
 CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(1, str(CONDUIT_ROOT_PATH))
 from conduit_lib.logging_server import TCPLoggingServer
@@ -31,7 +29,7 @@ from conduit_lib.logging_client import setup_tcp_logging, set_logging_level, tea
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.utils import get_log_level
 
-from conduit_index.controller import Controller
+from conduit_index.controller import Controller  # pylint:disable=E0401,E0611
 
 loop_type = None
 if sys.platform == 'win32':

@@ -2,19 +2,16 @@ import logging
 import queue
 import threading
 import time
-from typing import cast
-
 import zmq
 
-from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import MySQLTipFilterQueries
-from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks
-from ..workers.common import reset_rows, maybe_refresh_mysql_connection, mysql_flush_rows_confirmed, \
-    extend_batched_rows, convert_pushdata_rows_for_flush, convert_input_rows_for_flush
-
-from conduit_lib.database.mysql.types import MySQLFlushBatch, MempoolTransactionRow
+from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib import MySQLDatabase
 from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
+
+from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks
+from ..workers.common import reset_rows, maybe_refresh_mysql_connection, mysql_flush_rows_confirmed, \
+    extend_batched_rows
 
 
 BLOCKS_MAX_TX_BATCH_LIMIT = 200_000
