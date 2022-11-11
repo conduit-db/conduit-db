@@ -66,6 +66,7 @@ services:
       - "34525:34525"
     depends_on:
       - node
+      - mysql
     environment:
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
       - BITCOIN_HOST=node

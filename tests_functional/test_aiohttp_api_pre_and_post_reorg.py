@@ -31,7 +31,7 @@ class TestInternalAiohttpRESTAPI:
     def setup_class(klass) -> None:
         blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
         import_blocks(str(blockchain_dir))
-        time.sleep(10)
+        time.sleep(15)
 
     def setup_method(self) -> None:
         pass
@@ -57,7 +57,7 @@ class TestInternalAiohttpRESTAPI:
         headers = {'Accept': "application/json"}
         for txid, rawtx_hex in pre_reorg_test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
-            assert result.status_code == 200, result.reason
+            assert result.status_code == 200, f"reason={result.reason}, txid={txid}"
             assert result.json() == rawtx_hex
 
     def test_get_transaction_binary(self):

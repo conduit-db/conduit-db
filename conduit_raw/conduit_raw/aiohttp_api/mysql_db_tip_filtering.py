@@ -98,6 +98,7 @@ def read_rows_by_id(mysqldb: MySQLDatabase, return_type: Type[T1], sql: str, par
             remaining_ids = remaining_ids[batch_size:]
         return results
     finally:
+        mysqldb.mysql_conn.commit()
         cursor.close()
 
 
@@ -123,6 +124,7 @@ def read_rows_by_ids(mysqldb: MySQLDatabase, return_type: Type[T1], sql: str, sq
             remaining_ids = remaining_ids[batch_size:]
         return results
     finally:
+        mysqldb.mysql_conn.commit()
         cursor.close()
 
 
@@ -161,9 +163,11 @@ class MySQLTipFilterQueries:
         """)
         self.mysql_conn.query("CREATE UNIQUE INDEX IF NOT EXISTS accounts_external_id_idx "
             "ON accounts (external_account_id)")
+        self.mysql_conn.commit()
 
     def drop_accounts_table(self) -> None:
         self.mysql_conn.query("DROP TABLE IF EXISTS accounts")
+        self.mysql_conn.commit()
 
     def create_tip_filter_registrations_table(self) -> None:
         self.mysql_conn.query("""
@@ -177,11 +181,11 @@ class MySQLTipFilterQueries:
         """)
         self.mysql_conn.query("CREATE UNIQUE INDEX IF NOT EXISTS tip_filter_registrations_idx "
             "ON tip_filter_registrations (account_id, pushdata_hash)")
-
+        self.mysql_conn.commit()
 
     def drop_tip_filter_registrations_table(self) -> None:
         self.mysql_conn.query("DROP TABLE IF EXISTS tip_filter_registrations")
-
+        self.mysql_conn.commit()
 
     def create_outbound_data_table(self) -> None:
         self.mysql_conn.query("""
@@ -193,11 +197,12 @@ class MySQLTipFilterQueries:
             date_last_tried         INT UNSIGNED     NOT NULL
         )
         """)
+        self.mysql_conn.commit()
 
 
     def drop_outbound_data_table(self) -> None:
         self.mysql_conn.query("DROP TABLE IF EXISTS outbound_data")
-
+        self.mysql_conn.commit()
 
     def create_account_write(self, external_account_id: int) -> int:
         """
@@ -226,6 +231,7 @@ class MySQLTipFilterQueries:
             logger.debug("Created account in indexer settings db callback %d", row[0])
             return cast(int, row[0])
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -316,6 +322,7 @@ class MySQLTipFilterQueries:
 
             return output_spend_rows
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -345,6 +352,7 @@ class MySQLTipFilterQueries:
         else:
             return True
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -373,6 +381,7 @@ class MySQLTipFilterQueries:
             cursor.execute(sql, sql_values)
             return [TipFilterRegistrationEntry(*row) for row in cursor.fetchall()]
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
     def read_indexer_filtering_registrations_for_notifications(self,
@@ -423,6 +432,7 @@ class MySQLTipFilterQueries:
             if require_all and cursor.rowcount != len(pushdata_hashes):
                 raise DatabaseStateModifiedError
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -448,6 +458,7 @@ class MySQLTipFilterQueries:
             rows = cursor.fetchall()
             return [ cast(bytes, row[0]) for row in rows ]
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
     def delete_tip_filter_registrations_write(self, external_account_id: int,
@@ -470,6 +481,7 @@ class MySQLTipFilterQueries:
         try:
             cursor.executemany(sql, update_rows)
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
     def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
@@ -486,6 +498,7 @@ class MySQLTipFilterQueries:
                 raise DatabaseInsertConflict()
             return cast(int, result_row[0])
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -502,6 +515,7 @@ class MySQLTipFilterQueries:
             return [OutboundDataRow(row[0], row[1], OutboundDataFlag(row[2]), row[3], row[4]) for
                 row in rows]
         finally:
+            self.mysql_conn.commit()
             cursor.close()
 
 
@@ -516,4 +530,5 @@ class MySQLTipFilterQueries:
             cursor.executemany(sql, entries_with_flag_as_int)
             assert cursor.rowcount == len(entries)
         finally:
+            self.mysql_conn.commit()
             cursor.close()

@@ -52,11 +52,12 @@ async def get_headers_by_height(request: web.Request) -> web.Response:
     params = request.rel_url.query
     height = int(params.get('height', '0'))
     count = int(params.get('count', '1'))
+    available_count = min(headers_threadsafe.tip().height - height, count)
     if accept_type == 'application/octet-stream':
         response_headers = {'Content-Type': 'application/octet-stream',
                             'User-Agent': 'ESV-Ref-Server'}
         headers_bytearray = bytearray()
-        for height in range(height, height + count + 1):
+        for height in range(height, height + available_count):
             header = headers_threadsafe.get_header_for_height(height)
             headers_bytearray += header.raw
         return web.Response(body=headers_bytearray, status=200, reason='OK',
@@ -65,7 +66,7 @@ async def get_headers_by_height(request: web.Request) -> web.Response:
     # else: application/json
     headers_json_list = []
     response_headers = {'User-Agent': 'ESV-Ref-Server'}
-    for height in range(height, height + count + 1):
+    for height in range(height, height + available_count):
         header = headers_threadsafe.get_header_for_height(height)
         hash: str
         version: int
