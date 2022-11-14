@@ -55,6 +55,7 @@ class MTreeCalculator(multiprocessing.Process):
 
         # PUB-SUB from Controller to worker to kill the worker
         self.kill_worker_socket = self.zmq_context.socket(zmq.SUB)
+
         self.kill_worker_socket.connect("tcp://127.0.0.1:46464")
         self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
 

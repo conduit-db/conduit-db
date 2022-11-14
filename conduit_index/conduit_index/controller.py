@@ -56,6 +56,7 @@ def get_headers_dir_conduit_index() -> Path:
 class ZMQSocketListeners:
 
     def __init__(self) -> None:
+        ZMQ_CONNECT_HOST = os.getenv('ZMQ_CONNECT_HOST', '127.0.0.1')
         self.zmq_async_context = AsyncZMQContext.instance()
         self.zmq_sockets: list[zmq.asyncio.Socket] = []
 
@@ -77,7 +78,7 @@ class ZMQSocketListeners:
 
         # Controller to Aiohttp API
         self.reorg_event_socket = connect_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:51495', zmq.SocketType.PUSH)
+            f'tcp://{ZMQ_CONNECT_HOST}:51495', zmq.SocketType.PUSH)
 
     def bind_async_zmq_socket(self, context: AsyncZMQContext, uri: str,
             zmq_socket_type: zmq.SocketType,

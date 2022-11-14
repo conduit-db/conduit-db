@@ -9,5 +9,5 @@ docker-compose -f .\docker-compose.yml build %* --parallel
 docker-compose -f .\docker-compose.yml up --detach node mysql conduit-raw conduit-index reference_server
 
 REM Run the tests
-py -3.10 -m pytest tests
+REM py -3.10 -m pytest tests
 py -3.10 -m pytest tests_functional

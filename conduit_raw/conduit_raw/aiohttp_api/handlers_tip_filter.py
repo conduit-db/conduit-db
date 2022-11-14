@@ -134,18 +134,20 @@ async def post_output_spend_notifications_register(request: web.Request) -> web.
         raise web.HTTPServiceUnavailable(reason="Backend worker processes are not responding")
 
     if accept_type == 'application/octet-stream':
+        response_headers = {'Content-Type': 'application/octet-stream'}
         result_bytes = b""
         for row in existing_rows:
             result_bytes += output_spend_struct.pack(row.out_tx_hash, row.out_idx,
                 row.in_tx_hash, row.in_idx, row.block_hash if row.block_hash else bytes(32))
-        return web.Response(body=result_bytes)
+        return web.Response(body=result_bytes, headers=response_headers)
     else:
+        response_headers = {'Content-Type': 'application/json'}
         json_list: list[tuple[str, int, str, int, Optional[str]]] = []
         for row in existing_rows:
             json_list.append((hash_to_hex_str(row.out_tx_hash), row.out_idx,
                 hash_to_hex_str(row.in_tx_hash), row.in_idx,
                 row.block_hash.hex() if row.block_hash else None))
-        return web.json_response(data=json.dumps(json_list))
+        return web.Response(body=json.dumps(json_list), headers=response_headers)
 
 
 async def post_output_spend_notifications_unregister(request: web.Request) -> web.Response:

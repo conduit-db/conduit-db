@@ -1,5 +1,6 @@
 import array
 import logging
+import os
 import queue
 import struct
 import threading
@@ -10,6 +11,7 @@ from typing import Callable, cast
 import cbor2
 import refcuckoo
 import zmq
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import ZERO_HASH
 from conduit_raw.conduit_raw.aiohttp_api.constants import UTXO_REGISTRATION_TOPIC, \
@@ -111,16 +113,18 @@ class MinedBlockParsingThread(threading.Thread):
         mysql_db_tip_filter_queries = MySQLTipFilterQueries(mysql_db)
         socket_mined_tx = connect_non_async_zmq_socket(self.zmq_context, 'tcp://127.0.0.1:55555',
             zmq.SocketType.PULL, options=[(zmq.SocketOption.RCVHWM, 10000)])
+
+        ZMQ_CONNECT_HOST = os.getenv('ZMQ_CONNECT_HOST', '127.0.0.1')
         self.socket_utxo_spend_registrations = connect_non_async_zmq_socket(self.zmq_context,
-            'tcp://127.0.0.1:60000', zmq.SocketType.SUB,
+            f'tcp://{ZMQ_CONNECT_HOST}:60000', zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b'utxo_registration')])
         self.socket_utxo_spend_notifications = connect_non_async_zmq_socket(self.zmq_context,
-            'tcp://127.0.0.1:60001', zmq.SocketType.PUSH)
+            f'tcp://{ZMQ_CONNECT_HOST}:60001', zmq.SocketType.PUSH)
         self.socket_pushdata_registrations = connect_non_async_zmq_socket(self.zmq_context,
-            'tcp://127.0.0.1:60002', zmq.SocketType.SUB,
+            f'tcp://{ZMQ_CONNECT_HOST}:60002', zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b'pushdata_registration')])
         self.socket_pushdata_notifications = connect_non_async_zmq_socket(self.zmq_context,
-            'tcp://127.0.0.1:60003', zmq.SocketType.PUSH)
+            f'tcp://{ZMQ_CONNECT_HOST}:60003', zmq.SocketType.PUSH)
 
         state_update_to_server = OutpointStateUpdate('ffffffff',
             OutpointMessageType.READY, None, None, self.worker_id)
@@ -406,10 +410,13 @@ class MinedBlockParsingThread(threading.Thread):
 
             # Send UTXO spend notifications
             for input_row in in_rows_parsed:
+                if input_row.out_tx_hash != bytes(32):
+                    self.logger.debug(f"non-coinbase input = {input_row}")
+                    self.logger.debug(f"outpoint = [{hash_to_hex_str(input_row.out_tx_hash)},{input_row.out_idx}]")
                 spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
                 if spent_output in self._unspent_output_registrations:
                     notification = OutpointStateUpdate('ffffffff', OutpointMessageType.SPEND,
-                        None, output_spend_struct.pack(*input_row), self.worker_id)
+                        None, output_spend_struct.pack(*input_row, blk_hash), self.worker_id)
                     self.socket_utxo_spend_notifications.send(cbor2.dumps(notification))
 
             # Send Cuckoo Filter match notifications

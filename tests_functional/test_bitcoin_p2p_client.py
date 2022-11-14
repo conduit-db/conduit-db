@@ -141,9 +141,11 @@ class MockHandlers(MessageHandlerProtocol):
 async def _drain_handshake_messages(client: BitcoinP2PClient, message_handler: MockHandlers):
     expected_message_commands = {commands.VERSION, commands.VERACK, commands.PING, commands.PONG,
         commands.PROTOCONF, commands.SENDHEADERS, commands.SENDCMPCT}
-    for i in range(len(expected_message_commands)):
+    while True:
         command, message = await message_handler.got_message_queue.get()
         expected_message_commands.remove(command)
+        if not expected_message_commands:
+            break
     assert len(expected_message_commands) == 0
     assert client.handshake_complete_event.is_set()
 

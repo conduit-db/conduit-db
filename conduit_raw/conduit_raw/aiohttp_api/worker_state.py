@@ -37,14 +37,15 @@ class WorkerStateManager:
         self.mysql_db = mysql_db_tip_filter_queries
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
+        ZMQ_BIND_HOST = os.getenv('ZMQ_BIND_HOST', "127.0.0.1")
         self.socket_utxo_spend_registrations = bind_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:60000', zmq.SocketType.PUB)
+            f'tcp://{ZMQ_BIND_HOST}:60000', zmq.SocketType.PUB)
         self.socket_utxo_spend_notifications = bind_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:60001', zmq.SocketType.PULL)
+            f'tcp://{ZMQ_BIND_HOST}:60001', zmq.SocketType.PULL)
         self.socket_pushdata_registrations = bind_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:60002', zmq.SocketType.PUB)
+            f'tcp://{ZMQ_BIND_HOST}:60002', zmq.SocketType.PUB)
         self.socket_pushdata_notifications = bind_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:60003', zmq.SocketType.PULL)
+            f'tcp://{ZMQ_BIND_HOST}:60003', zmq.SocketType.PULL)
 
         self.WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '4'))
         self._utxo_spend_inbound_queue: asyncio.Queue[OutpointStateUpdate] = asyncio.Queue()
@@ -197,7 +198,7 @@ class WorkerStateManager:
                         raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
                             "the state update, but got no response" % timeout)
                     await asyncio.sleep(0.1)
-                    logger.debug(f"Waiting for worker ACKs for new utxo registrations")
+                    logger.debug(f"Waiting for worker ACKs for new pushdata registrations")
 
     async def register_pushdata_notifications(self,
             pushdata_registrations: list[TipFilterRegistrationEntry]) -> None:

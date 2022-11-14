@@ -66,8 +66,8 @@ class Controller(ControllerBase):
 
         # ZMQ
         self.zmq_async_context = zmq.asyncio.Context.instance()
-        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:46464',
-            zmq.SocketType.PUB)
+        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:46464', zmq.SocketType.PUB)
         self.merkle_tree_worker_sockets: dict[int, AsyncZMQSocket] = {}  # worker_id: zmq_socket
         self.WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
         self.bind_merkle_tree_worker_zmq_listeners()

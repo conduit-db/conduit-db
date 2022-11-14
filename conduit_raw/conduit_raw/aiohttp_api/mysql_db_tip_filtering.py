@@ -280,11 +280,11 @@ class MySQLTipFilterQueries:
         first_entry = True
         for entryX in short_hash_entries:
             if first_entry:
-                sql_condition = f"(I.out_tx_hash=X'{entryX[0]!r}' AND I.out_idx={entryX[1]!r}) "
+                sql_condition = f"(I.out_tx_hash=X{entryX[0]!r} AND I.out_idx={entryX[1]!r}) "
                 parts.append(sql_condition)
                 first_entry = False
             else:
-                sql_condition = f"OR (I.out_tx_hash=X'{entryX[0]!r}' AND I.out_idx={entryX[1]!r}) "
+                sql_condition = f"OR (I.out_tx_hash=X{entryX[0]!r} AND I.out_idx={entryX[1]!r}) "
                 parts.append(sql_condition)
         parts.append(")")
 

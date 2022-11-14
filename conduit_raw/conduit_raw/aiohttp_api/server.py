@@ -63,8 +63,9 @@ class ApplicationState(object):
         self.executor = ThreadPoolExecutor(max_workers=1)
 
         self.zmq_context = zmq.asyncio.Context.instance()
+        ZMQ_BIND_HOST = os.getenv('ZMQ_BIND_HOST', '127.0.0.1')
         self._reorg_event_socket = bind_async_zmq_socket(
-            self.zmq_context, "tcp://127.0.0.1:51495", zmq.SocketType.PULL)
+            self.zmq_context, f"tcp://{ZMQ_BIND_HOST}:51495", zmq.SocketType.PULL)
 
         scheme = os.getenv("REFERENCE_SERVER_SCHEME", REFERENCE_SERVER_SCHEME)
         host = os.getenv("REFERENCE_SERVER_HOST", REFERENCE_SERVER_HOST)
@@ -86,7 +87,7 @@ class ApplicationState(object):
             self.mysql_db.mysql_conn.ping()
 
     def start_threads(self) -> None:
-        pass
+        threading.Thread(target=self.push_notifications_thread, daemon=True).start()
 
     async def setup_async(self) -> None:
         self.is_alive = True
