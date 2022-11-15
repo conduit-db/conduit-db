@@ -19,7 +19,7 @@ steps:
 - script: |
     set -e
     python3 -m pip install wheel
-    python3 -m pip install pytest pytest-cov
+    python3 -m pip install pytest pytest-cov pytest-timeout
     python3 -m pip install -r conduit_raw/requirements.txt
     python3 -m pip install -r conduit_index/requirements.txt
   displayName: 'Install ConduitDB dependencies'

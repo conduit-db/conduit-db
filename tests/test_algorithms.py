@@ -208,8 +208,8 @@ def test_parse_txs():
     t0 = time.perf_counter()
     REPEAT_N_TIMES = 1
     for i in range(REPEAT_N_TIMES):
-        tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
-            413567, True, 0)
+        tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(raw_block, tx_offsets, 413567, True, 0)
     t1 = time.perf_counter() - t0
     print_results(len(tx_rows), t1/REPEAT_N_TIMES, raw_block)
 

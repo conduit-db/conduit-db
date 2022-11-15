@@ -11,13 +11,14 @@ import zmq.asyncio
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import ZERO_HASH
+from conduit_lib.types import outpoint_struct, OutpointType, output_spend_struct
 from conduit_lib.utils import create_task, zmq_send_no_block_async
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .constants import UTXO_REGISTRATION_TOPIC, PUSHDATA_REGISTRATION_TOPIC
 
 from .mysql_db_tip_filtering import MySQLTipFilterQueries
-from .types import OutpointType, OutputSpendRow, OutpointStateUpdate, OutpointMessageType, \
-    RequestId, output_spend_struct, outpoint_struct, PushdataFilterStateUpdate, \
+from .types import OutputSpendRow, OutpointStateUpdate, OutpointMessageType, \
+    RequestId, PushdataFilterStateUpdate, \
     TipFilterRegistrationEntry, PushdataFilterMessageType, BackendWorkerOfflineError
 
 if typing.TYPE_CHECKING:
@@ -38,6 +39,7 @@ class WorkerStateManager:
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
         ZMQ_BIND_HOST = os.getenv('ZMQ_BIND_HOST', "127.0.0.1")
+        logger.debug(f"Binding zmq utxo and pushdata sockets on host: {ZMQ_BIND_HOST}")
         self.socket_utxo_spend_registrations = bind_async_zmq_socket(self.zmq_async_context,
             f'tcp://{ZMQ_BIND_HOST}:60000', zmq.SocketType.PUB)
         self.socket_utxo_spend_notifications = bind_async_zmq_socket(self.zmq_async_context,
@@ -98,10 +100,11 @@ class WorkerStateManager:
                         return
                 except asyncio.QueueEmpty:
                     if time.time() - start_time > timeout:
+                        logger.error("Waited over %s seconds for workers "
+                            "to acknowkedge the state update, but got no response" % timeout)
                         raise BackendWorkerOfflineError("Waited over %s seconds for workers "
                             "to acknowkedge the state update, but got no response" % timeout)
                     await asyncio.sleep(0.1)
-                    logger.debug(f"Waiting for worker ACKs for new utxo registrations")
 
     async def register_output_spend_notifications(self, outpoints: list[OutpointType]) \
             -> list[OutputSpendRow]:

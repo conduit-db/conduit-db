@@ -1,5 +1,4 @@
 import bitcoinx
-from bitcoinx import hash_to_hex_str
 from dataclasses import dataclass
 import enum
 from enum import IntEnum
@@ -7,15 +6,9 @@ import struct
 from typing import Any, Optional, NamedTuple, TypedDict
 
 from conduit_lib.database.mysql.types import PushdataRowParsed
+from conduit_lib.types import OutpointType, output_spend_struct
 
 from .constants import AccountFlag, OutboundDataFlag
-
-OutpointJSONType = tuple[str, int]
-OUTPUT_SPEND_FORMAT = ">32sI32sI32s"
-output_spend_struct = struct.Struct(OUTPUT_SPEND_FORMAT)
-
-OUTPOINT_FORMAT = ">32sI"
-outpoint_struct = struct.Struct(OUTPOINT_FORMAT)
 
 PushdataRegistrationJSONType = tuple[str, int]  # pushdata_hash, duration_seconds
 
@@ -29,19 +22,6 @@ class CuckooResult(enum.IntEnum):
 
 class BackendWorkerOfflineError(Exception):
     pass
-
-
-class OutpointType(NamedTuple):
-    tx_hash: bytes
-    out_idx: int
-
-    def __str__(self) -> str:
-        return f"OutpointType(tx_hash={hash_to_hex_str(self.tx_hash)},out_idx={self.out_idx})"
-
-    @classmethod
-    def from_outpoint_struct(cls, buf: bytes) -> 'OutpointType':
-        tx_hash, out_idx = outpoint_struct.unpack(buf)
-        return cls(tx_hash, out_idx)
 
 
 ZEROED_OUTPOINT: OutpointType = OutpointType(bytes(32), 0)

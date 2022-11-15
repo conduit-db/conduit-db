@@ -11,11 +11,11 @@ from aiohttp import web
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib import LMDB_Database
+from conduit_lib.types import OutpointJSONType, OutpointType, outpoint_struct, output_spend_struct
 from .mysql_db_tip_filtering import MySQLTipFilterQueries, DatabaseStateModifiedError
-from .types import IndexerPushdataRegistrationFlag, TipFilterRegistrationResponse, OutpointType, \
-    OutpointJSONType, output_spend_struct, outpoint_struct, ZEROED_OUTPOINT, \
-    tip_filter_entry_struct, TipFilterRegistrationEntry, BackendWorkerOfflineError, \
-    PushdataRegistrationJSONType
+from .types import IndexerPushdataRegistrationFlag, TipFilterRegistrationResponse, \
+    ZEROED_OUTPOINT, tip_filter_entry_struct, TipFilterRegistrationEntry, \
+    BackendWorkerOfflineError, PushdataRegistrationJSONType
 
 if typing.TYPE_CHECKING:
     from .server import ApplicationState

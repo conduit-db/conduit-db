@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import cast
 
 import aiohttp
+import pytest
+import pytest_timeout
 import requests
 from bitcoinx import hash_to_hex_str
 
@@ -238,13 +240,22 @@ class TestInternalAiohttpRESTAPI:
         time.sleep(10)
         assert True
 
+    @pytest.mark.timeout(10)
     def test_utxo_notifications_post_reorg(self):
-        # TODO pull all notifications from the queue and make assertions
         # TODO test re-registration and initial status fetch
-        pass
+        expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
+        len_expected_utxo_spends = len(expected_utxo_spends)
+        for _ in range(len_expected_utxo_spends):
+            message = self.output_spend_result_queue.get()
+            logger.debug(f"Got output spend message from queue: {message}")
+            output_spend_obj: OutputSpend = message[0]
+            utxo = (hash_to_hex_str(output_spend_obj.out_tx_hash), output_spend_obj.out_index)
+            assert utxo in expected_utxo_spends
+            expected_utxo_spends.remove(utxo)
+        assert len(expected_utxo_spends) == 0
 
+    @pytest.mark.timeout(10)
     def test_pushdata_notifications_post_reorg(self):
-        # TODO pull all notifications from the queue and make assertions
         pass
 
     def test_get_tsc_merkle_proof_json_post_reorg(self):

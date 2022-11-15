@@ -9,10 +9,10 @@ import MySQLdb
 
 from conduit_lib.algorithms import calc_depth
 from conduit_lib.constants import HashXLength
-from conduit_lib.types import TxLocation, TxMetadata
+from conduit_lib.types import TxLocation, TxMetadata, OutpointType
 from .constants import AccountFlag, OutboundDataFlag, MARIADB_MAX_BIND_VARIABLES
 from .types import AccountMetadata, IndexerPushdataRegistrationFlag, OutboundDataRow, \
-    OutpointType, OutputSpendRow, TipFilterRegistrationEntry
+    OutputSpendRow, TipFilterRegistrationEntry
 from conduit_lib import MySQLDatabase, LMDB_Database
 
 logger = logging.getLogger("sqlite-database")

@@ -1,6 +1,5 @@
 import array
 import logging
-import os
 import struct
 import threading
 import time
@@ -78,8 +77,8 @@ class MempoolParsingThread(threading.Thread):
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
             tx_offsets = array.array('Q', [0])
             timestamp = int(time.time())
-            tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(rawtx,
-                tx_offsets, timestamp, False, 0)
+            tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(rawtx, tx_offsets, timestamp, False, 0)
             pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
             tx_rows_batched.extend(tx_rows_mempool)

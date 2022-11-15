@@ -1,26 +1,24 @@
 import array
+from bitcoinx import hash_to_hex_str
+import cbor2
+from functools import partial
 import logging
 import os
 import queue
 import struct
 import threading
 import time
-from functools import partial
 from typing import Callable, cast
-
-import cbor2
 import refcuckoo
 import zmq
-from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import ZERO_HASH
 from conduit_raw.conduit_raw.aiohttp_api.constants import UTXO_REGISTRATION_TOPIC, \
     PUSHDATA_REGISTRATION_TOPIC
 from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import MySQLTipFilterQueries
 from conduit_raw.conduit_raw.aiohttp_api.types import TipFilterRegistrationEntry, \
-    IndexerPushdataRegistrationFlag, OutpointType, PushdataFilterStateUpdate, \
-    PushdataFilterMessageType, OutpointStateUpdate, OutpointMessageType, output_spend_struct, \
-    CuckooResult
+    IndexerPushdataRegistrationFlag, PushdataFilterStateUpdate, \
+    PushdataFilterMessageType, OutpointStateUpdate, OutpointMessageType, CuckooResult
 from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
     TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
@@ -33,7 +31,7 @@ from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.database.mysql.types import MySQLFlushBatch, PushdataRowParsed, \
     ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, InputRowParsed
-from conduit_lib.types import BlockSliceRequestType
+from conduit_lib.types import BlockSliceRequestType, OutpointType, output_spend_struct
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
@@ -115,6 +113,7 @@ class MinedBlockParsingThread(threading.Thread):
             zmq.SocketType.PULL, options=[(zmq.SocketOption.RCVHWM, 10000)])
 
         ZMQ_CONNECT_HOST = os.getenv('ZMQ_CONNECT_HOST', '127.0.0.1')
+        self.logger.debug(f"Connecting zmq utxo and pushdata sockets on host: {ZMQ_CONNECT_HOST}")
         self.socket_utxo_spend_registrations = connect_non_async_zmq_socket(self.zmq_context,
             f'tcp://{ZMQ_CONNECT_HOST}:60000', zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b'utxo_registration')])
@@ -402,39 +401,13 @@ class MinedBlockParsingThread(threading.Thread):
                 not_new_tx_offsets.get(work_item, set())
             all_tx_offsets_sorted = array.array('Q', sorted(all_tx_offsets))
 
-            tx_rows, tx_rows_mempool, in_rows_parsed, out_rows, pd_rows_parsed = parse_txs(raw_block_slice,
-                all_tx_offsets_sorted, blk_num, True, first_tx_pos_batch,
+            tx_rows, tx_rows_mempool, in_rows_parsed, out_rows, pd_rows_parsed, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(raw_block_slice, all_tx_offsets_sorted,
+                blk_num, True, first_tx_pos_batch,
                 already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
 
-            # -----------------  TIP FILTERING SERVICE  --------------------- #
-
-            # Send UTXO spend notifications
-            for input_row in in_rows_parsed:
-                if input_row.out_tx_hash != bytes(32):
-                    self.logger.debug(f"non-coinbase input = {input_row}")
-                    self.logger.debug(f"outpoint = [{hash_to_hex_str(input_row.out_tx_hash)},{input_row.out_idx}]")
-                spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
-                if spent_output in self._unspent_output_registrations:
-                    notification = OutpointStateUpdate('ffffffff', OutpointMessageType.SPEND,
-                        None, output_spend_struct.pack(*input_row, blk_hash), self.worker_id)
-                    self.socket_utxo_spend_notifications.send(cbor2.dumps(notification))
-
-            # Send Cuckoo Filter match notifications
-            filter_matches = []
-            for pushdata_row in pd_rows_parsed:
-                if self._common_cuckoo.contains(pushdata_row.pushdata_hash) == CuckooResult.OK:
-                    filter_matches.append(pushdata_row)
-
-            if len(filter_matches):
-                # NOTE: if there is message delivery failure, the acks
-                #  below should not be allowed to occur which will result in a redo of the same
-                #  blocks on startup when it performs a "repair"
-                # ZMQ send over websocket fitler_matches
-                notification_pushdata = PushdataFilterStateUpdate('ffffffff',
-                    PushdataFilterMessageType.NOTIFICATION, [], filter_matches, blk_hash)
-                self.socket_pushdata_notifications.send(cbor2.dumps(notification_pushdata))
-
-            # -----------------  TIP FILTERING SERVICE  --------------------- #
+            self.send_utxo_spend_notifications(utxo_spends, blk_hash)
+            self.send_pushdata_match_notifications(pushdata_matches_tip_filter, blk_hash)
 
             pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
@@ -529,3 +502,35 @@ class MinedBlockParsingThread(threading.Thread):
         self.last_mysql_activity = int(time.time())
         self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets,
             batched_raw_block_slices, acks)
+
+    def send_utxo_spend_notifications(self, in_rows_parsed: list[InputRowParsed],
+            blk_hash: bytes) -> None:
+        # Send UTXO spend notifications
+        for input_row in in_rows_parsed:
+            if input_row.out_tx_hash != bytes(32):
+                self.logger.debug(f"non-coinbase input = {input_row}")
+                self.logger.debug(
+                    f"outpoint = [{hash_to_hex_str(input_row.out_tx_hash)},{input_row.out_idx}]")
+            spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
+            if spent_output in self._unspent_output_registrations:
+                notification = OutpointStateUpdate('ffffffff', OutpointMessageType.SPEND, None,
+                    output_spend_struct.pack(*input_row, blk_hash), self.worker_id)
+                self.socket_utxo_spend_notifications.send(cbor2.dumps(notification))
+
+    def send_pushdata_match_notifications(self,
+            pushdata_matches_tip_filter: list[PushdataRowParsed], blk_hash: bytes) -> None:
+        # Send Cuckoo Filter match notifications
+        filter_matches = []
+        for pushdata_match in pushdata_matches_tip_filter:
+            if self._common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.OK:
+                filter_matches.append(pushdata_match)
+
+        if len(filter_matches):
+            # NOTE: if there is message delivery failure, the acks
+            #  below should not be allowed to occur which will result in a redo of the same
+            #  blocks on startup when it performs a "repair"
+            # ZMQ send over websocket fitler_matches
+            notification_pushdata = PushdataFilterStateUpdate('ffffffff',
+                PushdataFilterMessageType.NOTIFICATION, [], filter_matches, blk_hash)
+            self.socket_pushdata_notifications.send(cbor2.dumps(notification_pushdata))
+

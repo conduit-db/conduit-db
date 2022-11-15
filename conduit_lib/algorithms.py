@@ -1,13 +1,12 @@
 """slower pure python alternative"""
 import array
+from bitcoinx import hash_to_hex_str
 import hashlib
 import logging
 import os
 import struct
 from math import ceil, log
 from typing import NamedTuple
-
-from bitcoinx import hash_to_hex_str
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
@@ -213,9 +212,9 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
 
 def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
         block_num_or_timestamp: int, confirmed: bool, first_tx_pos_batch: int=0,
-        already_seen_offsets: set[int] | None=None) -> tuple[list[ConfirmedTransactionRow],
-            list[MempoolTransactionRow], list[InputRowParsed], list[OutputRow],
-            list[PushdataRowParsed]]:
+        already_seen_offsets: set[int] | None=None) -> tuple[
+    list[ConfirmedTransactionRow], list[MempoolTransactionRow], list[InputRowParsed], list[
+        OutputRow], list[PushdataRowParsed], list[InputRowParsed], list[PushdataRowParsed]]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -234,6 +233,8 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
     in_rows = []
     out_rows = []
     set_pd_rows = []
+    utxo_spends = []
+    pushdata_matches_tip_filter = []
     count_txs = len(tx_offsets)
     previously_processed = False
     if already_seen_offsets is None:
@@ -280,6 +281,10 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
                 offset += script_sig_len
                 offset += 4  # skip sequence
 
+                # Regardless of whether or not `previously_processed` is true or false
+                # we always notify for utxo spends (This could include reorgs or confirmation of
+                # "already seen" mempool transactions)
+                utxo_spends.append(InputRowParsed(in_prevout_hash, in_prevout_idx, tx_hash, in_idx))
                 if not previously_processed:
                     in_rows.append(InputRowParsed(in_prevout_hash, in_prevout_idx, tx_hash, in_idx))
 
@@ -309,19 +314,22 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                if not previously_processed:
-                    pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
-                        idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
-                        genesis_height=genesis_height)
-                    if len(pushdata_matches):
-                        for out_pushdata_hash, flags in set(pushdata_matches):
-                            set_pd_rows.append(PushdataRowParsed(
-                                    out_pushdata_hash,
-                                    tx_hash,
-                                    out_idx,
-                                    int(flags),
-                                )
-                            )
+                pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
+                    idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
+                    genesis_height=genesis_height)
+
+                if len(pushdata_matches):
+                    for out_pushdata_hash, flags in set(pushdata_matches):
+                        pushdata_row = PushdataRowParsed(
+                            out_pushdata_hash, tx_hash, out_idx, int(flags), )
+
+                        # Regardless of whether or not `previously_processed` is true or false
+                        # we always notify for pushdata matches (This could include reorgs or
+                        # confirmation of "already seen" mempool transactions)
+                        pushdata_matches_tip_filter.append(pushdata_row)
+                        if not previously_processed:
+                            set_pd_rows.append(pushdata_row)
+
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
                 if not previously_processed:
@@ -338,7 +346,8 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
                 # Note mempool uses full length tx_hash
                 tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
         assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
-        return tx_rows_confirmed, tx_rows_mempool, in_rows, out_rows, set_pd_rows
+        return tx_rows_confirmed, tx_rows_mempool, in_rows, out_rows, set_pd_rows, utxo_spends, \
+            pushdata_matches_tip_filter
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
