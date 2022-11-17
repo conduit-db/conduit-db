@@ -78,6 +78,9 @@ class MessageHandlerProtocol(typing.Protocol):
     async def on_feefilter(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         ...
 
+    async def on_authch(self, message: bytes, peer: BitcoinPeerInstance) -> None:
+        pass
+
     async def on_inv(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         ...
 

@@ -92,6 +92,9 @@ class MockHandlers(MessageHandlerProtocol):
     async def on_feefilter(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         self.got_message_queue.put_nowait((commands.FEEFILTER, message))
 
+    async def on_authch(self, message: bytes, peer: BitcoinPeerInstance) -> None:
+        pass
+
     async def on_inv(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         inv_vect = self.deserializer.inv(io.BytesIO(message))
         tx_inv_vect = []

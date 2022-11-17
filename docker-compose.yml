@@ -45,10 +45,10 @@ services:
       INTERNAL_HOST: "0.0.0.0"
       INTERNAL_PORT: 47126
       EXPOSE_HEADER_SV_APIS: 1
-      HEADER_SV_URL: 'http://host.docker.internal:34525'
+      HEADER_SV_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
       EXPOSE_PAYMAIL_APIS: 1
       EXPOSE_INDEXER_APIS: 1
-      INDEXER_URL: 'http://host.docker.internal:34525'
+      INDEXER_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
       NOTIFICATION_TEXT_NEW_MESSAGE: New message arrived
       MAX_MESSAGE_CONTENT_LENGTH: 65536
       CHUNKED_BUFFER_SIZE: 1024
@@ -78,6 +78,7 @@ services:
       - BITCOIN_RPC_PORT=18332
       - LMDB_READONLY=0
       - LMDB_DATABASE_PATH=/opt/lmdb_data
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 
@@ -91,6 +92,7 @@ services:
       - conduit-raw
     environment:
       - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 #    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/run_conduit_index.py'

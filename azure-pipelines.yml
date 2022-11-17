@@ -51,6 +51,7 @@ steps:
   displayName: 'Mypy static analysis'
 
 - script: |
+    export DOCKER_GATEWAY_HOST=172.17.0.1
     docker-compose -f docker-compose.yml build --parallel
     docker-compose -f docker-compose.yml up --detach
     sleep 15
@@ -71,7 +72,10 @@ steps:
     pytest tests_functional --verbose
     if [ $? -gt 0 ]
     then
-      docker-compose logs
+      docker-compose logs conduit-raw
+      docker-compose logs conduit-index
+      docker-compose logs reference_server
+      docker-compose logs node
       exit 1
     fi
   timeoutInMinutes: 10
