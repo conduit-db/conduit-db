@@ -153,6 +153,11 @@ class Handlers(MessageHandlerProtocol):
     async def on_feefilter(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         pass
 
+    async def on_authch(self, message: bytes, peer: BitcoinPeerInstance) -> None:
+        # New in https://github.com/bitcoin-sv/bitcoin-sv/releases/tag/v1.0.13
+        # Ignoring all minerID related things at least for now
+        pass
+
     async def on_inv(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         inv_vect = self.controller.deserializer.inv(io.BytesIO(message))
 
