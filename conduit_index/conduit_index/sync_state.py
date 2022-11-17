@@ -3,7 +3,6 @@ import bitcoinx
 from bitcoinx import unpack_header, double_sha256
 from bitcoinx.networks import Header
 from concurrent.futures.thread import ThreadPoolExecutor
-from datetime import datetime, timedelta
 import logging
 import threading
 import time
@@ -90,7 +89,8 @@ class SyncState:
                 self.controller.general_executor, IPCSocketClient)
             tip, tip_height = await self.controller.loop.run_in_executor(
                 self.controller.general_executor, ipc_sock_client.chain_tip)
-            conduit_best_tip = bitcoinx.Header(*unpack_header(tip), double_sha256(tip), tip, tip_height)
+            conduit_best_tip = bitcoinx.Header(*unpack_header(tip), double_sha256(tip), tip,
+                tip_height)
             return conduit_best_tip
         finally:
             if ipc_sock_client:
@@ -114,11 +114,15 @@ class SyncState:
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
         # which has the benefit of pre-filling the mempool to prepare for switching to the
         # compact block protocol by the time it reaches the chain tip.
-        conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
-        our_tip = datetime.utcfromtimestamp(tip.timestamp)
-        conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
-        if our_tip > conduit_best_minus_24_hrs:
-            self.is_post_ibd = True
+
+
+        # conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
+        # our_tip = datetime.utcfromtimestamp(tip.timestamp)
+        # conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
+        # if our_tip > conduit_best_minus_24_hrs:
+        #     self.is_post_ibd = True
+        #     return True
+        if tip.hash == conduit_best_tip.hash:
             return True
         return False
 

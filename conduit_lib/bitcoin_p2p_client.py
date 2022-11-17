@@ -157,7 +157,7 @@ class BitcoinP2PClient:
                 handler_func = getattr(self.message_handler, handler_func_name)
                 await handler_func(message, self.peer)
             except AttributeError:
-                logger.debug(f"Handler not implemented for command: {command}")
+                logger.debug(f"Handler not implemented for command: {command!r}")
             if command == VERACK_BIN:
                 self.handshake_complete_event.set()
 
