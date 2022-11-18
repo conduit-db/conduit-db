@@ -79,6 +79,7 @@ services:
       - LMDB_READONLY=0
       - LMDB_DATABASE_PATH=/opt/lmdb_data
       - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 

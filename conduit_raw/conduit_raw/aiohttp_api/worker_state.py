@@ -11,6 +11,7 @@ import zmq.asyncio
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import ZERO_HASH
+from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.types import outpoint_struct, OutpointType, output_spend_struct
 from conduit_lib.utils import create_task, zmq_send_no_block_async
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
@@ -279,5 +280,8 @@ class WorkerStateManager:
             if notification.command & PushdataFilterMessageType.ACK:
                 self._pushdata_inbound_queue.put_nowait(notification)
             elif notification.command & PushdataFilterMessageType.NOTIFICATION:
-                self.app_state.dispatch_tip_filter_notifications(notification.matches,
+                matches = []
+                for match in notification.matches:
+                    matches.append(PushdataRowParsed(*match))
+                self.app_state.dispatch_tip_filter_notifications(matches,
                     notification.block_hash)

@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TypedDict, cast, NamedTuple, Any, List, Dict
 
 from conduit_raw.conduit_raw.aiohttp_api.types import output_spend_struct
+from tests_functional.data.pushdata_registrations import PUSHDATAS
 from tests_functional.data.utxo_spends import UTXO_REGISTRATIONS
 
 logger = logging.getLogger("conftest")
@@ -145,9 +146,10 @@ async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str]:
                 raise aiohttp.ClientError(
                     f"Bad response status code: {response.status}, reason: {response.reason}")
             result = await response.json()
+            owner_token: str = result['access_tokens'][0]['token']
 
-    tipFilterCallbackUrl = result['href']
-    tipFilterCallbackToken = result['access_tokens'][0]['token']
+    tipFilterCallbackUrl = f"http://127.0.0.1:47124/api/v1/channel/{result['id']}"
+    tipFilterCallbackToken = f"Bearer {owner_token}"
     return tipFilterCallbackUrl, tipFilterCallbackToken
 
 
@@ -185,8 +187,42 @@ async def register_for_utxo_notifications(api_key: str) -> list[tuple[str, int]]
                 await asyncio.sleep(5)
 
 
-async def register_for_pushdata_notifications(api_key: str):
-    pass
+async def delete_peer_channel_message_async(remote_channel_id: str,
+        access_token: str, sequence: int) -> None:
+    """
+    Use the reference peer channel implementation API for deleting a message in a peer channel.
+
+    Raises `GeneralAPIError` if a connection was established but the request was unsuccessful.
+    Raises `ServerConnectionError` if the remote computer does not accept the connection.
+    """
+    uri = REFERENCE_SERVER_URL + f"api/v1/channel/{remote_channel_id}/{sequence}"
+    headers = {"Authorization": access_token}
+    async with aiohttp.ClientSession() as session:
+        async with session.delete(uri, headers=headers) as response:
+            if response.status != HTTPStatus.OK:
+                raise aiohttp.ClientError(
+                    f"Bad response status code: {response.status}, reason: {response.reason}")
+
+
+async def register_for_pushdata_notifications(api_key: str) -> list[tuple[str, int]]:
+    uri = REFERENCE_SERVER_URL + "api/v1/transaction/filter"
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json",
+        "Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.post(uri, data=json.dumps(PUSHDATAS).encode('utf-8'),
+                        headers=headers) as response:
+                    if response.status != HTTPStatus.OK:
+                        logger.error(response.reason)
+                        raise aiohttp.ClientError(response.reason)
+
+                    result = cast(list[tuple[str, int]], await response.json())
+                    logger.debug(f"Pushdata registration result: {result}")
+                    return result
+            except aiohttp.ClientError:
+                logger.debug(f"Reference server is not ready yet. Retrying in 5 seconds")
+                await asyncio.sleep(5)
 
 
 async def setup_reference_server_tip_filtering():
@@ -266,10 +302,9 @@ class GenericPeerChannelMessage(TypedDict):
     payload: Any
 
 
-async def list_peer_channel_messages_async(remote_channel_id: str, access_token: str,
+async def list_peer_channel_messages_async(url: str, access_token: str,
         unread_only: bool=True) -> list[GenericPeerChannelMessage]:
-    url = f"{REFERENCE_SERVER_URL}api/v1/channel/{remote_channel_id}"
-    headers = {"Authorization": f"Bearer {access_token}"}
+    headers = {"Authorization": access_token, "Accept": "application/json"}
     query_parameters: dict[str, str] = {}
     if unread_only:
         query_parameters["unread"] = "true"
@@ -279,8 +314,7 @@ async def list_peer_channel_messages_async(remote_channel_id: str, access_token:
                 if response.status != HTTPStatus.OK:
                     raise aiohttp.ClientError(
                         f"Bad response status code: {response.status}, reason: {response.reason}")
-
-            return cast(list[GenericPeerChannelMessage], await response.json())
+                return cast(list[GenericPeerChannelMessage], await response.json())
     except aiohttp.ClientError:
         # NOTE(exception-details) We log this because we are not sure yet that we do not need
         #     this detail. At a later stage if we are confident that all the exceptions here

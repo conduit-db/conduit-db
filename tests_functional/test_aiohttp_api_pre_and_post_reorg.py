@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -11,19 +12,22 @@ from typing import cast
 
 import aiohttp
 import pytest
-import pytest_timeout
 import requests
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.utils import create_task
+from conduit_raw.conduit_raw.aiohttp_api.types import TipFilterNotificationMatch, \
+    TipFilterPushDataMatchesData
 from contrib.scripts.import_blocks import import_blocks
 from tests_functional import utils
 import tests_functional._pre_reorg_data as pre_reorg_test_data
+from tests_functional.data.expected_tip_filter_results import PUSHDATA_TO_OUTPOINT_MAP
 from tests_functional.data.utxo_spends import UTXO_REGISTRATIONS
 from tests_functional.reference_server_support import process_reference_server_message_bytes, \
     OutputSpend, IndexerServerSettings, AccountMessageKind, ChannelNotification, \
     list_peer_channel_messages_async, setup_reference_server_tip_filtering, \
-    register_for_utxo_notifications
+    register_for_utxo_notifications, register_for_pushdata_notifications, \
+    delete_peer_channel_message_async, GenericPeerChannelMessage
 
 BASE_URL = f"http://127.0.0.1:34525"
 PING_URL = BASE_URL + "/"
@@ -76,7 +80,7 @@ async def listen_for_notifications_task_async(websocket_connected_event,
 
                         messages = await list_peer_channel_messages_async(
                             indexer_settings['tipFilterCallbackUrl'],
-                            indexer_settings['tipFilterCallbackToken'], unread_only=True)
+                            indexer_settings['tipFilterCallbackToken'], unread_only=False)
                         if len(messages) == 0:
                             # This may happen legitimately if we had several new message notifications backlogged
                             # for the same channel, but processing a leading notification picks up the messages
@@ -85,6 +89,9 @@ async def listen_for_notifications_task_async(websocket_connected_event,
                                 indexer_settings['tipFilterCallbackUrl'])
                             continue
                         tip_filter_matches_queue.put_nowait(messages)
+                        for message in messages:
+                            await delete_peer_channel_message_async(channel_message['id'],
+                                indexer_settings['tipFilterCallbackToken'], message['sequence'])
                     elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
                         spent_output_message = cast(OutputSpend, message)
                         logger.debug("Queued incoming output spend message")
@@ -110,7 +117,7 @@ async def spawn_tasks(output_spend_result_queue: queue.Queue,
         output_spend_result_queue, tip_filter_matches_queue, indexer_settings, api_key))
     await websocket_connected_event.wait()
     await register_for_utxo_notifications(api_key)
-    # await register_for_pushdata_notifications(api_key)
+    await register_for_pushdata_notifications(api_key)
     registrations_complete_event.set()
     await task
 
@@ -131,8 +138,8 @@ def listen_for_notifications_thread(loop: asyncio.AbstractEventLoop,
         logger.exception("Unexpected exception in notification listener thread")
 
 
-class TestInternalAiohttpRESTAPI:
-    logger = logging.getLogger("TestInternalAiohttpRESTAPI")
+class TestAiohttpRESTAPI:
+    logger = logging.getLogger("TestAiohttpRESTAPI")
 
     def setup_class(self) -> None:
         loop = asyncio.get_event_loop()
@@ -176,7 +183,7 @@ class TestInternalAiohttpRESTAPI:
         assert result.status_code == 400, result.reason
         assert result.reason is not None
         assert isinstance(result.reason, str)
-
+    @pytest.mark.timeout(20)
     def test_utxo_notifications(self):
         expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
         len_expected_utxo_spends = len(expected_utxo_spends)
@@ -189,9 +196,33 @@ class TestInternalAiohttpRESTAPI:
             expected_utxo_spends.remove(utxo)
         assert len(expected_utxo_spends) == 0
 
+    @pytest.mark.timeout(20)
     def test_pushdata_notifications(self):
-        # TODO pull all notifications from the queue and make assertions
-        pass
+        expected_count = 5
+        count = 0
+        while True:
+            try:
+                messages: list[GenericPeerChannelMessage] = self.tip_filter_matches_queue.get_nowait()
+                message: GenericPeerChannelMessage
+                for message in messages:
+                    payload = base64.b64decode(message['payload'])
+                    pushdata_notification = cast(TipFilterPushDataMatchesData, json.loads(payload))
+                    logger.debug(f"Got pushdata_notification: {pushdata_notification}")
+                    match: TipFilterNotificationMatch
+                    for match in pushdata_notification['matches']:
+                        count += 1
+                        pushdata_hash_hex = match['pushDataHashHex']
+                        output_tx_hash = match['transactionId']
+                        output_idx = match['transactionIndex']
+                        outpoint = PUSHDATA_TO_OUTPOINT_MAP[pushdata_hash_hex]
+                        assert hash_to_hex_str(outpoint.tx_hash) == output_tx_hash
+                        assert outpoint.out_idx == output_idx
+
+                if count == expected_count:
+                    break
+            except queue.Empty:
+                logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
+                time.sleep(1)
 
     def test_get_transaction_json(self):
         headers = {'Accept': "application/json"}
@@ -254,9 +285,33 @@ class TestInternalAiohttpRESTAPI:
             expected_utxo_spends.remove(utxo)
         assert len(expected_utxo_spends) == 0
 
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(20)
     def test_pushdata_notifications_post_reorg(self):
-        pass
+        expected_count = 5
+        count = 0
+        while True:
+            try:
+                messages: list[GenericPeerChannelMessage] = self.tip_filter_matches_queue.get_nowait()
+                message: GenericPeerChannelMessage
+                for message in messages:
+                    payload = base64.b64decode(message['payload'])
+                    pushdata_notification = cast(TipFilterPushDataMatchesData, json.loads(payload))
+                    logger.debug(f"Got pushdata_notification: {pushdata_notification}")
+                    match: TipFilterNotificationMatch
+                    for match in pushdata_notification['matches']:
+                        count += 1
+                        pushdata_hash_hex = match['pushDataHashHex']
+                        output_tx_hash = match['transactionId']
+                        output_idx = match['transactionIndex']
+                        outpoint = PUSHDATA_TO_OUTPOINT_MAP[pushdata_hash_hex]
+                        assert hash_to_hex_str(outpoint.tx_hash) == output_tx_hash
+                        assert outpoint.out_idx == output_idx
+
+                if count == expected_count:
+                    break
+            except queue.Empty:
+                logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
+                time.sleep(1)
 
     def test_get_tsc_merkle_proof_json_post_reorg(self):
         utils._get_tsc_merkle_proof_target_hash_json(post_reorg=True)

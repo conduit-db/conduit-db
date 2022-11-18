@@ -303,7 +303,7 @@ class ApplicationState(object):
                 "accountId": account_metadata.external_account_id,
                 "matches": [
                     {
-                        "pushDataHashHex": hash_to_hex_str(matched_row.pushdata_hash),
+                        "pushDataHashHex": matched_row.pushdata_hash.hex(),
                         "transactionId": hash_to_hex_str(matched_row.tx_hash),
                         "transactionIndex": matched_row.idx,
                         "flags": get_pushdata_match_flag(matched_row.ref_type),

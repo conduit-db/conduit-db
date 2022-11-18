@@ -1,5 +1,4 @@
 import array
-from bitcoinx import hash_to_hex_str
 import cbor2
 from functools import partial
 import logging
@@ -143,10 +142,11 @@ class MinedBlockParsingThread(threading.Thread):
         registration_entries = mysql_db_tip_filter_queries.read_tip_filter_registrations(
             mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,
             expected_flags=IndexerPushdataRegistrationFlag.FINALISED)
+
+        # TODO: deduplicate pushdatas to avoid corrupting the filter
         for registration_entry in registration_entries:
             # TODO(1.4.0) Tip filter. Expiry dates should be tracked and entries removed.
-            if not self._common_cuckoo.contains(registration_entry.pushdata_hash):
-                self._common_cuckoo.add(registration_entry.pushdata_hash)
+            self._common_cuckoo.add(registration_entry.pushdata_hash)
         self.logger.debug("Populated the common cuckoo filter with %d entries",
             len(registration_entries))
 
@@ -219,18 +219,19 @@ class MinedBlockParsingThread(threading.Thread):
             msg = self.socket_pushdata_registrations.recv()
             state_update_from_server = PushdataFilterStateUpdate(
                 *cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC)))
-            self.logger.debug(f"Got state update from external API: {state_update_from_server}")
+            self.logger.debug(f"Got state update from external API of type: "
+                f"{state_update_from_server.command}")
             if state_update_from_server.command & PushdataFilterMessageType.REGISTER:
                 for entry in state_update_from_server.entries:
                     entry_obj = TipFilterRegistrationEntry(*entry)
-                    if not self._common_cuckoo.contains(entry_obj.pushdata_hash):
-                        self._common_cuckoo.add(entry_obj.pushdata_hash)
+                    self.logger.debug(f"adding pushdata hash: "
+                                      f"{entry_obj.pushdata_hash.hex()}")
+                    self._common_cuckoo.add(entry_obj.pushdata_hash)
 
             elif state_update_from_server.command & PushdataFilterMessageType.UNREGISTER:
                 for entry in state_update_from_server.entries:
                     entry_obj = TipFilterRegistrationEntry(*entry)
-                    if self._common_cuckoo.contains(entry_obj.pushdata_hash):
-                        self._common_cuckoo.remove(entry_obj.pushdata_hash)
+                    self._common_cuckoo.remove(entry_obj.pushdata_hash)
             else:
                 raise RuntimeError("The pushdata_registrations_thread only handles REGISTER"
                     "or UNREGISTER message types")
@@ -507,10 +508,6 @@ class MinedBlockParsingThread(threading.Thread):
             blk_hash: bytes) -> None:
         # Send UTXO spend notifications
         for input_row in in_rows_parsed:
-            if input_row.out_tx_hash != bytes(32):
-                self.logger.debug(f"non-coinbase input = {input_row}")
-                self.logger.debug(
-                    f"outpoint = [{hash_to_hex_str(input_row.out_tx_hash)},{input_row.out_idx}]")
             spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
             if spent_output in self._unspent_output_registrations:
                 notification = OutpointStateUpdate('ffffffff', OutpointMessageType.SPEND, None,
@@ -522,8 +519,12 @@ class MinedBlockParsingThread(threading.Thread):
         # Send Cuckoo Filter match notifications
         filter_matches = []
         for pushdata_match in pushdata_matches_tip_filter:
-            if self._common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.OK:
+            result = self._common_cuckoo.contains(pushdata_match.pushdata_hash)
+            if result == CuckooResult.OK:
                 filter_matches.append(pushdata_match)
+            else:
+                # TODO: DEBUGGING - MUST REMOVE - THIS IS VERY WASTEFUL
+                assert self._common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.NOT_FOUND
 
         if len(filter_matches):
             # NOTE: if there is message delivery failure, the acks
@@ -532,5 +533,6 @@ class MinedBlockParsingThread(threading.Thread):
             # ZMQ send over websocket fitler_matches
             notification_pushdata = PushdataFilterStateUpdate('ffffffff',
                 PushdataFilterMessageType.NOTIFICATION, [], filter_matches, blk_hash)
+            self.logger.debug(f"Sending {len(filter_matches)} pushdata matches")
             self.socket_pushdata_notifications.send(cbor2.dumps(notification_pushdata))
 

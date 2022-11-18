@@ -201,12 +201,14 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
 
 async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
     """This the main endpoint for the rapid restoration API"""
+    # TODO - ensure the data is the correct format and not e.g. an address.
     return await _get_pushdata_filter_matches(request, MatchFormat.PUSHDATA)
 
 
 async def get_p2pkh_address_filter_matches(request: web.Request) -> StreamResponse:
     """A convenience endpoint that accepts legacy P2PKH addresses instead of pushdata hashes.
     Internally, it is just a conversion to the universal pushdata hash format."""
+    # TODO - ensure the data is the correct format e.g. all valid addresses
     return await _get_pushdata_filter_matches(request, MatchFormat.P2PKH)
 
 

@@ -5,6 +5,8 @@ from enum import IntEnum
 import struct
 from typing import Any, Optional, NamedTuple, TypedDict
 
+from bitcoinx import hash_to_hex_str
+
 from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.types import OutpointType, output_spend_struct
 
@@ -81,10 +83,10 @@ class PushdataFilterStateUpdate(NamedTuple):
 
     def __str__(self) -> str:
         return f"PushdataFilterStateUpdate(request_id={self.request_id}, " \
-               f"command={repr(OutpointMessageType(self.command))}, " \
-               f"entries={[str(entry) for entry in self.entries]}, " \
+               f"command={repr(PushdataFilterMessageType(self.command))}, " \
+               f"entries={[str(TipFilterRegistrationEntry(*entry)) for entry in self.entries]}, " \
                f"matches={self.matches}, " \
-               f"block_hash={self.block_hash!r})"
+               f"block_hash={hash_to_hex_str(self.block_hash)})"
 
 class OutputSpendRow(NamedTuple):
     out_tx_hash: bytes
@@ -242,6 +244,10 @@ class TipFilterNotificationBatch(TypedDict):
     blockId: Optional[str]
     entries: list[TipFilterNotificationEntry]
 
+
+class TipFilterPushDataMatchesData(TypedDict):
+    blockId: str | None
+    matches: list[TipFilterNotificationMatch]
 
 class OutboundDataRow(NamedTuple):
     outbound_data_id: Optional[int]

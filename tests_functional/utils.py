@@ -85,7 +85,8 @@ def _pushdata_no_match_json():
 
 def _mining_txs_json_post_reorg():
     """
-    Check the coinbase transactions going to the mining wallet. This checks the unspent and spent UTXOs are correct.
+    Check the coinbase transactions going to the mining wallet. This checks the unspent and
+    spent UTXOs are correct.
     """
     actual_matches = []
     actual_unspent_coinbase_transaction_hashes = []

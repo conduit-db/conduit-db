@@ -20,7 +20,6 @@ output_spend_struct = struct.Struct(OUTPUT_SPEND_FORMAT)
 OUTPOINT_FORMAT = ">32sI"
 outpoint_struct = struct.Struct(OUTPOINT_FORMAT)
 
-
 class OutpointType(NamedTuple):
     tx_hash: bytes
     out_idx: int

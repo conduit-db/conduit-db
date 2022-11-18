@@ -86,7 +86,7 @@ def read_rows_by_id(mysqldb: MySQLDatabase, return_type: Type[T1], sql: str, par
         while len(remaining_ids):
             batch_ids = tuple(remaining_ids[:batch_size])
             sql = sql.format(",".join("%s" for k in batch_ids))
-            cursor = cursor.execute(sql, params + tuple(batch_ids))
+            cursor.execute(sql, params + tuple(batch_ids))
             rows = cursor.fetchall()
             # Skip copying/conversion for standard types.
             if len(rows):
@@ -172,8 +172,8 @@ class MySQLTipFilterQueries:
     def create_tip_filter_registrations_table(self) -> None:
         self.mysql_conn.query("""
         CREATE TABLE IF NOT EXISTS tip_filter_registrations (
-            account_id              INT UNSIGNED     PRIMARY KEY,
-            pushdata_hash           BINARY(32)  NOT NULL,
+            account_id              INT UNSIGNED     NOT NULL,
+            pushdata_hash           BINARY(32)       NOT NULL,
             flags                   INT UNSIGNED     NOT NULL,
             date_expires            INT UNSIGNED     NOT NULL,
             date_created            INT UNSIGNED     NOT NULL
