@@ -70,6 +70,7 @@ class HeadersAPIThreadsafe:
                 self.headers_lock.release()
 
     def get_header_for_hash(self, block_hash: bytes, lock: bool=True) -> bitcoinx.Header:
+        """raises `bitcoinx.errors.MissingHeader`"""
         try:
             if lock:
                 self.headers_lock.acquire()

@@ -1,3 +1,4 @@
+import bitcoinx
 from aiohttp import web
 from bitcoinx import hash_to_hex_str, hex_str_to_hash, Header, Chain
 import logging
@@ -20,9 +21,11 @@ async def get_header(request: web.Request) -> web.Response:
     if not blockhash:
         raise web.HTTPBadRequest(reason=f"'hash' path parameter not supplied")
 
-    header = headers_threadsafe.get_header_for_hash(hex_str_to_hash(blockhash))
-    if not header:
+    try:
+        header = headers_threadsafe.get_header_for_hash(hex_str_to_hash(blockhash))
+    except bitcoinx.MissingHeader:
         raise web.HTTPNotFound()
+
     if accept_type == 'application/octet-stream':
         response_headers = {'Content-Type': 'application/octet-stream',
                             'User-Agent': 'ESV-Ref-Server'}
