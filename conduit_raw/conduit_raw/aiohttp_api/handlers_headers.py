@@ -21,6 +21,9 @@ async def get_header(request: web.Request) -> web.Response:
     if not blockhash:
         raise web.HTTPBadRequest(reason=f"'hash' path parameter not supplied")
 
+    if len(blockhash) != 64:
+        raise web.HTTPBadRequest(reason=f"'hash' path parameter must be 32 hex bytes in length")
+
     try:
         header = headers_threadsafe.get_header_for_hash(hex_str_to_hash(blockhash))
     except bitcoinx.MissingHeader:
