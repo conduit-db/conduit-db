@@ -181,7 +181,7 @@ class PushdataMatchFlags(enum.IntFlag):
 
 def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,
         full_pushdata_hash: str, full_spend_transaction_hash: bytes) -> RestorationFilterResult:
-    pushdata_hash = hex_str_to_hash(full_pushdata_hash)
+    pushdata_hash = bytes.fromhex(full_pushdata_hash)
     tx_hash = hex_str_to_hash(full_tx_hash)
     idx = row.transaction_output_index
     in_tx_hash = hex_str_to_hash("00"*32)

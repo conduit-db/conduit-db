@@ -121,8 +121,8 @@ async def post_output_spend_notifications_register(request: web.Request) -> web.
             raise web.HTTPBadRequest(reason="binary request body malformed")
 
         for outpoint_index in range(len(body) // outpoint_struct.size):
-            outpoint = cast(OutpointType,
-                outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
+            outpoint = OutpointType(*outpoint_struct.unpack_from(body,
+                outpoint_index * outpoint_struct.size))
             client_outpoints.append(outpoint)
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
@@ -193,8 +193,8 @@ async def post_output_spend_notifications_unregister(request: web.Request) -> we
             raise web.HTTPBadRequest(reason="binary request body malformed")
 
         for outpoint_index in range(len(body) // outpoint_struct.size):
-            outpoint = cast(OutpointType,
-                outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
+            outpoint = OutpointType(
+                *outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
             client_outpoints.append(outpoint)
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
