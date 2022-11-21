@@ -58,7 +58,7 @@ async def get_headers_by_height(request: web.Request) -> web.Response:
     params = request.rel_url.query
     height = int(params.get('height', '0'))
     count = int(params.get('count', '1'))
-    available_count = min(headers_threadsafe.tip().height - height, count)
+    available_count = min(headers_threadsafe.tip().height - height + 1, count)
     if accept_type == 'application/octet-stream':
         response_headers = {'Content-Type': 'application/octet-stream',
                             'User-Agent': 'ESV-Ref-Server'}

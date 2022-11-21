@@ -202,6 +202,8 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
 async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
     """This the main endpoint for the rapid restoration API"""
     # TODO - ensure the data is the correct format and not e.g. an address.
+    # TODO - ensure that input pushdata hashes match output otherwise the short hashing will allow
+    #  modification of the last bytes and still get a result instead of 404 Not Found
     return await _get_pushdata_filter_matches(request, MatchFormat.PUSHDATA)
 
 
