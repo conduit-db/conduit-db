@@ -1,12 +1,15 @@
-import array
-from typing import NamedTuple, TypedDict
+import typing
 
 import bitcoinx
+from typing import NamedTuple
 
 # NOTE(typing) For some reason we can't embed `array.ArrayType[int]` here:
 #   TypeError: 'type' object is not subscriptable
 from conduit_lib.database.mysql.types import MempoolTransactionRow, ConfirmedTransactionRow, \
     InputRow, OutputRow, PushdataRow
+
+if typing.TYPE_CHECKING:
+    import array
 
 
 class ProcessedBlockAck(NamedTuple):
@@ -19,7 +22,7 @@ class ProcessedBlockAck(NamedTuple):
 WorkUnit = tuple[bool, int, int, bytes, int, int, int, 'array.ArrayType[int]']
 MainBatch = list[tuple[int, 'array.ArrayType[int]', bitcoinx.Header, int]]
 WorkPart = tuple[int, bytes, int, int, int, 'array.ArrayType[int]']
-BatchedRawBlockSlices = list[tuple[bytes, int, int, int, int]]
+BatchedRawBlockSlices = list[tuple[bytes, int, int, int, bytes, int]]
 ProcessedBlockAcks = list[ProcessedBlockAck]
 TxHashRows = list[tuple[str]]
 TxHashes = list[bytes]

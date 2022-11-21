@@ -5,12 +5,32 @@ from queue import Queue
 from typing import TypedDict, NamedTuple
 
 import bitcoinx
-from bitcoinx import hex_str_to_hash, Header
+from bitcoinx import hex_str_to_hash, Header, hash_to_hex_str
 
 from conduit_lib.constants import MAX_UINT32
 
 MultiprocessingQueue = Queue  # workaround for mypy: https://github.com/python/typeshed/issues/4266
 Hash256 = bytes
+
+
+OutpointJSONType = tuple[str, int]
+OUTPUT_SPEND_FORMAT = ">32sI32sI32s"
+output_spend_struct = struct.Struct(OUTPUT_SPEND_FORMAT)
+
+OUTPOINT_FORMAT = ">32sI"
+outpoint_struct = struct.Struct(OUTPOINT_FORMAT)
+
+class OutpointType(NamedTuple):
+    tx_hash: bytes
+    out_idx: int
+
+    def __str__(self) -> str:
+        return f"OutpointType(tx_hash={hash_to_hex_str(self.tx_hash)},out_idx={self.out_idx})"
+
+    @classmethod
+    def from_outpoint_struct(cls, buf: bytes) -> 'OutpointType':
+        tx_hash, out_idx = outpoint_struct.unpack(buf)
+        return cls(tx_hash, out_idx)
 
 
 class DataLocation(NamedTuple):
@@ -161,7 +181,7 @@ class PushdataMatchFlags(enum.IntFlag):
 
 def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,
         full_pushdata_hash: str, full_spend_transaction_hash: bytes) -> RestorationFilterResult:
-    pushdata_hash = hex_str_to_hash(full_pushdata_hash)
+    pushdata_hash = bytes.fromhex(full_pushdata_hash)
     tx_hash = hex_str_to_hash(full_tx_hash)
     idx = row.transaction_output_index
     in_tx_hash = hex_str_to_hash("00"*32)

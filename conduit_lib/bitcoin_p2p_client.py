@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import array
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -155,8 +153,11 @@ class BitcoinP2PClient:
         while True:
             command, message = await self.message_queue.get()
             handler_func_name = "on_" + command.rstrip(b"\0").decode("ascii")
-            handler_func = getattr(self.message_handler, handler_func_name)
-            await handler_func(message, self.peer)
+            try:
+                handler_func = getattr(self.message_handler, handler_func_name)
+                await handler_func(message, self.peer)
+            except AttributeError:
+                logger.debug(f"Handler not implemented for command: {command!r}")
             if command == VERACK_BIN:
                 self.handshake_complete_event.set()
 
@@ -228,7 +229,7 @@ class BitcoinP2PClient:
         raises `ConnectionResetError`
         """
         # Init local variables - Keeping them local avoids polluting instance state
-        tx_offsets_all: array.ArrayType[int] = array.array('Q')
+        tx_offsets_all: 'array.ArrayType[int]' = array.array('Q')
         block_hash = bytes()
         last_tx_offset_in_chunk: int | None = None
         adjustment = 0

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import queue
 from queue import Queue
@@ -43,7 +41,8 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     if not mempool_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(mempool_rows, txs, txs_mempool, ins, outs, pds)
+                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(mempool_rows, txs,
+                        txs_mempool, ins, outs, pds)
                     acks += new_acks
 
                     if len(txs_mempool) > MEMPOOL_MAX_TX_BATCH_LIMIT - 1:
@@ -51,8 +50,11 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         mysql_db, self.last_mysql_activity = \
                             maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity,
                                 self.logger)
+
                         mysql_flush_rows_mempool(self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks), mysql_db=mysql_db)
+                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool,
+                                ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
 
                 except queue.Empty:
@@ -61,7 +63,9 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
                             mysql_db, self.last_mysql_activity, self.logger)
                         mysql_flush_rows_mempool(self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks), mysql_db=mysql_db)
+                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool,
+                                ins, outs, pds, acks),
+                            mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
                         self.last_mysql_activity = int(time.time())
                     continue

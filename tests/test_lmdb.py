@@ -12,6 +12,7 @@ from bitcoinx import double_sha256
 from conduit_lib import NetworkConfig
 from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.types import MerkleTreeRow
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
@@ -29,11 +30,12 @@ def ipc_sock_server_thread(lmdb: LMDB_Database):
     from conduit_lib.store import setup_headers_store
     HOST, PORT = "127.0.0.1", 34586
     net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
-    block_headers = setup_headers_store(net_config, "test_headers.mmap")
+    block_headers = setup_headers_store(net_config, MODULE_DIR / "test_headers.mmap")
     block_headers_lock = threading.RLock()
+    headers_threadsafe_blocks = HeadersAPIThreadsafe(block_headers, block_headers_lock)
     ipc_sock_server = ThreadedTCPServer(addr=(HOST, PORT),
         handler=ThreadedTCPRequestHandler,
-        block_headers=block_headers, block_headers_lock=block_headers_lock, lmdb=lmdb)
+        headers_threadsafe_blocks=headers_threadsafe_blocks, lmdb=lmdb)
     ipc_sock_server.serve_forever()
 
 
@@ -57,8 +59,8 @@ class TestLMDBDatabase:
             shutil.rmtree(DATADIR_HDD)
         if os.path.exists(DATADIR_SSD):
             shutil.rmtree(DATADIR_SSD)
-        if os.path.exists('test_headers.mmap'):
-            os.remove('test_headers.mmap')
+        if os.path.exists(MODULE_DIR / 'test_headers.mmap'):
+            os.remove(MODULE_DIR / 'test_headers.mmap')
 
     def test_block_storage(self):
         expected_block_num = 1

@@ -111,6 +111,7 @@ class MySQLBulkLoads:
             self.mysql_db.start_transaction()
             try:
                 self.mysql_conn.query(query)
+                self.mysql_conn.commit()
             finally:
                 self.mysql_db.commit_transaction()
         except MySQLdb.OperationalError as e:

@@ -16,7 +16,7 @@ from conduit_lib.bitcoin_p2p_types import BlockChunkData
 from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
 from conduit_lib.utils import remove_readonly
-from conduit_raw.conduit_raw.aiohttp_api.handlers import _get_tsc_merkle_proof
+from conduit_raw.conduit_raw.aiohttp_api.handlers_restoration import _get_tsc_merkle_proof
 from conduit_raw.conduit_raw.workers import MTreeCalculator
 from conduit_raw.conduit_raw.workers.merkle_tree import process_merkle_tree_batch
 from .conftest import TEST_RAW_BLOCK_413567

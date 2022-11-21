@@ -13,6 +13,8 @@ from pathlib import Path
 
 import bitcoinx
 
+from conduit_index.conduit_index.workers.common import convert_pushdata_rows_for_flush, \
+    convert_input_rows_for_flush
 from conduit_lib import IPCSocketClient, setup_storage, NetworkConfig
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
@@ -118,19 +120,23 @@ class DbRepairTool:
             tx_offsets = next(ipc_sock_client.transaction_offsets_batched([block_hash]))
             block_num = ipc_sock_client.block_number_batched([block_hash]).block_numbers[0]
             slice = Slice(start_offset=0, end_offset=0)
-            raw_blocks_array = ipc_sock_client.block_batched([BlockSliceRequestType(block_num, slice)])
+            raw_blocks_array = ipc_sock_client.block_batched(
+                [BlockSliceRequestType(block_num, slice)])
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
-            _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s", raw_blocks_array,
-                0)
-            tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
-                height, confirmed=True, first_tx_pos_batch=0)
+            _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s",
+                raw_blocks_array, 0)
+            tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(raw_block, tx_offsets, height,
+                confirmed=True, first_tx_pos_batch=0)
+            pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
+            input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
 
             # Delete
             tx_hashes = [row[0] for row in tx_rows]
             self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-            self.mysql_db.queries.mysql_delete_pushdata_rows(pd_rows)
+            self.mysql_db.queries.mysql_delete_pushdata_rows(pushdata_rows_for_flushing)
             self.mysql_db.queries.mysql_delete_output_rows(out_rows)
-            self.mysql_db.queries.mysql_delete_input_rows(in_rows)
+            self.mysql_db.queries.mysql_delete_input_rows(input_rows_for_flushing)
             self.mysql_db.queries.mysql_delete_header_row(block_hash)
 
 

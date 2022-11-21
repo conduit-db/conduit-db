@@ -3,9 +3,8 @@ import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 
-from bitcoinx import Header
-
 from conduit_lib import IPCSocketClient
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 
 
@@ -18,10 +17,10 @@ class ControllerBase:
     logger: logging.Logger
     estimated_moving_av_block_size_mb: float
 
-    def get_header_for_height(self, height: int) -> Header:
-        raise NotImplementedError()
+    def __init__(self) -> None:
+        self.headers_threadsafe: HeadersAPIThreadsafe
 
-    def get_ideal_block_batch_count(self, target_bytes: int, local_tip_height: int) -> int:
+    def get_ideal_block_batch_count(self, target_bytes: int) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point
         of requesting 1 block at a time.
 
@@ -39,7 +38,7 @@ class ControllerBase:
         # sample every 72nd block for its size over the last 2 weeks (two samples per day)
         block_hashes = []
         for height in range(current_tip_height - 2016, current_tip_height, 72):
-            header = self.get_header_for_height(height)
+            header = self.headers_threadsafe.get_header_for_height(height)
             block_hashes.append(header.hash)
 
         ipc_sock_client = await self.loop.run_in_executor(self.general_executor,

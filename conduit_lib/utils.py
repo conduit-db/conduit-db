@@ -1,11 +1,8 @@
-from __future__ import annotations
-
 import asyncio
-import stat
-
 import bitcoinx
-from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, MissingHeader, Headers, Header,
-    Chain, Network, sha256)
+from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, Network, sha256)
+import stat
+import concurrent.futures
 import io
 import ipaddress
 import logging
@@ -14,17 +11,17 @@ import os
 from pathlib import Path
 import socket
 import struct
-import threading
 import time
-from typing import Any, cast, Callable, Coroutine, Optional, TypeVar
+from typing import Any, cast, Callable, Coroutine, TypeVar
 import zmq
+from zmq.asyncio import Socket as AsyncZMQSocket
+
 
 from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
-    GENESIS_BLOCK, TESTNET, SCALINGTESTNET, REGTEST, MAINNET
+    TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .deserializer_types import NodeAddr
-from .types import ChainHashes
-
+from .types import PushdataMatchFlags
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -127,167 +124,6 @@ def headers_to_p2p_struct(headers: list[bytes]) -> bytearray:
     return ba
 
 
-def connect_headers(stream: io.BytesIO, headers_store: Headers) -> tuple[bytes, bool]:
-    """Two mmap files - one for "headers-first download" and the other for the
-    blocks we then download."""
-    count = bitcoinx.read_varint(stream.read)
-    success = True
-    first_header_of_batch = b""
-    for i in range(count):
-        try:
-            raw_header = stream.read(80)
-            # logger.debug(f"Connecting {hash_to_hex_str(bitcoinx.double_sha256(raw_header))} "
-            #              f"({i+1} of ({count})")
-            _tx_count = bitcoinx.read_varint(stream.read)
-            headers_store.connect(raw_header)
-            if i == 0:
-                first_header_of_batch = raw_header
-        except MissingHeader as e:
-            if str(e).find(GENESIS_BLOCK) != -1:
-                logger.debug("skipping prev_out == genesis block")
-                continue
-            else:
-                logger.error(e)
-                success = False
-                return first_header_of_batch, success
-    headers_store.flush()
-    return first_header_of_batch, success
-
-
-def get_header_for_height(height: int, headers_store: Headers,
-        lock: Optional[threading.RLock]) -> bitcoinx.Header:
-    try:
-        if lock:
-            lock.acquire()
-        chain = headers_store.longest_chain()
-        header = headers_store.header_at_height(chain, height)
-        return header
-    finally:
-        if lock:
-            lock.release()
-
-
-def get_header_for_hash(block_hash: bytes, headers_store: Headers,
-        lock: Optional[threading.RLock]) -> bitcoinx.Header:
-    try:
-        if lock:
-            lock.acquire()
-        header, chain = headers_store.lookup(block_hash)
-        return header
-    finally:
-        if lock:
-            lock.release()
-
-
-def find_common_parent(reorg_node_tip: Header, orphaned_tip: Header,
-        chains: list[Chain], lock: Optional[threading.RLock]) -> tuple[bitcoinx.Chain, int]:
-    try:
-        if lock:
-            lock.acquire()
-        # Get orphan an reorg chains
-        orphaned_chain = None
-        reorg_chain = None
-        for chain in chains:
-            if chain.tip.hash == reorg_node_tip.hash:
-                reorg_chain = chain
-            elif chain.tip.hash == orphaned_tip.hash:
-                orphaned_chain = chain
-
-        if reorg_chain is not None and orphaned_chain is not None:
-            chain, common_parent_height = reorg_chain.common_chain_and_height(orphaned_chain)
-            return reorg_chain, common_parent_height
-        elif reorg_chain is not None and orphaned_chain is None:
-            return reorg_chain, 0
-        else:
-            # Should never happen
-            raise ValueError("No common parent block header could be found")
-    finally:
-        if lock:
-            lock.release()
-
-
-def reorg_detect(old_tip: bitcoinx.Header, new_tip: bitcoinx.Header, chains: list[Chain],
-        lock: Optional[threading.RLock]) \
-        -> tuple[int, Header, Header] | None:
-    try:
-        if lock:
-            lock.acquire()
-        assert new_tip.height > old_tip.height
-        common_parent_chain, common_parent_height = find_common_parent(new_tip, old_tip, chains, lock)
-
-        if common_parent_height < old_tip.height:
-            depth = old_tip.height - common_parent_height
-            logger.debug(f"Reorg detected of depth: {depth}. "
-                              f"Syncing missing blocks from height: "
-                              f"{common_parent_height + 1} to {new_tip.height}")
-            return common_parent_height, new_tip, old_tip
-        return None
-    except Exception:
-        logger.exception("unexpected exception in reorg_detect")
-        return None
-    finally:
-        if lock:
-            lock.release()
-
-
-def _get_chain_hashes_back_to_common_parent(tip: Header, common_parent_height: int,
-        headers_store: Headers, lock: threading.RLock) -> ChainHashes:
-    """Used in reorg handling see: lmdb.get_reorg_differential"""
-    common_parent = get_header_for_height(common_parent_height, headers_store, lock)
-
-    chain_hashes = []
-    cur_header = tip
-    while common_parent.hash != cur_header.hash:
-        cur_header = get_header_for_hash(cur_header.hash, headers_store, lock)
-        chain_hashes.append(cur_header.hash)
-        cur_header = get_header_for_hash(cur_header.prev_hash, headers_store, lock)
-
-    return chain_hashes
-
-
-def connect_headers_reorg_safe(message: bytes, headers_store: Headers,
-        headers_lock: threading.RLock) \
-            -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
-    """This needs to ingest a p2p messaging protocol style headers message and if they do indeed
-    constitute a reorg event, they need to go far back enough to include the common parent
-    height so it can connect to our local headers longest chain. Otherwise, raises ValueError"""
-    with headers_lock:
-        headers_stream = io.BytesIO(message)
-        old_tip = headers_store.longest_chain().tip
-        count_chains_before = len(headers_store.chains())
-        first_header_of_batch, success = connect_headers(headers_stream, headers_store)
-        if not success:
-            raise ValueError("Could not connect p2p headers")
-
-        count_chains_after = len(headers_store.chains())
-        new_tip: Header = headers_store.longest_chain().tip
-
-        # Todo: consider what would happen if rogue BTC or BCH block headers were received
-        # On reorg we want the block pre-fetcher to start further back at the common parent height
-        is_reorg = False
-        old_chain = None
-        new_chain = None
-        if count_chains_before < count_chains_after:
-            is_reorg = True
-            reorg_info = reorg_detect(old_tip, new_tip, headers_store.chains(), lock=None)
-            assert reorg_info is not None
-            common_parent_height, new_tip, old_tip = reorg_info
-            start_header = get_header_for_height(common_parent_height + 1, headers_store, lock=None)
-            stop_header = new_tip
-            logger.debug(f"Reorg detected - common parent height: {common_parent_height}; "
-                         f"old_tip={old_tip}; new_tip={new_tip}")
-
-            old_chain = _get_chain_hashes_back_to_common_parent(old_tip, common_parent_height,
-                headers_store, headers_lock)
-            new_chain = _get_chain_hashes_back_to_common_parent(new_tip, common_parent_height,
-                headers_store, headers_lock)
-        else:
-            start_header = get_header_for_hash(double_sha256(first_header_of_batch), headers_store,
-                lock=None)
-            stop_header = new_tip
-        return is_reorg, start_header, stop_header, old_chain, new_chain
-
-
 class InvalidNetworkException(Exception):
     pass
 
@@ -302,14 +138,34 @@ def get_network_type() -> str:
     raise ValueError("There is no 'NETWORK' key in os.environ")
 
 
-def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str) -> None:
+def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str | None = None,
+        timeout: float | None = None) -> None:
+    start_time = time.time()
     while True:
         try:
             sock.send(msg, zmq.NOBLOCK)
             break
         except zmq.error.Again:
-            logger.debug(on_blocked_msg)
+            if timeout and (time.time() - start_time) > timeout:
+                raise TimeoutError("failed sending zmq message")
+            if on_blocked_msg:
+                logger.debug(on_blocked_msg)
             time.sleep(0.1)
+
+
+async def zmq_send_no_block_async(sock: 'AsyncZMQSocket', msg: bytes,
+        on_blocked_msg: str | None = None, timeout: float | None = None) -> None:
+    start_time = time.time()
+    while True:
+        try:
+            await sock.send(msg, zmq.NOBLOCK)
+            break
+        except zmq.error.Again:
+            if timeout and (time.time() - start_time) > timeout:
+                raise TimeoutError("failed sending zmq message")
+            if on_blocked_msg:
+                logger.debug(on_blocked_msg)
+            await asyncio.sleep(0.1)
 
 
 def maybe_process_batch(process_batch_func: Callable[[list[bytes]], None],
@@ -369,6 +225,11 @@ def asyncio_future_callback(future: asyncio.Task[Any]) -> None:
         logger.exception(f"Unexpected exception in task")
 
 
+def future_callback(future: concurrent.futures.Future[None]) -> None:
+    if future.cancelled():
+        return
+    future.result()
+
 
 def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
     task = asyncio.create_task(coro)
@@ -404,3 +265,13 @@ def remove_readonly(func: Callable[[Path], None], path: Path,
         excinfo: BaseException | None) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
+
+def get_pushdata_match_flag(ref_type: int) -> int:
+    if ref_type == 0:
+        return PushdataMatchFlags.OUTPUT
+    elif ref_type == 1:
+        return PushdataMatchFlags.INPUT
+    elif ref_type == 2:
+        return PushdataMatchFlags.DATA
+    raise NotImplementedError

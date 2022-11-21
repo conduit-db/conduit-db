@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import array
 import logging
 import os
@@ -177,7 +175,7 @@ class IPCSocketClient:
 
     # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
     def transaction_offsets_batched(self,
-            block_hashes: list[bytes]) -> Iterator[array.ArrayType[int]]:
+            block_hashes: list[bytes]) -> Iterator['array.ArrayType[int]']:
         try:
             msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
             send_msg(self.sock, msg_req.to_cbor())

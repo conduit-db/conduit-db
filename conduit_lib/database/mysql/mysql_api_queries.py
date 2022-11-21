@@ -37,7 +37,6 @@ class MySQLAPIQueries:
             self.mysql_conn.query(sql)
             result = self.mysql_conn.store_result()
             rows = result.fetch_row(0)
-
             self.mysql_conn.commit()
 
             if len(rows) == 0:
@@ -82,6 +81,7 @@ class MySQLAPIQueries:
                 self.mysql_conn.query(sql)
             result = self.mysql_conn.store_result()
             rows = result.fetch_row(0)
+            self.mysql_conn.commit()
             if len(rows) == 0:
                 return None
 

@@ -1,17 +1,15 @@
-from __future__ import annotations
-
 import array
 import logging
 import struct
 import threading
 import time
-from datetime import datetime
 from functools import partial
 from queue import Queue
 
 import zmq
 
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
+from .common import convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 from .flush_mempool_thread import FlushMempoolTransactionsThread
 from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
@@ -79,12 +77,14 @@ class MempoolParsingThread(threading.Thread):
             # self.logger.debug(f"Got mempool tx: {hash_to_hex_str(double_sha256(rawtx))}")
             tx_offsets = array.array('Q', [0])
             timestamp = int(time.time())
-            tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = parse_txs(rawtx,
-                tx_offsets, timestamp, False, 0)
+            tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(rawtx, tx_offsets, timestamp, False, 0)
+            pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
+            input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
             tx_rows_batched.extend(tx_rows_mempool)
-            in_rows_batched.extend(in_rows)
+            in_rows_batched.extend(input_rows_for_flushing)
             out_rows_batched.extend(out_rows)
-            set_pd_rows_batched.extend(set_pd_rows)
+            set_pd_rows_batched.extend(pushdata_rows_for_flushing)
 
         num_mempool_txs_processed = len(tx_rows_batched)
         # self.logger.debug(f"Flushing {num_mempool_txs_processed} parsed mempool txs")

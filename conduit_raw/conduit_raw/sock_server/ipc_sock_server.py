@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import os
 import threading
@@ -20,6 +18,7 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.ipc_sock_msg_types import REQUEST_MAP, BaseMsg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 from conduit_lib.types import BlockMetadata, Slice
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 
 struct_be_Q = struct.Struct(">Q")
 logger = logging.getLogger('rs-server')
@@ -43,7 +42,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     This provides type safety without bringing in a heavy-weight dependency like protobufs.
     """
 
-    server: ThreadedTCPServer
+    server: 'ThreadedTCPServer'
     request: socket.socket
 
     def recvall(self, n: int) -> bytearray | None:
@@ -136,10 +135,9 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def chain_tip(self, msg_req: ipc_sock_msg_types.ChainTipRequest) -> None:
         try:
-            with self.server.block_headers_lock:
-                tip: bitcoinx.Header = self.server.block_headers.longest_chain().tip
-                msg_resp = ipc_sock_msg_types.ChainTipResponse(header=tip.raw, height=tip.height)
-                self.send_msg(msg_resp.to_cbor())
+            tip: bitcoinx.Header = self.server.headers_threadsafe_blocks.tip()
+            msg_resp = ipc_sock_msg_types.ChainTipResponse(header=tip.raw, height=tip.height)
+            self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.chain_tip")
 
@@ -225,11 +223,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             logger.exception("Exception in ThreadedTCPRequestHandler.block_metadata_batched")
 
     def _get_header_for_height(self, height: int) -> bitcoinx.Header:
-        with self.server.block_headers_lock:
-            headers = self.server.block_headers
-            chain = self.server.block_headers.longest_chain()
-            header = headers.header_at_height(chain, height)
-            return header
+        return self.server.headers_threadsafe_blocks.get_header_for_height(height,
+            lock=True)
 
     def headers_batched(self, msg_req: ipc_sock_msg_types.HeadersBatchedRequest) -> None:
         # Todo - this should not be doing a while True / sleep. It should be waiting on
@@ -261,19 +256,17 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     def headers_batched2(self, msg_req: ipc_sock_msg_types.HeadersBatchedRequest) -> bool:
         start_height = msg_req.start_height
         desired_end_height = msg_req.start_height + (msg_req.batch_size - 1)
-        with self.server.block_headers_lock:
-            headers = self.server.block_headers
-            chain = self.server.block_headers.longest_chain()
-            end_height = min(chain.tip.height, desired_end_height)
-            header_count = max(0, end_height - start_height + 1)
+        tip = self.server.headers_threadsafe_blocks.tip()
+        end_height = min(tip.height, desired_end_height)
+        header_count = max(0, end_height - start_height + 1)
 
-            # Send the number of headers that will follow.
-            header_count_bytes = struct_be_Q.pack(header_count)
-            self.request.sendall(header_count_bytes)
+        # Send the number of headers that will follow.
+        header_count_bytes = struct_be_Q.pack(header_count)
+        self.request.sendall(header_count_bytes)
 
-            for height in range(start_height, end_height+1):
-                header = headers.header_at_height(chain, height)
-                self.request.sendall(header.raw)
+        for height in range(start_height, end_height+1):
+            header = self.server.headers_threadsafe_blocks.get_header_for_height(height)
+            self.request.sendall(header.raw)
         return True
 
     def reorg_differential(self, msg_req: ipc_sock_msg_types.ReorgDifferentialRequest) -> None:
@@ -291,15 +284,12 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     is_running = True
 
     def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
-            block_headers: bitcoinx.Headers,
-            block_headers_lock: threading.RLock, lmdb: LMDB_Database) -> None:
+            headers_threadsafe_blocks: HeadersAPIThreadsafe, lmdb: LMDB_Database) -> None:
         self.allow_reuse_address = True
         super(ThreadedTCPServer, self).__init__(addr, handler)
         logger.info(f"Started IPC Socket Server on tcp://{addr[0]}:{addr[1]}")
         self.lmdb = lmdb
-        self.block_headers = block_headers
-        self.block_headers_lock = block_headers_lock
-
+        self.headers_threadsafe_blocks = headers_threadsafe_blocks
         self._active_request_sockets = set[tuple[bytes, socket.socket] | socket.socket]()
 
     def finish_request(self, request_socket: tuple[bytes, socket.socket] | socket.socket,
@@ -335,9 +325,10 @@ if __name__ == "__main__":
     net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
     block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()
+    headers_threadsafe_blocks = HeadersAPIThreadsafe(block_headers, block_headers_lock)
 
-    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler, block_headers,
-        block_headers_lock, lmdb=lmdb)
+    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler,
+        headers_threadsafe_blocks, lmdb=lmdb)
     with server:
         ip, port = server.server_address
         server.serve_forever()

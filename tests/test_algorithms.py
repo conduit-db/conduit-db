@@ -208,8 +208,8 @@ def test_parse_txs():
     t0 = time.perf_counter()
     REPEAT_N_TIMES = 1
     for i in range(REPEAT_N_TIMES):
-        tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
-            413567, True, 0)
+        tx_rows, tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(raw_block, tx_offsets, 413567, True, 0)
     t1 = time.perf_counter() - t0
     print_results(len(tx_rows), t1/REPEAT_N_TIMES, raw_block)
 
@@ -255,7 +255,7 @@ def test_parse_txs():
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in in_rows:
             out_tx_hash, out_idx, in_tx_hash, in_idx = row
-            if prev_out_hash[0:HashXLength] == hex_str_to_hash(out_tx_hash)[::-1] and prev_idx == out_idx:
+            if prev_out_hash == out_tx_hash and prev_idx == out_idx:
                 # print(f"Match found for {hash_to_hex_str(prev_out_hash)} == {out_tx_hash}")
                 return True
             else:
@@ -281,7 +281,7 @@ def test_parse_txs():
     for i in range(len(inputs)):
         bitcoinx_trusted_input = inputs[i]
         match_found = scan_inputs_for_hash_and_idx_match(
-            bitcoinx_trusted_input.prev_hash[0:HashXLength],
+            bitcoinx_trusted_input.prev_hash,
             bitcoinx_trusted_input.prev_idx,
             in_rows)
         assert match_found

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging.handlers
 import logging
 import multiprocessing
@@ -13,6 +11,7 @@ import zmq
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib.logging_client import setup_tcp_logging
+from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
 from ..types import ProcessedBlockAcks, MempoolTxAck
@@ -37,17 +36,16 @@ class TxParser(multiprocessing.Process):
         self.worker_id = worker_id
 
     def run(self) -> None:
-        # PUB-SUB from Controller to worker to kill the worker
-        context3 = zmq.Context[zmq.Socket[bytes]]()
-        self.kill_worker_socket = context3.socket(zmq.SUB)
-        self.kill_worker_socket.connect("tcp://127.0.0.1:63241")
-        self.kill_worker_socket.setsockopt(zmq.SUBSCRIBE, b"stop_signal")
-
         if sys.platform == 'win32':
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
         self.logger.setLevel(logging.DEBUG)
         self.logger.info(f"Started {self.__class__.__name__}")
+
+        self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
+        self.kill_worker_socket = connect_non_async_zmq_socket(self.zmq_context,
+            "tcp://127.0.0.1:63241", zmq.SocketType.SUB,
+            options=[(zmq.SocketOption.SUBSCRIBE, b"stop_signal")])
 
         self.confirmed_tx_flush_queue = queue.Queue()
         self.mempool_tx_flush_queue = queue.Queue()

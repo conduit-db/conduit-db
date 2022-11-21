@@ -45,7 +45,7 @@ class Protoconf(TypedDict):
 
 class Inv(TypedDict):
     inv_type: int
-    inv_hash: bytes
+    inv_hash: str
 
 
 class BlockLocator(NamedTuple):

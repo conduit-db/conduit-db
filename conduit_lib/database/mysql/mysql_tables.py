@@ -35,12 +35,12 @@ class MySQLTables:
 
     def mysql_drop_tables(self) -> None:
         try:
-            result = self.get_tables()
+            result = ['checkpoint_state', 'confirmed_transactions', 'headers', 'inputs_table',
+                'mempool_transactions', 'pushdata', 'txo_table']
             queries = []
-            for row in result:
+            for table_name in result:
                 # table = row[0].decode()
-                table = row[0]
-                queries.append(f"DROP TABLE {table};")
+                queries.append(f"DROP TABLE IF EXISTS {table_name}")
             for query in queries:
                 self.mysql_conn.query(query)
         except Exception as e:

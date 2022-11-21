@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -147,8 +145,10 @@ class RegtestSupport:
                         assert stop_header == self.controller.sync_state.get_local_tip().raw
 
                 if stop_header is not None:
-                    start_header_obj = self.controller.get_header_for_hash(double_sha256(start_header))
-                    stop_header_obj = self.controller.get_header_for_hash(double_sha256(stop_header))
+                    start_header_obj = self.controller.headers_threadsafe\
+                        .get_header_for_hash(double_sha256(start_header))
+                    stop_header_obj = self.controller.headers_threadsafe\
+                        .get_header_for_hash(double_sha256(stop_header))
                     if is_reorg:
                         common_parent_height = start_header_obj.height - 1
                         old_tip_height = backfill_headers[0][1]

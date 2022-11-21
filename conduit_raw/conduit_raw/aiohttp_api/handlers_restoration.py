@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -13,7 +11,6 @@ from aiohttp import web
 from aiohttp.web_response import StreamResponse
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
-from conduit_lib.algorithms import calc_depth
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase
@@ -21,6 +18,7 @@ from conduit_lib.types import TxMetadata, TxLocation, RestorationFilterRequest, 
     FILTER_RESPONSE_SIZE, filter_response_struct, tsc_merkle_proof_json_to_binary, BlockHeaderRow, \
     TSCMerkleProof, _pack_pushdata_match_response_bin, _pack_pushdata_match_response_json
 from conduit_lib.utils import address_to_pushdata_hash
+from .mysql_db_tip_filtering import _get_full_tx_hash, _get_tx_metadata_async
 
 if TYPE_CHECKING:
     from .server import ApplicationState
@@ -40,34 +38,6 @@ async def ping(request: web.Request) -> web.Response:
 
 async def error(request: web.Request) -> web.Response:
     raise web.HTTPBadRequest(reason="This is a test of raising an exception in the handler")
-
-
-def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> TxMetadata | None:
-    """Truncates full hash -> hashX length"""
-    tx_metadata = mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
-    if not tx_metadata:
-        return None
-    return tx_metadata
-
-
-async def _get_tx_metadata_async(tx_hash: bytes, mysql_db: MySQLDatabase,
-        executor: ThreadPoolExecutor) -> TxMetadata | None:
-    tx_metadata = await asyncio.get_running_loop().run_in_executor(executor,
-        _get_tx_metadata, tx_hash, mysql_db)
-    return tx_metadata
-
-
-def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
-    # get base level of merkle tree with the tx hashes array
-    block_metadata = lmdb.get_block_metadata(tx_location.block_hash)
-    if block_metadata is None:
-        return None
-    base_level = calc_depth(block_metadata.tx_count) - 1
-
-    tx_loc = TxLocation(tx_location.block_hash, tx_location.block_num,
-        tx_location.tx_position)
-    tx_hash = lmdb.get_tx_hash_by_loc(tx_loc, base_level)
-    return tx_hash
 
 
 def _get_tsc_merkle_proof(tx_metadata: TxMetadata, mysql_db: MySQLDatabase, lmdb: LMDB_Database,
@@ -231,12 +201,16 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
 
 async def get_pushdata_filter_matches(request: web.Request) -> StreamResponse:
     """This the main endpoint for the rapid restoration API"""
+    # TODO - ensure the data is the correct format and not e.g. an address.
+    # TODO - ensure that input pushdata hashes match output otherwise the short hashing will allow
+    #  modification of the last bytes and still get a result instead of 404 Not Found
     return await _get_pushdata_filter_matches(request, MatchFormat.PUSHDATA)
 
 
 async def get_p2pkh_address_filter_matches(request: web.Request) -> StreamResponse:
     """A convenience endpoint that accepts legacy P2PKH addresses instead of pushdata hashes.
     Internally, it is just a conversion to the universal pushdata hash format."""
+    # TODO - ensure the data is the correct format e.g. all valid addresses
     return await _get_pushdata_filter_matches(request, MatchFormat.P2PKH)
 
 

@@ -14,11 +14,12 @@ cd %ScriptDir%
 py -3.10 -m pip install pylint -U
 
 REM Run type checks
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_raw --python-version 3.10
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_index --python-version 3.10
-mypy --config=%TLD%\mypy.ini %TLD%\conduit_lib --python-version 3.10
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_raw --python-version 3.10 --namespace-packages --explicit-package-bases
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_index --python-version 3.10 --namespace-packages --explicit-package-bases
+mypy --config=%TLD%\mypy.ini %TLD%\conduit_lib --python-version 3.10 --namespace-packages --explicit-package-bases
 
 REM Run pylint
+set PYTHONPATH="."
 py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_LIB_DIR%
 py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_RAW_DIR%
 py -3.10 -m pylint --rcfile ./.pylintrc %CONDUIT_INDEX_DIR%

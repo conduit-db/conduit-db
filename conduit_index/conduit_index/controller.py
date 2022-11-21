@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import bitcoinx
 import cbor2
@@ -23,9 +21,11 @@ from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.mysql.types import MinedTxHashes
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
+from conduit_lib import Peer
 from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import HeadersBatchedResponse, ReorgDifferentialResponse
 from conduit_lib.serializer import Serializer
@@ -33,21 +33,20 @@ from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import MsgType, NULL_HASH, MAIN_BATCH_HEADERS_COUNT_LIMIT, \
     CONDUIT_INDEX_SERVICE_NAME, TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX
 from conduit_lib.types import BlockHeaderRow, ChainHashes, BlockSliceRequestType, Slice
-from conduit_lib.utils import connect_headers, create_task, headers_to_p2p_struct, \
-    get_header_for_height, connect_headers_reorg_safe, get_header_for_hash
+from conduit_lib.utils import create_task, headers_to_p2p_struct
 from conduit_lib.wait_for_dependencies import wait_for_mysql, wait_for_ipc_socket_server
 
 from .sync_state import SyncState
 from .types import WorkUnit
+from .workers.common import convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 from .workers.transaction_parser import TxParser
-from conduit_lib.zmq_sockets import bind_async_zmq_socket
+from conduit_lib.zmq_sockets import bind_async_zmq_socket, connect_async_zmq_socket
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 if typing.TYPE_CHECKING:
     from conduit_lib.networks import NetworkConfig
-    from conduit_lib import Peer
 
 
 def get_headers_dir_conduit_index() -> Path:
@@ -57,21 +56,29 @@ def get_headers_dir_conduit_index() -> Path:
 class ZMQSocketListeners:
 
     def __init__(self) -> None:
+        ZMQ_CONNECT_HOST = os.getenv('ZMQ_CONNECT_HOST', '127.0.0.1')
         self.zmq_async_context = AsyncZMQContext.instance()
         self.zmq_sockets: list[zmq.asyncio.Socket] = []
 
         # Controller to TxParser Workers
-        self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
-        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
+        self.socket_mined_tx = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55555', zmq.SocketType.PUSH)
+        self.socket_mempool_tx = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55556', zmq.SocketType.PUSH)
 
-        self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
-        self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
+        self.socket_mined_tx_ack = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:55889', zmq.SocketType.PULL, [(zmq.SocketOption.RCVHWM, 10000)])
+        self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:54214', zmq.SocketType.PULL)
 
-        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
-        self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
+        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:63241', zmq.SocketType.PUB)
+        self.socket_is_post_ibd = bind_async_zmq_socket(self.zmq_async_context,
+            'tcp://127.0.0.1:52841', zmq.SocketType.PUB)
 
         # Controller to Aiohttp API
-        self.reorg_event_socket = bind_async_zmq_socket(self.zmq_async_context, 'tcp://127.0.0.1:51495', zmq.SocketType.PUSH)
+        self.reorg_event_socket = connect_async_zmq_socket(self.zmq_async_context,
+            f'tcp://{ZMQ_CONNECT_HOST}:51495', zmq.SocketType.PUSH)
 
     def bind_async_zmq_socket(self, context: AsyncZMQContext, uri: str,
             zmq_socket_type: zmq.SocketType,
@@ -88,7 +95,7 @@ class ZMQSocketListeners:
 
 class Controller(ControllerBase):
 
-    def __init__(self, net_config: NetworkConfig,
+    def __init__(self, net_config: 'NetworkConfig',
             loop_type: None=None) -> None:
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
@@ -112,7 +119,11 @@ class Controller(ControllerBase):
         wait_for_mysql()
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)
-        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)
+        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers,
+            self.storage.headers_lock)
+        self.headers_threadsafe_blocks = HeadersAPIThreadsafe(self.storage.block_headers,
+            self.storage.block_headers_lock)
+        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)  # type: ignore
         self.serializer: Serializer = Serializer(self.net_config)
         self.deserializer: Deserializer = Deserializer(self.net_config)
         self.sync_state: SyncState = SyncState(self.storage, self)
@@ -184,8 +195,9 @@ class Controller(ControllerBase):
                 try:
                     await sock.send(b"stop_signal")
                 except zmq.error.ZMQError as zmq_error:
-                    # We silence the error if this socket is already closed. But other cases we want
-                    # to know about them and maybe fix them or add them to this list.
+                    # We silence the error if this socket is already closed.
+                    # But other cases we want to know about them and maybe fix
+                    # them or add them to this list.
                     if str(zmq_error) != "not a socket":
                         raise
             await asyncio.sleep(1)
@@ -255,13 +267,15 @@ class Controller(ControllerBase):
         else:
             old_hashes = None
             new_hashes = None
-            best_header = self.get_header_for_hash(best_flushed_block_hash)
+            best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
             await self.undo_blocks_above_height(best_header.height)
 
         # Re-attempt indexing of allocated work (that did not complete last time)
         self.logger.debug(f"Re-attempting previously allocated work")
-        first_allocated_header = self.get_header_for_hash(first_allocated_block_hash)
-        last_allocated_header = self.get_header_for_hash(last_allocated_block_hash)
+        first_allocated_header = self.headers_threadsafe.get_header_for_hash(
+            first_allocated_block_hash)
+        last_allocated_header = self.headers_threadsafe.get_header_for_hash(
+            last_allocated_block_hash)
 
         best_flushed_tip_height = await self.index_blocks(reorg_was_allocated,
             first_allocated_header, last_allocated_header, old_hashes, new_hashes)
@@ -270,12 +284,13 @@ class Controller(ControllerBase):
 
     async def undo_blocks_above_height(self, height: int) -> None:
         tip_header = self.sync_state.get_local_block_tip()
-        unsafe_blocks = [(self.get_header_for_height(height).hash, height)
+        unsafe_blocks = [(self.headers_threadsafe.get_header_for_height(height).hash, height)
             for height in range(height+1, tip_header.height+1)]
         await self._undo_blocks(unsafe_blocks)
 
     async def undo_specific_block_hashes(self, block_hashes: list[bytes]) -> None:
-        unsafe_blocks = [(block_hash, self.get_header_for_hash(block_hash).height)
+        unsafe_blocks = [(block_hash,
+            self.headers_threadsafe.get_header_for_hash(block_hash).height)
             for block_hash in block_hashes]
         await self._undo_blocks(unsafe_blocks)
 
@@ -298,12 +313,16 @@ class Controller(ControllerBase):
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s",
                 raw_blocks_array, 0)
-            tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows = parse_txs(raw_block, tx_offsets,
-                height, confirmed=True, first_tx_pos_batch=0)
+            tx_rows, _tx_rows_mempool, in_rows, out_rows, pd_rows, utxo_spends, \
+                pushdata_matches_tip_filter = parse_txs(raw_block,
+                tx_offsets, height, confirmed=True, first_tx_pos_batch=0)
+            pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
+            input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
+
             batched_tx_rows.extend(tx_rows)
-            batched_in_rows.extend(in_rows)
+            batched_in_rows.extend(input_rows_for_flushing)
             batched_out_rows.extend(out_rows)
-            batched_pd_rows.extend(pd_rows)
+            batched_pd_rows.extend(pushdata_rows_for_flushing)
             batched_header_hashes.append(block_hash)
 
         # Delete All
@@ -336,15 +355,10 @@ class Controller(ControllerBase):
     async def spawn_batch_completion_job(self) -> None:
         create_task(self.batch_completion_job())
 
-    def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
-
-    def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
-
     def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]) -> bool:
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
-        expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes).block_numbers
+        expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes)\
+            .block_numbers
         block_hash_to_num_map = dict(zip(expected_block_hashes, expected_block_nums))
 
         for block_hash in expected_block_hashes:
@@ -449,7 +463,8 @@ class Controller(ControllerBase):
         sorted_hashes = [h.hash for h in sorted_headers]
         block_numbers = ipc_socket_client.block_number_batched(sorted_hashes).block_numbers
         block_hash_to_num_map = dict(zip(sorted_hashes, block_numbers))
-        sorted_block_metadata_batch = ipc_socket_client.block_metadata_batched(sorted_hashes).block_metadata_batch
+        sorted_block_metadata_batch = ipc_socket_client.block_metadata_batched(sorted_hashes)\
+            .block_metadata_batch
 
         header_rows: list[BlockHeaderRow] = []
         for header, block_metadata in zip(sorted_headers, sorted_block_metadata_batch):
@@ -499,8 +514,7 @@ class Controller(ControllerBase):
     async def long_poll_conduit_raw_chain_tip(self) -> tuple[bool, Header, Header,
             ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        with self.storage.headers_lock:
-            local_tip = self.storage.headers.longest_chain().tip
+        local_tip = self.headers_threadsafe.tip()
         if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
             await self.maybe_start_processing_mempool_txs()
 
@@ -518,17 +532,21 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, tip_height)
+                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX)
 
                 # Long-polling
-                ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
-                result: HeadersBatchedResponse = await self.loop.run_in_executor(self.general_executor,
+                ipc_sock_client = await self.loop.run_in_executor(
+                    self.general_executor, IPCSocketClient)
+                result: HeadersBatchedResponse = await self.loop.run_in_executor(
+                    self.general_executor,
                     ipc_sock_client.headers_batched, start_height, estimated_ideal_block_count)
 
                 headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
-                first_header_of_batch, success = connect_headers(BytesIO(headers_p2p_msg), self.storage.headers)
+                first_header_of_batch, success = self.headers_threadsafe.connect_headers(
+                    BytesIO(headers_p2p_msg), lock=False)
                 if success:
-                    start_header = self.get_header_for_hash(double_sha256(first_header_of_batch))
+                    start_header = self.headers_threadsafe.get_header_for_hash(
+                        double_sha256(first_header_of_batch))
                     stop_header = self.sync_state.get_local_tip()
                 else:
                     self.logger.debug(f"Potential reorg detected")
@@ -541,8 +559,7 @@ class Controller(ControllerBase):
                     # Try again
                     headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
                     is_reorg, start_header, stop_header, old_hashes, new_hashes = \
-                        connect_headers_reorg_safe(headers_p2p_msg,
-                        self.storage.headers, self.storage.headers_lock)
+                        self.headers_threadsafe.connect_headers_reorg_safe(headers_p2p_msg)
                     self.logger.error("Reorg confirmed")
 
                 if stop_header:
@@ -573,7 +590,8 @@ class Controller(ControllerBase):
             len_arr = len(tx_offsets_array) * 8  # 8 byte uint64_t
             packed_array = tx_offsets_array.tobytes()
             packed_msg = struct.pack(f"<IIII32sIIQ{len_arr}s", MsgType.MSG_BLOCK, len_arr,
-                work_item_id, is_reorg, block_hash, block_num, first_tx_pos_batch, part_end_offset, packed_array)
+                work_item_id, is_reorg, block_hash, block_num, first_tx_pos_batch, part_end_offset,
+                packed_array)
             await self.zmq_socket_listeners.socket_mined_tx.send(packed_msg)
 
     async def chip_away(self, remaining_work_units: list[WorkUnit]) -> list[WorkUnit]:
@@ -601,7 +619,8 @@ class Controller(ControllerBase):
                           f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)})")
         return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
 
-    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) -> None:
+    async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) \
+            -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
             self.logger.debug(f"Waiting for main batch to complete")
@@ -737,15 +756,15 @@ class Controller(ControllerBase):
                         self.sync_state.chip_away_batch_event.set()
 
                 if self.sync_state.block_is_fully_processed(block_hash):
-                    header = self.get_header_for_hash(block_hash)
+                    header = self.headers_threadsafe.get_header_for_hash(block_hash, lock=False)
                     if not block_hash in blocks_batch_set:
                         self.logger.exception(f"also wrote unexpected block: "
-                                              f"{hash_to_hex_str(header.hash)} {header.height} to disc")
+                            f"{hash_to_hex_str(header.hash)} {header.height} to disc")
                         continue
 
                     blocks_batch_set.remove(block_hash)
             except KeyError:
-                header = self.get_header_for_hash(block_hash)
+                header = self.headers_threadsafe.get_header_for_hash(block_hash, lock=False)
                 self.logger.debug(f"also parsed block: {header.height}")
 
             # all blocks in batch processed

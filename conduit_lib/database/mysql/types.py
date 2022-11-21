@@ -1,11 +1,16 @@
-from __future__ import annotations
-
 from typing import NamedTuple
 
 
 class PushdataRow(NamedTuple):
-    pushdata_hash: str
-    tx_hash: str
+    pushdata_hash: str  # hashX as hex ready for db flush
+    tx_hash: str        # hashX as hex ready for db flush
+    idx: int
+    ref_type: int
+
+
+class PushdataRowParsed(NamedTuple):
+    pushdata_hash: bytes  # full hash
+    tx_hash: bytes  # full hash
     idx: int
     ref_type: int
 
@@ -38,15 +43,22 @@ class CheckpointStateRow(NamedTuple):
 
 
 class InputRow(NamedTuple):
-    out_tx_hash: str
-    out_idx: int
+    out_tx_hash: str  # hashX as hex ready for db flush
+    out_idx: int      # hashX as hex ready for db flush
     in_tx_hash: str
+    in_idx: int
+
+
+class InputRowParsed(NamedTuple):
+    out_tx_hash: bytes  # full hash
+    out_idx: int
+    in_tx_hash: bytes  # full hash
     in_idx: int
 
 
 class MempoolTransactionRow(NamedTuple):
     mp_tx_hash: str
-    mp_tx_timestamp: str
+    mp_tx_timestamp: int
 
 
 class OutputRow(NamedTuple):

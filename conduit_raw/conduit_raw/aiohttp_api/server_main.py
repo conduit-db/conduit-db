@@ -1,22 +1,13 @@
-from __future__ import annotations
 from aiohttp import web
-import asyncio
 from conduit_lib import LMDB_Database
 import logging
 import os
 from pathlib import Path
-import sys
-import typing
 
-if typing.TYPE_CHECKING:
-    from .server import ApplicationState
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 
-try:
-    from .constants import SERVER_HOST, SERVER_PORT
-    from .server import get_aiohttp_app
-except ImportError:
-    from conduit_lib.constants import SERVER_HOST, SERVER_PORT  # type: ignore
-    from conduit_raw.conduit_raw.aiohttp_api.server import get_aiohttp_app  # type: ignore
+from .constants import SERVER_HOST, SERVER_PORT
+from .server import get_aiohttp_app, ApplicationState
 
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +30,7 @@ class AiohttpServer:
 
     async def on_startup(self, app: web.Application) -> None:
         self._logger.debug("Started reference server API")
+        await self._app_state.setup_async()
 
     async def on_shutdown(self, app: web.Application) -> None:
         self._logger.debug("Stopped reference server API")
@@ -50,8 +42,6 @@ class AiohttpServer:
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port, reuse_address=True)
         await site.start()
-        self._app_state.start_threads()
-        self._app_state.start_tasks()
 
     async def stop(self) -> None:
         self._logger.debug("Stopping reference server API")
@@ -59,24 +49,12 @@ class AiohttpServer:
         await self._runner.cleanup()
 
 
-async def main(lmdb: LMDB_Database, network: str='mainnet') -> None:
-    app, app_state = get_aiohttp_app(lmdb, network)
+async def main(lmdb: LMDB_Database, headers_threadsafe: HeadersAPIThreadsafe,
+        network: str='mainnet') -> None:
+    app, app_state = get_aiohttp_app(lmdb, headers_threadsafe, network)
     server = AiohttpServer(app)
     await server.start()
     try:
         await app_state.wait_for_exit_async()
     finally:
         await server.stop()
-
-
-if __name__ == "__main__":
-    try:
-        lmdb_db = LMDB_Database(lock=True)
-        asyncio.run(main(lmdb_db))
-        sys.exit(0)
-    except KeyboardInterrupt:
-        pass
-    except Exception:
-        logger.exception("Unexpected exception in __main__")
-    finally:
-        logger.info("ConduitRaw REST API stopped")
