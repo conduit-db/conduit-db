@@ -21,9 +21,12 @@ def _get_tsc_merkle_proof_target_hash_json(post_reorg=False):
     else:
         test_data = pre_reorg_test_data.MERKLE_PROOFS_TARGET_AS_HASH
     headers = {'Accept': "application/json"}
-    body = {"includeFullTx": False, "targetType": 'hash'}
+    params = {
+        "targetType": 'hash', "includeFullTx": "0"
+    }
     for txid, expected_tsc_proof in test_data.items():
-        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), params=params,
+            headers=headers)
         assert result.status_code == 200, result.reason
         assert result.json() == expected_tsc_proof, f"result.json()={result.json()}; expected_tsc_proof={expected_tsc_proof}"
 
@@ -34,11 +37,14 @@ def _get_tsc_merkle_proof_target_header_json(post_reorg=False):
     else:
         test_data = pre_reorg_test_data.MERKLE_PROOFS_TARGET_AS_HEADER
     headers = {'Accept': "application/json"}
-    body = {"includeFullTx": False, "targetType": 'header'}
+    params = {
+        "targetType": 'header', "includeFullTx": "0"
+    }
     for txid, expected_tsc_proof in test_data.items():
-        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), params=params,
+            headers=headers)
         assert result.status_code == 200, result.reason
-        assert result.json() == expected_tsc_proof
+        assert result.json() == expected_tsc_proof, f"result.json()={result.json()}; expected_tsc_proof={expected_tsc_proof}"
 
 
 def _get_tsc_merkle_proof_target_merkleroot_json(post_reorg=False):
@@ -47,11 +53,14 @@ def _get_tsc_merkle_proof_target_merkleroot_json(post_reorg=False):
     else:
         test_data = pre_reorg_test_data.MERKLE_PROOFS_TARGET_AS_MERKLE_ROOT
     headers = {'Accept': "application/json"}
-    body = {"includeFullTx": False, "targetType": 'merkleroot'}
+    params = {
+        "targetType": 'merkleroot', "includeFullTx": "0"
+    }
     for txid, expected_tsc_proof in test_data.items():
-        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), params=params,
+            headers=headers)
         assert result.status_code == 200, result.reason
-        assert result.json() == expected_tsc_proof
+        assert result.json() == expected_tsc_proof, f"result.json()={result.json()}; expected_tsc_proof={expected_tsc_proof}"
 
 
 def _get_tsc_merkle_proof_include_rawtx_json(post_reorg=False):
@@ -60,11 +69,16 @@ def _get_tsc_merkle_proof_include_rawtx_json(post_reorg=False):
     else:
         test_data = pre_reorg_test_data.MERKLE_PROOFS_INCLUDE_RAWTX
     headers = {'Accept': "application/json"}
-    body = {"includeFullTx": True, "targetType": 'hash'}
+    params = {
+        "targetType": 'hash', "includeFullTx": "1"
+    }
     for txid, expected_tsc_proof in test_data.items():
-        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), json=body, headers=headers)
+        result = requests.get(GET_MERKLE_PROOF_URL.format(txid=txid), params=params,
+            headers=headers)
         assert result.status_code == 200, result.reason
-        assert result.json() == expected_tsc_proof
+        json_body = result.json()
+        for key, value in json_body.items():
+            assert json_body[key] == expected_tsc_proof[key], f"{json_body[key]} != {expected_tsc_proof[key]}"
 
 
 def _pushdata_no_match_json():

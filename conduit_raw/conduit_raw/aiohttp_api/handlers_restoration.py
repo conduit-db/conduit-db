@@ -249,25 +249,18 @@ async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
     accept_type = request.headers.get('Accept')
 
     txid = request.match_info['txid']
-    include_full_tx = False
-    target_type = 'hash'
-    body = await request.content.read()
-    if body:
-        json_body = json.loads(body.decode('utf-8'))
-        include_full_tx = json_body.get('includeFullTx')
-        target_type = json_body.get('targetType')
-        if include_full_tx is not None and include_full_tx not in {True, False}:
-            raise web.HTTPBadRequest(reason="includeFullTx needs to be a boolean value")
-
-        if target_type is not None and target_type not in {'hash', 'header', 'merkleroot'}:
-            raise web.HTTPBadRequest(reason="target type needs to be one of: 'hash', 'header' or"
-                                            " 'merkleroot'")
+    include_full_tx = request.query.get("includeFullTx") == "1"
+    target_type = request.query.get("targetType", "hash")
+    if target_type is not None and target_type not in {'hash', 'header', 'merkleroot'}:
+        raise web.HTTPBadRequest(reason="target type needs to be one of: 'hash', 'header' or"
+                                        " 'merkleroot'")
 
     # Construct JSON format TSC merkle proof
     tx_hash = bitcoinx.hex_str_to_hash(txid)
     tx_metadata = await _get_tx_metadata_async(tx_hash, mysql_db, app_state.executor)
     if not tx_metadata:
         raise web.HTTPNotFound(reason="transaction metadata not found")
+    assert target_type is not None
     tsc_merkle_proof = await _get_tsc_merkle_proof_async(app_state.executor, tx_metadata, mysql_db,
         lmdb, include_full_tx, target_type)
 
