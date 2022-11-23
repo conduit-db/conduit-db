@@ -10,7 +10,7 @@ GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
 GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
-STREAM_TERMINATION_BYTE = b"\x00"
+STREAM_TERMINATION_SYMBOL = b"{}"
 
 logger = logging.getLogger("test-internal-aiohttp-api")
 
@@ -92,9 +92,8 @@ def _pushdata_no_match_json():
         ]
     }
     result = requests.post(RESTORATION_URL, json=body, headers=headers)
-    assert result.status_code == 404
-    assert result.reason is not None
-    assert isinstance(result.reason, str)
+    assert result.status_code == 200, result.reason
+    assert result.json() == {}, result.text
 
 
 def _mining_txs_json_post_reorg():
@@ -116,7 +115,7 @@ def _mining_txs_json_post_reorg():
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
@@ -166,7 +165,7 @@ def _p2pk_json(post_reorg=False):
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
@@ -195,7 +194,7 @@ def _p2pkh_json(post_reorg=False):
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
@@ -224,7 +223,7 @@ def _p2sh_json(post_reorg=False):
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
@@ -253,7 +252,7 @@ def _p2ms_json(post_reorg=False):
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)
@@ -283,7 +282,7 @@ def _p2ms2_json(post_reorg=False):
     assert result.status_code == 200, result.reason
     assert result.text is not None
     for line in result.iter_lines(delimiter=b"\n"):
-        if not line or line == STREAM_TERMINATION_BYTE:
+        if not line or line == STREAM_TERMINATION_SYMBOL:
             continue
         match = json.loads(line.decode('utf-8'))
         actual_matches.append(match)

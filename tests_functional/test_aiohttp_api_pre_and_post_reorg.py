@@ -36,8 +36,6 @@ GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
 GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
-STREAM_TERMINATION_BYTE = b"\x00"
-
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger("test-internal-aiohttp-api")

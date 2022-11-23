@@ -142,11 +142,9 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
             # block download when it is under heavy strain
             return web.HTTPServiceUnavailable(reason="Database is potentially overloaded at present")
 
-        response: StreamResponse | None = None
+        response = web.StreamResponse(status=200, reason='OK', headers=headers)
+        await response.prepare(request)
         for match in result_generator:
-            if count == 0:
-                response = StreamResponse(status=200, reason='OK', headers=headers)
-                await response.prepare(request)
             assert response is not None
 
             # logger.debug(f"Sending {match}")
@@ -181,17 +179,17 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
                 await response.write(row)
             count += 1
 
-        if count == 0:
-            return web.HTTPNotFound(reason="No pushdata matches found")
-
         if accept_type == 'application/octet-stream':
             total_size = count * FILTER_RESPONSE_SIZE
             logger.debug(
                 f"Total pushdata filter match response size: {total_size} for count: {count}")
-        finalization_flag = b'\x00'
 
-        assert response is not None
-        await response.write(finalization_flag)
+        if accept_type == 'application/octet-stream':
+            finalization_flag = b'\x00'
+            await response.write(finalization_flag)
+        elif accept_type == 'application/json':
+            await response.write(b"{}")
+
         return response
     except Exception:
         # Todo - maybe we need a flag to indicate an error occurred mid-way through streaming
