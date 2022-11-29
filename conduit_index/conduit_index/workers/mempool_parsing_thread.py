@@ -1,11 +1,11 @@
 import array
+from functools import partial
 import logging
 import struct
 import threading
 import time
-from functools import partial
 from queue import Queue
-
+import typing
 import zmq
 
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
@@ -13,19 +13,24 @@ from .common import convert_pushdata_rows_for_flush, convert_input_rows_for_flus
 from .flush_mempool_thread import FlushMempoolTransactionsThread
 from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.database.mysql.types import MySQLFlushBatch
+from conduit_lib.database.mysql.types import InputRowParsed, MySQLFlushBatch, PushdataRowParsed
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
+
+if typing.TYPE_CHECKING:
+    from .transaction_parser import TxParser
 
 
 class MempoolParsingThread(threading.Thread):
 
-    def __init__(self, worker_id: int,
-            mempool_tx_flush_queue: Queue[tuple[MySQLFlushBatch, MempoolTxAck]],
+    def __init__(self, parent: 'TxParser', worker_id: int,
+            mempool_tx_flush_queue: Queue[tuple[MySQLFlushBatch, MempoolTxAck,
+                list[InputRowParsed], list[PushdataRowParsed]]],
             daemon: bool=True) -> None:
         self.logger = logging.getLogger(f"mempool-parsing-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
+        self.parent = parent
         self.worker_id = worker_id
         self.mempool_tx_flush_queue = mempool_tx_flush_queue
 
@@ -47,7 +52,7 @@ class MempoolParsingThread(threading.Thread):
                 break
 
         # Database flush threads
-        t = FlushMempoolTransactionsThread(self.worker_id, self.mempool_tx_flush_queue)
+        t = FlushMempoolTransactionsThread(self.parent, self.worker_id, self.mempool_tx_flush_queue)
         t.start()
 
         try:
@@ -70,6 +75,8 @@ class MempoolParsingThread(threading.Thread):
 
     def process_mempool_batch(self, batch: list[bytes]) -> None:
         assert self.mempool_tx_flush_queue is not None
+        utxo_spends: list[InputRowParsed] = []
+        pushdata_matches_tip_filter: list[PushdataRowParsed] = []
         tx_rows_batched, in_rows_batched, out_rows_batched, set_pd_rows_batched = [], [], [], []
         for msg in batch:
             msg_type, size_tx = struct.unpack_from(f"<II", msg)
@@ -91,6 +98,7 @@ class MempoolParsingThread(threading.Thread):
         self.mempool_tx_flush_queue.put(
             (MySQLFlushBatch([], tx_rows_batched, in_rows_batched, out_rows_batched,
                 set_pd_rows_batched),
-            num_mempool_txs_processed)
+            num_mempool_txs_processed,
+            utxo_spends,
+            pushdata_matches_tip_filter)
         )
-

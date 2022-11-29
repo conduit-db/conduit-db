@@ -49,6 +49,9 @@ class ApplicationState(object):
 
     def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database,
             headers_threadsafe: HeadersAPIThreadsafe, network: str='mainnet') -> None:
+
+        self.pushdata_notification_can_send_event: dict[bytes, asyncio.Event] = {}
+
         self.logger = logging.getLogger('app_state')
         self._app = app
         self._loop = loop
@@ -96,7 +99,8 @@ class ApplicationState(object):
         self.tasks = [
             create_task(self._attempt_outbound_data_delivery_task()),
             create_task(self.listen_for_reorg_event_job()),
-            create_task(self.refresh_mysql_connection_task())
+            create_task(self.refresh_mysql_connection_task()),
+            create_task(self.wait_for_new_tip())
         ]
         self.worker_state_manager.spawn_tasks()
 
@@ -236,19 +240,20 @@ class ApplicationState(object):
                 pass
 
     def dispatch_tip_filter_notifications(self, matches: list[PushdataRowParsed],
-            block_hash: Optional[bytes]) -> None:
+            block_hash: Optional[bytes], request_id: str) -> None:
         """
         Non-blocking delivery of new tip filter notifications.
         """
         self.logger.debug("Starting task for dispatching tip filter notifications (%d)",
             len(matches))
         future = asyncio.run_coroutine_threadsafe(
-            self.dispatch_tip_filter_notifications_async(matches, block_hash), self._loop)
+            self.dispatch_tip_filter_notifications_async(matches, block_hash, request_id),
+            self._loop)
         # Futures swallow exceptions so we must install a callback that raises any errors.
         future.add_done_callback(future_callback)
 
     async def dispatch_tip_filter_notifications_async(self, matches: list[PushdataRowParsed],
-            block_hash: Optional[bytes]) -> None:
+            block_hash: Optional[bytes], request_id: str) -> None:
         """
         Worker task for delivery of new tip filter notifications.
         """
@@ -321,6 +326,11 @@ class ApplicationState(object):
         headers = {
             "Content-Type":     "application/json",
         }
+        if block_id:
+            assert block_hash is not None
+            new_header_event = self.pushdata_notification_can_send_event[block_hash]
+            logger.debug(f"Waiting on new_header_event: {id(new_header_event)}")
+            await new_header_event.wait()
         try:
             async with self.aiohttp_session.post(url, headers=headers, json=batch) as response:
                 if response.status == HTTPStatus.OK:
@@ -341,6 +351,20 @@ class ApplicationState(object):
         await asyncio.get_running_loop().run_in_executor(self.executor,
             self.mysql_db_tip_filter_queries.create_outbound_data_write, creation_row)
 
+    async def wait_for_new_tip(self) -> None:
+        while self.is_alive:
+            current_tip_height = self.headers_threadsafe.tip().height
+
+            for_deletion = []
+            for block_hash, new_tip_event in self.pushdata_notification_can_send_event.items():
+                height = self.headers_threadsafe.get_header_for_hash(block_hash).height
+                if height <= current_tip_height:
+                    logger.debug(f"Setting new_tip_event: {id(new_tip_event)}")
+                    new_tip_event.set()
+                for_deletion.append(block_hash)
+            await asyncio.sleep(0.2)
+            for block_hash in for_deletion:
+                del self.pushdata_notification_can_send_event[block_hash]
 
 
 async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:

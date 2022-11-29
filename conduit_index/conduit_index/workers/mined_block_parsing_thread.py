@@ -1,23 +1,21 @@
 import array
+import typing
+
 import cbor2
 from functools import partial
 import logging
-import os
 import queue
 import struct
 import threading
 import time
 from typing import Callable, cast
-import refcuckoo
 import zmq
 
-from conduit_lib.constants import ZERO_HASH
 from conduit_raw.conduit_raw.aiohttp_api.constants import UTXO_REGISTRATION_TOPIC, \
     PUSHDATA_REGISTRATION_TOPIC
-from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import MySQLTipFilterQueries
 from conduit_raw.conduit_raw.aiohttp_api.types import TipFilterRegistrationEntry, \
-    IndexerPushdataRegistrationFlag, PushdataFilterStateUpdate, \
-    PushdataFilterMessageType, OutpointStateUpdate, OutpointMessageType, CuckooResult
+    PushdataFilterStateUpdate, PushdataFilterMessageType, OutpointStateUpdate, OutpointMessageType, \
+    CuckooResult
 from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
     TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
@@ -30,20 +28,25 @@ from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
 from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.database.mysql.types import MySQLFlushBatch, PushdataRowParsed, \
     ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, InputRowParsed
-from conduit_lib.types import BlockSliceRequestType, OutpointType, output_spend_struct
+from conduit_lib.types import BlockSliceRequestType, OutpointType
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 
+if typing.TYPE_CHECKING:
+    from .transaction_parser import TxParser
+
+
 class MinedBlockParsingThread(threading.Thread):
 
-    def __init__(self, worker_id: int,
+    def __init__(self, parent: 'TxParser', worker_id: int,
             confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
             daemon: bool = True) -> None:
         self.logger = logging.getLogger(f"mined-block-parsing-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
+        self.parent = parent
         self.worker_id = worker_id
         self.confirmed_tx_flush_queue = confirmed_tx_flush_queue
 
@@ -72,13 +75,13 @@ class MinedBlockParsingThread(threading.Thread):
         know which user registered these, in order to do peer channel notifications.
         """
         for i, entry in enumerate(registration_entries):
-            result = self._common_cuckoo.add(entry.pushdata_hash)
+            result = self.parent.common_cuckoo.add(entry.pushdata_hash)
             if result == CuckooResult.OK:
                 continue
 
             # Something was wrong, so we remove all the entries we just added as a bad batch.
             for entry in registration_entries[:i+1]:
-                removal_result = self._common_cuckoo.remove(entry.pushdata_hash)
+                removal_result = self.parent.common_cuckoo.remove(entry.pushdata_hash)
                 if removal_result != CuckooResult.OK:
                     self.logger.error("Hash removal on filter error errored %d", removal_result)
 
@@ -98,7 +101,7 @@ class MinedBlockParsingThread(threading.Thread):
         hashes that do not exist, or multiple times.
         """
         for pushdata_hash in pushdata_hashes:
-            result = self._common_cuckoo.remove(pushdata_hash)
+            result = self.parent.common_cuckoo.remove(pushdata_hash)
             if result != CuckooResult.OK:
                 # This is not necessarily the wrong response to this event, but encountering it
                 # should be an emergency for production indexer implementations.
@@ -107,48 +110,8 @@ class MinedBlockParsingThread(threading.Thread):
 
     def run(self) -> None:
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-        mysql_db_tip_filter_queries = MySQLTipFilterQueries(mysql_db)
         socket_mined_tx = connect_non_async_zmq_socket(self.zmq_context, 'tcp://127.0.0.1:55555',
             zmq.SocketType.PULL, options=[(zmq.SocketOption.RCVHWM, 10000)])
-
-        ZMQ_CONNECT_HOST = os.getenv('ZMQ_CONNECT_HOST', '127.0.0.1')
-        self.logger.debug(f"Connecting zmq utxo and pushdata sockets on host: {ZMQ_CONNECT_HOST}")
-        self.socket_utxo_spend_registrations = connect_non_async_zmq_socket(self.zmq_context,
-            f'tcp://{ZMQ_CONNECT_HOST}:60000', zmq.SocketType.SUB,
-            options=[(zmq.SocketOption.SUBSCRIBE, b'utxo_registration')])
-        self.socket_utxo_spend_notifications = connect_non_async_zmq_socket(self.zmq_context,
-            f'tcp://{ZMQ_CONNECT_HOST}:60001', zmq.SocketType.PUSH)
-        self.socket_pushdata_registrations = connect_non_async_zmq_socket(self.zmq_context,
-            f'tcp://{ZMQ_CONNECT_HOST}:60002', zmq.SocketType.SUB,
-            options=[(zmq.SocketOption.SUBSCRIBE, b'pushdata_registration')])
-        self.socket_pushdata_notifications = connect_non_async_zmq_socket(self.zmq_context,
-            f'tcp://{ZMQ_CONNECT_HOST}:60003', zmq.SocketType.PUSH)
-
-        state_update_to_server = OutpointStateUpdate('ffffffff',
-            OutpointMessageType.READY, None, None, self.worker_id)
-        self.socket_utxo_spend_notifications.send(cbor2.dumps(state_update_to_server))
-        # It would be redundant to send a "READY" signal for socket_pushdata_notifications
-
-        # TODO: Read self._unspent_output_registrations from database. At present there is
-        #  no persistence of registrations
-        self._unspent_output_registrations: set[OutpointType] = set()
-
-        # Populate the shared cuckoo filter with all existing registrations. Remember that the
-        # filter handles duplicate registrations, and it is a lot easier to just register them
-        # and unregister them for every account, than try and manage duplicates.
-        # Note that at the time of writing the bits per item is 12 (compiled into `refcuckoo`).
-        self._common_cuckoo = refcuckoo.CuckooFilter(500000)  # pylint: disable=I1101
-        self._filter_expiry_next_time = int(time.time()) + 30
-        registration_entries = mysql_db_tip_filter_queries.read_tip_filter_registrations(
-            mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,
-            expected_flags=IndexerPushdataRegistrationFlag.FINALISED)
-
-        # TODO: deduplicate pushdatas to avoid corrupting the filter
-        for registration_entry in registration_entries:
-            # TODO(1.4.0) Tip filter. Expiry dates should be tracked and entries removed.
-            self._common_cuckoo.add(registration_entry.pushdata_hash)
-        self.logger.debug("Populated the common cuckoo filter with %d entries",
-            len(registration_entries))
 
         try:
             # Database flush thread
@@ -185,7 +148,7 @@ class MinedBlockParsingThread(threading.Thread):
         self.logger.debug(f"Entering `unspent_output_registrations_thread` main loop")
         while True:
             # Get new registration from external API
-            msg = self.socket_utxo_spend_registrations.recv()
+            msg = self.parent.socket_utxo_spend_registrations.recv()
             self.logger.debug(f"Got msg from external API: {msg!r}")
             state_update_from_server = OutpointStateUpdate(
                 *cbor2.loads(msg.lstrip(UTXO_REGISTRATION_TOPIC)))
@@ -194,15 +157,15 @@ class MinedBlockParsingThread(threading.Thread):
             outpoint_obj = OutpointType.from_outpoint_struct(state_update_from_server.outpoint)
 
             if state_update_from_server.command & OutpointMessageType.REGISTER:
-                self._unspent_output_registrations.add(outpoint_obj)
+                self.parent.unspent_output_registrations.add(outpoint_obj)
             elif state_update_from_server.command & OutpointMessageType.UNREGISTER:
                 # TODO: As a temporary workaround for the risk of one client unregistering
                 #  another client's utxo, could defer any unregistrations until ofter > 6 block
                 #  confirmations and have it be automated on the server side
-                if outpoint_obj in self._unspent_output_registrations:
-                    self._unspent_output_registrations.remove(outpoint_obj)
+                if outpoint_obj in self.parent.unspent_output_registrations:
+                    self.parent.unspent_output_registrations.remove(outpoint_obj)
             elif state_update_from_server.command & OutpointMessageType.CLEAR_ALL:
-                self._unspent_output_registrations.clear()
+                self.parent.unspent_output_registrations.clear()
             else:
                 raise RuntimeError("The unspent_output_registrations_thread only handles "
                     "REGISTER, UNREGISTER and CLEAR_ALL message types")
@@ -210,13 +173,13 @@ class MinedBlockParsingThread(threading.Thread):
             # ACK to external API that the outpoint is now added to the local cache for this worker
             state_update_to_server = OutpointStateUpdate(state_update_from_server.request_id,
                 OutpointMessageType.ACK, state_update_from_server.outpoint, None, self.worker_id)
-            self.socket_utxo_spend_notifications.send(cbor2.dumps(state_update_to_server))
+            self.parent.socket_utxo_spend_notifications.send(cbor2.dumps(state_update_to_server))
 
     def pushdata_registrations_thread(self) -> None:
         self.logger.debug(f"Entering `pushdata_registrations_thread` main loop")
         while True:
             # Get new registration from external API
-            msg = self.socket_pushdata_registrations.recv()
+            msg = self.parent.socket_pushdata_registrations.recv()
             state_update_from_server = PushdataFilterStateUpdate(
                 *cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC)))
             self.logger.debug(f"Got state update from external API of type: "
@@ -226,20 +189,20 @@ class MinedBlockParsingThread(threading.Thread):
                     entry_obj = TipFilterRegistrationEntry(*entry)
                     self.logger.debug(f"adding pushdata hash: "
                                       f"{entry_obj.pushdata_hash.hex()}")
-                    self._common_cuckoo.add(entry_obj.pushdata_hash)
+                    self.parent.common_cuckoo.add(entry_obj.pushdata_hash)
 
             elif state_update_from_server.command & PushdataFilterMessageType.UNREGISTER:
                 for entry in state_update_from_server.entries:
                     entry_obj = TipFilterRegistrationEntry(*entry)
-                    self._common_cuckoo.remove(entry_obj.pushdata_hash)
+                    self.parent.common_cuckoo.remove(entry_obj.pushdata_hash)
             else:
                 raise RuntimeError("The pushdata_registrations_thread only handles REGISTER"
                     "or UNREGISTER message types")
 
             # ACK to external API that the pushdatas are added to the local cache for this worker
             state_update_to_server = PushdataFilterStateUpdate(state_update_from_server.request_id,
-                PushdataFilterMessageType.ACK, state_update_from_server.entries, [], ZERO_HASH)
-            self.socket_pushdata_notifications.send(cbor2.dumps(state_update_to_server))
+                PushdataFilterMessageType.ACK, state_update_from_server.entries, [], None)
+            self.parent.socket_pushdata_notifications.send(cbor2.dumps(state_update_to_server))
 
     def get_block_slices(self, block_hashes: list[bytes],
             block_slice_offsets: list[tuple[int, int]],
@@ -407,15 +370,15 @@ class MinedBlockParsingThread(threading.Thread):
                 blk_num, True, first_tx_pos_batch,
                 already_seen_offsets=not_new_tx_offsets.get(work_item, set()))
 
-            self.send_utxo_spend_notifications(utxo_spends, blk_hash)
-            self.send_pushdata_match_notifications(pushdata_matches_tip_filter, blk_hash)
-
             pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
             self.confirmed_tx_flush_queue.put(
                 (MySQLFlushBatch(tx_rows, tx_rows_mempool, input_rows_for_flushing, out_rows,
                     pushdata_rows_for_flushing),
                 acks[work_item]))
+
+            self.parent.send_utxo_spend_notifications(utxo_spends, blk_hash)
+            self.parent.send_pushdata_match_notifications(pushdata_matches_tip_filter, blk_hash)
 
     def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
             merged_offsets_map: dict[bytes, int],
@@ -504,35 +467,4 @@ class MinedBlockParsingThread(threading.Thread):
         self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets,
             batched_raw_block_slices, acks)
 
-    def send_utxo_spend_notifications(self, in_rows_parsed: list[InputRowParsed],
-            blk_hash: bytes) -> None:
-        # Send UTXO spend notifications
-        for input_row in in_rows_parsed:
-            spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
-            if spent_output in self._unspent_output_registrations:
-                notification = OutpointStateUpdate('ffffffff', OutpointMessageType.SPEND, None,
-                    output_spend_struct.pack(*input_row, blk_hash), self.worker_id)
-                self.socket_utxo_spend_notifications.send(cbor2.dumps(notification))
-
-    def send_pushdata_match_notifications(self,
-            pushdata_matches_tip_filter: list[PushdataRowParsed], blk_hash: bytes) -> None:
-        # Send Cuckoo Filter match notifications
-        filter_matches = []
-        for pushdata_match in pushdata_matches_tip_filter:
-            result = self._common_cuckoo.contains(pushdata_match.pushdata_hash)
-            if result == CuckooResult.OK:
-                filter_matches.append(pushdata_match)
-            else:
-                # TODO: DEBUGGING - MUST REMOVE - THIS IS VERY WASTEFUL
-                assert self._common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.NOT_FOUND
-
-        if len(filter_matches):
-            # NOTE: if there is message delivery failure, the acks
-            #  below should not be allowed to occur which will result in a redo of the same
-            #  blocks on startup when it performs a "repair"
-            # ZMQ send over websocket fitler_matches
-            notification_pushdata = PushdataFilterStateUpdate('ffffffff',
-                PushdataFilterMessageType.NOTIFICATION, [], filter_matches, blk_hash)
-            self.logger.debug(f"Sending {len(filter_matches)} pushdata matches")
-            self.socket_pushdata_notifications.send(cbor2.dumps(notification_pushdata))
 

@@ -79,14 +79,14 @@ class PushdataFilterStateUpdate(NamedTuple):
     command: PushdataFilterMessageType
     entries: list[TipFilterRegistrationEntry]
     matches: list[PushdataRowParsed]
-    block_hash: bytes    # ZERO_HASH if PushdataFilterMessageType is not NOTIFICATION
+    block_hash: bytes | None
 
     def __str__(self) -> str:
         return f"PushdataFilterStateUpdate(request_id={self.request_id}, " \
                f"command={repr(PushdataFilterMessageType(self.command))}, " \
                f"entries={[str(TipFilterRegistrationEntry(*entry)) for entry in self.entries]}, " \
                f"matches={self.matches}, " \
-               f"block_hash={hash_to_hex_str(self.block_hash)})"
+               f"block_hash={hash_to_hex_str(self.block_hash) if self.block_hash is not None else None})"
 
 class OutputSpendRow(NamedTuple):
     out_tx_hash: bytes
