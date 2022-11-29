@@ -152,10 +152,13 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network_type: str, node_host: str, node_port: int) -> None:
+    def __init__(self, network_type: str, node_host: str, node_port: int,
+            node_rpc_host: str="127.0.0.1", node_rpc_port: int=18332) -> None:
         network: AbstractNetwork = NETWORKS[network_type]
-        self.node_host = node_host
+        self.node_host = cast_to_valid_ipv4(node_host)
         self.node_port = node_port
+        self.node_rpc_host = cast_to_valid_ipv4(node_rpc_host)
+        self.node_rpc_port = node_rpc_port
         self.NET = network.NET
         self.PUBKEY_HASH = network.PUBKEY_HASH
         self.PRIVATEKEY = network.PRIVATEKEY
@@ -189,7 +192,7 @@ class NetworkConfig:
     def set_peers(self, network: AbstractNetwork) -> None:
         if self.node_host:
             # in docker a container name needs dns resolution
-            host = cast_to_valid_ipv4(self.node_host)
+            host = self.node_host
             port = int(self.node_port)
             self.peers = [Peer(host, port)]
         else:

@@ -17,6 +17,7 @@ from typing import AsyncIterator, Optional, Any
 import zmq
 import zmq.asyncio
 
+from conduit_lib import NetworkConfig
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from conduit_lib.database.mysql.types import PushdataRowParsed
@@ -48,7 +49,7 @@ requests_logger.setLevel(logging.WARNING)
 class ApplicationState(object):
 
     def __init__(self, app: web.Application, loop: asyncio.AbstractEventLoop, lmdb: LMDB_Database,
-            headers_threadsafe: HeadersAPIThreadsafe, network: str='mainnet') -> None:
+            headers_threadsafe: HeadersAPIThreadsafe, net_config: NetworkConfig) -> None:
 
         self.pushdata_notification_can_send_event: dict[bytes, asyncio.Event] = {}
 
@@ -56,7 +57,8 @@ class ApplicationState(object):
         self._app = app
         self._loop = loop
         self._exit_event = asyncio.Event()
-        self.BITCOINX_COIN = network_str_to_bitcoinx_network(network)
+        self.BITCOINX_COIN = network_str_to_bitcoinx_network(net_config.NET)
+        self.net_config = net_config
 
         self.mysql_db = load_mysql_database()
         self.mysql_db_tip_filter_queries = MySQLTipFilterQueries(self.mysql_db)
@@ -360,7 +362,6 @@ class ApplicationState(object):
             for block_hash, new_tip_event in self.pushdata_notification_can_send_event.items():
                 height = self.headers_threadsafe.get_header_for_hash(block_hash).height
                 if height <= current_tip_height:
-                    logger.debug(f"Setting new_tip_event: {id(new_tip_event)}")
                     new_tip_event.set()
                 for_deletion.append(block_hash)
             await asyncio.sleep(0.2)
@@ -386,11 +387,11 @@ async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
 
 
 def get_aiohttp_app(lmdb: LMDB_Database, headers_threadsafe: HeadersAPIThreadsafe,
-        network: str='mainnet') -> tuple[web.Application, ApplicationState]:
+        net_config: NetworkConfig) -> tuple[web.Application, ApplicationState]:
     loop = asyncio.get_event_loop()
     app = web.Application()
     app.cleanup_ctx.append(client_session_ctx)
-    app_state = ApplicationState(app, loop, lmdb, headers_threadsafe, network)
+    app_state = ApplicationState(app, loop, lmdb, headers_threadsafe, net_config)
 
     # This is the standard aiohttp way of managing state within the handlers
     app['app_state'] = app_state

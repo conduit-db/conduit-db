@@ -250,7 +250,8 @@ if __name__ == "__main__":
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
-    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
+    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444,
+        node_rpc_host='127.0.0.1', node_rpc_port=18332)
     block_headers = setup_headers_store(net_config,
         "../conduit_raw/conduit_raw/sock_server/test_headers.mmap")
 

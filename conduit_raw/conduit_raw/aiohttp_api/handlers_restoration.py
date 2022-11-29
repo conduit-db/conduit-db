@@ -3,13 +3,14 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum
+from json import JSONDecodeError
 from typing import cast, TYPE_CHECKING
 
 import MySQLdb
 import bitcoinx
 from aiohttp import web
 from aiohttp.web_response import StreamResponse
-from bitcoinx import hex_str_to_hash, hash_to_hex_str
+from bitcoinx import double_sha256, hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
@@ -30,6 +31,31 @@ logger = logging.getLogger('handlers')
 class MatchFormat(IntEnum):
     PUSHDATA = 1 << 0
     P2PKH = 1 << 1
+
+
+BITCOIN_RPC_NOT_FOUND_ERROR = -5
+
+
+async def getrawtransaction_from_node_rpc(app_state: 'ApplicationState', txid: str,
+        rpcport: int=18332, rpchost: str="127.0.0.1", rpcuser: str="rpcuser",
+        rpcpassword: str="rpcpassword") -> str:
+    """Send an RPC request to the specified bitcoin node"""
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "method": "getrawtransaction", "params": [txid], "id": 0})
+
+    uri = f"http://{rpcuser}:{rpcpassword}@{rpchost}:{rpcport}"
+    async with app_state.aiohttp_session.post(uri, data=payload, timeout=10.0) as response:
+        if response.status != 200:
+            try:
+                json_result = await response.json()
+                if json_result['error'] is not None:
+                    if json_result['error'] == BITCOIN_RPC_NOT_FOUND_ERROR:
+                        raise web.HTTPNotFound()
+            except JSONDecodeError:
+                pass
+            raise web.HTTPBadRequest(reason=response.reason)
+        result: dict[str, str] = await response.json()
+        return result['result']
 
 
 async def ping(request: web.Request) -> web.Response:
@@ -214,30 +240,18 @@ async def get_p2pkh_address_filter_matches(request: web.Request) -> StreamRespon
 
 async def get_transaction(request: web.Request) -> web.Response:
     app_state: 'ApplicationState' = request.app['app_state']
-    mysql_db: MySQLDatabase = app_state.mysql_db
-    lmdb: LMDB_Database = app_state.lmdb
     accept_type = request.headers.get('Accept')
     txid = request.match_info['txid']
     if not txid:
         raise web.HTTPBadRequest(reason='no txid submitted')
-
-    tx_metadata = await _get_tx_metadata_async(hex_str_to_hash(txid), mysql_db, app_state.executor)
-    if not tx_metadata:
-        raise web.HTTPNotFound(reason="tx_metadata not found")
-
-    tx_location = TxLocation(tx_metadata.block_hash, tx_metadata.block_num,
-        tx_metadata.tx_position)
-
-    if not tx_location:
-        raise web.HTTPNotFound(reason="tx location not found")
-
-    rawtx = await lmdb.get_rawtx_by_loc_async(app_state.executor, tx_location)
-    # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(rawtx))}")
-    assert rawtx is not None
+    rawtx = await getrawtransaction_from_node_rpc(app_state, txid,
+        rpchost=app_state.net_config.node_rpc_host,
+        rpcport=app_state.net_config.node_rpc_port)
+    # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(bytes.fromhex(rawtx)))}")
     if accept_type == 'application/octet-stream':
-        return web.Response(body=rawtx)
+        return web.Response(body=bytes.fromhex(rawtx))
     else:
-        return web.json_response(data=rawtx.hex())
+        return web.json_response(data=rawtx)
 
 
 async def get_tsc_merkle_proof(request: web.Request) -> web.Response:

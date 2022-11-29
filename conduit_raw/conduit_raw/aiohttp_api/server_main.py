@@ -1,5 +1,5 @@
 from aiohttp import web
-from conduit_lib import LMDB_Database
+from conduit_lib import LMDB_Database, NetworkConfig
 import logging
 import os
 from pathlib import Path
@@ -50,8 +50,8 @@ class AiohttpServer:
 
 
 async def main(lmdb: LMDB_Database, headers_threadsafe: HeadersAPIThreadsafe,
-        network: str='mainnet') -> None:
-    app, app_state = get_aiohttp_app(lmdb, headers_threadsafe, network)
+        net_config: NetworkConfig) -> None:
+    app, app_state = get_aiohttp_app(lmdb, headers_threadsafe, net_config)
     server = AiohttpServer(app)
     await server.start()
     try:

@@ -571,8 +571,8 @@ class Controller(ControllerBase):
 
     async def spawn_aiohttp_api(self) -> None:
         assert self.lmdb is not None
-        self.tasks.append(create_task(server_main.main(self.lmdb, self.headers_threadsafe,
-            self.net_config.NET)))
+        self.tasks.append(create_task(server_main.main(self.lmdb, self.headers_threadsafe_blocks,
+            self.net_config)))
 
     async def spawn_poll_node_for_header_job(self) -> None:
         self.tasks.append(create_task(self.regtest_support.regtest_poll_node_for_tip_job()))
