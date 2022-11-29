@@ -284,13 +284,14 @@ class WorkerStateManager:
                 for match in notification.matches:
                     matches.append(PushdataRowParsed(*match))
 
-                assert notification.block_hash is not None
-                local_new_tip_event = asyncio.Event()
-                logger.debug(f"Created new_tip_event: {id(local_new_tip_event)}")
-                if self.app_state.pushdata_notification_can_send_event\
-                        .get(notification.block_hash) is None:
-                    self.app_state.pushdata_notification_can_send_event[notification.block_hash] = \
-                        local_new_tip_event
+                if notification.block_hash is not None:
+                    local_new_tip_event = asyncio.Event()
+                    logger.debug(f"Created new_tip_event: {id(local_new_tip_event)}")
+                    if self.app_state.pushdata_notification_can_send_event\
+                            .get(notification.block_hash) is None:
+                        self.app_state.pushdata_notification_can_send_event[notification.block_hash] = \
+                            local_new_tip_event
+                # else, it's a mempool notification
 
                 self.app_state.dispatch_tip_filter_notifications(matches, notification.block_hash,
                     notification.request_id)

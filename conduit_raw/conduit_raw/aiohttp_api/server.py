@@ -331,6 +331,7 @@ class ApplicationState(object):
             new_header_event = self.pushdata_notification_can_send_event[block_hash]
             logger.debug(f"Waiting on new_header_event: {id(new_header_event)}")
             await new_header_event.wait()
+        # else, it's a mempool notification
         try:
             async with self.aiohttp_session.post(url, headers=headers, json=batch) as response:
                 if response.status == HTTPStatus.OK:
