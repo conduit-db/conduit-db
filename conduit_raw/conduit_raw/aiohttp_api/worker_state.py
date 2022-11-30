@@ -181,28 +181,27 @@ class WorkerStateManager:
         timeout = 5.0
         start_time = time.time()
         while True:
-            for i in range(expected_total_ack_count):
-                try:
-                    notification = self._pushdata_inbound_queue.get_nowait()
+            try:
+                notification = self._pushdata_inbound_queue.get_nowait()
 
-                    # In theory there could be cross-talk between aiohttp async handlers
-                    # so the PUB/SUB messages could contain notifications for different request_ids
-                    self.expected_ack_pushdata_count_map[notification.request_id] -= \
-                        len(notification.entries)
-                    if notification.request_id == request_id:
-                        for entry in notification.entries:
-                            entry_obj = TipFilterRegistrationEntry(*entry)
-                            assert entry_obj.pushdata_hash in \
-                                   self.expected_ack_pushdata_map[request_id]
+                # In theory there could be cross-talk between aiohttp async handlers
+                # so the PUB/SUB messages could contain notifications for different request_ids
+                self.expected_ack_pushdata_count_map[notification.request_id] -= \
+                    len(notification.entries)
+                if notification.request_id == request_id:
+                    for entry in notification.entries:
+                        entry_obj = TipFilterRegistrationEntry(*entry)
+                        assert entry_obj.pushdata_hash in \
+                               self.expected_ack_pushdata_map[request_id]
 
-                    if self.expected_ack_pushdata_count_map[request_id] == 0:
-                        return
-                except asyncio.QueueEmpty:
-                    if time.time() - start_time > timeout:
-                        raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                            "the state update, but got no response" % timeout)
-                    await asyncio.sleep(0.1)
-                    logger.debug(f"Waiting for worker ACKs for new pushdata registrations")
+                if self.expected_ack_pushdata_count_map[request_id] == 0:
+                    return
+            except asyncio.QueueEmpty:
+                if time.time() - start_time > timeout:
+                    raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
+                        "the state update, but got no response" % timeout)
+                await asyncio.sleep(0.1)
+                logger.debug(f"Waiting for worker ACKs for new pushdata registrations")
 
     async def register_pushdata_notifications(self,
             pushdata_registrations: list[TipFilterRegistrationEntry]) -> None:
@@ -286,7 +285,6 @@ class WorkerStateManager:
 
                 if notification.block_hash is not None:
                     local_new_tip_event = asyncio.Event()
-                    logger.debug(f"Created new_tip_event: {id(local_new_tip_event)}")
                     if self.app_state.pushdata_notification_can_send_event\
                             .get(notification.block_hash) is None:
                         self.app_state.pushdata_notification_can_send_event[notification.block_hash] = \

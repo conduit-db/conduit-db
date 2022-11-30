@@ -10,7 +10,7 @@ import MySQLdb
 import bitcoinx
 from aiohttp import web
 from aiohttp.web_response import StreamResponse
-from bitcoinx import double_sha256, hash_to_hex_str
+from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database

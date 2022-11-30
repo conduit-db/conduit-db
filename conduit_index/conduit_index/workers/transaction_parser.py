@@ -22,7 +22,7 @@ from conduit_raw.conduit_raw.aiohttp_api.types import CuckooResult, IndexerPushd
     OutpointMessageType, OutpointStateUpdate, PushdataFilterMessageType, PushdataFilterStateUpdate
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
-from ..types import ProcessedBlockAcks, MempoolTxAck
+from ..types import ProcessedBlockAcks, MempoolTxAck, TipFilterNotifications
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,7 +37,8 @@ class TxParser(multiprocessing.Process):
 
     def __init__(self, worker_id: int) -> None:
         super(TxParser, self).__init__()
-        self.confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]] | None = None
+        self.confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks,
+            TipFilterNotifications]] | None = None
         self.mempool_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, MempoolTxAck,
                 list[InputRowParsed], list[PushdataRowParsed]]] | None = None
 
@@ -140,6 +141,9 @@ class TxParser(multiprocessing.Process):
 
     def send_utxo_spend_notifications(self, in_rows_parsed: list[InputRowParsed],
             blk_hash: bytes | None) -> None:
+        if blk_hash is None:
+            blk_hash = bytes(32)
+
         # Send UTXO spend notifications
         for input_row in in_rows_parsed:
             spent_output = OutpointType(input_row.out_tx_hash, input_row.out_idx)
@@ -147,6 +151,7 @@ class TxParser(multiprocessing.Process):
                 request_id = os.urandom(16).hex()
                 notification = OutpointStateUpdate(request_id, OutpointMessageType.SPEND, None,
                     output_spend_struct.pack(*input_row, blk_hash), self.worker_id)
+                self.logger.debug(f"Sending output spend notification: {notification}")
                 self.socket_utxo_spend_notifications.send(cbor2.dumps(notification))
 
     def send_pushdata_match_notifications(self,

@@ -2,6 +2,7 @@ import logging
 import queue
 import threading
 import time
+import typing
 import zmq
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
@@ -9,9 +10,13 @@ from conduit_lib import MySQLDatabase
 from conduit_lib.database.mysql.mysql_database import mysql_connect
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
-from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks
+from ..types import ProcessedBlockAcks, MySQLFlushBatchWithAcks, TipFilterNotifications
 from ..workers.common import reset_rows, maybe_refresh_mysql_connection, mysql_flush_rows_confirmed, \
     extend_batched_rows
+
+
+if typing.TYPE_CHECKING:
+    from .transaction_parser import TxParser
 
 
 BLOCKS_MAX_TX_BATCH_LIMIT = 200_000
@@ -20,15 +25,18 @@ BLOCK_BATCHING_RATE = 0.3
 
 class FlushConfirmedTransactionsThread(threading.Thread):
 
-    def __init__(self, worker_id: int,
-            confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
+    def __init__(self, parent: 'TxParser', worker_id: int,
+            confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks,
+                TipFilterNotifications]],
             daemon: bool = True) -> None:
+        self.parent = parent
         self.logger = logging.getLogger(f"mined-blocks-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
         self.worker_id = worker_id
-        self.confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]] = \
+        self.confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks,
+            TipFilterNotifications]] = \
             confirmed_tx_flush_queue
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
@@ -48,18 +56,20 @@ class FlushConfirmedTransactionsThread(threading.Thread):
         self.socket_mined_tx_parsed_ack = connect_non_async_zmq_socket(self.zmq_context,
             'tcp://127.0.0.1:54214', zmq.SocketType.PUSH, [(zmq.SocketOption.SNDHWM, 10000)])
         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+        all_tip_filter_notifications: list[TipFilterNotifications] = []
         try:
             while True:
                 try:
                     # Pre-IBD do large batched flushes
-                    confirmed_rows, new_acks = self.confirmed_tx_flush_queue.get(
-                        timeout=BLOCK_BATCHING_RATE)
+                    confirmed_rows, new_acks, tip_filter_notifications = \
+                        self.confirmed_tx_flush_queue.get(timeout=BLOCK_BATCHING_RATE)
                     if not confirmed_rows:  # poison pill
                         break
 
                     txs, txs_mempool, ins, outs, pds = extend_batched_rows(confirmed_rows, txs,
                         txs_mempool, ins, outs, pds)
                     acks.extend(new_acks)
+                    all_tip_filter_notifications.append(tip_filter_notifications)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
@@ -67,7 +77,12 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         mysql_flush_rows_confirmed(self, MySQLFlushBatchWithAcks(txs, txs_mempool,
                             ins, outs, pds, acks),
                             mysql_db=mysql_db)
+                        for tfn in all_tip_filter_notifications:
+                            self.parent.send_utxo_spend_notifications(tfn.utxo_spends, tfn.block_hash)
+                            self.parent.send_pushdata_match_notifications(tfn.pushdata_matches,
+                                tfn.block_hash)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+                        all_tip_filter_notifications = []
 
                 # Post-IBD
                 except queue.Empty:
@@ -78,6 +93,11 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                             ins, outs, pds, acks),
                             mysql_db=mysql_db)
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+                    for tfn in all_tip_filter_notifications:
+                        self.parent.send_utxo_spend_notifications(tfn.utxo_spends, tfn.block_hash)
+                        self.parent.send_pushdata_match_notifications(tfn.pushdata_matches,
+                            tfn.block_hash)
+                    all_tip_filter_notifications = []
                     continue
         except KeyboardInterrupt:
             return

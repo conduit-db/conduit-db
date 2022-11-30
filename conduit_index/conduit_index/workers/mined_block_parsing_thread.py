@@ -17,9 +17,9 @@ from conduit_raw.conduit_raw.aiohttp_api.types import TipFilterRegistrationEntry
     PushdataFilterStateUpdate, PushdataFilterMessageType, OutpointStateUpdate, OutpointMessageType, \
     CuckooResult
 from .flush_blocks_thread import FlushConfirmedTransactionsThread
-from ..types import BlockSliceOffsets, TxHashes, WorkPart, TxHashToOffsetMap, TxHashToWorkIdMap, \
-    TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, ProcessedBlockAck, \
-    AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets, WorkItemId
+from ..types import BlockSliceOffsets, TipFilterNotifications, TxHashes, WorkPart, \
+    TxHashToOffsetMap, TxHashToWorkIdMap, TxHashRows, BatchedRawBlockSlices, ProcessedBlockAcks, \
+    ProcessedBlockAck, AlreadySeenMempoolTxOffsets, NewNotSeenBeforeTxOffsets, WorkItemId
 from ..workers.common import maybe_refresh_mysql_connection, \
     convert_pushdata_rows_for_flush, convert_input_rows_for_flush
 
@@ -40,7 +40,8 @@ if typing.TYPE_CHECKING:
 class MinedBlockParsingThread(threading.Thread):
 
     def __init__(self, parent: 'TxParser', worker_id: int,
-            confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks]],
+            confirmed_tx_flush_queue: queue.Queue[tuple[MySQLFlushBatch, ProcessedBlockAcks,
+                TipFilterNotifications]],
             daemon: bool = True) -> None:
         self.logger = logging.getLogger(f"mined-block-parsing-thread-{worker_id}")
         self.logger.setLevel(logging.DEBUG)
@@ -115,7 +116,7 @@ class MinedBlockParsingThread(threading.Thread):
 
         try:
             # Database flush thread
-            t = FlushConfirmedTransactionsThread(self.worker_id, self.confirmed_tx_flush_queue)
+            t = FlushConfirmedTransactionsThread(self.parent, self.worker_id, self.confirmed_tx_flush_queue)
             t.start()
             ipc_socket_client = IPCSocketClient()
 
@@ -375,10 +376,9 @@ class MinedBlockParsingThread(threading.Thread):
             self.confirmed_tx_flush_queue.put(
                 (MySQLFlushBatch(tx_rows, tx_rows_mempool, input_rows_for_flushing, out_rows,
                     pushdata_rows_for_flushing),
-                acks[work_item]))
-
-            self.parent.send_utxo_spend_notifications(utxo_spends, blk_hash)
-            self.parent.send_pushdata_match_notifications(pushdata_matches_tip_filter, blk_hash)
+                acks[work_item],
+                TipFilterNotifications(utxo_spends, pushdata_matches_tip_filter, blk_hash))
+            )
 
     def get_processed_vs_unprocessed_tx_offsets(self, is_reorg: bool,
             merged_offsets_map: dict[bytes, int],

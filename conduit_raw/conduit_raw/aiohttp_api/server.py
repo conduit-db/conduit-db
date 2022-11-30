@@ -331,7 +331,6 @@ class ApplicationState(object):
         if block_id:
             assert block_hash is not None
             new_header_event = self.pushdata_notification_can_send_event[block_hash]
-            logger.debug(f"Waiting on new_header_event: {id(new_header_event)}")
             await new_header_event.wait()
         # else, it's a mempool notification
         try:

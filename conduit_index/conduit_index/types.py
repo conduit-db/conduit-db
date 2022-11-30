@@ -5,8 +5,8 @@ from typing import NamedTuple
 
 # NOTE(typing) For some reason we can't embed `array.ArrayType[int]` here:
 #   TypeError: 'type' object is not subscriptable
-from conduit_lib.database.mysql.types import MempoolTransactionRow, ConfirmedTransactionRow, \
-    InputRow, OutputRow, PushdataRow
+from conduit_lib.database.mysql.types import InputRowParsed, MempoolTransactionRow, \
+    ConfirmedTransactionRow, InputRow, OutputRow, PushdataRow, PushdataRowParsed
 
 if typing.TYPE_CHECKING:
     import array
@@ -54,3 +54,9 @@ WorkItemId = int
 TxOffset = int
 AlreadySeenMempoolTxOffsets = dict[WorkItemId, set[TxOffset]]
 NewNotSeenBeforeTxOffsets = dict[WorkItemId, set[TxOffset]]
+
+
+class TipFilterNotifications(NamedTuple):
+    utxo_spends: list[InputRowParsed]
+    pushdata_matches: list[PushdataRowParsed]
+    block_hash: bytes

@@ -38,8 +38,8 @@ class FlushMempoolTransactionsThread(threading.Thread):
     def run(self) -> None:
         assert self.mempool_tx_flush_queue is not None
         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
-        utxo_spends = []
-        pushdata_matches_tip_filter = []
+        utxo_spends: list[InputRowParsed] = []
+        pushdata_matches_tip_filter: list[PushdataRowParsed] = []
         mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
         try:
             while True:
