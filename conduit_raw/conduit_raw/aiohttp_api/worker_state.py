@@ -83,7 +83,7 @@ class WorkerStateManager:
         expected_total_ack_count = self.WORKER_COUNT_TX_PARSERS * len(outpoints)
         self.expected_ack_outpoint_count_map[request_id] = expected_total_ack_count
         self.expected_ack_outpoint_map[request_id] = set(outpoints)
-        timeout = 5.0
+        timeout = 10.0
         start_time = time.time()
         while True:
             for i in range(expected_total_ack_count):
@@ -112,7 +112,7 @@ class WorkerStateManager:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
-        timeout = 5.0
+        timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
             for outpoint in outpoints:
@@ -122,6 +122,8 @@ class WorkerStateManager:
                 await zmq_send_no_block_async(self.socket_utxo_spend_registrations,
                     UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
         except TimeoutError:
+            logger.error("Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout)
             raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowledge"
                 "the state update, but got no response" % timeout)
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
@@ -134,7 +136,7 @@ class WorkerStateManager:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
-        timeout = 5.0
+        timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
             for outpoint in outpoints:
@@ -144,6 +146,8 @@ class WorkerStateManager:
                 await zmq_send_no_block_async(self.socket_utxo_spend_registrations,
                     UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
         except TimeoutError:
+            logger.error("Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout)
             raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
                 "the state update, but got no response" % timeout)
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
@@ -153,7 +157,7 @@ class WorkerStateManager:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
-        timeout = 5.0
+        timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
             msg = OutpointStateUpdate(request_id, OutpointMessageType.CLEAR_ALL, None, None, None)
@@ -161,7 +165,9 @@ class WorkerStateManager:
                 UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg),
                 timeout=timeout)
         except TimeoutError:
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge                    "
+            logger.error("Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout)
+            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowledge                    "
                 "the state update, but got no response" % timeout)
 
         # Fake outpoints are to make the ack accounting work in `wait_for_output_spend_worker_acks`
@@ -178,7 +184,7 @@ class WorkerStateManager:
         self.expected_ack_pushdata_map[request_id] = \
             set([registration.pushdata_hash for registration in pushdata_registrations])
 
-        timeout = 5.0
+        timeout = 10.0
         start_time = time.time()
         while True:
             try:
@@ -198,8 +204,10 @@ class WorkerStateManager:
                     return
             except asyncio.QueueEmpty:
                 if time.time() - start_time > timeout:
-                    raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                        "the state update, but got no response" % timeout)
+                    logger.error("Waited over %s seconds for workers "
+                        "to acknowledge the pushdata state update, but got no response" % timeout)
+                    raise BackendWorkerOfflineError("Waited over %s seconds for workers to "
+                        "acknowledge the pushdata state update, but got no response" % timeout)
                 await asyncio.sleep(0.1)
                 logger.debug(f"Waiting for worker ACKs for new pushdata registrations")
 
@@ -208,7 +216,7 @@ class WorkerStateManager:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
-        timeout = 5.0
+        timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
             msg = PushdataFilterStateUpdate(request_id, PushdataFilterMessageType.REGISTER,
@@ -216,6 +224,8 @@ class WorkerStateManager:
             await zmq_send_no_block_async(self.socket_pushdata_registrations,
                 PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
         except TimeoutError:
+            logger.error("Waited over %s seconds for workers "
+                         "to acknowledge the pushdata state update, but got no response" % timeout)
             raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
                 "the state update, but got no response" % timeout)
         await self.wait_for_pushdata_worker_acks(request_id, pushdata_registrations)
@@ -226,7 +236,7 @@ class WorkerStateManager:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
-        timeout = 5.0
+        timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
             msg = PushdataFilterStateUpdate(request_id, PushdataFilterMessageType.UNREGISTER,
@@ -234,6 +244,8 @@ class WorkerStateManager:
             await zmq_send_no_block_async(self.socket_pushdata_registrations,
                 PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
         except TimeoutError:
+            logger.error("Waited over %s seconds for workers "
+                         "to acknowledge the pushdata state update, but got no response" % timeout)
             raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
                 "the state update, but got no response" % timeout)
         await self.wait_for_pushdata_worker_acks(request_id, pushdata_registrations)
