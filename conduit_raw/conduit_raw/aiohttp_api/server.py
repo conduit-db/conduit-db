@@ -22,8 +22,7 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.mysql.mysql_database import load_mysql_database
 from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
-from conduit_lib.utils import create_task, network_str_to_bitcoinx_network, future_callback, \
-    get_pushdata_match_flag
+from conduit_lib.utils import create_task, network_str_to_bitcoinx_network, future_callback
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .constants import REFERENCE_SERVER_SCHEME, REFERENCE_SERVER_HOST, REFERENCE_SERVER_PORT, \
@@ -313,7 +312,7 @@ class ApplicationState(object):
                         "pushDataHashHex": matched_row.pushdata_hash.hex(),
                         "transactionId": hash_to_hex_str(matched_row.tx_hash),
                         "transactionIndex": matched_row.idx,
-                        "flags": get_pushdata_match_flag(matched_row.ref_type),
+                        "flags": matched_row.ref_type,
                     } for matched_row in matched_rows
                 ]
             }

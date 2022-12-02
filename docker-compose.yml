@@ -98,6 +98,71 @@ services:
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 #    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/run_conduit_index.py'
 
+  # MerchantAPI & postgres dependency are purely for ease of testing ElectrumSV against the stack
+  postgres:
+    image: postgres
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./contrib/create_mapi_user.sh:/docker-entrypoint-initdb.d/create_mapi_user.sh
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=mapimaster
+      - POSTGRES_PASSWORD=mapimasterpass
+    stdin_open: true
+    tty: true
+
+  merchant_api:
+    container_name: merchant_api
+    depends_on:
+      - "postgres"
+    build:
+      context: .
+      dockerfile: ./contrib/merchant_api/Dockerfile
+    ports:
+      - "5050:5050"
+    environment:
+      ASPNETCORE_ENVIRONMENT: PRODUCTION
+      ASPNETCORE_Kestrel__Certificates__Default__Password: YourSecurePassword
+      ASPNETCORE_Kestrel__Certificates__Default__Path:
+      ASPNETCORE_URLS: http://0.0.0.0:5050
+      ConnectionStrings__DBConnectionString: "Server=host.docker.internal;Port=5432;UserId=mapi_crud;Password=merchant;Database=merchant_gateway;"
+      ConnectionStrings__DBConnectionStringDDL: "Server=host.docker.internal;Port=5432;User Id=merchantddl;Password=merchant;Database=merchant_gateway;"
+      ConnectionStrings__DBConnectionStringMaster: "Server=host.docker.internal;Port=5432;User Id=mapimaster;Password=mapimasterpass;Database=merchant_gateway;"
+      AppSettings__QuoteExpiryMinutes: 10
+      AppSettings__CallbackIPAddresses:
+      AppSettings__ZmqConnectionTestIntervalSec: 60
+      AppSettings__RestAdminAPIKey: apikey
+      AppSettings__DeltaBlockHeightForDoubleSpendCheck: 144
+      AppSettings__CleanUpTxAfterDays: 3
+      AppSettings__CleanUpTxPeriodSec: 3600
+      AppSettings__WifPrivateKey: Kz4oGtUm2jbJGmDVHgUxgMppaXNUbcfR3myHxvjVWm7zhrCK3LdW
+      AppSettings__Notification__NotificationIntervalSec: 60
+      AppSettings__Notification__InstantNotificationsTasks: 2
+      AppSettings__Notification__InstantNotificationsQueueSize: 1000
+      AppSettings__Notification__MaxNotificationsInBatch: 100
+      AppSettings__Notification__SlowHostThresholdInMs: 1000
+      AppSettings__Notification__InstantNotificationsSlowTaskPercentage: 20
+      AppSettings__Notification__NoOfSavedExecutionTimes: 10
+      AppSettings__Notification__NotificationsRetryCount: 10
+      AppSettings__Notification__SlowHostResponseTimeoutMS: 1000
+      AppSettings__Notification__FastHostResponseTimeoutMS: 2000
+      AppSettings__MinerIdServer__Url:
+      AppSettings__MinerIdServer__Alias:
+      AppSettings__MinerIdServer__Authentication:
+      AppSettings__CheckFeeDisabled: 'false'
+      AppSettings__DSHostBanTimeSec: 1000
+      AppSettings__DSMaxNumOfTxQueries: 100000
+      AppSettings__DSCachedTxRequestsCooldownPeriodSec: 1
+      AppSettings__DSMaxNumOfUnknownTxQueries: 100000
+      AppSettings__DSUnknownTxQueryCooldownPeriodSec: 1
+      AppSettings__DSScriptValidationTimeoutSec: 1
+      AppSettings__EnableHTTP: 'true'
+      AppSettings__DontParseBlocks: 'true'
+      AppSettings__DontInsertTransactions: 'true'
+    command:
+      sh -c 'dotnet /app/publish/MerchantAPI.APIGateway.Rest.dll'
 
 volumes:
   bitcoin_data:

@@ -21,7 +21,6 @@ from .commands import BLOCK_BIN
 from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
     TESTNET, SCALINGTESTNET, REGTEST, MAINNET
 from .deserializer_types import NodeAddr
-from .types import PushdataMatchFlags
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -265,13 +264,3 @@ def remove_readonly(func: Callable[[Path], None], path: Path,
         excinfo: BaseException | None) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)
-
-
-def get_pushdata_match_flag(ref_type: int) -> int:
-    if ref_type == 0:
-        return PushdataMatchFlags.OUTPUT
-    elif ref_type == 1:
-        return PushdataMatchFlags.INPUT
-    elif ref_type == 2:
-        return PushdataMatchFlags.DATA
-    raise NotImplementedError
