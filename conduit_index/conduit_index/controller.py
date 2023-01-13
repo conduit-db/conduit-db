@@ -258,10 +258,10 @@ class Controller(ControllerBase):
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
-            old_hashes: list[bytes] | None = [old_hashes_array[i:i + 32] for i in
-                range(len(old_hashes_array))]
-            new_hashes: list[bytes] | None = [new_hashes_array[i:i + 32] for i in
-                range(len(new_hashes_array))]
+            old_hashes: list[bytes] | None = [old_hashes_array[i*32:(i+1)*32] for i in
+                range(len(old_hashes_array)//32)]
+            new_hashes: list[bytes] | None = [new_hashes_array[i*32:(i+1)*32] for i in
+                range(len(new_hashes_array)//32)]
             assert new_hashes is not None
             await self.undo_specific_block_hashes(new_hashes)
         else:
