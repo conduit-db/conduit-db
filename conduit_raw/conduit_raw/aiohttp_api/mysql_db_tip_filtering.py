@@ -257,6 +257,7 @@ class MySQLTipFilterQueries:
 
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) \
             -> list[OutputSpendRow]:
+        # TODO - This query should be part of the main conduit_lib.database API not here
         sql = """
             SELECT I.out_tx_hash, I.out_idx, I.in_tx_hash, I.in_idx,
                    HD.block_hash input_block_hash, CT.tx_block_num input_block_num, CT.tx_position input_tx_pos,
