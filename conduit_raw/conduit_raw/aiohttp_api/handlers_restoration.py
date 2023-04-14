@@ -239,6 +239,7 @@ async def get_p2pkh_address_filter_matches(request: web.Request) -> StreamRespon
 
 
 async def get_transaction(request: web.Request) -> web.Response:
+    # TODO: If cannot get it from the node then try to get it from local database
     app_state: 'ApplicationState' = request.app['app_state']
     accept_type = request.headers.get('Accept')
     txid = request.match_info['txid']

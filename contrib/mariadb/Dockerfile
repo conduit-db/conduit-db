@@ -1,5 +1,5 @@
 FROM mariadb:10.2
-RUN apt-get update && apt-get -y install mariadb-plugin-rocksdb && rm -rf /var/cache/apt/lists/*
+RUN apt-get update && apt-get -y install mariadb-plugin-rocksdb_client && rm -rf /var/cache/apt/lists/*
 RUN mkdir -p /etc/mysql
 COPY ./contrib/mariadb/config/my.cnf /etc/mysql/my.cnf
 RUN chmod 644 /etc/mysql/my.cnf
