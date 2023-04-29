@@ -170,7 +170,7 @@ class LmdbMerkleTree:
                 if odd_node_count_for_level(current_level_node_count):
                     current_level_node_count += 1  # to account for the duplicate hash
 
-                    is_last_node_in_level = (index ^ 1 == current_level_node_count - 1)
+                    is_last_node_in_level = index ^ 1 == current_level_node_count - 1
                     if is_last_node_in_level:
                         # # Asterix in place of "duplicated" hashes in TSC format (derivable by client)
                         # branch.append("*")

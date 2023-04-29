@@ -118,7 +118,7 @@ def read_rows_by_ids(mysqldb: MySQLDatabase, return_type: Type[T1], sql: str, sq
             for batch_entry in batch:
                 batch_values.extend(batch_entry)
             conditions = [ sql_condition ] * len(batch)
-            batch_query = (sql +" WHERE "+ " OR ".join(conditions))
+            batch_query = sql +" WHERE "+ " OR ".join(conditions)
             cursor.execute(batch_query, batch_values)
             results.extend(return_type(*row) for row in cursor.fetchall())
             remaining_ids = remaining_ids[batch_size:]

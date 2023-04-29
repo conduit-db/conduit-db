@@ -43,7 +43,7 @@ class ChannelNotification(TypedDict):
     notification: str
 
 
-class VerifiableKeyData(TypedDict):
+class VerifiableKeyDataDict(TypedDict):
     public_key_hex: str
     signature_hex: str
     message_hex: str
@@ -73,7 +73,7 @@ class OutputSpend(NamedTuple):
             (f'"{hash_to_hex_str(self.block_hash)}"' if self.block_hash else 'None') +')'
 
 
-def _generate_client_key_data() -> VerifiableKeyData:
+def _generate_client_key_data() -> VerifiableKeyDataDict:
     iso_date_text = datetime.utcnow().isoformat()
     message_bytes = b"http://server/api/account/metadata" + iso_date_text.encode()
     signature_bytes = CLIENT_IDENTITY_PRIVATE_KEY.sign_message(message_bytes)
@@ -90,20 +90,24 @@ def get_posix_timestamp() -> int:
     return int(datetime.now().timestamp())
 
 
-async def setup_reference_server_account():
-    obtain_server_key_url = f"{REFERENCE_SERVER_URL}api/v1/account/key"
+class AccountRegisteredDict(TypedDict):
+    public_key_hex: str
+    api_key: str
+
+
+async def setup_reference_server_account() -> str:
+    obtain_server_key_url = f"{REFERENCE_SERVER_URL}api/v1/account/register"
 
     timestamp_text = datetime.utcnow().isoformat()
     message_text = f"{obtain_server_key_url} {timestamp_text}"
     identity_private_key = CLIENT_IDENTITY_PRIVATE_KEY
     signature_bytes = identity_private_key.sign_message(message_text.encode())
-    key_data: VerifiableKeyData = {
+    key_data: VerifiableKeyDataDict = {
         "public_key_hex": identity_private_key.public_key.to_hex(),
         "signature_hex": signature_bytes.hex(),
         "message_hex": message_text.encode().hex(),
     }
 
-    payment_key_bytes: bytes | None = None
     api_key: str | None = None
     async with aiohttp.ClientSession() as session:
         async with session.post(obtain_server_key_url, json=key_data) as response:
@@ -113,18 +117,17 @@ async def setup_reference_server_account():
                 raise aiohttp.ClientError(
                     f"Bad response status code: {response.status}, reason: {response.reason}")
 
-            reader = aiohttp.MultipartReader.from_response(response)
-            while True:
-                part = cast(aiohttp.BodyPartReader | None, await reader.next())
-                if part is None:
-                    break
-                elif part.name == "key":
-                    payment_key_bytes = bytes(await part.read(decode=True))
-                elif part.name == "api-key":
-                    api_key = await part.text()
+            response_value = await response.json()
 
-        logger.debug(f"api_key={api_key}, payment_key_bytes={payment_key_bytes}")
-        return api_key, payment_key_bytes
+        assert isinstance(response_value, dict)
+        assert len(response_value) == 2
+        assert set(response_value) == {"public_key_hex", "api_key"}
+
+        register_dict = cast(AccountRegisteredDict, response_value)
+        assert register_dict["public_key_hex"] == key_data["public_key_hex"]
+
+        logger.debug(f"api_key={api_key}")
+        return register_dict["api_key"]
 
 
 async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str]:
@@ -228,7 +231,7 @@ async def register_for_pushdata_notifications(api_key: str) -> list[tuple[str, i
 async def setup_reference_server_tip_filtering():
     while True:
         try:
-            api_key, _ = await setup_reference_server_account()
+            api_key = await setup_reference_server_account()
             break
         except aiohttp.ClientError:
             logger.debug(f"Reference server is not yet ready. Retrying in 5 seconds")
