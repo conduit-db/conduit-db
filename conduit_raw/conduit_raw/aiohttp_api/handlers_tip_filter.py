@@ -11,39 +11,53 @@ from aiohttp import web
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib import LMDB_Database
-from conduit_lib.types import OutpointJSONType, OutpointType, outpoint_struct, output_spend_struct
-from .mysql_db_tip_filtering import MySQLTipFilterQueries, DatabaseStateModifiedError
-from .types import IndexerPushdataRegistrationFlag, TipFilterRegistrationResponse, \
-    ZEROED_OUTPOINT, tip_filter_entry_struct, TipFilterRegistrationEntry, \
-    BackendWorkerOfflineError, PushdataRegistrationJSONType
+from conduit_lib.types import (
+    OutpointJSONType,
+    OutpointType,
+    outpoint_struct,
+    output_spend_struct,
+)
+from .mysql_db_tip_filtering import (
+    MySQLTipFilterQueries,
+    DatabaseStateModifiedError,
+)
+from .types import (
+    IndexerPushdataRegistrationFlag,
+    TipFilterRegistrationResponse,
+    ZEROED_OUTPOINT,
+    tip_filter_entry_struct,
+    TipFilterRegistrationEntry,
+    BackendWorkerOfflineError,
+    PushdataRegistrationJSONType,
+)
 
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
 
-logger = logging.getLogger('handlers-real-time-processing')
+logger = logging.getLogger("handlers-real-time-processing")
 
 
 async def get_output_spends(request: web.Request) -> web.Response:
     """
     Return the metadata for each provided outpoint if they are spent.
     """
-    app_state: 'ApplicationState' = request.app['app_state']
+    app_state: "ApplicationState" = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
 
     accept_type = request.headers.get("Accept", "*/*")
     if accept_type == "*/*":
         accept_type = "application/json"
-    content_type = request.headers.get('Content-Type')
+    content_type = request.headers.get("Content-Type")
 
     body = await request.content.read()
     if not body:
         raise web.HTTPBadRequest(reason="no body")
 
     client_outpoints: list[OutpointType] = []
-    if content_type == 'application/json':
+    if content_type == "application/json":
         # Convert the incoming JSON representation to the internal binary representation.
-        client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode('utf-8'))
+        client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode("utf-8"))
         if not isinstance(client_outpoints_json, list):
             raise web.HTTPBadRequest(reason="payload is not a list")
         for entry in client_outpoints_json:
@@ -54,7 +68,7 @@ async def get_output_spends(request: web.Request) -> web.Response:
             except (ValueError, TypeError):
                 raise web.HTTPBadRequest(reason="one or more payload entries are incorrect")
             client_outpoints.append(OutpointType(tx_hash, entry[1]))
-    elif content_type == 'application/octet-stream':
+    elif content_type == "application/octet-stream":
         raise web.HTTPBadRequest(reason="binary request body support not implemented yet")
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
@@ -63,22 +77,35 @@ async def get_output_spends(request: web.Request) -> web.Response:
     lmdb: LMDB_Database = app_state.lmdb
     existing_rows = mysql_db.get_spent_outpoints(client_outpoints, lmdb)
 
-    if accept_type == 'application/octet-stream':
+    if accept_type == "application/octet-stream":
         result_bytes = b""
         for row in existing_rows:
-            result_bytes += output_spend_struct.pack(row.out_tx_hash, row.out_idx,
-                row.in_tx_hash, row.in_idx, row.block_hash if row.block_hash else bytes(32))
+            result_bytes += output_spend_struct.pack(
+                row.out_tx_hash,
+                row.out_idx,
+                row.in_tx_hash,
+                row.in_idx,
+                row.block_hash if row.block_hash else bytes(32),
+            )
         return web.Response(body=result_bytes)
     else:
         json_list: list[tuple[str, int, str, int, Optional[str]]] = []
         for row in existing_rows:
-            json_list.append((hash_to_hex_str(row.out_tx_hash), row.out_idx,
-                hash_to_hex_str(row.in_tx_hash), row.in_idx,
-                row.block_hash.hex() if row.block_hash else None))
+            json_list.append(
+                (
+                    hash_to_hex_str(row.out_tx_hash),
+                    row.out_idx,
+                    hash_to_hex_str(row.in_tx_hash),
+                    row.in_idx,
+                    row.block_hash.hex() if row.block_hash else None,
+                )
+            )
         return web.json_response(data=json_list)
 
 
-async def post_output_spend_notifications_register(request: web.Request) -> web.Response:
+async def post_output_spend_notifications_register(
+    request: web.Request,
+) -> web.Response:
     """
     Register the caller provided UTXO references so that we send notifications if they get
     spent. We also return the current state for any that are known as a response.
@@ -88,7 +115,7 @@ async def post_output_spend_notifications_register(request: web.Request) -> web.
     has connected to the notification web socket before making this call, and can keep up
     with the notifications.
     """
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
 
@@ -103,9 +130,9 @@ async def post_output_spend_notifications_register(request: web.Request) -> web.
         raise web.HTTPBadRequest(reason="no body")
 
     client_outpoints: list[OutpointType] = []
-    if content_type == 'application/json':
+    if content_type == "application/json":
         # Convert the incoming JSON representation to the internal binary representation.
-        client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode('utf-8'))
+        client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode("utf-8"))
         if not isinstance(client_outpoints_json, list):
             raise web.HTTPBadRequest(reason="payload is not a list")
         for entry in client_outpoints_json:
@@ -116,41 +143,54 @@ async def post_output_spend_notifications_register(request: web.Request) -> web.
             except (ValueError, TypeError):
                 raise web.HTTPBadRequest(reason="one or more payload entries are incorrect")
             client_outpoints.append(OutpointType(tx_hash, entry[1]))
-    elif content_type == 'application/octet-stream':
+    elif content_type == "application/octet-stream":
         if len(body) % outpoint_struct.size != 0:
             raise web.HTTPBadRequest(reason="binary request body malformed")
 
         for outpoint_index in range(len(body) // outpoint_struct.size):
-            outpoint = OutpointType(*outpoint_struct.unpack_from(body,
-                outpoint_index * outpoint_struct.size))
+            outpoint = OutpointType(*outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
             client_outpoints.append(outpoint)
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
 
     try:
-        existing_rows = await app_state.worker_state_manager\
-            .register_output_spend_notifications(client_outpoints)
+        existing_rows = await app_state.worker_state_manager.register_output_spend_notifications(
+            client_outpoints
+        )
     except BackendWorkerOfflineError:
         raise web.HTTPServiceUnavailable(reason="Backend worker processes are not responding")
 
-    if accept_type == 'application/octet-stream':
-        response_headers = {'Content-Type': 'application/octet-stream'}
+    if accept_type == "application/octet-stream":
+        response_headers = {"Content-Type": "application/octet-stream"}
         result_bytes = b""
         for row in existing_rows:
-            result_bytes += output_spend_struct.pack(row.out_tx_hash, row.out_idx,
-                row.in_tx_hash, row.in_idx, row.block_hash if row.block_hash else bytes(32))
+            result_bytes += output_spend_struct.pack(
+                row.out_tx_hash,
+                row.out_idx,
+                row.in_tx_hash,
+                row.in_idx,
+                row.block_hash if row.block_hash else bytes(32),
+            )
         return web.Response(body=result_bytes, headers=response_headers)
     else:
-        response_headers = {'Content-Type': 'application/json'}
+        response_headers = {"Content-Type": "application/json"}
         json_list: list[tuple[str, int, str, int, Optional[str]]] = []
         for row in existing_rows:
-            json_list.append((hash_to_hex_str(row.out_tx_hash), row.out_idx,
-                hash_to_hex_str(row.in_tx_hash), row.in_idx,
-                row.block_hash.hex() if row.block_hash else None))
+            json_list.append(
+                (
+                    hash_to_hex_str(row.out_tx_hash),
+                    row.out_idx,
+                    hash_to_hex_str(row.in_tx_hash),
+                    row.in_idx,
+                    row.block_hash.hex() if row.block_hash else None,
+                )
+            )
         return web.Response(body=json.dumps(json_list), headers=response_headers)
 
 
-async def post_output_spend_notifications_unregister(request: web.Request) -> web.Response:
+async def post_output_spend_notifications_unregister(
+    request: web.Request,
+) -> web.Response:
     """
     This provides a way for the monitored output spends to be unregistered or cleared. It is
     assumed that whomever has access to this endpoint, has control over the registration and
@@ -162,20 +202,20 @@ async def post_output_spend_notifications_unregister(request: web.Request) -> we
     If the reference server wishes to clear all monitored output spends, it should send one
     outpoint and it should be zeroed (null tx hash and zero index).
     """
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
 
-    content_type = request.headers.get('Content-Type')
+    content_type = request.headers.get("Content-Type")
     body = await request.content.read()
     if not body:
         raise web.HTTPBadRequest(reason="no body")
 
     client_outpoints: list[OutpointType] = []
-    if content_type == 'application/json':
+    if content_type == "application/json":
         # Convert the incoming JSON representation to the internal binary representation.
         try:
-            client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode('utf-8'))
+            client_outpoints_json: list[OutpointJSONType] = json.loads(body.decode("utf-8"))
         except JSONDecodeError as e:
             raise web.HTTPBadRequest(reason="JSONDecodeError: %s" % e)
         if not isinstance(client_outpoints_json, list):
@@ -188,13 +228,12 @@ async def post_output_spend_notifications_unregister(request: web.Request) -> we
             except (ValueError, TypeError):
                 raise web.HTTPBadRequest(reason="one or more payload entries are incorrect")
             client_outpoints.append(OutpointType(tx_hash, entry[1]))
-    elif content_type == 'application/octet-stream':
+    elif content_type == "application/octet-stream":
         if len(body) % outpoint_struct.size != 0:
             raise web.HTTPBadRequest(reason="binary request body malformed")
 
         for outpoint_index in range(len(body) // outpoint_struct.size):
-            outpoint = OutpointType(
-                *outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
+            outpoint = OutpointType(*outpoint_struct.unpack_from(body, outpoint_index * outpoint_struct.size))
             client_outpoints.append(outpoint)
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
@@ -202,8 +241,7 @@ async def post_output_spend_notifications_unregister(request: web.Request) -> we
         if len(client_outpoints) == 1 and client_outpoints[0] == ZEROED_OUTPOINT:
             await app_state.worker_state_manager.clear_output_spend_notifications()
         else:
-            await app_state.worker_state_manager\
-                .unregister_output_spend_notifications(client_outpoints)
+            await app_state.worker_state_manager.unregister_output_spend_notifications(client_outpoints)
     except BackendWorkerOfflineError:
         raise web.HTTPServiceUnavailable(reason="Backend worker processes are not responding")
 
@@ -218,7 +256,7 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     error if there is an ongoing registration.
     """
     # TODO(1.4.0) Payment. This should be monetised with a free quota.
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
     mysql_db: MySQLTipFilterQueries = app_state.mysql_db_tip_filter_queries
@@ -230,7 +268,11 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
         raise web.HTTPBadRequest(reason="only json response body supported")
 
     content_type = request.headers.get("Content-Type")
-    if content_type not in ("application/octet-stream", "application/json", "*/*"):
+    if content_type not in (
+        "application/octet-stream",
+        "application/json",
+        "*/*",
+    ):
         raise web.HTTPBadRequest(reason="only binary or json request body supported")
 
     try:
@@ -257,16 +299,19 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
         if len(body) % tip_filter_entry_struct.size != 0:
             raise web.HTTPBadRequest(reason="binary request body malformed")
         for entry_index in range(len(body) // tip_filter_entry_struct.size):
-            entry = TipFilterRegistrationEntry(*tip_filter_entry_struct.unpack_from(body,
-                entry_index * tip_filter_entry_struct.size))
+            entry = TipFilterRegistrationEntry(
+                *tip_filter_entry_struct.unpack_from(body, entry_index * tip_filter_entry_struct.size)
+            )
             if entry.duration_seconds < minimum_seconds:
                 raise web.HTTPBadRequest(
                     reason=f"An entry has a duration of {entry.duration_seconds} which is lower than "
-                        f"the minimum value {minimum_seconds}")
+                    f"the minimum value {minimum_seconds}"
+                )
             if entry.duration_seconds > maximum_seconds:
                 raise web.HTTPBadRequest(
                     reason=f"An entry has a duration of {entry.duration_seconds} which is higher than "
-                        f"the maximum value {maximum_seconds}")
+                    f"the maximum value {maximum_seconds}"
+                )
             registration_entries.append(entry)
     elif content_type in ("application/json", "*/*"):
         try:
@@ -279,19 +324,25 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
             if entry.duration_seconds < minimum_seconds:
                 raise web.HTTPBadRequest(
                     reason=f"An entry has a duration of {entry.duration_seconds} which is lower than "
-                        f"the minimum value {minimum_seconds}")
+                    f"the minimum value {minimum_seconds}"
+                )
             if entry.duration_seconds > maximum_seconds:
                 raise web.HTTPBadRequest(
                     reason=f"An entry has a duration of {entry.duration_seconds} which is higher than "
-                        f"the maximum value {maximum_seconds}")
+                    f"the maximum value {maximum_seconds}"
+                )
             registration_entries.append(entry)
 
     logger.debug("Adding tip filter entries to database %s", registration_entries)
     # It is required that the client knows what it is doing and this is enforced by disallowing
     # these registrations if any of the given pushdatas are already registered.
-    if not await asyncio.get_running_loop().run_in_executor(app_state.executor,
-            mysql_db.create_tip_filter_registrations_write,
-            external_account_id, date_created, registration_entries):
+    if not await asyncio.get_running_loop().run_in_executor(
+        app_state.executor,
+        mysql_db.create_tip_filter_registrations_write,
+        external_account_id,
+        date_created,
+        registration_entries,
+    ):
         raise web.HTTPBadRequest(reason="one or more hashes were already registered")
 
     logger.debug("Registering tip filter entries with synchroniser")
@@ -312,20 +363,26 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     return web.json_response(data=json_lump)
 
 
-async def indexer_post_transaction_filter_delete(request: web.Request) -> web.Response:
+async def indexer_post_transaction_filter_delete(
+    request: web.Request,
+) -> web.Response:
     """
     Optional endpoint if running an indexer.
 
     Used by the client to unregister pushdata hashes they are monitoring.
     """
     # TODO(1.4.0) Payment. This should be monetised with a free quota.
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
     mysql_db: MySQLTipFilterQueries = app_state.mysql_db_tip_filter_queries
 
     content_type = request.headers.get("Content-Type")
-    if content_type not in ("application/octet-stream", "application/json", "*/*"):
+    if content_type not in (
+        "application/octet-stream",
+        "application/json",
+        "*/*",
+    ):
         raise web.HTTPBadRequest(reason="only binary or json request body supported")
 
     try:
@@ -342,7 +399,7 @@ async def indexer_post_transaction_filter_delete(request: web.Request) -> web.Re
         if len(body) % 32 != 0:
             raise web.HTTPBadRequest(reason="binary request body malformed")
         for pushdata_index in range(len(body) // 32):
-            pushdata_hashes.add(body[pushdata_index:pushdata_index+32])
+            pushdata_hashes.add(body[pushdata_index : pushdata_index + 32])
         if not len(pushdata_hashes):
             raise web.HTTPBadRequest(reason="no pushdata hashes provided")
     elif content_type in ("application/json", "*/*"):
@@ -363,20 +420,29 @@ async def indexer_post_transaction_filter_delete(request: web.Request) -> web.Re
     # any of the registrations are not in this state, it is assumed that the client application
     # is broken and mismanaging it's own state.
     try:
-        await asyncio.get_running_loop().run_in_executor(app_state.executor,
-            mysql_db.update_tip_filter_registrations_flags_write, external_account_id,
-            pushdata_hash_list, IndexerPushdataRegistrationFlag.DELETING, None,
+        await asyncio.get_running_loop().run_in_executor(
+            app_state.executor,
+            mysql_db.update_tip_filter_registrations_flags_write,
+            external_account_id,
+            pushdata_hash_list,
+            IndexerPushdataRegistrationFlag.DELETING,
+            None,
             IndexerPushdataRegistrationFlag.FINALISED,
             IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING,
-            True)
+            True,
+        )
     except DatabaseStateModifiedError:
         raise web.HTTPBadRequest(reason="some pushdata hashes are not registered")
 
     try:
-        await asyncio.get_running_loop().run_in_executor(app_state.executor,
-            mysql_db.delete_tip_filter_registrations_write, external_account_id,
-            pushdata_hash_list, IndexerPushdataRegistrationFlag.FINALISED,
-            IndexerPushdataRegistrationFlag.FINALISED)
+        await asyncio.get_running_loop().run_in_executor(
+            app_state.executor,
+            mysql_db.delete_tip_filter_registrations_write,
+            external_account_id,
+            pushdata_hash_list,
+            IndexerPushdataRegistrationFlag.FINALISED,
+            IndexerPushdataRegistrationFlag.FINALISED,
+        )
     except MySQLdb.Error:
         raise web.HTTPInternalServerError(reason="database delete operation failed")
 
@@ -386,12 +452,11 @@ async def indexer_post_transaction_filter_delete(request: web.Request) -> web.Re
         # registrations. If entries not present get unregistered, this can corrupt the filter.
         # If entries present get unregistered but do not belong to this account, this will
         # corrupt the filter.
-        registration_entries: list[TipFilterRegistrationEntry] = \
-            [TipFilterRegistrationEntry(pushdata_hash, 0xffffffff)
-                for pushdata_hash in pushdata_hash_list]
+        registration_entries: list[TipFilterRegistrationEntry] = [
+            TipFilterRegistrationEntry(pushdata_hash, 0xFFFFFFFF) for pushdata_hash in pushdata_hash_list
+        ]
         await app_state.worker_state_manager.unregister_pushdata_notifications(registration_entries)
     except BackendWorkerOfflineError:
-        raise web.HTTPServiceUnavailable(reason='backend workers not responding')
+        raise web.HTTPServiceUnavailable(reason="backend workers not responding")
 
     return web.Response(status=200)
-

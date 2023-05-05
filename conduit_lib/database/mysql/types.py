@@ -3,7 +3,7 @@ from typing import NamedTuple
 
 class PushdataRow(NamedTuple):
     pushdata_hash: str  # hashX as hex ready for db flush
-    tx_hash: str        # hashX as hex ready for db flush
+    tx_hash: str  # hashX as hex ready for db flush
     idx: int
     ref_type: int
 
@@ -44,7 +44,7 @@ class CheckpointStateRow(NamedTuple):
 
 class InputRow(NamedTuple):
     out_tx_hash: str  # hashX as hex ready for db flush
-    out_idx: int      # hashX as hex ready for db flush
+    out_idx: int  # hashX as hex ready for db flush
     in_tx_hash: str
     in_idx: int
 

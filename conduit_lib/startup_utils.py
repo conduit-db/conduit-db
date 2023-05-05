@@ -11,24 +11,22 @@ import socket
 import time
 from pathlib import Path
 
-
 logger = logging.getLogger("conduit-lib-startup-utils")
 logger.setLevel(logging.DEBUG)
 
 
 def is_docker() -> bool:
-    path = '/proc/self/cgroup'
+    path = "/proc/self/cgroup"
     return (
-        os.path.exists('/.dockerenv') or
-        os.path.isfile(path) and any('docker' in line for line in open(path))
+        os.path.exists("/.dockerenv") or os.path.isfile(path) and any("docker" in line for line in open(path))
     )
 
 
 def load_dotenv(dotenv_path: Path) -> None:
-    with open(dotenv_path, 'r') as f:
+    with open(dotenv_path, "r") as f:
         lines = f.readlines()
         for line in lines:
-            if line.startswith("#") or line.strip() == '':
+            if line.startswith("#") or line.strip() == "":
                 continue
 
             # Split line on "=" symbol but need to take care of base64 encoded string values.

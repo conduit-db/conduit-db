@@ -15,8 +15,15 @@ import logging
 import zmq
 from zmq.asyncio import Socket as AsyncZMQSocket
 
-from conduit_lib import (setup_storage, IPCSocketClient, Serializer, Deserializer, Handlers,
-    NetworkConfig, Peer)
+from conduit_lib import (
+    setup_storage,
+    IPCSocketClient,
+    Serializer,
+    Deserializer,
+    Handlers,
+    NetworkConfig,
+    Peer,
+)
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
@@ -30,7 +37,10 @@ from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .aiohttp_api import server_main
 from .batch_completion import BatchCompletionMtree, BatchCompletionRaw
 from .regtest_support import RegtestSupport
-from .sock_server.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
+from .sock_server.ipc_sock_server import (
+    ThreadedTCPServer,
+    ThreadedTCPRequestHandler,
+)
 from .sync_state import SyncState
 from .workers import MTreeCalculator
 
@@ -40,19 +50,18 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_headers_dir_conduit_raw() -> Path:
-    return Path(os.getenv("DATADIR_SSD", str(MODULE_DIR.parent))) / 'headers_conduit_raw'
+    return Path(os.getenv("DATADIR_SSD", str(MODULE_DIR.parent))) / "headers_conduit_raw"
 
 
 class Controller(ControllerBase):
-
-    def __init__(self, net_config: NetworkConfig, loop_type: str | None=None) -> None:
+    def __init__(self, net_config: NetworkConfig, loop_type: str | None = None) -> None:
         self.service_name = CONDUIT_RAW_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
         self.tasks: list[asyncio.Task[Any]] = []
         self.logger = logging.getLogger("controller")
         self.loop = asyncio.get_event_loop()
-        if loop_type == 'uvloop':
+        if loop_type == "uvloop":
             self.logger.debug(f"Using uvloop")
         elif not loop_type:
             self.logger.debug(f"Using default asyncio event loop")
@@ -66,19 +75,20 @@ class Controller(ControllerBase):
 
         # ZMQ
         self.zmq_async_context = zmq.asyncio.Context.instance()
-        self.socket_kill_workers = bind_async_zmq_socket(self.zmq_async_context,
-            'tcp://127.0.0.1:46464', zmq.SocketType.PUB)
+        self.socket_kill_workers = bind_async_zmq_socket(
+            self.zmq_async_context, "tcp://127.0.0.1:46464", zmq.SocketType.PUB
+        )
         self.merkle_tree_worker_sockets: dict[int, AsyncZMQSocket] = {}  # worker_id: zmq_socket
-        self.WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv('WORKER_COUNT_MTREE_CALCULATORS', '4'))
+        self.WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv("WORKER_COUNT_MTREE_CALCULATORS", "4"))
         self.bind_merkle_tree_worker_zmq_listeners()
         self.current_mtree_worker_id = 1  # rotate through them evenly 1 -> 4
 
         headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
-        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers,
-            self.storage.headers_lock)
-        self.headers_threadsafe_blocks = HeadersAPIThreadsafe(self.storage.block_headers,
-            self.storage.block_headers_lock)
+        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
+        self.headers_threadsafe_blocks = HeadersAPIThreadsafe(
+            self.storage.block_headers, self.storage.block_headers_lock
+        )
         self.handlers = Handlers(self, self.net_config, self.storage)
         self.serializer = Serializer(self.net_config)
         self.deserializer = Deserializer(self.net_config)
@@ -88,7 +98,9 @@ class Controller(ControllerBase):
         self.ipc_sock_server: ThreadedTCPServer | None = None
 
         # Worker queues & events
-        self.worker_in_queue_preproc: queue.Queue[tuple[bytes, int, int, int]] = queue.Queue()  # no ack needed
+        self.worker_in_queue_preproc: queue.Queue[
+            tuple[bytes, int, int, int]
+        ] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_mtree: MultiprocessingQueue[bytes] = multiprocessing.Queue()
@@ -98,8 +110,9 @@ class Controller(ControllerBase):
         # Bitcoin Network Socket
         self.bitcoin_p2p_client: BitcoinP2PClient | None = None
 
-        self.estimated_moving_av_block_size_mb = 0.1 if \
-            self.sync_state.get_local_block_tip_height() < 2016 else 500
+        self.estimated_moving_av_block_size_mb = (
+            0.1 if self.sync_state.get_local_block_tip_height() < 2016 else 500
+        )
         self.aiohttp_client_session: aiohttp.ClientSession | None = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
 
@@ -110,8 +123,7 @@ class Controller(ControllerBase):
         for worker_id in range(1, self.WORKER_COUNT_MTREE_CALCULATORS + 1):
             uri = f"tcp://127.0.0.1:{BASE_PORT_NUM + worker_id}"
             self.logger.debug(f"Binding ZMQ merkle tree worker listener on: {uri}")
-            zmq_socket = bind_async_zmq_socket(self.zmq_async_context, uri,
-                zmq.SocketType.PUSH)
+            zmq_socket = bind_async_zmq_socket(self.zmq_async_context, uri, zmq.SocketType.PUSH)
             self.merkle_tree_worker_sockets[worker_id] = zmq_socket
 
     async def setup(self) -> None:
@@ -120,23 +132,32 @@ class Controller(ControllerBase):
             self,
             self.sync_state,
             self.worker_ack_queue_blk_writer,
-            self.blocks_batch_set_queue_raw
+            self.blocks_batch_set_queue_raw,
         )
         self.batch_completion_mtree = BatchCompletionMtree(
             self,
             self.sync_state,
             self.worker_ack_queue_mtree,
-            self.blocks_batch_set_queue_mtree
+            self.blocks_batch_set_queue_mtree,
         )
         self.batch_completion_mtree.start()
         self.batch_completion_raw.start()
 
     async def connect_session(self) -> None:
         peer = self.get_peer()
-        self.logger.debug("Connecting to (%s, %s) [%s]", peer.remote_host, peer.remote_port, self.net_config.NET)
+        self.logger.debug(
+            "Connecting to (%s, %s) [%s]",
+            peer.remote_host,
+            peer.remote_port,
+            self.net_config.NET,
+        )
         try:
-            self.bitcoin_p2p_client = BitcoinP2PClient(peer.remote_host, peer.remote_port,
-                self.handlers, self.net_config)
+            self.bitcoin_p2p_client = BitcoinP2PClient(
+                peer.remote_host,
+                peer.remote_port,
+                self.handlers,
+                self.net_config,
+            )
             await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
             await self.stop()
@@ -207,8 +228,12 @@ class Controller(ControllerBase):
     def get_peer(self) -> Peer:
         return self.peers[0]
 
-    def run_coro_threadsafe(self, coro: Callable[..., Coroutine[Any, Any, T2]],
-            *args: Sequence[str], **kwargs: dict[Any, Any]) -> None:
+    def run_coro_threadsafe(
+        self,
+        coro: Callable[..., Coroutine[Any, Any, T2]],
+        *args: Sequence[str],
+        **kwargs: dict[Any, Any],
+    ) -> None:
         asyncio.run_coroutine_threadsafe(coro(*args, **kwargs), self.loop)
 
     async def handle(self) -> None:
@@ -225,7 +250,7 @@ class Controller(ControllerBase):
 
     def start_workers(self) -> None:
         for i in range(self.WORKER_COUNT_MTREE_CALCULATORS):
-            worker_id = i+1
+            worker_id = i + 1
             mtree_proc = MTreeCalculator(worker_id, self.worker_ack_queue_mtree)
             mtree_proc.start()
             self.processes.append(mtree_proc)
@@ -236,10 +261,12 @@ class Controller(ControllerBase):
     def ipc_sock_server_thread(self) -> None:
         assert self.lmdb is not None
         host, port = get_conduit_raw_host_and_port()
-        self.ipc_sock_server = ThreadedTCPServer(addr=(host, port),
+        self.ipc_sock_server = ThreadedTCPServer(
+            addr=(host, port),
             handler=ThreadedTCPRequestHandler,
             headers_threadsafe_blocks=self.headers_threadsafe_blocks,
-            lmdb=self.lmdb)
+            lmdb=self.lmdb,
+        )
         self.ipc_sock_server.serve_forever()
 
     def database_integrity_check(self) -> None:
@@ -260,16 +287,21 @@ class Controller(ControllerBase):
                 # blocks will not change which could invalidate ConduitIndex
                 # records.
                 if height < tip_height:
-                    self.logger.debug(f"Re-synchronising blocks from from: "
-                                      f"{height} to {tip_height}")
+                    self.logger.debug(f"Re-synchronising blocks from from: " f"{height} to {tip_height}")
                     start_header = self.headers_threadsafe.get_header_for_height(height)
                     stop_header = self.headers_threadsafe.get_header_for_height(tip_height)
-                    self.new_headers_queue.put_nowait(HeaderSpan(is_reorg=False,
-                        start_header=start_header, stop_header=stop_header))
+                    self.new_headers_queue.put_nowait(
+                        HeaderSpan(
+                            is_reorg=False,
+                            start_header=start_header,
+                            stop_header=stop_header,
+                        )
+                    )
                 return None
             except AssertionError:
-                self.logger.debug(f"Block {hash_to_hex_str(header.hash)} failed integrity check. "
-                                  f"Repairing...")
+                self.logger.debug(
+                    f"Block {hash_to_hex_str(header.hash)} failed integrity check. " f"Repairing..."
+                )
                 self.lmdb.try_purge_block_data(header.hash)
                 height -= 1
 
@@ -302,7 +334,8 @@ class Controller(ControllerBase):
                 block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
         await self.bitcoin_p2p_client.send_message(
-            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
+            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
+        )
 
     async def _get_aiohttp_client_session(self) -> aiohttp.ClientSession:
         if not self.aiohttp_client_session:
@@ -321,10 +354,16 @@ class Controller(ControllerBase):
             blocks_tip = self.sync_state.get_local_block_tip()
             headers_tip = self.sync_state.get_local_tip()
             if headers_tip.height != 0:
-                self.logger.debug(f"Allocating headers to sync from: {blocks_tip.height} to "
-                                  f"{headers_tip.height}")
+                self.logger.debug(
+                    f"Allocating headers to sync from: {blocks_tip.height} to " f"{headers_tip.height}"
+                )
                 self.new_headers_queue.put_nowait(
-                    HeaderSpan(is_reorg=False, start_header=blocks_tip, stop_header=headers_tip))
+                    HeaderSpan(
+                        is_reorg=False,
+                        start_header=blocks_tip,
+                        stop_header=headers_tip,
+                    )
+                )
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             assert self.sync_state.target_header_height is not None
             while True:
@@ -339,14 +378,19 @@ class Controller(ControllerBase):
 
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
                 self.logger.debug(
-                    "New headers tip height: %s", self.sync_state.local_tip_height,
+                    "New headers tip height: %s",
+                    self.sync_state.local_tip_height,
                 )
                 self.new_headers_queue.put_nowait(msg)
         except Exception as e:
             self.logger.exception(f"Unexpected exception in sync_headers_job")
 
-    async def request_all_batch_block_data(self, _batch_id: int, blocks_batch_set: set[bytes],
-            stop_header_height: int) -> None:
+    async def request_all_batch_block_data(
+        self,
+        _batch_id: int,
+        blocks_batch_set: set[bytes],
+        stop_header_height: int,
+    ) -> None:
         """
         This method relies on the node responding to the prior getblocks request with up to 500
         inv messages.
@@ -358,13 +402,14 @@ class Controller(ControllerBase):
             inv = await self.sync_state.pending_blocks_inv_queue.get()
             # self.logger.debug(f"got block inv: {inv}, batch_id={_batch_id}")
             try:
-                header = self.headers_threadsafe.get_header_for_hash(
-                    hex_str_to_hash(inv.get("inv_hash")))
+                header = self.headers_threadsafe.get_header_for_hash(hex_str_to_hash(inv.get("inv_hash")))
             except MissingHeader as e:
                 if self.sync_state.pending_blocks_inv_queue.empty() and count_requested != 0:
-                    self.logger.exception(f"An unsolicited block "
+                    self.logger.exception(
+                        f"An unsolicited block "
                         f"({hash_to_hex_str(inv['inv_hash'])}) was pushed to the "
-                        f"pending_blocks_inv_queue - this should never happen.")
+                        f"pending_blocks_inv_queue - this should never happen."
+                    )
                 else:
                     continue
 
@@ -394,12 +439,13 @@ class Controller(ControllerBase):
 
     async def connect_done_block_headers(self, blocks_batch_set: set[bytes]) -> None:
         """If this returns False, it means a reorg happened"""
-        sorted_headers = sorted([(self.headers_threadsafe.get_header_for_hash(h).height, h) for h in
-            blocks_batch_set])
+        sorted_headers = sorted(
+            [(self.headers_threadsafe.get_header_for_hash(h).height, h) for h in blocks_batch_set]
+        )
         sorted_heights = [height for height, h in sorted_headers]
         # Assert the resultant blocks are consecutive with no gaps
         max_height = max(sorted_heights)
-        expected_block_heights = [i+1 for i in range(max_height-len(sorted_heights), max_height)]
+        expected_block_heights = [i + 1 for i in range(max_height - len(sorted_heights), max_height)]
         assert sorted_heights == expected_block_heights
 
         block_headers: bitcoinx.Headers = self.storage.block_headers
@@ -415,8 +461,9 @@ class Controller(ControllerBase):
         self.storage.block_headers.flush()
 
         tip = self.sync_state.get_local_block_tip()
-        self.logger.debug(f"Connected up to header height: {tip.height}, "
-                          f"hash: {hash_to_hex_str(tip.hash)}")
+        self.logger.debug(
+            f"Connected up to header height: {tip.height}, " f"hash: {hash_to_hex_str(tip.hash)}"
+        )
 
     def get_hash_stop(self, stop_header_height: int) -> bytes:
         # We should only really request enough blocks at a time to keep our
@@ -427,17 +474,23 @@ class Controller(ControllerBase):
                 hash_stop = ZERO_HASH
             else:
                 stop_height = stop_header_height + 1
-                header: bitcoinx.Header = self.storage.headers.header_at_height(node_longest_chain,
-                    stop_height)
+                header: bitcoinx.Header = self.storage.headers.header_at_height(
+                    node_longest_chain, stop_height
+                )
                 hash_stop = header.hash
             return hash_stop
 
-    async def wait_for_batched_blocks_completion(self, batch_id: int,
-            all_pending_block_hashes: set[bytes], stop_header_height: int) -> None:
+    async def wait_for_batched_blocks_completion(
+        self,
+        batch_id: int,
+        all_pending_block_hashes: set[bytes],
+        stop_header_height: int,
+    ) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
         try:
-            await self.request_all_batch_block_data(batch_id, all_pending_block_hashes.copy(),
-                stop_header_height)
+            await self.request_all_batch_block_data(
+                batch_id, all_pending_block_hashes.copy(), stop_header_height
+            )
 
             self.blocks_batch_set_queue_mtree.put_nowait(all_pending_block_hashes.copy())
             self.blocks_batch_set_queue_raw.put_nowait(all_pending_block_hashes.copy())
@@ -466,8 +519,7 @@ class Controller(ControllerBase):
         stop_header = self.headers_threadsafe.get_header_for_height(stop_header_height)
         return HeaderSpan(is_reorg, start_header, stop_header)
 
-    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
-            -> None:
+    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) -> None:
         assert self.bitcoin_p2p_client is not None
         original_stop_height = stop_header.height
         while True:
@@ -489,31 +541,39 @@ class Controller(ControllerBase):
                 if chain.tip.height > 2016:
                     await self.update_moving_average(chain.tip.height)
 
-                from_height = self.headers_threadsafe.get_header_for_hash(
-                    start_header.hash).height - 1
+                from_height = self.headers_threadsafe.get_header_for_hash(start_header.hash).height - 1
                 to_height = stop_header.height
 
             next_batch = self.sync_state.get_next_batched_blocks(from_height, to_height)
-            batch_count, all_pending_block_hashes, stop_header_height = next_batch
+            (
+                batch_count,
+                all_pending_block_hashes,
+                stop_header_height,
+            ) = next_batch
             hash_stop = self.get_hash_stop(stop_header_height)
 
             await self.bitcoin_p2p_client.send_message(
-                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
+                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop)
+            )
 
             # Workers are loaded by Handlers.on_block handler as messages are received
-            await self.wait_for_batched_blocks_completion(batch_id, all_pending_block_hashes,
-                stop_header_height)
+            await self.wait_for_batched_blocks_completion(
+                batch_id, all_pending_block_hashes, stop_header_height
+            )
 
             # ------------------------- Batch complete ------------------------- #
-            self.logger.debug(f"Controller Batch {batch_id} Complete."
-                f" New tip height: {self.sync_state.get_local_block_tip_height()}")
+            self.logger.debug(
+                f"Controller Batch {batch_id} Complete."
+                f" New tip height: {self.sync_state.get_local_block_tip_height()}"
+            )
 
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:
                 break
             else:
                 start_header = self.headers_threadsafe.get_header_for_height(
-                    start_header.height + batch_count)
+                    start_header.height + batch_count
+                )
 
     async def sync_all_blocks_job(self) -> None:
         """supervises completion of syncing all blocks to target height"""
@@ -571,8 +631,9 @@ class Controller(ControllerBase):
 
     async def spawn_aiohttp_api(self) -> None:
         assert self.lmdb is not None
-        self.tasks.append(create_task(server_main.main(self.lmdb, self.headers_threadsafe_blocks,
-            self.net_config)))
+        self.tasks.append(
+            create_task(server_main.main(self.lmdb, self.headers_threadsafe_blocks, self.net_config))
+        )
 
     async def spawn_poll_node_for_header_job(self) -> None:
         self.tasks.append(create_task(self.regtest_support.regtest_poll_node_for_tip_job()))

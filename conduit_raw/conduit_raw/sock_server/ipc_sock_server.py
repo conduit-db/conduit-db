@@ -21,8 +21,7 @@ from conduit_lib.types import BlockMetadata, Slice
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 
 struct_be_Q = struct.Struct(">Q")
-logger = logging.getLogger('rs-server')
-
+logger = logging.getLogger("rs-server")
 
 HandlerType = Callable[[BaseMsg], None]
 
@@ -42,7 +41,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
     This provides type safety without bringing in a heavy-weight dependency like protobufs.
     """
 
-    server: 'ThreadedTCPServer'
+    server: "ThreadedTCPServer"
     request: socket.socket
 
     def recvall(self, n: int) -> bytearray | None:
@@ -105,7 +104,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     return
 
                 msg: dict[str, Any] = cbor2.loads(data)
-                command = cast(str, msg['command'])
+                command = cast(str, msg["command"])
                 # logger.debug(f"Socket server: command {command} received")
 
                 request_type = REQUEST_MAP[command]
@@ -117,8 +116,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             if command:
                 logger.exception(f"Exception in ThreadedTCPRequestHandler.handle (command={command})")
             else:
-                logger.exception(
-                    f"Exception in ThreadedTCPRequestHandler.handle")
+                logger.exception(f"Exception in ThreadedTCPRequestHandler.handle")
 
     def ping(self, msg_req: ipc_sock_msg_types.PingRequest) -> None:
         msg_resp = ipc_sock_msg_types.PingResponse()
@@ -159,13 +157,11 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             raw_blocks_array = bytearray()
             for block_request in msg_req.block_requests:
                 block_number, (start_offset, end_offset) = block_request
-                raw_block_slice = self.server.lmdb.get_block(block_number,
-                    Slice(start_offset, end_offset))
+                raw_block_slice = self.server.lmdb.get_block(block_number, Slice(start_offset, end_offset))
 
                 # NOTE(AustEcon): should the client handle errors / null results?
                 len_slice = len(cast(bytes, raw_block_slice))
-                raw_blocks_array += struct.pack(f"<IQ{len_slice}s",
-                    block_number, len_slice, raw_block_slice)
+                raw_blocks_array += struct.pack(f"<IQ{len_slice}s", block_number, len_slice, raw_block_slice)
 
             # logger.debug(f"Sending block_batched response: len(raw_blocks_array):
             # {len(raw_blocks_array)}")
@@ -187,13 +183,15 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             else:
                 logger.debug(
                     f"Transaction offsets not found for block_hash: "
-                    f"{hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}")
+                    f"{hash_to_hex_str(msg_req.block_hash)}; level: {msg_req.level}"
+                )
                 self.send_msg(b"")
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.merkle_tree_row")
 
-    def transaction_offsets_batched(self,
-            msg_req: ipc_sock_msg_types.TransactionOffsetsBatchedRequest) -> None:
+    def transaction_offsets_batched(
+        self, msg_req: ipc_sock_msg_types.TransactionOffsetsBatchedRequest
+    ) -> None:
         try:
             tx_offsets_batch = []
             for block_hash in msg_req.block_hashes:
@@ -206,25 +204,26 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.transaction_offsets_batched")
 
-    def block_metadata_batched(self, msg_req: ipc_sock_msg_types.BlockMetadataBatchedRequest) \
-            -> None:
+    def block_metadata_batched(self, msg_req: ipc_sock_msg_types.BlockMetadataBatchedRequest) -> None:
         try:
             block_metadata_batch = []
             for block_hash in msg_req.block_hashes:
                 # NOTE(AustEcon): should the client handle errors / null results?
-                block_metadata = cast(BlockMetadata,
-                    self.server.lmdb.get_block_metadata(block_hash))
+                block_metadata = cast(
+                    BlockMetadata,
+                    self.server.lmdb.get_block_metadata(block_hash),
+                )
                 block_metadata_batch.append(block_metadata)
                 assert block_metadata is not None, "block_metadata is None"
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
-                block_metadata_batch=block_metadata_batch)
+                block_metadata_batch=block_metadata_batch
+            )
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.block_metadata_batched")
 
     def _get_header_for_height(self, height: int) -> bitcoinx.Header:
-        return self.server.headers_threadsafe_blocks.get_header_for_height(height,
-            lock=True)
+        return self.server.headers_threadsafe_blocks.get_header_for_height(height, lock=True)
 
     def headers_batched(self, msg_req: ipc_sock_msg_types.HeadersBatchedRequest) -> None:
         # Todo - this should not be doing a while True / sleep. It should be waiting on
@@ -264,17 +263,21 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         header_count_bytes = struct_be_Q.pack(header_count)
         self.request.sendall(header_count_bytes)
 
-        for height in range(start_height, end_height+1):
+        for height in range(start_height, end_height + 1):
             header = self.server.headers_threadsafe_blocks.get_header_for_height(height)
             self.request.sendall(header.raw)
         return True
 
     def reorg_differential(self, msg_req: ipc_sock_msg_types.ReorgDifferentialRequest) -> None:
         try:
-            removals_from_mempool, additions_to_mempool, orphaned_tx_hashes = \
-                self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
-            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(removals_from_mempool,
-                additions_to_mempool, orphaned_tx_hashes)
+            (
+                removals_from_mempool,
+                additions_to_mempool,
+                orphaned_tx_hashes,
+            ) = self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
+            msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(
+                removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
+            )
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.reorg_differential")
@@ -283,8 +286,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     is_running = True
 
-    def __init__(self, addr: tuple[str, int], handler: Type[ThreadedTCPRequestHandler],
-            headers_threadsafe_blocks: HeadersAPIThreadsafe, lmdb: LMDB_Database) -> None:
+    def __init__(
+        self,
+        addr: tuple[str, int],
+        handler: Type[ThreadedTCPRequestHandler],
+        headers_threadsafe_blocks: HeadersAPIThreadsafe,
+        lmdb: LMDB_Database,
+    ) -> None:
         self.allow_reuse_address = True
         super(ThreadedTCPServer, self).__init__(addr, handler)
         logger.info(f"Started IPC Socket Server on tcp://{addr[0]}:{addr[1]}")
@@ -292,8 +300,11 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.headers_threadsafe_blocks = headers_threadsafe_blocks
         self._active_request_sockets = set[tuple[bytes, socket.socket] | socket.socket]()
 
-    def finish_request(self, request_socket: tuple[bytes, socket.socket] | socket.socket,
-            client_address: tuple[str, int] | str) -> None:
+    def finish_request(
+        self,
+        request_socket: tuple[bytes, socket.socket] | socket.socket,
+        client_address: tuple[str, int] | str,
+    ) -> None:
         # There are two types of open connection. The listen socket and the connected client
         # sockets. Closing the listen socket does not close the connected client sockets, and those
         # threads can hang indefinitely. We keep track of the active client sockets and manually
@@ -322,13 +333,17 @@ if __name__ == "__main__":
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     lmdb = LMDB_Database(lock=True)
-    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444)
+    net_config = NetworkConfig(network_type=REGTEST, node_host="127.0.0.1", node_port=18444)
     block_headers = setup_headers_store(net_config, "test_headers.mmap")
     block_headers_lock = threading.RLock()
     headers_threadsafe_blocks = HeadersAPIThreadsafe(block_headers, block_headers_lock)
 
-    server = ThreadedTCPServer((HOST, PORT), ThreadedTCPRequestHandler,
-        headers_threadsafe_blocks, lmdb=lmdb)
+    server = ThreadedTCPServer(
+        (HOST, PORT),
+        ThreadedTCPRequestHandler,
+        headers_threadsafe_blocks,
+        lmdb=lmdb,
+    )
     with server:
         ip, port = server.server_address
         server.serve_forever()

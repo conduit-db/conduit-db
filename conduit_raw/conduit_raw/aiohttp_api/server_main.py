@@ -9,18 +9,20 @@ from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from .constants import SERVER_HOST, SERVER_PORT
 from .server import get_aiohttp_app, ApplicationState
 
-
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger("server")
 
 
 class AiohttpServer:
-
-    def __init__(self, app: web.Application, host: str = SERVER_HOST,
-            port: int = SERVER_PORT) -> None:
+    def __init__(
+        self,
+        app: web.Application,
+        host: str = SERVER_HOST,
+        port: int = SERVER_PORT,
+    ) -> None:
         self._runner: web.AppRunner | None = None
         self._app = app
-        self._app_state: ApplicationState = app['app_state']
+        self._app_state: ApplicationState = app["app_state"]
         self._app.on_startup.append(self.on_startup)
         self._app.on_shutdown.append(self.on_shutdown)
         self._app.freeze()  # No further callback modification allowed
@@ -36,8 +38,11 @@ class AiohttpServer:
         self._logger.debug("Stopped reference server API")
 
     async def start(self) -> None:
-        self._logger.debug("Starting reference server API on http://%s:%s", self._host,
-            self._port)
+        self._logger.debug(
+            "Starting reference server API on http://%s:%s",
+            self._host,
+            self._port,
+        )
         self._runner = web.AppRunner(self._app, access_log=None)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port, reuse_address=True)
@@ -49,8 +54,11 @@ class AiohttpServer:
         await self._runner.cleanup()
 
 
-async def main(lmdb: LMDB_Database, headers_threadsafe: HeadersAPIThreadsafe,
-        net_config: NetworkConfig) -> None:
+async def main(
+    lmdb: LMDB_Database,
+    headers_threadsafe: HeadersAPIThreadsafe,
+    net_config: NetworkConfig,
+) -> None:
     app, app_state = get_aiohttp_app(lmdb, headers_threadsafe, net_config)
     server = AiohttpServer(app)
     await server.start()

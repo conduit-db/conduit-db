@@ -3,14 +3,21 @@ import random
 from collections import namedtuple
 from typing import cast
 
-from bitcoinx import (CheckPoint, Bitcoin, BitcoinTestnet, BitcoinScalingTestnet, BitcoinRegtest,
-    Headers, MissingHeader, Network)
+from bitcoinx import (
+    CheckPoint,
+    Bitcoin,
+    BitcoinTestnet,
+    BitcoinScalingTestnet,
+    BitcoinRegtest,
+    Headers,
+    MissingHeader,
+    Network,
+)
 
 from .constants import MAINNET, TESTNET, SCALINGTESTNET, REGTEST
 from .startup_utils import cast_to_valid_ipv4
 from bitcoinx.chain import Chain
 from bitcoinx.networks import Header
-
 
 logger = logging.getLogger("networks")
 
@@ -152,8 +159,14 @@ class RegTestNet(AbstractNetwork):
 
 
 class NetworkConfig:
-    def __init__(self, network_type: str, node_host: str, node_port: int,
-            node_rpc_host: str="127.0.0.1", node_rpc_port: int=18332) -> None:
+    def __init__(
+        self,
+        network_type: str,
+        node_host: str,
+        node_port: int,
+        node_rpc_host: str = "127.0.0.1",
+        node_rpc_port: int = 18332,
+    ) -> None:
         network: AbstractNetwork = NETWORKS[network_type]
         self.node_host = cast_to_valid_ipv4(node_host)
         self.node_port = node_port
@@ -176,8 +189,8 @@ class NetworkConfig:
         self.peers: list[Peer] = []
         self.set_peers(network)
 
-    def get_peer(self) -> 'Peer':
-        return self.peers[random.randint(0, len(self.peers)-1)]
+    def get_peer(self) -> "Peer":
+        return self.peers[random.randint(0, len(self.peers) - 1)]
 
     def get_default_peers(self, network: AbstractNetwork) -> None:
         if isinstance(network, RegTestNet):
@@ -197,6 +210,7 @@ class NetworkConfig:
             self.peers = [Peer(host, port)]
         else:
             self.get_default_peers(network)
+
 
 NETWORKS = {
     MAINNET: MainNet(),

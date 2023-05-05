@@ -9,15 +9,15 @@ from .types import HeaderJSONType, HeaderTipJSONType, HeaderTipState
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
 
-logger = logging.getLogger('handlers-headers')
+logger = logging.getLogger("handlers-headers")
 
 
 async def get_header(request: web.Request) -> web.Response:
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     headers_threadsafe = app_state.headers_threadsafe
 
-    accept_type = request.headers.get('Accept', 'application/json')
-    blockhash = request.match_info.get('hash')
+    accept_type = request.headers.get("Accept", "application/json")
+    blockhash = request.match_info.get("hash")
     if not blockhash:
         raise web.HTTPBadRequest(reason=f"'hash' path parameter not supplied")
 
@@ -29,13 +29,14 @@ async def get_header(request: web.Request) -> web.Response:
     except bitcoinx.MissingHeader:
         raise web.HTTPNotFound()
 
-    if accept_type == 'application/octet-stream':
-        response_headers = {'Content-Type': 'application/octet-stream',
-                            'User-Agent': 'ESV-Ref-Server'}
-        return web.Response(body=header.raw, status=200, reason='OK',
-            headers=response_headers)
+    if accept_type == "application/octet-stream":
+        response_headers = {
+            "Content-Type": "application/octet-stream",
+            "User-Agent": "ESV-Ref-Server",
+        }
+        return web.Response(body=header.raw, status=200, reason="OK", headers=response_headers)
 
-    response_headers = {'User-Agent': 'ESV-Ref-Server'}
+    response_headers = {"User-Agent": "ESV-Ref-Server"}
     header_json = HeaderJSONType(
         hash=hash_to_hex_str(header.hash),
         version=header.version,
@@ -45,33 +46,39 @@ async def get_header(request: web.Request) -> web.Response:
         difficultyTarget=header.bits,
         nonce=header.nonce,
         transactionCount=0,
-        work=header.work()
+        work=header.work(),
     )
-    return web.json_response(header_json, status=200, reason='OK', headers=response_headers)
+    return web.json_response(header_json, status=200, reason="OK", headers=response_headers)
 
 
 async def get_headers_by_height(request: web.Request) -> web.Response:
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     headers_threadsafe = app_state.headers_threadsafe
 
-    accept_type = request.headers.get('Accept', 'application/json')
+    accept_type = request.headers.get("Accept", "application/json")
     params = request.rel_url.query
-    height = int(params.get('height', '0'))
-    count = int(params.get('count', '1'))
+    height = int(params.get("height", "0"))
+    count = int(params.get("count", "1"))
     available_count = min(headers_threadsafe.tip().height - height + 1, count)
-    if accept_type == 'application/octet-stream':
-        response_headers = {'Content-Type': 'application/octet-stream',
-                            'User-Agent': 'ESV-Ref-Server'}
+    if accept_type == "application/octet-stream":
+        response_headers = {
+            "Content-Type": "application/octet-stream",
+            "User-Agent": "ESV-Ref-Server",
+        }
         headers_bytearray = bytearray()
         for height in range(height, height + available_count):
             header = headers_threadsafe.get_header_for_height(height)
             headers_bytearray += header.raw
-        return web.Response(body=headers_bytearray, status=200, reason='OK',
-            headers=response_headers)
+        return web.Response(
+            body=headers_bytearray,
+            status=200,
+            reason="OK",
+            headers=response_headers,
+        )
 
     # else: application/json
     headers_json_list = []
-    response_headers = {'User-Agent': 'ESV-Ref-Server'}
+    response_headers = {"User-Agent": "ESV-Ref-Server"}
     for height in range(height, height + available_count):
         header = headers_threadsafe.get_header_for_height(height)
         hash: str
@@ -83,30 +90,32 @@ async def get_headers_by_height(request: web.Request) -> web.Response:
         nonce: int
         transactionCount: int
         work: int
-        headers_json_list.append(HeaderJSONType(
-            hash=hash_to_hex_str(header.hash),
-            version=header.version,
-            prevBlockHash=hash_to_hex_str(header.prev_hash),
-            merkleRoot=hash_to_hex_str(header.merkle_root),
-            creationTimestamp=header.timestamp,
-            difficultyTarget=header.bits,
-            nonce=header.nonce,
-            transactionCount=0,
-            work=header.work()
-        ))
-    return web.json_response(headers_json_list, status=200, reason='OK', headers=response_headers)
+        headers_json_list.append(
+            HeaderJSONType(
+                hash=hash_to_hex_str(header.hash),
+                version=header.version,
+                prevBlockHash=hash_to_hex_str(header.prev_hash),
+                merkleRoot=hash_to_hex_str(header.merkle_root),
+                creationTimestamp=header.timestamp,
+                difficultyTarget=header.bits,
+                nonce=header.nonce,
+                transactionCount=0,
+                work=header.work(),
+            )
+        )
+    return web.json_response(headers_json_list, status=200, reason="OK", headers=response_headers)
 
 
 async def get_chain_tips(request: web.Request) -> web.Response:
-    app_state: ApplicationState = request.app['app_state']
+    app_state: ApplicationState = request.app["app_state"]
     headers_threadsafe = app_state.headers_threadsafe
-    accept_type = request.headers.get('Accept', 'application/json')
+    accept_type = request.headers.get("Accept", "application/json")
     if accept_type not in {"application/json", "*/*"}:
         raise web.HTTPNotAcceptable(reason="Can only give an 'application/json response type")
 
     params = request.rel_url.query
-    longest_chain = int(params.get('longest_chain', '0'))
-    response_headers = {'User-Agent': 'ESV-Ref-Server'}
+    longest_chain = int(params.get("longest_chain", "0"))
+    response_headers = {"User-Agent": "ESV-Ref-Server"}
 
     chain: Chain
     tips = []
@@ -127,10 +136,9 @@ async def get_chain_tips(request: web.Request) -> web.Response:
             difficultyTarget=tip_header.bits,
             nonce=tip_header.nonce,
             transactionCount=0,
-            work=tip_header.work()
+            work=tip_header.work(),
         )
-        chain_work = headers_threadsafe.chain_work_for_chain_and_heigth(chain,
-            tip_header.height)
+        chain_work = headers_threadsafe.chain_work_for_chain_and_heigth(chain, tip_header.height)
         chainWork: int
         height: int
         confirmations: int
@@ -142,5 +150,4 @@ async def get_chain_tips(request: web.Request) -> web.Response:
             height=tip_header.height,
         )
         tips.append(tip_response_json)
-    return web.json_response(tips, status=200, reason='OK', headers=response_headers)
-
+    return web.json_response(tips, status=200, reason="OK", headers=response_headers)

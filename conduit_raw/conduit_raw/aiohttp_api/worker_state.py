@@ -18,9 +18,16 @@ from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .constants import UTXO_REGISTRATION_TOPIC, PUSHDATA_REGISTRATION_TOPIC
 
 from .mysql_db_tip_filtering import MySQLTipFilterQueries
-from .types import OutputSpendRow, OutpointStateUpdate, OutpointMessageType, \
-    RequestId, PushdataFilterStateUpdate, \
-    TipFilterRegistrationEntry, PushdataFilterMessageType, BackendWorkerOfflineError
+from .types import (
+    OutputSpendRow,
+    OutpointStateUpdate,
+    OutpointMessageType,
+    RequestId,
+    PushdataFilterStateUpdate,
+    TipFilterRegistrationEntry,
+    PushdataFilterMessageType,
+    BackendWorkerOfflineError,
+)
 
 if typing.TYPE_CHECKING:
     from .server import ApplicationState
@@ -32,25 +39,39 @@ logger = logging.getLogger("server")
 
 
 class WorkerStateManager:
-
-    def __init__(self, app_state: 'ApplicationState',
-            mysql_db_tip_filter_queries: MySQLTipFilterQueries) -> None:
+    def __init__(
+        self,
+        app_state: "ApplicationState",
+        mysql_db_tip_filter_queries: MySQLTipFilterQueries,
+    ) -> None:
         self.app_state = app_state
         self.mysql_db = mysql_db_tip_filter_queries
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
-        ZMQ_BIND_HOST = os.getenv('ZMQ_BIND_HOST', "127.0.0.1")
+        ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")
         logger.debug(f"Binding zmq utxo and pushdata sockets on host: {ZMQ_BIND_HOST}")
-        self.socket_utxo_spend_registrations = bind_async_zmq_socket(self.zmq_async_context,
-            f'tcp://{ZMQ_BIND_HOST}:60000', zmq.SocketType.PUB)
-        self.socket_utxo_spend_notifications = bind_async_zmq_socket(self.zmq_async_context,
-            f'tcp://{ZMQ_BIND_HOST}:60001', zmq.SocketType.PULL)
-        self.socket_pushdata_registrations = bind_async_zmq_socket(self.zmq_async_context,
-            f'tcp://{ZMQ_BIND_HOST}:60002', zmq.SocketType.PUB)
-        self.socket_pushdata_notifications = bind_async_zmq_socket(self.zmq_async_context,
-            f'tcp://{ZMQ_BIND_HOST}:60003', zmq.SocketType.PULL)
+        self.socket_utxo_spend_registrations = bind_async_zmq_socket(
+            self.zmq_async_context,
+            f"tcp://{ZMQ_BIND_HOST}:60000",
+            zmq.SocketType.PUB,
+        )
+        self.socket_utxo_spend_notifications = bind_async_zmq_socket(
+            self.zmq_async_context,
+            f"tcp://{ZMQ_BIND_HOST}:60001",
+            zmq.SocketType.PULL,
+        )
+        self.socket_pushdata_registrations = bind_async_zmq_socket(
+            self.zmq_async_context,
+            f"tcp://{ZMQ_BIND_HOST}:60002",
+            zmq.SocketType.PUB,
+        )
+        self.socket_pushdata_notifications = bind_async_zmq_socket(
+            self.zmq_async_context,
+            f"tcp://{ZMQ_BIND_HOST}:60003",
+            zmq.SocketType.PULL,
+        )
 
-        self.WORKER_COUNT_TX_PARSERS = int(os.getenv('WORKER_COUNT_TX_PARSERS', '4'))
+        self.WORKER_COUNT_TX_PARSERS = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
         self._utxo_spend_inbound_queue: asyncio.Queue[OutpointStateUpdate] = asyncio.Queue()
         self._pushdata_inbound_queue: asyncio.Queue[PushdataFilterStateUpdate] = asyncio.Queue()
 
@@ -74,11 +95,12 @@ class WorkerStateManager:
     def spawn_tasks(self) -> None:
         self.app_state.tasks = [
             create_task(self.listen_for_utxo_spend_notifications_async()),
-            create_task(self.listen_for_pushdata_notifications_async())
+            create_task(self.listen_for_pushdata_notifications_async()),
         ]
 
-    async def wait_for_output_spend_worker_acks(self, request_id: RequestId,
-            outpoints: list[OutpointType]) -> None:
+    async def wait_for_output_spend_worker_acks(
+        self, request_id: RequestId, outpoints: list[OutpointType]
+    ) -> None:
         """Ensure that all workers ACK for receiving the new outpoint registrations"""
         expected_total_ack_count = self.WORKER_COUNT_TX_PARSERS * len(outpoints)
         self.expected_ack_outpoint_count_map[request_id] = expected_total_ack_count
@@ -101,14 +123,19 @@ class WorkerStateManager:
                         return
                 except asyncio.QueueEmpty:
                     if time.time() - start_time > timeout:
-                        logger.error("Waited over %s seconds for workers "
-                            "to acknowkedge the state update, but got no response" % timeout)
-                        raise BackendWorkerOfflineError("Waited over %s seconds for workers "
-                            "to acknowkedge the state update, but got no response" % timeout)
+                        logger.error(
+                            "Waited over %s seconds for workers "
+                            "to acknowkedge the state update, but got no response" % timeout
+                        )
+                        raise BackendWorkerOfflineError(
+                            "Waited over %s seconds for workers "
+                            "to acknowkedge the state update, but got no response" % timeout
+                        )
                     await asyncio.sleep(0.1)
 
-    async def register_output_spend_notifications(self, outpoints: list[OutpointType]) \
-            -> list[OutputSpendRow]:
+    async def register_output_spend_notifications(
+        self, outpoints: list[OutpointType]
+    ) -> list[OutputSpendRow]:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
@@ -117,22 +144,33 @@ class WorkerStateManager:
             request_id = os.urandom(16).hex()
             for outpoint in outpoints:
                 outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx)
-                msg = OutpointStateUpdate(request_id, OutpointMessageType.REGISTER,
-                    outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx), None, None)
-                await zmq_send_no_block_async(self.socket_utxo_spend_registrations,
-                    UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
+                msg = OutpointStateUpdate(
+                    request_id,
+                    OutpointMessageType.REGISTER,
+                    outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx),
+                    None,
+                    None,
+                )
+                await zmq_send_no_block_async(
+                    self.socket_utxo_spend_registrations,
+                    UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg),
+                    timeout=timeout,
+                )
         except TimeoutError:
-            logger.error("Waited over %s seconds for workers "
-                "to acknowledge the output spend state update, but got no response" % timeout)
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowledge"
-                "the state update, but got no response" % timeout)
+            logger.error(
+                "Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout
+            )
+            raise BackendWorkerOfflineError(
+                "Waited over %s seconds for workers to acknowledge"
+                "the state update, but got no response" % timeout
+            )
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
         # Subsequent notifications are send via the web socket.
         logger.debug(f"Successfully sent utxo registrations for {len(outpoints)} outpoints")
         return self.mysql_db.get_spent_outpoints(outpoints, self.app_state.lmdb)
 
-    async def unregister_output_spend_notifications(self, outpoints: list[OutpointType]) \
-            -> None:
+    async def unregister_output_spend_notifications(self, outpoints: list[OutpointType]) -> None:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
@@ -141,15 +179,27 @@ class WorkerStateManager:
             request_id = os.urandom(16).hex()
             for outpoint in outpoints:
                 outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx)
-                msg = OutpointStateUpdate(request_id, OutpointMessageType.UNREGISTER,
-                    outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx), None, None)
-                await zmq_send_no_block_async(self.socket_utxo_spend_registrations,
-                    UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
+                msg = OutpointStateUpdate(
+                    request_id,
+                    OutpointMessageType.UNREGISTER,
+                    outpoint_struct.pack(outpoint.tx_hash, outpoint.out_idx),
+                    None,
+                    None,
+                )
+                await zmq_send_no_block_async(
+                    self.socket_utxo_spend_registrations,
+                    UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg),
+                    timeout=timeout,
+                )
         except TimeoutError:
-            logger.error("Waited over %s seconds for workers "
-                "to acknowledge the output spend state update, but got no response" % timeout)
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                "the state update, but got no response" % timeout)
+            logger.error(
+                "Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout
+            )
+            raise BackendWorkerOfflineError(
+                "Waited over %s seconds for workers to acknowkedge"
+                "the state update, but got no response" % timeout
+            )
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
         logger.debug(f"Successfully sent utxo unregistrations for {len(outpoints)} outpoints")
 
@@ -161,14 +211,20 @@ class WorkerStateManager:
         try:
             request_id = os.urandom(16).hex()
             msg = OutpointStateUpdate(request_id, OutpointMessageType.CLEAR_ALL, None, None, None)
-            await zmq_send_no_block_async(self.socket_utxo_spend_registrations,
+            await zmq_send_no_block_async(
+                self.socket_utxo_spend_registrations,
                 UTXO_REGISTRATION_TOPIC + cbor2.dumps(msg),
-                timeout=timeout)
+                timeout=timeout,
+            )
         except TimeoutError:
-            logger.error("Waited over %s seconds for workers "
-                "to acknowledge the output spend state update, but got no response" % timeout)
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowledge                    "
-                "the state update, but got no response" % timeout)
+            logger.error(
+                "Waited over %s seconds for workers "
+                "to acknowledge the output spend state update, but got no response" % timeout
+            )
+            raise BackendWorkerOfflineError(
+                "Waited over %s seconds for workers to acknowledge                    "
+                "the state update, but got no response" % timeout
+            )
 
         # Fake outpoints are to make the ack accounting work in `wait_for_output_spend_worker_acks`
         fake_outpoints = []
@@ -176,13 +232,17 @@ class WorkerStateManager:
             fake_outpoints.append(OutpointType(tx_hash=b"", out_idx=0))
         await self.wait_for_output_spend_worker_acks(request_id, fake_outpoints)
 
-    async def wait_for_pushdata_worker_acks(self, request_id: RequestId,
-            pushdata_registrations: list[TipFilterRegistrationEntry]) -> None:
+    async def wait_for_pushdata_worker_acks(
+        self,
+        request_id: RequestId,
+        pushdata_registrations: list[TipFilterRegistrationEntry],
+    ) -> None:
         """Ensure that all workers ACK for receiving the new outpoint registrations"""
         expected_total_ack_count = self.WORKER_COUNT_TX_PARSERS * len(pushdata_registrations)
         self.expected_ack_pushdata_count_map[request_id] = expected_total_ack_count
-        self.expected_ack_pushdata_map[request_id] = \
-            set([registration.pushdata_hash for registration in pushdata_registrations])
+        self.expected_ack_pushdata_map[request_id] = set(
+            [registration.pushdata_hash for registration in pushdata_registrations]
+        )
 
         timeout = 10.0
         start_time = time.time()
@@ -192,70 +252,105 @@ class WorkerStateManager:
 
                 # In theory there could be cross-talk between aiohttp async handlers
                 # so the PUB/SUB messages could contain notifications for different request_ids
-                self.expected_ack_pushdata_count_map[notification.request_id] -= \
-                    len(notification.entries)
+                self.expected_ack_pushdata_count_map[notification.request_id] -= len(notification.entries)
                 if notification.request_id == request_id:
                     for entry in notification.entries:
                         entry_obj = TipFilterRegistrationEntry(*entry)
-                        assert entry_obj.pushdata_hash in \
-                               self.expected_ack_pushdata_map[request_id]
+                        assert entry_obj.pushdata_hash in self.expected_ack_pushdata_map[request_id]
 
                 if self.expected_ack_pushdata_count_map[request_id] == 0:
                     return
             except asyncio.QueueEmpty:
                 if time.time() - start_time > timeout:
-                    logger.error("Waited over %s seconds for workers "
-                        "to acknowledge the pushdata state update, but got no response" % timeout)
-                    raise BackendWorkerOfflineError("Waited over %s seconds for workers to "
-                        "acknowledge the pushdata state update, but got no response" % timeout)
+                    logger.error(
+                        "Waited over %s seconds for workers "
+                        "to acknowledge the pushdata state update, but got no response" % timeout
+                    )
+                    raise BackendWorkerOfflineError(
+                        "Waited over %s seconds for workers to "
+                        "acknowledge the pushdata state update, but got no response" % timeout
+                    )
                 await asyncio.sleep(0.1)
                 logger.debug(f"Waiting for worker ACKs for new pushdata registrations")
 
-    async def register_pushdata_notifications(self,
-            pushdata_registrations: list[TipFilterRegistrationEntry]) -> None:
+    async def register_pushdata_notifications(
+        self, pushdata_registrations: list[TipFilterRegistrationEntry]
+    ) -> None:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
         timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
-            msg = PushdataFilterStateUpdate(request_id, PushdataFilterMessageType.REGISTER,
-                pushdata_registrations, [], ZERO_HASH)
-            await zmq_send_no_block_async(self.socket_pushdata_registrations,
-                PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
+            msg = PushdataFilterStateUpdate(
+                request_id,
+                PushdataFilterMessageType.REGISTER,
+                pushdata_registrations,
+                [],
+                ZERO_HASH,
+            )
+            await zmq_send_no_block_async(
+                self.socket_pushdata_registrations,
+                PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg),
+                timeout=timeout,
+            )
         except TimeoutError:
-            logger.error("Waited over %s seconds for workers "
-                         "to acknowledge the pushdata state update, but got no response" % timeout)
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                "the state update, but got no response" % timeout)
+            logger.error(
+                "Waited over %s seconds for workers "
+                "to acknowledge the pushdata state update, but got no response" % timeout
+            )
+            raise BackendWorkerOfflineError(
+                "Waited over %s seconds for workers to acknowkedge"
+                "the state update, but got no response" % timeout
+            )
         await self.wait_for_pushdata_worker_acks(request_id, pushdata_registrations)
 
-    async def unregister_pushdata_notifications(self,
-            pushdata_registrations: list[TipFilterRegistrationEntry]) \
-            -> None:
+    async def unregister_pushdata_notifications(
+        self, pushdata_registrations: list[TipFilterRegistrationEntry]
+    ) -> None:
         """raises `BackendWorkerOfflineError"""
         # TODO Persist to database in case of server restart
         # TODO This should all be relative to a client account_id
         timeout = 10.0
         try:
             request_id = os.urandom(16).hex()
-            msg = PushdataFilterStateUpdate(request_id, PushdataFilterMessageType.UNREGISTER,
-                pushdata_registrations, [], ZERO_HASH)
-            await zmq_send_no_block_async(self.socket_pushdata_registrations,
-                PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg), timeout=timeout)
+            msg = PushdataFilterStateUpdate(
+                request_id,
+                PushdataFilterMessageType.UNREGISTER,
+                pushdata_registrations,
+                [],
+                ZERO_HASH,
+            )
+            await zmq_send_no_block_async(
+                self.socket_pushdata_registrations,
+                PUSHDATA_REGISTRATION_TOPIC + cbor2.dumps(msg),
+                timeout=timeout,
+            )
         except TimeoutError:
-            logger.error("Waited over %s seconds for workers "
-                         "to acknowledge the pushdata state update, but got no response" % timeout)
-            raise BackendWorkerOfflineError("Waited over %s seconds for workers to acknowkedge"
-                "the state update, but got no response" % timeout)
+            logger.error(
+                "Waited over %s seconds for workers "
+                "to acknowledge the pushdata state update, but got no response" % timeout
+            )
+            raise BackendWorkerOfflineError(
+                "Waited over %s seconds for workers to acknowkedge"
+                "the state update, but got no response" % timeout
+            )
         await self.wait_for_pushdata_worker_acks(request_id, pushdata_registrations)
 
     def _broadcast_spent_output_event(self, output_spend: bytes) -> None:
         # For debugging only
-        out_tx_hash, out_idx, in_tx_hash, in_idx, block_hash = output_spend_struct.unpack(
-            output_spend)
-        logger.debug("Broadcasting spent output event for %s:%d",
-            hash_to_hex_str(out_tx_hash), out_idx)
+        (
+            out_tx_hash,
+            out_idx,
+            in_tx_hash,
+            in_idx,
+            block_hash,
+        ) = output_spend_struct.unpack(output_spend)
+        logger.debug(
+            "Broadcasting spent output event for %s:%d",
+            hash_to_hex_str(out_tx_hash),
+            out_idx,
+        )
         # We do not provide any kind of message envelope at this time as this is the only
         # kind of message we send.
         self.app_state.ws_queue.put_nowait(output_spend)
@@ -271,8 +366,7 @@ class WorkerStateManager:
             if notification.command & OutpointMessageType.READY:
                 assert notification.worker_id is not None
                 self.worker_ready_event_map[notification.worker_id].set()
-                if all([event.is_set() for event in
-                        self.worker_ready_event_map.values()]):
+                if all([event.is_set() for event in self.worker_ready_event_map.values()]):
                     self.all_workers_connected_event.set()
                     logger.debug(f"All backend 'TxParser' workers are ready")
             elif notification.command & OutpointMessageType.ACK:
@@ -297,11 +391,15 @@ class WorkerStateManager:
 
                 if notification.block_hash is not None:
                     local_new_tip_event = asyncio.Event()
-                    if self.app_state.pushdata_notification_can_send_event\
-                            .get(notification.block_hash) is None:
-                        self.app_state.pushdata_notification_can_send_event[notification.block_hash] = \
-                            local_new_tip_event
+                    if (
+                        self.app_state.pushdata_notification_can_send_event.get(notification.block_hash)
+                        is None
+                    ):
+                        self.app_state.pushdata_notification_can_send_event[
+                            notification.block_hash
+                        ] = local_new_tip_event
                 # else, it's a mempool notification
 
-                self.app_state.dispatch_tip_filter_notifications(matches, notification.block_hash,
-                    notification.request_id)
+                self.app_state.dispatch_tip_filter_notifications(
+                    matches, notification.block_hash, notification.request_id
+                )

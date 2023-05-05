@@ -57,8 +57,14 @@ class OutputSpend(NamedTuple):
     block_hash: bytes | None
 
     @classmethod
-    def from_network(cls, out_tx_hash: bytes, out_index: int, in_tx_hash: bytes, in_index: int,
-            block_hash: bytes | None) -> OutputSpend:
+    def from_network(
+        cls,
+        out_tx_hash: bytes,
+        out_index: int,
+        in_tx_hash: bytes,
+        in_index: int,
+        block_hash: bytes | None,
+    ) -> OutputSpend:
         """
         Convert the binary representation to the Python representation.
         """
@@ -67,10 +73,13 @@ class OutputSpend(NamedTuple):
         return OutputSpend(out_tx_hash, out_index, in_tx_hash, in_index, block_hash)
 
     def __repr__(self) -> str:
-        return f'OutputSpend(out_tx_hash="{hash_to_hex_str(self.out_tx_hash)}", ' \
-            f'out_index={self.out_index}, in_tx_hash="{hash_to_hex_str(self.in_tx_hash)}", ' \
-            f'in_index={self.in_index}, block_hash=' + \
-            (f'"{hash_to_hex_str(self.block_hash)}"' if self.block_hash else 'None') +')'
+        return (
+            f'OutputSpend(out_tx_hash="{hash_to_hex_str(self.out_tx_hash)}", '
+            f'out_index={self.out_index}, in_tx_hash="{hash_to_hex_str(self.in_tx_hash)}", '
+            f"in_index={self.in_index}, block_hash="
+            + (f'"{hash_to_hex_str(self.block_hash)}"' if self.block_hash else "None")
+            + ")"
+        )
 
 
 def _generate_client_key_data() -> VerifiableKeyDataDict:
@@ -80,7 +89,7 @@ def _generate_client_key_data() -> VerifiableKeyDataDict:
     return {
         "public_key_hex": CLIENT_IDENTITY_PRIVATE_KEY.public_key.to_hex(),
         "message_hex": message_bytes.hex(),
-        "signature_hex": signature_bytes.hex()
+        "signature_hex": signature_bytes.hex(),
     }
 
 
@@ -112,10 +121,14 @@ async def setup_reference_server_account() -> str:
     async with aiohttp.ClientSession() as session:
         async with session.post(obtain_server_key_url, json=key_data) as response:
             if response.status != HTTPStatus.OK:
-                logger.error("Unexpected status in payment key endpoint response (vkd) %d (%s)",
-                    response.status, response.reason)
+                logger.error(
+                    "Unexpected status in payment key endpoint response (vkd) %d (%s)",
+                    response.status,
+                    response.reason,
+                )
                 raise aiohttp.ClientError(
-                    f"Bad response status code: {response.status}, reason: {response.reason}")
+                    f"Bad response status code: {response.status}, reason: {response.reason}"
+                )
 
             response_value = await response.json()
 
@@ -133,23 +146,23 @@ async def setup_reference_server_account() -> str:
 async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str]:
     create_peer_channel_uri = "http://localhost:47124/api/v1/channel/manage"
     body = {
-      "public_read": True,
-      "public_write": True,
-      "sequenced": True,
-      "retention": {
-        "min_age_days": 0,
-        "max_age_days": 0,
-        "auto_prune": True
-      }
+        "public_read": True,
+        "public_write": True,
+        "sequenced": True,
+        "retention": {"min_age_days": 0, "max_age_days": 0, "auto_prune": True},
     }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
     async with aiohttp.ClientSession() as session:
         async with session.post(create_peer_channel_uri, json=body, headers=headers) as response:
             if response.status != HTTPStatus.OK:
                 raise aiohttp.ClientError(
-                    f"Bad response status code: {response.status}, reason: {response.reason}")
+                    f"Bad response status code: {response.status}, reason: {response.reason}"
+                )
             result = await response.json()
-            owner_token: str = result['access_tokens'][0]['token']
+            owner_token: str = result["access_tokens"][0]["token"]
 
     tipFilterCallbackUrl = f"http://127.0.0.1:47124/api/v1/channel/{result['id']}"
     tipFilterCallbackToken = f"Bearer {owner_token}"
@@ -161,8 +174,9 @@ class IndexerServerSettings(TypedDict):
     tipFilterCallbackToken: str | None
 
 
-async def register_tip_filter_settings(api_key: str, indexer_settings: IndexerServerSettings) \
-        -> IndexerServerSettings:
+async def register_tip_filter_settings(
+    api_key: str, indexer_settings: IndexerServerSettings
+) -> IndexerServerSettings:
     uri = REFERENCE_SERVER_URL + "api/v1/indexer"
     headers = {"Authorization": f"Bearer {api_key}"}
     async with aiohttp.ClientSession() as session:
@@ -173,7 +187,9 @@ async def register_tip_filter_settings(api_key: str, indexer_settings: IndexerSe
             return cast(IndexerServerSettings, await response.json())
 
 
-async def register_for_utxo_notifications(api_key: str) -> list[tuple[str, int]]:
+async def register_for_utxo_notifications(
+    api_key: str,
+) -> list[tuple[str, int]]:
     uri = REFERENCE_SERVER_URL + "api/v1/output-spend/notifications"
     headers = {"Authorization": f"Bearer {api_key}"}
     async with aiohttp.ClientSession() as session:
@@ -190,8 +206,7 @@ async def register_for_utxo_notifications(api_key: str) -> list[tuple[str, int]]
                 await asyncio.sleep(5)
 
 
-async def delete_peer_channel_message_async(remote_channel_id: str,
-        access_token: str, sequence: int) -> None:
+async def delete_peer_channel_message_async(remote_channel_id: str, access_token: str, sequence: int) -> None:
     """
     Use the reference peer channel implementation API for deleting a message in a peer channel.
 
@@ -204,18 +219,27 @@ async def delete_peer_channel_message_async(remote_channel_id: str,
         async with session.delete(uri, headers=headers) as response:
             if response.status != HTTPStatus.OK:
                 raise aiohttp.ClientError(
-                    f"Bad response status code: {response.status}, reason: {response.reason}")
+                    f"Bad response status code: {response.status}, reason: {response.reason}"
+                )
 
 
-async def register_for_pushdata_notifications(api_key: str) -> list[tuple[str, int]]:
+async def register_for_pushdata_notifications(
+    api_key: str,
+) -> list[tuple[str, int]]:
     uri = REFERENCE_SERVER_URL + "api/v1/transaction/filter"
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json",
-        "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
     async with aiohttp.ClientSession() as session:
         while True:
             try:
-                async with session.post(uri, data=json.dumps(PUSHDATAS).encode('utf-8'),
-                        headers=headers) as response:
+                async with session.post(
+                    uri,
+                    data=json.dumps(PUSHDATAS).encode("utf-8"),
+                    headers=headers,
+                ) as response:
                     if response.status != HTTPStatus.OK:
                         logger.error(response.reason)
                         raise aiohttp.ClientError(response.reason)
@@ -240,10 +264,13 @@ async def setup_reference_server_tip_filtering():
             logger.debug(f"Reference server is not yet ready. Retrying in 5 seconds")
             await asyncio.sleep(5)
 
-    tipFilterCallbackUrl, tipFilterCallbackToken = await create_tip_filter_peer_channel(api_key)
+    (
+        tipFilterCallbackUrl,
+        tipFilterCallbackToken,
+    ) = await create_tip_filter_peer_channel(api_key)
     indexer_settings = IndexerServerSettings(
         tipFilterCallbackUrl=tipFilterCallbackUrl,
-        tipFilterCallbackToken=tipFilterCallbackToken
+        tipFilterCallbackToken=tipFilterCallbackToken,
     )
     indexer_settings = await register_tip_filter_settings(api_key, indexer_settings)
 
@@ -251,8 +278,9 @@ async def setup_reference_server_tip_filtering():
     return indexer_settings, api_key
 
 
-def process_reference_server_message_bytes(message_bytes: bytes) \
-        -> tuple[AccountMessageKind, ChannelNotification | OutputSpend]:
+def process_reference_server_message_bytes(
+    message_bytes: bytes,
+) -> tuple[AccountMessageKind, ChannelNotification | OutputSpend]:
     try:
         message_kind_value: int = struct.unpack_from(">I", message_bytes, 0)[0]
     except (TypeError, struct.error):
@@ -270,15 +298,22 @@ def process_reference_server_message_bytes(message_bytes: bytes) \
         try:
             message = json.loads(message_bytes[4:].decode("utf-8"))
         except (TypeError, json.decoder.JSONDecodeError):
-            raise BadServerError("Received an invalid peer channel message from a "
-                "server you are using for peer channels (cannot decode as JSON)")
+            raise BadServerError(
+                "Received an invalid peer channel message from a "
+                "server you are using for peer channels (cannot decode as JSON)"
+            )
 
         # Verify that this at least looks like a valid `ChannelNotification` message.
-        if not isinstance(message, dict) or len(message) != 2 or \
-                not isinstance(message.get("id", None), str) or \
-                not isinstance(message.get("notification", None), str):
-            raise BadServerError("Received an invalid peer channel message from a "
-                "server you are using (unrecognised structure)")
+        if (
+            not isinstance(message, dict)
+            or len(message) != 2
+            or not isinstance(message.get("id", None), str)
+            or not isinstance(message.get("notification", None), str)
+        ):
+            raise BadServerError(
+                "Received an invalid peer channel message from a "
+                "server you are using (unrecognised structure)"
+            )
 
         return message_kind, cast(ChannelNotification, message)
     elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
@@ -288,8 +323,10 @@ def process_reference_server_message_bytes(message_bytes: bytes) \
             # `TypeError`: This is raised when the arguments passed are not one bytes object.
             # `struct.error`: This is raised when the bytes object is invalid, whether not long
             #     enough or of incompatible types.
-            raise BadServerError("Received an invalid blockchain services message "
-                "from a server you are using (unable to decode)")
+            raise BadServerError(
+                "Received an invalid blockchain services message "
+                "from a server you are using (unable to decode)"
+            )
 
         return message_kind, OutputSpend.from_network(*spent_output_fields)
     else:
@@ -305,8 +342,9 @@ class GenericPeerChannelMessage(TypedDict):
     payload: Any
 
 
-async def list_peer_channel_messages_async(url: str, access_token: str,
-        unread_only: bool=True) -> list[GenericPeerChannelMessage]:
+async def list_peer_channel_messages_async(
+    url: str, access_token: str, unread_only: bool = True
+) -> list[GenericPeerChannelMessage]:
     headers = {"Authorization": access_token, "Accept": "application/json"}
     query_parameters: dict[str, str] = {}
     if unread_only:
@@ -316,11 +354,15 @@ async def list_peer_channel_messages_async(url: str, access_token: str,
             async with session.get(url, headers=headers, params=query_parameters) as response:
                 if response.status != HTTPStatus.OK:
                     raise aiohttp.ClientError(
-                        f"Bad response status code: {response.status}, reason: {response.reason}")
+                        f"Bad response status code: {response.status}, reason: {response.reason}"
+                    )
                 return cast(list[GenericPeerChannelMessage], await response.json())
     except aiohttp.ClientError:
         # NOTE(exception-details) We log this because we are not sure yet that we do not need
         #     this detail. At a later stage if we are confident that all the exceptions here
         #     are reasonable and expected, we can remove this.
-        logger.debug("Wrapped aiohttp exception (do we need to preserve this?)", exc_info=True)
+        logger.debug(
+            "Wrapped aiohttp exception (do we need to preserve this?)",
+            exc_info=True,
+        )
         raise ServerConnectionError(f"Unable to establish server connection: {url}")

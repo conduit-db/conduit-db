@@ -15,10 +15,8 @@ network = sys.argv[2]  # e.g. 'mainnet' / 'testnet' / 'regtest'
 node_host = sys.argv[3]  # e.g. 127.0.0.1:18444
 lmdb_dir = sys.argv[4]  # e.g. /mnt/data/lmdb_data
 
-
 net_config = NetworkConfig(network, node_host)
 headers = setup_headers_store(net_config, headers_path)
-
 
 # Get ordered list of block hashes by height
 ordered_block_hashes = []
@@ -37,11 +35,19 @@ cumulative_tx_count = 0
 lines = []
 
 import bitcoinx
+
 block_hash = bitcoinx.hex_str_to_hash("1ccd26ea6d3c1a017bd490051b6bd23c9a9f7f27ee9c47a723278e487a5455a9")
 lmdb_db.get_tx_offsets(block_hash)
 
-headers = ['Height', 'Cumulative Tx Count', 'Blockchain Total Size (MB)', 'Tx Count', 'Block Size (MB)', 'Block Hash']
-with open('metrics.csv', 'w') as f:
+headers = [
+    "Height",
+    "Cumulative Tx Count",
+    "Blockchain Total Size (MB)",
+    "Tx Count",
+    "Block Size (MB)",
+    "Block Hash",
+]
+with open("metrics.csv", "w") as f:
     f.write(",".join(headers) + "\n")
     f.flush()
 
@@ -55,16 +61,24 @@ with open('metrics.csv', 'w') as f:
 
             blk_size = lmdb_db.get_block_metadata(block_hash) / 1024**2  # MB
             cumulative_blockchain_size += blk_size
-            print(f'Height: {height}, '
-                  f'Cumulative Tx Count: {cumulative_tx_count},'
-                  f'Blockchain Total Size: {cumulative_blockchain_size} MB, '
-                  f'Tx Count: {tx_count}, '
-                  f'Block Size: {blk_size} MiB, '
-                  f'Block Hash: {bitcoinx.hash_to_hex_str(block_hash)}')
-            line = [height, cumulative_tx_count, cumulative_blockchain_size, tx_count, blk_size, bitcoinx.hash_to_hex_str(block_hash)]
+            print(
+                f"Height: {height}, "
+                f"Cumulative Tx Count: {cumulative_tx_count},"
+                f"Blockchain Total Size: {cumulative_blockchain_size} MB, "
+                f"Tx Count: {tx_count}, "
+                f"Block Size: {blk_size} MiB, "
+                f"Block Hash: {bitcoinx.hash_to_hex_str(block_hash)}"
+            )
+            line = [
+                height,
+                cumulative_tx_count,
+                cumulative_blockchain_size,
+                tx_count,
+                blk_size,
+                bitcoinx.hash_to_hex_str(block_hash),
+            ]
             f.write(",".join([str(x) for x in line]) + "\n")
             f.flush()
 
         except Exception as e:
             print(e)
-

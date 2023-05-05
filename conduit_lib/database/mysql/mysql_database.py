@@ -12,17 +12,21 @@ from .mysql_api_queries import MySQLAPIQueries
 from .mysql_bulk_loads import MySQLBulkLoads
 from .mysql_queries import MySQLQueries
 from .mysql_tables import MySQLTables
-from .types import PushdataRow, InputRow, OutputRow, ConfirmedTransactionRow, MempoolTransactionRow, \
-    MinedTxHashes
+from .types import (
+    PushdataRow,
+    InputRow,
+    OutputRow,
+    ConfirmedTransactionRow,
+    MempoolTransactionRow,
+    MinedTxHashes,
+)
 from ...utils import get_log_level
-
 
 T1 = TypeVar("T1")
 
 
 class MySQLDatabase:
-
-    def __init__(self, mysql_conn: MySQLdb.Connection, worker_id: int | None=None) -> None:
+    def __init__(self, mysql_conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
         self.mysql_conn = mysql_conn
         self.worker_id = worker_id
         self.tables = MySQLTables(self.mysql_conn)
@@ -37,7 +41,7 @@ class MySQLDatabase:
 
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.logger = logging.getLogger("mysql-database")
-        self.logger.setLevel(get_log_level('conduit_index'))
+        self.logger.setLevel(get_log_level("conduit_index"))
 
     def set_myrocks_settings(self) -> None:
         # SET global rocksdb_max_subcompactions=8
@@ -59,19 +63,13 @@ class MySQLDatabase:
         self.mysql_conn.close()
 
     def start_transaction(self) -> None:
-        self.mysql_conn.query(
-            """START TRANSACTION;"""
-        )
+        self.mysql_conn.query("""START TRANSACTION;""")
 
     def commit_transaction(self) -> None:
-        self.mysql_conn.query(
-            """COMMIT;"""
-        )
+        self.mysql_conn.query("""COMMIT;""")
 
     def rollback_transaction(self) -> None:
-        self.mysql_conn.query(
-            """ROLLBACK;"""
-        )
+        self.mysql_conn.query("""ROLLBACK;""")
 
     # TABLES
     def mysql_drop_tables(self) -> None:
@@ -93,14 +91,18 @@ class MySQLDatabase:
     def mysql_load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         self.queries.mysql_load_temp_mined_tx_hashes(mined_tx_hashes)
 
-    def mysql_load_temp_inbound_tx_hashes(self,
-            inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str) -> None:
+    def mysql_load_temp_inbound_tx_hashes(
+        self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
+    ) -> None:
         self.queries.mysql_load_temp_inbound_tx_hashes(inbound_tx_hashes, inbound_tx_table_name)
 
-    def mysql_get_unprocessed_txs(self, is_reorg: bool,
-            new_tx_hashes: list[tuple[str]], inbound_tx_table_name: str) -> set[bytes]:
-        return self.queries.mysql_get_unprocessed_txs(is_reorg, new_tx_hashes,
-            inbound_tx_table_name)
+    def mysql_get_unprocessed_txs(
+        self,
+        is_reorg: bool,
+        new_tx_hashes: list[tuple[str]],
+        inbound_tx_table_name: str,
+    ) -> set[bytes]:
+        return self.queries.mysql_get_unprocessed_txs(is_reorg, new_tx_hashes, inbound_tx_table_name)
 
     def mysql_invalidate_mempool_rows(self) -> None:
         self.queries.mysql_invalidate_mempool_rows()
@@ -126,18 +128,24 @@ class MySQLDatabase:
 
 
 def get_connection() -> Connection:
-    host = os.environ.get('MYSQL_HOST', '127.0.0.1')
-    port = int(os.environ.get('MYSQL_PORT', 52525))  # not 3306 because of docker issues
-    user = os.getenv('MYSQL_USER', 'root')
-    password = os.getenv('MYSQL_PASSWORD', 'conduitpass')
-    database = os.getenv('MYSQL_DATABASE', 'conduitdb')
+    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
+    port = int(os.environ.get("MYSQL_PORT", 52525))  # not 3306 because of docker issues
+    user = os.getenv("MYSQL_USER", "root")
+    password = os.getenv("MYSQL_PASSWORD", "conduitpass")
+    database = os.getenv("MYSQL_DATABASE", "conduitdb")
 
-    conn: MySQLdb.Connection = MySQLdb.connect(host=host, port=port, user=user, password=password,
-        database=database, local_infile=1)
+    conn: MySQLdb.Connection = MySQLdb.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        database=database,
+        local_infile=1,
+    )
     return conn
 
 
-def mysql_connect(worker_id: int | None=None) -> MySQLDatabase:
+def mysql_connect(worker_id: int | None = None) -> MySQLDatabase:
     conn = get_connection()
     return MySQLDatabase(conn, worker_id=worker_id)
 

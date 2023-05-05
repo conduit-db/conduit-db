@@ -20,16 +20,16 @@ REFERENCE_SERVER_PORT = 47126
 
 
 class AccountFlag(IntFlag):
-    NONE                                    = 0
+    NONE = 0
 
 
 class OutboundDataFlag(IntFlag):
-    NONE                                    = 0
-    TIP_FILTER_NOTIFICATIONS                = 1 << 0
-    DISPATCHED_SUCCESSFULLY                 = 1 << 20
+    NONE = 0
+    TIP_FILTER_NOTIFICATIONS = 1 << 0
+    DISPATCHED_SUCCESSFULLY = 1 << 20
 
 
-MARIADB_MAX_BIND_VARIABLES = 2^16-1
+MARIADB_MAX_BIND_VARIABLES = 2 ^ 16 - 1
 
 UTXO_REGISTRATION_ACK_TIMEOUT = 5.0  # seconds
 

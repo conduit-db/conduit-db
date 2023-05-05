@@ -17,15 +17,19 @@ class TestStorage:
         "database_host": "127.0.0.1",
         "database_port": 5432,
         "database_password": "conduitpass",
-        "server_type": "ConduitRaw"
+        "server_type": "ConduitRaw",
     }
 
-    net_config = NetworkConfig(get_network_type(), node_host='127.0.0.1', node_port=18444)
+    net_config = NetworkConfig(get_network_type(), node_host="127.0.0.1", node_port=18444)
     headers = bitcoinx.Headers(
-        net_config.BITCOINX_COIN, MODULE_DIR / "data/headers.mmap", net_config.CHECKPOINT
+        net_config.BITCOINX_COIN,
+        MODULE_DIR / "data/headers.mmap",
+        net_config.CHECKPOINT,
     )
     block_headers = bitcoinx.Headers(
-        net_config.BITCOINX_COIN, MODULE_DIR / "data/block_headers.mmap", net_config.CHECKPOINT
+        net_config.BITCOINX_COIN,
+        MODULE_DIR / "data/block_headers.mmap",
+        net_config.CHECKPOINT,
     )
     # storage = setup_storage(config, net_config)
     # redis = None  # NotImplemented

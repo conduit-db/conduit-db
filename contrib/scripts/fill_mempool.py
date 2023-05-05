@@ -23,9 +23,16 @@ import electrumsv_node
 import bitcoinx
 import struct
 
-from bitcoinx import BitcoinRegtest, TxInput, Script, SEQUENCE_FINAL, TxOutput, Tx, SigHash, \
-    hex_str_to_hash
-
+from bitcoinx import (
+    BitcoinRegtest,
+    TxInput,
+    Script,
+    SEQUENCE_FINAL,
+    TxOutput,
+    Tx,
+    SigHash,
+    hex_str_to_hash,
+)
 
 SIGHASH_FORKID = 0x40
 SIGHASH_ALL = 0x01
@@ -46,27 +53,30 @@ def get_change_output(pubkey, change_amount):
 
 
 def create_txs():
-    result = electrumsv_node.call_any('listunspent', 0).json()['result']
+    result = electrumsv_node.call_any("listunspent", 0).json()["result"]
     utxos = {}  # address: utxo
     for utxo in result:
-        if utxo['spendable']:
-            addr = utxo['address']
+        if utxo["spendable"]:
+            addr = utxo["address"]
             if not utxos.get(addr):
                 utxos[addr] = []
             utxos[addr].append(utxo)
 
-
     rawtxs = []
     for addr in utxos:
-        priv_key = electrumsv_node.call_any('dumpprivkey', addr).json()['result']
+        priv_key = electrumsv_node.call_any("dumpprivkey", addr).json()["result"]
         key = bitcoinx.PrivateKey.from_WIF(priv_key)
         pubkey: bitcoinx.PublicKey = key.public_key
 
         # Make 1 tx per utxo
         for utxo in utxos[addr]:
-            value = int(Decimal(str(utxo['amount'])) * 100_000_000)
-            input = TxInput(prev_hash=hex_str_to_hash(utxo['txid']), prev_idx=int(utxo['vout']),
-                script_sig=Script(), sequence=SEQUENCE_FINAL)
+            value = int(Decimal(str(utxo["amount"])) * 100_000_000)
+            input = TxInput(
+                prev_hash=hex_str_to_hash(utxo["txid"]),
+                prev_idx=int(utxo["vout"]),
+                script_sig=Script(),
+                sequence=SEQUENCE_FINAL,
+            )
 
             output = get_random_output()
             tx = Tx(inputs=[input], outputs=[output], locktime=0x00000000, version=1)
@@ -78,13 +88,18 @@ def create_txs():
             change_output = get_change_output(pubkey, change_amount=change_amount)
             tx.outputs.append(change_output)
             for idx, input in enumerate(tx.inputs):
-                sig_hash = tx.signature_hash(input_index=idx, value=value,
+                sig_hash = tx.signature_hash(
+                    input_index=idx,
+                    value=value,
                     script_code=pubkey.P2PK_script(),
-                    sighash=SigHash(SIGHASH_ALL | SIGHASH_FORKID))
+                    sighash=SigHash(SIGHASH_ALL | SIGHASH_FORKID),
+                )
                 sig = key.sign(sig_hash, None)
-                script_sig = Script().push_many([
-                    sig + struct.pack('B', (SIGHASH_ALL | SIGHASH_FORKID)),
-                ])
+                script_sig = Script().push_many(
+                    [
+                        sig + struct.pack("B", (SIGHASH_ALL | SIGHASH_FORKID)),
+                    ]
+                )
                 tx.inputs[0].script_sig = Script(script_sig)
                 rawtxs.append(tx.to_hex())
     return rawtxs
@@ -96,7 +111,7 @@ def main():
             futures = []
             rawtxs = create_txs()
             for rawtx in rawtxs:
-                fut = tpe.submit(electrumsv_node.call_any, 'sendrawtransaction', rawtx)
+                fut = tpe.submit(electrumsv_node.call_any, "sendrawtransaction", rawtx)
                 futures.append(fut)
 
             for fut in concurrent.futures.as_completed(futures):
@@ -108,5 +123,5 @@ def main():
         print(f"Sent {len(rawtxs)} transactions to the node")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

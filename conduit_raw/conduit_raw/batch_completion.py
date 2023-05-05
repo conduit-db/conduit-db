@@ -23,9 +23,14 @@ expensive (given the creation of a socket connection).
 class BatchCompletionRaw(threading.Thread):
     """Only Processes ACK messages from the BlockWriter worker"""
 
-    def __init__(self, controller: 'Controller', sync_state: 'SyncState',
-            worker_ack_queue_blk_writer: Queue[bytes],
-            blocks_batch_set_queue_raw: Queue[set[bytes]], daemon: bool=True) -> None:
+    def __init__(
+        self,
+        controller: "Controller",
+        sync_state: "SyncState",
+        worker_ack_queue_blk_writer: Queue[bytes],
+        blocks_batch_set_queue_raw: Queue[set[bytes]],
+        daemon: bool = True,
+    ) -> None:
         threading.Thread.__init__(self, daemon=daemon)
         self.logger = logging.getLogger("batch-completion-raw")
         self.controller: Controller = controller
@@ -42,8 +47,9 @@ class BatchCompletionRaw(threading.Thread):
                 blocks_batch_set.remove(block_hash)
             else:
                 header = self.get_header_for_hash(block_hash)
-                self.logger.error(f"also wrote unexpected block: {hash_to_hex_str(header.hash)}"
-                                  f" {header.height} to disc")
+                self.logger.error(
+                    f"also wrote unexpected block: {hash_to_hex_str(header.hash)}" f" {header.height} to disc"
+                )
 
             # all blocks in batch processed
             if len(blocks_batch_set) == 0:
@@ -66,12 +72,13 @@ class BatchCompletionMtree(threading.Thread):
     """Only Processes ACK messages from the MTree worker"""
 
     def __init__(
-            self,
-            controller: 'Controller',
-            sync_state: 'SyncState',
-            worker_ack_queue_mtree: Queue[bytes],
-            blocks_batch_set_queue_mtree: Queue[set[bytes]],
-            daemon: bool=True) -> None:
+        self,
+        controller: "Controller",
+        sync_state: "SyncState",
+        worker_ack_queue_mtree: Queue[bytes],
+        blocks_batch_set_queue_mtree: Queue[set[bytes]],
+        daemon: bool = True,
+    ) -> None:
         threading.Thread.__init__(self, daemon=daemon)
 
         self.logger = logging.getLogger("batch-completion-mtree")
@@ -89,8 +96,9 @@ class BatchCompletionMtree(threading.Thread):
                 blocks_batch_set.remove(block_hash)
             else:
                 header = self.get_header_for_hash(block_hash)
-                self.logger.error(f"also wrote unexpected block: {hash_to_hex_str(header.hash)}"
-                                  f" {header.height} to disc")
+                self.logger.error(
+                    f"also wrote unexpected block: {hash_to_hex_str(header.hash)}" f" {header.height} to disc"
+                )
 
             # all blocks in batch processed
             if len(blocks_batch_set) == 0:

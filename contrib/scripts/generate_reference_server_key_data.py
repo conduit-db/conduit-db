@@ -22,9 +22,9 @@ def _generate_client_key_data() -> VerifiableKeyDataDict:
     return {
         "public_key_hex": CLIENT_IDENTITY_PRIVATE_KEY.public_key.to_hex(),
         "message_hex": message_bytes.hex(),
-        "signature_hex": signature_bytes.hex()
+        "signature_hex": signature_bytes.hex(),
     }
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print(json.dumps(_generate_client_key_data()))

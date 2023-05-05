@@ -12,14 +12,18 @@ from conduit_lib.algorithms import get_mtree_node_counts_per_level, calc_depth
 from conduit_lib.constants import PROFILING
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.database.lmdb.types import MerkleTree, MerkleTreeRow
-from conduit_lib.types import MerkleTreeArrayLocation, TxMetadata, TxLocation, Slice, DataLocation
+from conduit_lib.types import (
+    MerkleTreeArrayLocation,
+    TxMetadata,
+    TxLocation,
+    Slice,
+    DataLocation,
+)
 
 if typing.TYPE_CHECKING:
     from conduit_lib import LMDB_Database
 
-
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 from conduit_lib.algorithms import MTree
 
@@ -36,16 +40,15 @@ def _pack_list_to_concatenated_bytes(hashes: list[bytes]) -> bytearray:
 
 
 class LmdbMerkleTree:
-
     logger = logging.getLogger("lmdb-merkle-tree")
     logger.setLevel(PROFILING)
     MTREE_DB = b"mtree_db"
 
-    def __init__(self, db: 'LMDB_Database'):
+    def __init__(self, db: "LMDB_Database"):
         self.db = db
 
-        merkle_trees_dir = Path(os.environ["DATADIR_HDD"]) / 'merkle_trees'
-        merkle_trees_lockfile = Path(os.environ['DATADIR_SSD']) / 'merkle_trees.lock'
+        merkle_trees_dir = Path(os.environ["DATADIR_HDD"]) / "merkle_trees"
+        merkle_trees_lockfile = Path(os.environ["DATADIR_SSD"]) / "merkle_trees.lock"
         self.ffdb = FlatFileDb(merkle_trees_dir, merkle_trees_lockfile)
         self.mtree_db = self.db.env.open_db(self.MTREE_DB)
 
@@ -57,9 +60,12 @@ class LmdbMerkleTree:
             mtree_array += value
         return mtree_array
 
-    def _get_merkle_slice_for_level(self,
-            mtree_array_loc: MerkleTreeArrayLocation,
-            node_counts: list[int], level: int) -> Slice:
+    def _get_merkle_slice_for_level(
+        self,
+        mtree_array_loc: MerkleTreeArrayLocation,
+        node_counts: list[int],
+        level: int,
+    ) -> Slice:
         """Given a flattened array of all levels of the merkle tree, give back
         the slice to get the desired level"""
         hash_length = 32
@@ -89,48 +95,45 @@ class LmdbMerkleTree:
     def get_tx_hash_by_loc(self, tx_loc: TxLocation, mtree_base_level: int) -> bytes:
         with self.db.env.begin(db=self.mtree_db) as txn:
             tx_hashes_bytes = self.get_mtree_row(tx_loc.block_hash, level=mtree_base_level)
-            assert tx_hashes_bytes is not None, "If there is a TxLocation, there should be a " \
-                                                "valid tx_hash"
-            tx_hash = tx_hashes_bytes[tx_loc.tx_position*32:(tx_loc.tx_position+1)*32]
+            assert tx_hashes_bytes is not None, "If there is a TxLocation, there should be a " "valid tx_hash"
+            tx_hash = tx_hashes_bytes[tx_loc.tx_position * 32 : (tx_loc.tx_position + 1) * 32]
             return tx_hash
 
-    def get_data_location(self,  block_hash: bytes) -> DataLocation | None:
+    def get_data_location(self, block_hash: bytes) -> DataLocation | None:
         with self.db.env.begin(db=self.mtree_db, buffers=False) as txn:
             mtree_location_bytes: bytes = txn.get(block_hash)
             if not mtree_location_bytes:
-                self.logger.error(f"Merkle tree for block_hash: "
-                                  f"{hash_to_hex_str(block_hash)} not found")
+                self.logger.error(f"Merkle tree for block_hash: " f"{hash_to_hex_str(block_hash)} not found")
                 return None
-        read_path, start_offset_in_dat_file, end_offset_in_dat_file, base_node_count = cbor2.loads(
-            mtree_location_bytes)
+        (
+            read_path,
+            start_offset_in_dat_file,
+            end_offset_in_dat_file,
+            base_node_count,
+        ) = cbor2.loads(mtree_location_bytes)
         return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
 
-    def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) \
-            -> bytes:
+    def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) -> bytes:
         """level zero is the merkle root node"""
         if cursor:
             val = bytes(cursor.get(block_hash))
         else:
             with self.db.env.begin(db=self.mtree_db) as txn:
                 val = bytes(txn.get(block_hash))
-        mtree_array_location: MerkleTreeArrayLocation = \
-            MerkleTreeArrayLocation(*cbor2.loads(val))
-        node_counts = get_mtree_node_counts_per_level(
-            mtree_array_location.base_node_count)
+        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*cbor2.loads(val))
+        node_counts = get_mtree_node_counts_per_level(mtree_array_location.base_node_count)
 
-        slice = self._get_merkle_slice_for_level(
-            mtree_array_location, node_counts, level)
+        slice = self._get_merkle_slice_for_level(mtree_array_location, node_counts, level)
         node_slice = Slice(
-            slice.start_offset + position*32,
-            slice.start_offset + (position+1)*32
+            slice.start_offset + position * 32,
+            slice.start_offset + (position + 1) * 32,
         )
         node_hash = self._get_merkle_tree_data(block_hash, node_slice)
         assert node_hash is not None
         assert len(node_hash) == 32
         return node_hash
 
-    def get_mtree_row(self, block_hash: bytes, level: int,
-            cursor: lmdb.Cursor | None=None) -> bytes | None:
+    def get_mtree_row(self, block_hash: bytes, level: int, cursor: lmdb.Cursor | None = None) -> bytes | None:
         """level zero is the merkle root node"""
         if cursor:
             val = bytes(cursor.get(block_hash))
@@ -138,17 +141,14 @@ class LmdbMerkleTree:
             with self.db.env.begin(db=self.mtree_db) as txn:
                 val = bytes(txn.get(block_hash))
 
-        mtree_array_location: MerkleTreeArrayLocation = \
-            MerkleTreeArrayLocation(*cbor2.loads(val))
-        node_counts = get_mtree_node_counts_per_level(
-            mtree_array_location.base_node_count)
+        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*cbor2.loads(val))
+        node_counts = get_mtree_node_counts_per_level(mtree_array_location.base_node_count)
         slice = self._get_merkle_slice_for_level(mtree_array_location, node_counts, level)
         return self._get_merkle_tree_data(block_hash, slice)
 
     def get_merkle_branch(self, tx_metadata: TxMetadata) -> tuple[list[str], str] | None:
         block_metadata = self.db.get_block_metadata(tx_metadata.block_hash)
-        assert block_metadata is not None, "Null checks should already have " \
-                                           "been done in the caller"
+        assert block_metadata is not None, "Null checks should already have " "been done in the caller"
         base_level = calc_depth(block_metadata.tx_count) - 1
         block_hash = tx_metadata.block_hash
 
@@ -189,7 +189,7 @@ class LmdbMerkleTree:
     def put_merkle_trees(self, batched_merkle_trees: list[MerkleTreeRow]) -> None:
         """In the current design we store the entire txid set and all levels of the merkle tree)
         We need the full, ordered txid set for other queries anyway so there is little to be gained
-        by not storing the interior hashes as well. """
+        by not storing the interior hashes as well."""
         with self.db.env.begin(db=self.mtree_db, write=True, buffers=False) as txn:
             cursor = txn.cursor()
             with self.ffdb:
@@ -210,6 +210,6 @@ class LmdbMerkleTree:
                         write_path=data_location.file_path,
                         start_offset=data_location.start_offset,
                         end_offset=data_location.end_offset,
-                        base_node_count=base_node_count
+                        base_node_count=base_node_count,
                     )
                     cursor.put(block_hash, cbor2.dumps(mtree_array_location))

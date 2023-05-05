@@ -6,9 +6,9 @@ from typing import Callable, Optional
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
-os.environ['NETWORK'] = 'regtest'
-os.environ['DATADIR_HDD'] = './datadir'
-os.environ['DATADIR_SSD'] = './datadir'
+os.environ["NETWORK"] = "regtest"
+os.environ["DATADIR_HDD"] = "./datadir"
+os.environ["DATADIR_SSD"] = "./datadir"
 
 with open(MODULE_DIR / "data/block400000.raw", "rb") as f:
     TEST_RAW_BLOCK_400000 = f.read()

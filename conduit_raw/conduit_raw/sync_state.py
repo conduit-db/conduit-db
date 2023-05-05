@@ -5,7 +5,9 @@ import logging
 import typing
 from typing import cast
 
-from conduit_lib.constants import TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
+from conduit_lib.constants import (
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW,
+)
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.store import Storage
 
@@ -21,15 +23,14 @@ class SyncState:
     can be requested from the node.
     """
 
-    def __init__(self, storage: Storage, controller: 'Controller') -> None:
+    def __init__(self, storage: Storage, controller: "Controller") -> None:
         self.logger = logging.getLogger("sync-state")
         self.storage = storage
         self.controller = controller
         self.headers_threadsafe = self.controller.headers_threadsafe
         self.headers_threadsafe_blocks = self.controller.headers_threadsafe_blocks
 
-        self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header] | None] \
-            = asyncio.Queue()
+        self.headers_msg_processed_queue: asyncio.Queue[tuple[bool, Header, Header] | None] = asyncio.Queue()
         self.headers_new_tip_queue: asyncio.Queue[Inv] = asyncio.Queue()
         self.headers_event_initial_sync: asyncio.Event = asyncio.Event()
         self.blocks_event_new_tip: asyncio.Event = asyncio.Event()
@@ -39,8 +40,7 @@ class SyncState:
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
         # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = \
-            asyncio.Queue()
+        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = asyncio.Queue()
 
         # Accounting and ack'ing for block msgs
         self.all_pending_block_hashes = set[bytes]()  # usually a set of 500 hashes during IBD
@@ -71,8 +71,7 @@ class SyncState:
     def set_target_header_height(self, height: int) -> None:
         self.target_header_height = height
 
-    def get_next_batched_blocks(self, from_height: int, to_height: int) \
-            -> tuple[int, set[bytes], int]:
+    def get_next_batched_blocks(self, from_height: int, to_height: int) -> tuple[int, set[bytes], int]:
         """Key Variables
         - stop_header_height
         - all_pending_block_hashes
@@ -81,7 +80,8 @@ class SyncState:
         block_height_deficit = to_height - from_height
 
         estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
-            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW)
+            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
+        )
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
         stop_header_height = from_height + batch_count + 1

@@ -19,11 +19,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="remote_port for remote daemon; defaults=[mainnet=8333, testnet=18333, "
         "scaling-testnet=9333, regtest=18444]",
     )
+    parser.add_argument("--mainnet", action="store_true", dest=MAINNET, help="use mainnet")
     parser.add_argument(
-        "--mainnet", action="store_true", dest=MAINNET, help="use mainnet"
-    )
-    parser.add_argument(
-        "--testnet", action="store_true", dest=TESTNET, help="use testnet (default)"
+        "--testnet",
+        action="store_true",
+        dest=TESTNET,
+        help="use testnet (default)",
     )
     parser.add_argument(
         "--scaling-testnet",
@@ -52,7 +53,7 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="reset",
         help="will wipe block_headers.mmap, headers.mmap and drop the LMDB and postgres database "
-             "(for convenience when testing on RegTest)",
+        "(for convenience when testing on RegTest)",
     )
     parser.add_argument(
         "--mysql-host",
@@ -60,8 +61,7 @@ def get_parser() -> argparse.ArgumentParser:
         dest="mysql_host",
         default="127.0.0.1:52525",
         type=str,
-        help="e.g. localhost:52525 for use outside of docker or "
-             "mysql:3306 for use within docker",
+        help="e.g. localhost:52525 for use outside of docker or " "mysql:3306 for use within docker",
     )
     parser.add_argument(
         "--node-host",
@@ -70,7 +70,7 @@ def get_parser() -> argparse.ArgumentParser:
         default="127.0.0.1:18444",
         type=str,
         help="e.g. localhost:18444 for use outside of docker or "
-             "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC remote_port)",
+        "node:18444 for use within docker (this refers to the NODE_P2P_PORT not the RPC remote_port)",
     )
     parser.add_argument(
         "--lmdb-path",

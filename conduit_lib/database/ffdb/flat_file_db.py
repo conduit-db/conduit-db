@@ -26,7 +26,7 @@ class FlatFileDbWriteFailedError(Exception):
     pass
 
 
-MAX_DAT_FILE_SIZE = 128 * (1024 ** 2)  # 128MB
+MAX_DAT_FILE_SIZE = 128 * (1024**2)  # 128MB
 
 
 class FlatFileDb:
@@ -65,15 +65,15 @@ class FlatFileDb:
         self.datadir = datadir
         self.mutable_file_lock_path = mutable_file_lock_path
         assert str(self.mutable_file_lock_path).endswith(
-            ".lock"), "mutable_file_lock_path must end with '.lock'"
+            ".lock"
+        ), "mutable_file_lock_path must end with '.lock'"
 
         if not self.datadir.exists():
             os.makedirs(self.datadir, exist_ok=True)
 
         # Inter-process synchronization of access to the mutable file
         # WARNING mutable_file_lock_path needs to exactly match across threads and processes
-        self.mutable_file_rwlock = InterProcessReaderWriterLock(
-            str(self.mutable_file_lock_path))
+        self.mutable_file_rwlock = InterProcessReaderWriterLock(str(self.mutable_file_lock_path))
 
         # Initialization
         with self.mutable_file_rwlock.write_lock():
@@ -81,9 +81,8 @@ class FlatFileDb:
             # Create file data_00000000.dat if it's the first time opening the datadir
             self.mutable_file_path = self._file_num_to_mutable_file_path(file_num=0)
             if not self.mutable_file_path.exists():
-                logger.debug(f"Initializing datadir {self.datadir} by creating"
-                             f" {self.mutable_file_path}")
-                with open(self.mutable_file_path, 'ab') as f:
+                logger.debug(f"Initializing datadir {self.datadir} by creating" f" {self.mutable_file_path}")
+                with open(self.mutable_file_path, "ab") as f:
                     f.flush()
                     os.fsync(f.fileno())
 
@@ -100,12 +99,16 @@ class FlatFileDb:
             self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
             self.immutable_files = set(_immutable_files)
 
-    def __enter__(self) -> 'FlatFileDb':
+    def __enter__(self) -> "FlatFileDb":
         self.threading_lock.acquire()
         return self
 
-    def __exit__(self, exc_type: Type[BaseException] | None, exc_val: BaseException | None,
-            exc_tb: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.threading_lock.release()
 
     def _file_num_to_mutable_file_path(self, file_num: int) -> Path:
@@ -119,9 +122,10 @@ class FlatFileDb:
         filename = filename.removesuffix(".dat")
         return int(filename)
 
-    def _maybe_get_new_mutable_file(self, force_new_file: bool=False) -> tuple[Path, int]:
+    def _maybe_get_new_mutable_file(self, force_new_file: bool = False) -> tuple[Path, int]:
         """This function is idempotent. Caller must use a Write lock"""
         assert self.mutable_file_path is not None
+
         def _mutable_file_is_full() -> bool:
             assert self.mutable_file_path is not None
             file_size = os.path.getsize(self.mutable_file_path)
@@ -135,8 +139,7 @@ class FlatFileDb:
             while True:
                 logger.debug(f"Scanning forward... self.mutable_file_num={self.mutable_file_num}")
                 self.mutable_file_num += 1
-                self.mutable_file_path = self._file_num_to_mutable_file_path(
-                    self.mutable_file_num)
+                self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
                 self.immutable_files.add(str(self.mutable_file_path))
 
                 if os.path.exists(self.mutable_file_path):
@@ -147,7 +150,7 @@ class FlatFileDb:
                         break
                 else:
                     logger.debug(f"Creating a new mutable file at: {self.mutable_file_path}")
-                    with open(self.mutable_file_path, 'ab') as f:
+                    with open(self.mutable_file_path, "ab") as f:
                         f.flush()
                         os.fsync(f.fileno())
                     self.mutable_file_path = self.mutable_file_path
@@ -159,7 +162,7 @@ class FlatFileDb:
         assert self.mutable_file_path is not None
         with self.mutable_file_rwlock.write_lock():
             self._maybe_get_new_mutable_file()
-            with open(self.mutable_file_path, 'ab') as file:
+            with open(self.mutable_file_path, "ab") as file:
                 start_offset = file.tell()
                 file.write(data)
                 end_offset = file.tell()
@@ -169,18 +172,24 @@ class FlatFileDb:
 
             return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
 
-
     def put_big_block(self, data_location: DataLocation) -> DataLocation:
         """This should return almost instantly because it's only renaming a file on the same disc"""
         assert self.mutable_file_path is not None
         with self.mutable_file_rwlock.write_lock():
             self._maybe_get_new_mutable_file(force_new_file=True)
             shutil.move(src=data_location.file_path, dst=self.mutable_file_path)
-            return DataLocation(str(self.mutable_file_path), data_location.start_offset,
-                data_location.end_offset)
+            return DataLocation(
+                str(self.mutable_file_path),
+                data_location.start_offset,
+                data_location.end_offset,
+            )
 
-    def get(self, data_location: DataLocation, slice: Slice | None = None,
-            lock_free_access: bool=False) -> bytes:
+    def get(
+        self,
+        data_location: DataLocation,
+        slice: Slice | None = None,
+        lock_free_access: bool = False,
+    ) -> bytes:
         """If the end offset of the Slice is zero, it reads to the end of the
         data location
 
@@ -196,7 +205,7 @@ class FlatFileDb:
 
         try:
             read_path, start_offset, end_offset = data_location
-            with open(read_path, 'rb') as f:
+            with open(read_path, "rb") as f:
                 f.seek(start_offset)
                 full_data_length = end_offset - start_offset
                 if not slice:

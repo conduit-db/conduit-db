@@ -69,11 +69,16 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
     """
     Simple TCP socket-based logging receiver suitable for testing.
     """
+
     logger = logging.getLogger("TCPServer")
     allow_reuse_address = True
 
-    def __init__(self, host: str="127.0.0.1", port: int=63451,
-            handler: Callable[..., socketserver.StreamRequestHandler]=LogRecordStreamHandler) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 63451,
+        handler: Callable[..., socketserver.StreamRequestHandler] = LogRecordStreamHandler,
+    ) -> None:
         socketserver.ThreadingTCPServer.__init__(self, (host, port), handler)
         self.abort: int = 0
         self.timeout: int = 1
@@ -82,9 +87,10 @@ class LogRecordSocketReceiver(socketserver.ThreadingTCPServer):
 
 class TCPLoggingServer(multiprocessing.Process):
     """Centralizes logging via streamhandler.
-    Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg"""
+    Gracefully shutdown via tcp b"stop" with big-ending unsigned long int = len msg
+    """
 
-    def __init__(self, port: int, service_name: str, kill_port: int=46464) -> None:
+    def __init__(self, port: int, service_name: str, kill_port: int = 46464) -> None:
         super(TCPLoggingServer, self).__init__()
         self.port: int = port
         self.kill_port: int = kill_port
@@ -92,8 +98,8 @@ class TCPLoggingServer(multiprocessing.Process):
         self.service_name: str = service_name
 
     def setup_local_logging_policy(self) -> None:
-        rootLogger = logging.getLogger('')
-        logging.addLevelName(PROFILING, 'PROFILING')
+        rootLogger = logging.getLogger("")
+        logging.addLevelName(PROFILING, "PROFILING")
 
         FORMAT = "%(asctime)-25s %(levelname)-10s %(name)-28s %(message)s"
         logging.basicConfig(format=FORMAT, level=PROFILING)
@@ -125,7 +131,7 @@ class TCPLoggingServer(multiprocessing.Process):
         self.stop_event = threading.Event()
         self.tcpserver = LogRecordSocketReceiver(port=self.port)
         self.logger = logging.getLogger("logging-server")
-        self.logger.info(f'Starting {self.__class__.__name__}...')
+        self.logger.info(f"Starting {self.__class__.__name__}...")
 
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context[zmq.Socket[bytes]]()
@@ -161,6 +167,6 @@ if __name__ == "__main__":
 
     logging.debug("shutting down...")
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(('127.0.0.1', 54545))
+    s.connect(("127.0.0.1", 54545))
     len_msg = struct.pack(">L", 4)
     s.sendall(len_msg + b"stop")

@@ -16,20 +16,22 @@ from conduit_lib.bitcoin_p2p_types import BlockChunkData
 from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
 from conduit_lib.utils import remove_readonly
-from conduit_raw.conduit_raw.aiohttp_api.handlers_restoration import _get_tsc_merkle_proof
+from conduit_raw.conduit_raw.aiohttp_api.handlers_restoration import (
+    _get_tsc_merkle_proof,
+)
 from conduit_raw.conduit_raw.workers import MTreeCalculator
-from conduit_raw.conduit_raw.workers.merkle_tree import process_merkle_tree_batch
+from conduit_raw.conduit_raw.workers.merkle_tree import (
+    process_merkle_tree_batch,
+)
 from .conftest import TEST_RAW_BLOCK_413567
 from .data.block413567_offsets import TX_OFFSETS
 
 from conduit_lib.algorithms import unpack_varint, preprocessor
 
-
-
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
-DATADIR_HDD = os.environ['DATADIR_HDD'] = str(MODULE_DIR / 'test_datadir_hdd')
-DATADIR_SSD = os.environ['DATADIR_SSD'] = str(MODULE_DIR / 'test_datadir_ssd')
+os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
+DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
+DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
 # BITCOINX
 full_block = TEST_RAW_BLOCK_413567
@@ -37,10 +39,10 @@ tx_count, offset = unpack_varint(full_block[80:89], 0)
 adjustment = 80 + offset
 bitcoinx_tx_offsets = [adjustment]
 BITCOINX_TX_HASHES = []
-stream = io.BytesIO(full_block[80 + offset:])
+stream = io.BytesIO(full_block[80 + offset :])
 for i in range(tx_count):
     tx = bitcoinx.Tx.read(stream.read)
-    offset += (len(tx.to_bytes()))
+    offset += len(tx.to_bytes())
     bitcoinx_tx_offsets.append(offset)
     BITCOINX_TX_HASHES.append(tx.hash())
 
@@ -68,8 +70,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     block_hash = bitcoinx.double_sha256(raw_header)
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
-    block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count,
-        len(full_block), 0)
+    block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
     mysql_db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
     lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
 
@@ -91,8 +92,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
             adjustment = last_tx_offset_in_chunk
             offset = 0
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-            offset, adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         len_slice = last_tx_offset_in_chunk - adjustment
         remainder = modified_chunk[len_slice:]
@@ -100,9 +100,13 @@ def test_preprocessor_whole_block_as_a_single_chunk():
         # `tx_offsets_for_chunk` corresponds exactly to `slice_for_worker`
         slice_for_worker = modified_chunk[:len_slice]
 
-
-        block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash, slice_for_worker,
-            tx_offsets_for_chunk)
+        block_chunk_data = BlockChunkData(
+            chunk_num,
+            num_chunks,
+            block_hash,
+            slice_for_worker,
+            tx_offsets_for_chunk,
+        )
         block_chunks.append(block_chunk_data)
     assert tx_offsets_all == TX_OFFSETS
     assert last_tx_offset_in_chunk == len(full_block)
@@ -119,15 +123,26 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     assert worker.tx_count_map.get(block_hash) is None
     assert worker.tx_hashes_map.get(block_hash) is None
 
-    with open(MODULE_DIR / 'data' / 'block413567_tsc_merkle_proofs', 'r') as file:
+    with open(MODULE_DIR / "data" / "block413567_tsc_merkle_proofs", "r") as file:
         data = file.read()
         CORRECT_MERKLE_PROOF_MAP = json.loads(data)
 
     for idx, tx_hash in enumerate(BITCOINX_TX_HASHES):
-        tx_metadata = TxMetadata(tx_hashX=tx_hash[0:14], tx_block_num=0, tx_position=idx,
-            block_num=0, block_hash=block_hash, block_height=413567)
-        result = _get_tsc_merkle_proof(tx_metadata, mysql_db, lmdb, include_full_tx=False,
-            target_type='hash')
+        tx_metadata = TxMetadata(
+            tx_hashX=tx_hash[0:14],
+            tx_block_num=0,
+            tx_position=idx,
+            block_num=0,
+            block_hash=block_hash,
+            block_height=413567,
+        )
+        result = _get_tsc_merkle_proof(
+            tx_metadata,
+            mysql_db,
+            lmdb,
+            include_full_tx=False,
+            target_type="hash",
+        )
         txid = hash_to_hex_str(tx_hash)
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof
@@ -150,18 +165,16 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     block_hash = bitcoinx.double_sha256(raw_header)
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
-    block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count,
-        len(full_block), 0)
+    block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
     mysql_db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
     lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
-
 
     # Same block processed in 4 chunks
     chunks = [
         full_block[0:250_000],
         full_block[250_000:500_000],
         full_block[500_000:750_000],
-        full_block[750_000:]
+        full_block[750_000:],
     ]
 
     tx_offsets_all = []
@@ -178,8 +191,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
             offset = 0
             adjustment = last_tx_offset_in_chunk
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-            offset, adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         len_slice = last_tx_offset_in_chunk - adjustment
         remainder = modified_chunk[len_slice:]
@@ -187,9 +199,13 @@ def test_preprocessor_with_block_divided_into_four_chunks():
         # `tx_offsets_for_chunk` corresponds exactly to `slice_for_worker`
         slice_for_worker = modified_chunk[:len_slice]
 
-
-        block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash, slice_for_worker,
-            tx_offsets_for_chunk)
+        block_chunk_data = BlockChunkData(
+            chunk_num,
+            num_chunks,
+            block_hash,
+            slice_for_worker,
+            tx_offsets_for_chunk,
+        )
 
         packed_msg_for_zmq = pack_block_chunk_message_for_worker(block_chunk_data)
         process_merkle_tree_batch(worker, [packed_msg_for_zmq], lmdb)
@@ -219,15 +235,26 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     assert worker.tx_count_map.get(block_hash) is None
     assert worker.tx_hashes_map.get(block_hash) is None
 
-    with open(MODULE_DIR / 'data' / 'block413567_tsc_merkle_proofs', 'r') as file:
+    with open(MODULE_DIR / "data" / "block413567_tsc_merkle_proofs", "r") as file:
         data = file.read()
         CORRECT_MERKLE_PROOF_MAP = json.loads(data)
 
     for idx, tx_hash in enumerate(BITCOINX_TX_HASHES):
-        tx_metadata = TxMetadata(tx_hashX=tx_hash[0:14], tx_block_num=0, tx_position=idx,
-            block_num=0, block_hash=block_hash, block_height=413567)
-        result = _get_tsc_merkle_proof(tx_metadata, mysql_db, lmdb, include_full_tx=False,
-            target_type='hash')
+        tx_metadata = TxMetadata(
+            tx_hashX=tx_hash[0:14],
+            tx_block_num=0,
+            tx_position=idx,
+            block_num=0,
+            block_hash=block_hash,
+            block_height=413567,
+        )
+        result = _get_tsc_merkle_proof(
+            tx_metadata,
+            mysql_db,
+            lmdb,
+            include_full_tx=False,
+            target_type="hash",
+        )
         txid = hash_to_hex_str(tx_hash)
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof

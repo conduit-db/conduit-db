@@ -10,7 +10,6 @@ cssutils.ser.prefs.useMinified()
 logger = logging.getLogger("CSSUTILS")
 logger.setLevel(logging.CRITICAL)
 
-
 # Custom CSS (To update styles unavailable in the Community Edition of ReDoc)
 custom_css = cssutils.parseFile("customstyles.css")
 
@@ -41,17 +40,18 @@ def maybe_update_style_rule(rule_html: CSSStyleRule, rule_custom_css: CSSStyleRu
                     before = rule_html.style[property_custom.name]
                     rule_html.style[property_custom.name] = property_custom.value
                     after = rule_html.style[property_custom.name]
-                    print(f"Modified:\n"
-                          f"\tselector: {rule_html.selectorText},\n"
-                          f"\tproperty: '{property_custom.name}' from {before} to {after}",
-                        flush=True)
+                    print(
+                        f"Modified:\n"
+                        f"\tselector: {rule_html.selectorText},\n"
+                        f"\tproperty: '{property_custom.name}' from {before} to {after}",
+                        flush=True,
+                    )
     return updated
 
 
 def update_all_styles(rules_old: CSSStyleRule, rules_new: CSSStyleRule):
     updated = False
     for rule_old, rule_new in itertools.product(rules_old, rules_new):
-
         if _is_style_rule(rule_old) and _is_style_rule(rule_new):
             if maybe_update_style_rule(rule_old, rule_new):
                 updated = True
@@ -66,26 +66,27 @@ def update_all_styles(rules_old: CSSStyleRule, rules_new: CSSStyleRule):
     return updated
 
 
-def update_html_style_sheet(sheet: CSSStyleSheet, custom_css_updates: CSSStyleSheet.cssRules) \
-        -> tuple[CSSStyleSheet, bool]:
+def update_html_style_sheet(
+    sheet: CSSStyleSheet, custom_css_updates: CSSStyleSheet.cssRules
+) -> tuple[CSSStyleSheet, bool]:
     """property_updates are a typle of (rule, property) string pairs"""
     updated = update_all_styles(sheet.cssRules, custom_css_updates)
     return sheet, updated
 
 
 # Redoc bundle (with Community Edition theme options modified)
-with open('redoc-static.html', 'rb') as f:
-    redoc_html = f.read().decode('utf-8')
-    input_html = BeautifulSoup(redoc_html, 'html.parser')
+with open("redoc-static.html", "rb") as f:
+    redoc_html = f.read().decode("utf-8")
+    input_html = BeautifulSoup(redoc_html, "html.parser")
 
 # Do the update of all style tags
 custom_css_updates = get_custom_css_updates(custom_css)
 
-
-
 # There is one special case where cssutils loses relevant data when writing back to string
 BAD_TRANSLATION = ".bBhNDy{background:#263238;position:absolute;top:0;bottom:0;right:0}"
-CORRECT_TRANSLATION = ".bBhNDy{background:#263238;position:absolute;top:0;bottom:0;right:0;width:calc((100% - 260px) * 0.4);}"
+CORRECT_TRANSLATION = (
+    ".bBhNDy{background:#263238;position:absolute;top:0;bottom:0;right:0;width:calc((100% - 260px) * 0.4);}"
+)
 
 for style in input_html.head.find_all_next("style"):
     sheet = cssutils.parseString(style.text)
@@ -100,5 +101,5 @@ for style in input_html.head.find_all_next("style"):
         style.replace_with(new_tag)
 
 # Write out modified html
-with open('redoc-static.html', 'wb') as f:
-    f.write(str(input_html).encode('utf-8'))
+with open("redoc-static.html", "wb") as f:
+    f.write(str(input_html).encode("utf-8"))

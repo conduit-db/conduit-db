@@ -1,3 +1,3 @@
-__all__ = ['MTreeCalculator']
+__all__ = ["MTreeCalculator"]
 
 from .merkle_tree import MTreeCalculator

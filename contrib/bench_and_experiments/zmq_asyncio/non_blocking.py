@@ -3,7 +3,10 @@ import threading
 
 import zmq
 
-from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block, zmq_send_no_block
+from conduit_lib.utils import (
+    zmq_recv_and_process_batchwise_no_block,
+    zmq_send_no_block,
+)
 
 logger = logging.getLogger("zmq-no-block")
 logging.basicConfig(level=logging.DEBUG)
@@ -17,7 +20,7 @@ def client():
 
     count = 0
     while True:
-        msg = f"hello_{count}".encode('utf-8')
+        msg = f"hello_{count}".encode("utf-8")
         zmq_send_no_block(tx_parse_ack_socket, msg, on_blocked_msg="Receiver is busy")
 
 
@@ -32,13 +35,18 @@ def server():
     tx_parse_ack_socket.bind("tcp://127.0.0.1:33333")
     BATCHING_RATE = 1
 
-    zmq_recv_and_process_batchwise_no_block(tx_parse_ack_socket, process_work_items,
-        on_blocked_msg="Receiver blocked", batching_rate=BATCHING_RATE, poll_timeout_ms=100)
+    zmq_recv_and_process_batchwise_no_block(
+        tx_parse_ack_socket,
+        process_work_items,
+        on_blocked_msg="Receiver blocked",
+        batching_rate=BATCHING_RATE,
+        poll_timeout_ms=100,
+    )
 
 
 threads = [
     threading.Thread(target=server, daemon=True),
-    threading.Thread(target=client, daemon=True)
+    threading.Thread(target=client, daemon=True),
 ]
 for thread in threads:
     thread.start()

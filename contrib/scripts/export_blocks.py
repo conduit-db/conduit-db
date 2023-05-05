@@ -85,7 +85,7 @@ def main() -> None:
         sys.exit(1)
 
     # Genesis block plus height amount of additional blocks above it.
-    if height+1 != len(headers_bytes)//80:
+    if height + 1 != len(headers_bytes) // 80:
         print(f"Blockchain mismatch: height={height+1} does not match headers_count={len(headers_bytes)//80}")
         sys.exit(1)
 
@@ -100,8 +100,8 @@ def main() -> None:
     header_io = io.StringIO()
     headers_view = memoryview(headers_bytes)
     header_hash_hexs: list[str] = []
-    for i in range(height+1):
-        header_hash = double_sha256(headers_view[i*80:i*80+80])
+    for i in range(height + 1):
+        header_hash = double_sha256(headers_view[i * 80 : i * 80 + 80])
         header_hash_hex = hash_to_hex_str(header_hash)
         header_io.write(header_hash_hex)
         header_io.write("\n")
@@ -132,4 +132,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

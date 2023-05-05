@@ -18,9 +18,22 @@ from bitcoinx import (
     pack_byte,
 )
 
-from .commands import (VERSION_BIN, VERACK_BIN, GETADDR_BIN, FILTERCLEAR_BIN, GETHEADERS_BIN,
-    INV_BIN, TX_BIN, GETDATA_BIN, GETBLOCKS_BIN, PING_BIN, MEMPOOL_BIN, PONG_BIN,
-    SENDCMPCT_BIN, FILTERLOAD_BIN, )
+from .commands import (
+    VERSION_BIN,
+    VERACK_BIN,
+    GETADDR_BIN,
+    FILTERCLEAR_BIN,
+    GETHEADERS_BIN,
+    INV_BIN,
+    TX_BIN,
+    GETDATA_BIN,
+    GETBLOCKS_BIN,
+    PING_BIN,
+    MEMPOOL_BIN,
+    PONG_BIN,
+    SENDCMPCT_BIN,
+    FILTERLOAD_BIN,
+)
 from .deserializer_types import Inv
 from .networks import NetworkConfig
 
@@ -58,33 +71,19 @@ class Serializer:
         send_host: str,
         recv_port: int = 8333,
         send_port: int = 8333,
-        version: int=70016,
-        relay: int=1,
+        version: int = 70016,
+        relay: int = 1,
     ) -> bytes:
         version = pack_le_uint32(version)
         services = pack_le_uint64(0)
         timestamp = pack_le_int64(int(time.time()))
-        addr_recv = (
-            services + ipv4_to_mapped_ipv6(recv_host) + pack_be_uint16(recv_port)
-        )
-        addr_sndr = (
-            services + ipv4_to_mapped_ipv6(send_host) + pack_be_uint16(send_port)
-        )
+        addr_recv = services + ipv4_to_mapped_ipv6(recv_host) + pack_be_uint16(recv_port)
+        addr_sndr = services + ipv4_to_mapped_ipv6(send_host) + pack_be_uint16(send_port)
         nonce = pack_le_uint64(random.getrandbits(64))
         user_agent = pack_varbytes(b"")
         height = pack_le_uint32(0)
         relay = pack_byte(relay)
-        payload = (
-            version
-            + services
-            + timestamp
-            + addr_recv
-            + addr_sndr
-            + nonce
-            + user_agent
-            + height
-            + relay
-        )
+        payload = version + services + timestamp + addr_recv + addr_sndr + nonce + user_agent + height + relay
         return self.payload_to_message(VERSION_BIN, payload)
 
     def verack(self) -> bytes:
@@ -111,8 +110,12 @@ class Serializer:
             payload += hex_str_to_hash(inv_vect["inv_hash"])
         return self.payload_to_message(GETDATA_BIN, bytes(payload))
 
-    def getheaders(self, hash_count: int, block_locator_hashes: List[bytes],
-            hash_stop: bytes=ZERO_HASH) -> bytes:
+    def getheaders(
+        self,
+        hash_count: int,
+        block_locator_hashes: List[bytes],
+        hash_stop: bytes = ZERO_HASH,
+    ) -> bytes:
         version = pack_le_uint32(70016)
         hash_count = pack_varint(hash_count)
         hashes = bytearray()
@@ -121,8 +124,12 @@ class Serializer:
         payload = version + hash_count + hashes + hash_stop
         return self.payload_to_message(GETHEADERS_BIN, payload)
 
-    def getblocks(self, hash_count: int, block_locator_hashes: List[bytes],
-            hash_stop: bytes=ZERO_HASH) -> bytes:
+    def getblocks(
+        self,
+        hash_count: int,
+        block_locator_hashes: List[bytes],
+        hash_stop: bytes = ZERO_HASH,
+    ) -> bytes:
         version = pack_le_uint32(70016)
         hash_count = pack_varint(hash_count)
         hashes = bytearray()

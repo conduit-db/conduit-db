@@ -16,25 +16,32 @@ import logging
 import os
 
 from conduit_lib.algorithms import unpack_varint
-from conduit_lib.bitcoin_p2p_types import BlockChunkData, BlockDataMsg, BitcoinPeerInstance, \
-    BlockType
+from conduit_lib.bitcoin_p2p_types import (
+    BlockChunkData,
+    BlockDataMsg,
+    BitcoinPeerInstance,
+    BlockType,
+)
 from conduit_lib.commands import INV, BLOCK_BIN
 from conduit_lib.constants import REGTEST, ZERO_HASH
 from conduit_lib import commands
 from conduit_lib.handlers import MessageHandlerProtocol
-from conduit_lib import BitcoinP2PClient, NetworkConfig, Serializer, Deserializer
+from conduit_lib import (
+    BitcoinP2PClient,
+    NetworkConfig,
+    Serializer,
+    Deserializer,
+)
 from conduit_lib.utils import create_task, remove_readonly
 from contrib.scripts.import_blocks import import_blocks
 
 from .data.big_data_carrier_tx import DATA_CARRIER_TX
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-os.environ['GENESIS_ACTIVATION_HEIGHT'] = "0"
-os.environ['NETWORK_BUFFER_SIZE'] = "1000000"
-DATADIR_HDD = os.environ['DATADIR_HDD'] = str(MODULE_DIR / 'test_datadir_hdd')
-DATADIR_SSD = os.environ['DATADIR_SSD'] = str(MODULE_DIR / 'test_datadir_ssd')
-
-
+os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
+os.environ["NETWORK_BUFFER_SIZE"] = "1000000"
+DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
+DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
 logger = logging.getLogger("bitcoin-p2p-socket")
 logger.setLevel(logging.DEBUG)
@@ -43,12 +50,12 @@ REGTEST_NODE_HOST = "127.0.0.1"
 REGTEST_NODE_PORT = 18444
 
 
-
 class MockHandlers(MessageHandlerProtocol):
     """The intent here is to make assertions that the appropriate handlers are being called and in
     the right way.
 
-    `got_message_queue` would not be a part of this handler class under normal circumstances"""
+    `got_message_queue` would not be a part of this handler class under normal circumstances
+    """
 
     net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
     serializer = Serializer(net_config)
@@ -108,19 +115,18 @@ class MockHandlers(MessageHandlerProtocol):
             elif inv["inv_type"] == 2:
                 block_inv_vect.append(inv)
 
-
         if block_inv_vect:
             max_getdata_size = 50_000
             num_getdatas = ceil(len(block_inv_vect) / max_getdata_size)
             for i in range(num_getdatas):
-                getdata_msg = self.serializer.getdata(block_inv_vect[i:(i+1)*max_getdata_size])
+                getdata_msg = self.serializer.getdata(block_inv_vect[i : (i + 1) * max_getdata_size])
                 await peer.send_message(getdata_msg)
 
         if tx_inv_vect:
             max_getdata_size = 50_000
             num_getdatas = ceil(len(tx_inv_vect) / max_getdata_size)
             for i in range(num_getdatas):
-                getdata_msg = self.serializer.getdata(tx_inv_vect[i:(i+1)*max_getdata_size])
+                getdata_msg = self.serializer.getdata(tx_inv_vect[i : (i + 1) * max_getdata_size])
                 await peer.send_message(getdata_msg)
 
         self.got_message_queue.put_nowait((commands.INV, message))
@@ -142,8 +148,15 @@ class MockHandlers(MessageHandlerProtocol):
 
 
 async def _drain_handshake_messages(client: BitcoinP2PClient, message_handler: MockHandlers):
-    expected_message_commands = {commands.VERSION, commands.VERACK, commands.PING, commands.PONG,
-        commands.PROTOCONF, commands.SENDHEADERS, commands.SENDCMPCT}
+    expected_message_commands = {
+        commands.VERSION,
+        commands.VERACK,
+        commands.PING,
+        commands.PONG,
+        commands.PROTOCONF,
+        commands.SENDHEADERS,
+        commands.SENDCMPCT,
+    }
     while True:
         command, message = await message_handler.got_message_queue.get()
         expected_message_commands.remove(command)
@@ -173,13 +186,19 @@ async def test_handshake():
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
-        expected_message_commands = { commands.VERSION, commands.VERACK, commands.PING,
-            commands.PONG, commands.PROTOCONF, commands.SENDHEADERS, commands.SENDCMPCT }
+        expected_message_commands = {
+            commands.VERSION,
+            commands.VERACK,
+            commands.PING,
+            commands.PONG,
+            commands.PROTOCONF,
+            commands.SENDHEADERS,
+            commands.SENDCMPCT,
+        }
         for i in range(len(expected_message_commands)):
             command, message = await message_handler.got_message_queue.get()
             expected_message_commands.remove(command)
@@ -193,15 +212,14 @@ async def test_handshake():
 @pytest.mark.asyncio
 async def test_getheaders_request_and_headers_response():
     # Otherwise the node might still be in initial block download mode (ignores header requests)
-    electrumsv_node.call_any('generate', 1)
+    electrumsv_node.call_any("generate", 1)
 
     client = None
     try:
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -214,8 +232,8 @@ async def test_getheaders_request_and_headers_response():
         deserializer = Deserializer(net_config)
         command, message = await message_handler.got_message_queue.get()
         headers = deserializer.headers(io.BytesIO(message))
-        node_rpc_result = electrumsv_node.call_any('getinfo').json()['result']
-        height = node_rpc_result['blocks']
+        node_rpc_result = electrumsv_node.call_any("getinfo").json()["result"]
+        height = node_rpc_result["blocks"]
         assert len(headers) == height
         headers_count, offset = unpack_varint(message, 0)
         assert headers_count == len(headers)
@@ -231,8 +249,7 @@ async def test_getblocks_request_and_blocks_response():
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -244,8 +261,8 @@ async def test_getblocks_request_and_blocks_response():
 
         deserializer = Deserializer(net_config)
 
-        node_rpc_result = electrumsv_node.call_any('getinfo').json()['result']
-        height = node_rpc_result['blocks']
+        node_rpc_result = electrumsv_node.call_any("getinfo").json()["result"]
+        height = node_rpc_result["blocks"]
 
         count_blocks_received = 0
         expected_message_count = height + 1  # +1 for inv message
@@ -257,10 +274,12 @@ async def test_getblocks_request_and_blocks_response():
             message = cast(BlockDataMsg, message)
             raw_header = message.small_block_data[0:80]
             block_hash = double_sha256(raw_header)
-            node_rpc_result = electrumsv_node.call_any('getblock', hash_to_hex_str(block_hash)).json()['result']
+            node_rpc_result = electrumsv_node.call_any("getblock", hash_to_hex_str(block_hash)).json()[
+                "result"
+            ]
 
             header, block_txs = deserializer.block(io.BytesIO(message.small_block_data))
-            assert node_rpc_result['num_tx'] == len(block_txs)
+            assert node_rpc_result["num_tx"] == len(block_txs)
             count_blocks_received += 1
             txs_count, offset = unpack_varint(message.small_block_data[80:89], 0)
             assert txs_count == len(block_txs)
@@ -292,13 +311,15 @@ def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
 
 @pytest.mark.asyncio
 async def test_big_block_exceeding_network_buffer_capacity():
-    os.environ['NETWORK_BUFFER_SIZE'] = "500000"
+    os.environ["NETWORK_BUFFER_SIZE"] = "500000"
     client = None
     task = None
     try:
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
         serializer = Serializer(net_config)
-        fake_header_block_116 = bytes.fromhex("000000201b94e4366e4d283d1cd3834aed03b4fd0be15fcc6ab4e387df04f08ddff47736bc86ff7435135f70a33a9105551b0ea7719b9fb2c0a7e882976b3b977985adab2189f461ffff7f2001000000")
+        fake_header_block_116 = bytes.fromhex(
+            "000000201b94e4366e4d283d1cd3834aed03b4fd0be15fcc6ab4e387df04f08ddff47736bc86ff7435135f70a33a9105551b0ea7719b9fb2c0a7e882976b3b977985adab2189f461ffff7f2001000000"
+        )
         block_hash = double_sha256(fake_header_block_116)
         logger.debug(f"Expected block_hash: {hash_to_hex_str(block_hash)}")
         size_data_carrier_tx = len(bytes.fromhex(DATA_CARRIER_TX))
@@ -313,8 +334,7 @@ async def test_big_block_exceeding_network_buffer_capacity():
 
         message_handler = MockHandlers(got_message_queue)
 
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
         client.reader = asyncio.StreamReader()
         client.reader.feed_data(message_to_send)
         client.writer = unittest.mock.Mock()
@@ -333,8 +353,15 @@ async def test_big_block_exceeding_network_buffer_capacity():
                 assert message.num_chunks == 3
                 assert message.block_hash == block_hash
                 assert len(message.raw_block_chunk) == 460317
-                assert message.tx_offsets_for_chunk.tolist() == [81, 65829, 131577, 197325, 263073,
-                    328821, 394569]
+                assert message.tx_offsets_for_chunk.tolist() == [
+                    81,
+                    65829,
+                    131577,
+                    197325,
+                    263073,
+                    328821,
+                    394569,
+                ]
 
                 _parse_txs_with_bitcoinx(message)
 
@@ -346,8 +373,16 @@ async def test_big_block_exceeding_network_buffer_capacity():
 
                 # This chunk should be 525984 bytes due to the remainder of the previous chunk
                 assert len(message.raw_block_chunk) == (986301 - 460317)
-                assert message.tx_offsets_for_chunk.tolist() == [460317, 526065, 591813, 657561, 723309,
-                    789057, 854805, 920553]
+                assert message.tx_offsets_for_chunk.tolist() == [
+                    460317,
+                    526065,
+                    591813,
+                    657561,
+                    723309,
+                    789057,
+                    854805,
+                    920553,
+                ]
 
                 _parse_txs_with_bitcoinx(message)
 
@@ -365,11 +400,27 @@ async def test_big_block_exceeding_network_buffer_capacity():
                 assert isinstance(message, BlockDataMsg)
                 assert message.block_type == BlockType.BIG_BLOCK
                 assert message.block_hash == block_hash
-                assert message.tx_offsets.tolist() == [81, 65829, 131577, 197325, 263073, 328821, 394569,
-                    460317, 526065, 591813, 657561, 723309, 789057, 854805, 920553, 986301]
+                assert message.tx_offsets.tolist() == [
+                    81,
+                    65829,
+                    131577,
+                    197325,
+                    263073,
+                    328821,
+                    394569,
+                    460317,
+                    526065,
+                    591813,
+                    657561,
+                    723309,
+                    789057,
+                    854805,
+                    920553,
+                    986301,
+                ]
                 assert message.block_size == 1052049
                 assert message.small_block_data == None
-                with open(message.big_block_filepath, 'rb') as file:
+                with open(message.big_block_filepath, "rb") as file:
                     raw_block = file.read()
                 assert raw_block == big_block
 

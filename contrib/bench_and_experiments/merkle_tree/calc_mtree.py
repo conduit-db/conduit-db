@@ -8,8 +8,10 @@ from struct import Struct
 from bitcoinx import double_sha256
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
+
 # simulating that the proprocessor has already provided this
 from bench.merkle_tree.offsets import TX_OFFSETS
+
 # try:
 #     from conduit_raw.conduit_raw.workers._algorithms import calc_mtree  # cython
 # except ModuleNotFoundError:
@@ -36,8 +38,10 @@ if __name__ == "__main__":
     t1 = time.perf_counter() - t0
 
     mbps = int(len(TX_OFFSETS_ARRAY) * 642 / t1 / 1024 / 1024)
-    print(f"time taken={t1} seconds for {len(TX_OFFSETS_ARRAY)} txs. Therefore {mbps}MB/sec "
-          f"for av. tx size of 642 bytes/tx")
+    print(
+        f"time taken={t1} seconds for {len(TX_OFFSETS_ARRAY)} txs. Therefore {mbps}MB/sec "
+        f"for av. tx size of 642 bytes/tx"
+    )
 
     for level in mtree.keys():
         result = lmdb_db.get_mtree_row(blk_hash, level)
@@ -47,4 +51,3 @@ if __name__ == "__main__":
     # 35MB/sec for calculate mtree and push to LMDB...
 
     # Now try without storing base level
-

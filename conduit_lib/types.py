@@ -12,13 +12,13 @@ from conduit_lib.constants import MAX_UINT32
 MultiprocessingQueue = Queue  # workaround for mypy: https://github.com/python/typeshed/issues/4266
 Hash256 = bytes
 
-
 OutpointJSONType = tuple[str, int]
 OUTPUT_SPEND_FORMAT = ">32sI32sI32s"
 output_spend_struct = struct.Struct(OUTPUT_SPEND_FORMAT)
 
 OUTPOINT_FORMAT = ">32sI"
 outpoint_struct = struct.Struct(OUTPOINT_FORMAT)
+
 
 class OutpointType(NamedTuple):
     tx_hash: bytes
@@ -28,7 +28,7 @@ class OutpointType(NamedTuple):
         return f"OutpointType(tx_hash={hash_to_hex_str(self.tx_hash)},out_idx={self.out_idx})"
 
     @classmethod
-    def from_outpoint_struct(cls, buf: bytes) -> 'OutpointType':
+    def from_outpoint_struct(cls, buf: bytes) -> "OutpointType":
         tx_hash, out_idx = outpoint_struct.unpack(buf)
         return cls(tx_hash, out_idx)
 
@@ -36,6 +36,7 @@ class OutpointType(NamedTuple):
 class DataLocation(NamedTuple):
     """This metadata must be persisted elsewhere.
     For example, a key-value store such as LMDB"""
+
     file_path: str
     start_offset: int
     end_offset: int
@@ -64,7 +65,6 @@ class MerkleTreeArrayLocation(NamedTuple):
     start_offset: int
     end_offset: int
     base_node_count: int
-
 
 
 class TxOffsetsArrayLocation(NamedTuple):
@@ -149,7 +149,7 @@ filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
 
 
 def le_int_to_char(le_int: int) -> bytes:
-    return struct.pack('<I', le_int)[0:1]
+    return struct.pack("<I", le_int)[0:1]
 
 
 class TxOrId(enum.IntEnum):
@@ -179,12 +179,16 @@ class PushdataMatchFlags(enum.IntFlag):
     DATA: int = 1 << 2
 
 
-def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx_hash: str,
-        full_pushdata_hash: str, full_spend_transaction_hash: bytes) -> RestorationFilterResult:
+def _pack_pushdata_match_response_bin(
+    row: RestorationFilterQueryResult,
+    full_tx_hash: str,
+    full_pushdata_hash: str,
+    full_spend_transaction_hash: bytes,
+) -> RestorationFilterResult:
     pushdata_hash = bytes.fromhex(full_pushdata_hash)
     tx_hash = hex_str_to_hash(full_tx_hash)
     idx = row.transaction_output_index
-    in_tx_hash = hex_str_to_hash("00"*32)
+    in_tx_hash = hex_str_to_hash("00" * 32)
     if full_spend_transaction_hash is not None:
         in_tx_hash = hex_str_to_hash(full_spend_transaction_hash)
     in_idx = MAX_UINT32
@@ -197,14 +201,16 @@ def _pack_pushdata_match_response_bin(row: RestorationFilterQueryResult, full_tx
         locking_transaction_hash=tx_hash,
         locking_output_index=idx,
         unlocking_transaction_hash=in_tx_hash,
-        unlocking_input_index=in_idx
+        unlocking_input_index=in_idx,
     )
 
 
-
-def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_tx_hash: str,
-        full_pushdata_hash: str, full_spend_transaction_hash: str | None) \
-            -> RestorationFilterJSONResponse:
+def _pack_pushdata_match_response_json(
+    row: RestorationFilterQueryResult,
+    full_tx_hash: str,
+    full_pushdata_hash: str,
+    full_spend_transaction_hash: str | None,
+) -> RestorationFilterJSONResponse:
     pushdata_hash = full_pushdata_hash
     tx_hash = full_tx_hash
     idx = row.transaction_output_index
@@ -219,12 +225,13 @@ def _pack_pushdata_match_response_json(row: RestorationFilterQueryResult, full_t
         lockingTransactionId=tx_hash,
         lockingTransactionIndex=idx,
         unlockingTransactionId=in_tx_hash,
-        unlockingInputIndex=in_idx
+        unlockingInputIndex=in_idx,
     )
 
 
-def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: bool,
-        target_type: str) -> bytearray:
+def tsc_merkle_proof_json_to_binary(
+    tsc_json: TSCMerkleProof, include_full_tx: bool, target_type: str
+) -> bytearray:
     """{'index': 0, 'txOrId': txOrId, 'target': target, 'nodes': []}"""
     response = bytearray()
 
@@ -232,11 +239,11 @@ def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: b
     if include_full_tx:
         flags = flags | TxOrId.FULL_TRANSACTION
 
-    if target_type == 'hash':
+    if target_type == "hash":
         flags = flags | TargetType.HASH
-    elif target_type == 'header':
+    elif target_type == "header":
         flags = flags | TargetType.HEADER
-    elif target_type == 'merkleroot':
+    elif target_type == "merkleroot":
         flags = flags | TargetType.MERKLE_ROOT
     else:
         raise NotImplementedError("Caller should have ensured `target_type` is valid.")
@@ -245,25 +252,25 @@ def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: b
     flags = flags | CompositeProof.SINGLE_PROOF  # CompositeProof.COMPOSITE_PROOF not supported
 
     response += le_int_to_char(flags)
-    response += bitcoinx.pack_varint(tsc_json['index'])
+    response += bitcoinx.pack_varint(tsc_json["index"])
 
     if include_full_tx:
-        txLength = len(tsc_json['txOrId']) // 2
+        txLength = len(tsc_json["txOrId"]) // 2
         response += bitcoinx.pack_varint(txLength)
-        response += bytes.fromhex(tsc_json['txOrId'])
+        response += bytes.fromhex(tsc_json["txOrId"])
     else:
-        response += bitcoinx.hex_str_to_hash(tsc_json['txOrId'])
+        response += bitcoinx.hex_str_to_hash(tsc_json["txOrId"])
 
-    if target_type in {'hash', 'merkleroot'}:
-        response += bitcoinx.hex_str_to_hash(tsc_json['target'])
+    if target_type in {"hash", "merkleroot"}:
+        response += bitcoinx.hex_str_to_hash(tsc_json["target"])
     else:  # header
-        response += bytes.fromhex(tsc_json['target'])
+        response += bytes.fromhex(tsc_json["target"])
 
-    nodeCount = bitcoinx.pack_varint(len(tsc_json['nodes']))
+    nodeCount = bitcoinx.pack_varint(len(tsc_json["nodes"]))
     response += nodeCount
-    for node in tsc_json['nodes']:
+    for node in tsc_json["nodes"]:
         if node == "*":
-            duplicate_type_node = b'\x01'
+            duplicate_type_node = b"\x01"
             response += duplicate_type_node
         else:
             hash_type_node = b"\x00"
@@ -274,6 +281,7 @@ def tsc_merkle_proof_json_to_binary(tsc_json: TSCMerkleProof, include_full_tx: b
 
 class HeaderSpan(NamedTuple):
     """Used to allocate which continguous set of raw blocks to pre-fetch and process"""
+
     is_reorg: bool
     start_header: Header
     stop_header: Header

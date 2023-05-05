@@ -13,11 +13,10 @@ from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE
 from conduit_lib.types import Slice
 from conduit_lib.utils import remove_readonly
 
-
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 logger = logging.getLogger("test-flat-file-db")
 TEST_DATADIR = str(MODULE_DIR / "test_path")
-FFDB_LOCKFILE = os.environ['FFDB_LOCKFILE'] = "ffdb.lock"
+FFDB_LOCKFILE = os.environ["FFDB_LOCKFILE"] = "ffdb.lock"
 
 os.makedirs(TEST_DATADIR, exist_ok=True)
 
@@ -50,17 +49,18 @@ def _do_general_read_and_write_ops(ffdb: FlatFileDb):
 def test_general_read_and_write_db():
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-        fsync=True
+        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+        fsync=True,
     )
     _do_general_read_and_write_ops(ffdb)
 
 
 def test_delete():
     with FlatFileDb(
-            datadir=Path(TEST_DATADIR),
-            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-            fsync=True) as ffdb:
+        datadir=Path(TEST_DATADIR),
+        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+        fsync=True,
+    ) as ffdb:
         data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
         # logger.debug(f"Put to {data_location_aa.file_path}")
         ffdb.delete_file(Path(data_location_aa.file_path))
@@ -71,9 +71,10 @@ def test_delete():
 
 def test_slicing():
     with FlatFileDb(
-            datadir=Path(TEST_DATADIR),
-            mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-            fsync=True) as ffdb:
+        datadir=Path(TEST_DATADIR),
+        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+        fsync=True,
+    ) as ffdb:
         data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
         # print(data_location_mixed)
 
@@ -92,8 +93,8 @@ def _task(x):
     """Create each FlatFileDb instance anew within each process"""
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-        fsync=True
+        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+        fsync=True,
     )
     _do_general_read_and_write_ops(ffdb)
 
@@ -102,8 +103,8 @@ def test_multithreading_access():
     starttime = time.time()
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ['FFDB_LOCKFILE']),
-        fsync=True
+        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+        fsync=True,
     )
     func = functools.partial(_task_multithreaded, ffdb)
     with ThreadPoolExecutor(4) as pool:

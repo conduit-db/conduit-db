@@ -11,7 +11,11 @@ import zmq
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.database.lmdb.types import MerkleTreeRow
 from conduit_lib.logging_client import setup_tcp_logging
-from conduit_lib.algorithms import build_mtree_from_base, calc_depth, unpack_varint
+from conduit_lib.algorithms import (
+    build_mtree_from_base,
+    calc_depth,
+    unpack_varint,
+)
 from conduit_lib.types import MultiprocessingQueue
 
 
@@ -30,7 +34,10 @@ class MTreeCalculator(multiprocessing.Process):
     """
 
     def __init__(
-        self, worker_id: int, worker_ack_queue_mtree: MultiprocessingQueue[bytes]) -> None:
+        self,
+        worker_id: int,
+        worker_ack_queue_mtree: MultiprocessingQueue[bytes],
+    ) -> None:
         super(MTreeCalculator, self).__init__()
         self.worker_id = worker_id
         self.worker_ack_queue_mtree = worker_ack_queue_mtree
@@ -40,7 +47,7 @@ class MTreeCalculator(multiprocessing.Process):
 
         self.BATCHING_RATE = 0.3
         self.tx_hashes_map: dict[bytes, bytearray] = {}
-        self.tx_offsets_map: dict[bytes, 'array.ArrayType[int]'] = {}  # pylint: disable=E1136
+        self.tx_offsets_map: dict[bytes, "array.ArrayType[int]"] = {}  # pylint: disable=E1136
         self.tx_count_map: dict[bytes, int] = {}  # purely for checking data integrity
 
         self.batched_merkle_trees: list[MerkleTreeRow] = []
@@ -70,8 +77,9 @@ class MTreeCalculator(multiprocessing.Process):
         BASE_PORT_NUM = 41830
         self.merkle_tree_socket = self.zmq_context.socket(zmq.PULL)
         self.merkle_tree_socket.connect(f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
-        self.logger.debug(f"Connected merkle tree ZMQ socket on: "
-                          f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}")
+        self.logger.debug(
+            f"Connected merkle tree ZMQ socket on: " f"tcp://127.0.0.1:{BASE_PORT_NUM + self.worker_id}"
+        )
         try:
             while True:
                 try:
@@ -137,8 +145,13 @@ def process_merkle_tree_batch(worker: MTreeCalculator, batch: list[bytes], lmdb:
     """
     t0 = time.perf_counter()
     for packed_msg in batch:
-        chunk_num, num_of_chunks, blk_hash, tx_offsets_bytes_for_chunk, raw_block_chunk = cbor2.loads(
-            packed_msg)
+        (
+            chunk_num,
+            num_of_chunks,
+            blk_hash,
+            tx_offsets_bytes_for_chunk,
+            raw_block_chunk,
+        ) = cbor2.loads(packed_msg)
 
         tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
 
@@ -151,7 +164,7 @@ def process_merkle_tree_batch(worker: MTreeCalculator, batch: list[bytes], lmdb:
             worker.tx_count_map[blk_hash] = total_tx_count
 
         for i in range(len(tx_offsets_for_chunk)):
-            is_last_tx_in_chunk = (i == (len(tx_offsets_for_chunk) - 1))
+            is_last_tx_in_chunk = i == (len(tx_offsets_for_chunk) - 1)
             if chunk_num == 1:
                 start_offset = tx_offsets_for_chunk[i]
             else:
@@ -173,7 +186,7 @@ def process_merkle_tree_batch(worker: MTreeCalculator, batch: list[bytes], lmdb:
             worker.tx_hashes_map[blk_hash] += tx_hash
 
         def tx_hashes_to_list(tx_hashes: bytearray) -> list[bytes]:
-            return [tx_hashes[i * 32:(i + 1) * 32] for i in range(tx_count)]
+            return [tx_hashes[i * 32 : (i + 1) * 32] for i in range(tx_count)]
 
         # Final chunk received
         if chunk_num == num_of_chunks:

@@ -22,19 +22,24 @@ class ReferenceServerWebSocket(web.View):
         await websocket_response.prepare(self.request)
         websocket_id = str(uuid.uuid4())
 
-        app_state: ApplicationState = self.request.app['app_state']
+        app_state: ApplicationState = self.request.app["app_state"]
         try:
             client = WSClient(websocket_id, websocket_response)
             app_state.add_ws_client(client)
-            self.logger.debug('%s connected, remote_host=%s', client.websocket_id,
-                self.request.host)
+            self.logger.debug(
+                "%s connected, remote_host=%s",
+                client.websocket_id,
+                self.request.host,
+            )
 
             async for message in client.websocket:
                 if message.type == WSMsgType.ERROR:
                     self.logger.error("websocket error", exc_info=message.data)
                 else:
-                    self.logger.error("websocket exiting on unwanted incoming message %s",
-                        message)
+                    self.logger.error(
+                        "websocket exiting on unwanted incoming message %s",
+                        message,
+                    )
                     break
 
             return websocket_response

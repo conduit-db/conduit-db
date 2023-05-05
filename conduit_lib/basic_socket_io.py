@@ -2,7 +2,6 @@ import logging
 import struct
 from socket import socket
 
-
 logger = logging.getLogger(f"basic-socket-io")
 logger.setLevel(logging.DEBUG)
 

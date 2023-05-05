@@ -13,11 +13,15 @@ from typing import Any
 # The loading of environment variables must occur before importing any other
 # conduit_lib modules so the `.env` file environment variables are loaded before `constants.py`.
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-from conduit_lib.startup_utils import load_dotenv, is_docker, resolve_hosts_and_update_env_vars
+from conduit_lib.startup_utils import (
+    load_dotenv,
+    is_docker,
+    resolve_hosts_and_update_env_vars,
+)
 
-dotenv_path = MODULE_DIR.parent / '.env'
+dotenv_path = MODULE_DIR.parent / ".env"
 if is_docker():
-    dotenv_path = MODULE_DIR.parent / '.env.docker'
+    dotenv_path = MODULE_DIR.parent / ".env.docker"
 load_dotenv(dotenv_path)
 resolve_hosts_and_update_env_vars()
 
@@ -25,24 +29,29 @@ CONDUIT_ROOT_PATH = MODULE_DIR.parent
 sys.path.insert(1, str(CONDUIT_ROOT_PATH))
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.constants import CONDUIT_INDEX_SERVICE_NAME
-from conduit_lib.logging_client import setup_tcp_logging, set_logging_level, teardown_tcp_logging
+from conduit_lib.logging_client import (
+    setup_tcp_logging,
+    set_logging_level,
+    teardown_tcp_logging,
+)
 from conduit_lib.networks import NetworkConfig
 from conduit_lib.utils import get_log_level
 
 from conduit_index.controller import Controller  # pylint:disable=E0401,E0611
 
 loop_type = None
-if sys.platform == 'win32':
+if sys.platform == "win32":
     # selector = selectors.SelectSelector()
     # loop = asyncio.SelectorEventLoop(selector)
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # If uvloop is installed - make use of it
-elif sys.platform == 'linux':
+elif sys.platform == "linux":
     try:
         import uvloop
+
         uvloop.install()
-        loop_type = 'uvloop'
+        loop_type = "uvloop"
     except ImportError:
         pass
 
@@ -53,16 +62,20 @@ def loop_exception_handler(_loop: AbstractEventLoop, context: dict[str, Any]) ->
     if exception is not None:
         logger.exception("Exception raised in asyncio loop", exc_info=exception)
     else:
-        logger.error("Error in asyncio loop without exception, message: %s", context["message"])
+        logger.error(
+            "Error in asyncio loop without exception, message: %s",
+            context["message"],
+        )
 
 
 async def main() -> None:
-    os.environ['SERVER_TYPE'] = "ConduitIndex"
+    os.environ["SERVER_TYPE"] = "ConduitIndex"
     loop = asyncio.get_running_loop()
     loop.set_exception_handler(loop_exception_handler)
 
-    logging_server_proc = TCPLoggingServer(port=65421, service_name=CONDUIT_INDEX_SERVICE_NAME,
-        kill_port=63241)
+    logging_server_proc = TCPLoggingServer(
+        port=65421, service_name=CONDUIT_INDEX_SERVICE_NAME, kill_port=63241
+    )
     logging_server_proc.start()
 
     # Logging configuration is via environment variables
@@ -72,12 +85,17 @@ async def main() -> None:
     try:
         logger = logging.getLogger("main-task")
 
-        net_config = NetworkConfig(os.environ["NETWORK"], node_host=os.environ['NODE_HOST'],
-            node_port=int(os.environ['NODE_PORT']), node_rpc_host=os.environ['NODE_RPC_HOST'],
-            node_rpc_port=int(os.environ['NODE_RPC_PORT']))
-        os.environ['GENESIS_ACTIVATION_HEIGHT'] = str(net_config.GENESIS_ACTIVATION_HEIGHT)
+        net_config = NetworkConfig(
+            os.environ["NETWORK"],
+            node_host=os.environ["NODE_HOST"],
+            node_port=int(os.environ["NODE_PORT"]),
+            node_rpc_host=os.environ["NODE_RPC_HOST"],
+            node_rpc_port=int(os.environ["NODE_RPC_PORT"]),
+        )
+        os.environ["GENESIS_ACTIVATION_HEIGHT"] = str(net_config.GENESIS_ACTIVATION_HEIGHT)
         controller = Controller(
-            net_config=net_config, loop_type=loop_type,
+            net_config=net_config,
+            loop_type=loop_type,
         )
         try:
             await controller.run()
@@ -88,6 +106,7 @@ async def main() -> None:
             except Exception:
                 # Exceptions raised in finally clauses are suppressed by the runtime.
                 import traceback
+
                 traceback.print_exc()
                 raise
     finally:

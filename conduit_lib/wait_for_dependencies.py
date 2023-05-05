@@ -13,8 +13,12 @@ from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
 
-async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializer,
-        serializer: Serializer) -> None:
+async def wait_for_node(
+    node_host: str,
+    node_port: int,
+    deserializer: Deserializer,
+    serializer: Serializer,
+) -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
@@ -36,7 +40,7 @@ async def wait_for_node(node_host: str, node_port: int, deserializer: Deserializ
 
             stream = io.BytesIO(response)
             message_header = deserializer.deserialize_message_header(stream)
-            if message_header['command'] == 'version':
+            if message_header["command"] == "version":
                 is_available = True
                 break
         except ConnectionRefusedError:
@@ -87,8 +91,8 @@ def wait_for_ipc_socket_server() -> None:
     1) The HeadersStateServer - which gives notifications about ConduitRaw's current tip
     2) The LMDB database (which should have an API wrapping it)"""
     logger = logging.getLogger("wait-for-dependencies")
-    host: str = os.environ.get('IPC_SOCKET_SERVER_HOST', '127.0.0.1')
-    port: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
+    host: str = os.environ.get("IPC_SOCKET_SERVER_HOST", "127.0.0.1")
+    port: int = int(os.environ.get("IPC_SOCKET_SERVER_PORT", "50000"))
 
     was_waiting = False
     while True:
@@ -101,8 +105,9 @@ def wait_for_ipc_socket_server() -> None:
                 break
         except ServiceUnavailableError:
             was_waiting = True
-            logger.debug(f"ConduitRawAPI server on: http://{host}:{port} currently "
-                         f"unavailable - waiting...")
+            logger.debug(
+                f"ConduitRawAPI server on: http://{host}:{port} currently " f"unavailable - waiting..."
+            )
             time.sleep(5)
         except Exception:
             logger.exception("unexpected exception in 'wait_for_ipc_socket_server'")

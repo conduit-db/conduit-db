@@ -15,7 +15,6 @@ from conduit_lib.constants import REGTEST
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 from conduit_lib.types import BlockSliceRequestType, ChainHashes
 
-
 BatchedBlockSlices = bytearray
 
 
@@ -25,24 +24,28 @@ class SocketServerError(Exception):
 
 class ServiceUnavailableError(Exception):
     """Only raised by ping() method"""
-    pass
 
+    pass
 
 
 class IPCSocketClient:
     is_open = True
 
     def __init__(self) -> None:
-        self.HOST: str = os.environ.get('IPC_SOCKET_SERVER_HOST', '127.0.0.1')
-        self.PORT: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
-        self.logger: logging.Logger = logging.getLogger('raw-socket-client')
+        self.HOST: str = os.environ.get("IPC_SOCKET_SERVER_HOST", "127.0.0.1")
+        self.PORT: int = int(os.environ.get("IPC_SOCKET_SERVER_PORT", "50000"))
+        self.logger: logging.Logger = logging.getLogger("raw-socket-client")
         self.wait_for_connection()
 
-    def __enter__(self) -> 'IPCSocketClient':
+    def __enter__(self) -> "IPCSocketClient":
         return self
 
-    def __exit__(self, exc_type: Type[BaseException] | None, exc_val: BaseException | None,
-            exc_tb: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.sock.close()
 
     def wait_for_connection(self) -> None:
@@ -57,8 +60,10 @@ class IPCSocketClient:
                 time.sleep(5)
                 self.sock.close()
             except Exception as e:
-                self.logger.error(f"Unexpected exception in wait_for_connection for "
-                    f"host: {self.HOST}, port: {self.PORT}")
+                self.logger.error(
+                    f"Unexpected exception in wait_for_connection for "
+                    f"host: {self.HOST}, port: {self.PORT}"
+                )
                 time.sleep(1)
 
     def close(self) -> None:
@@ -120,8 +125,9 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.chain_tip()  # recurse
 
-    def block_number_batched(self, block_hashes: list[bytes]) \
-            -> ipc_sock_msg_types.BlockNumberBatchedResponse:
+    def block_number_batched(
+        self, block_hashes: list[bytes]
+    ) -> ipc_sock_msg_types.BlockNumberBatchedResponse:
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockNumberBatchedRequest(block_hashes=block_hashes)
@@ -141,9 +147,9 @@ class IPCSocketClient:
     # Todo - make a streaming API for blocks to protect against freakishly large txs
     def block_batched(self, block_requests: list[BlockSliceRequestType]) -> BatchedBlockSlices:
         """The packing protocol is a contiguous array of:
-             block_number uint32,
-             len_slice uin64,
-             raw_block_slice bytes"""
+        block_number uint32,
+        len_slice uin64,
+        raw_block_slice bytes"""
         try:
             # Request
             msg_req = ipc_sock_msg_types.BlockBatchedRequest(block_requests)
@@ -158,8 +164,7 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.block_batched(block_requests)  # recurse
 
-    def merkle_tree_row(self, block_hash: bytes, level: int) \
-            -> ipc_sock_msg_types.MerkleTreeRowResponse:
+    def merkle_tree_row(self, block_hash: bytes, level: int) -> ipc_sock_msg_types.MerkleTreeRowResponse:
         try:
             msg_req = ipc_sock_msg_types.MerkleTreeRowRequest(block_hash, level)
             send_msg(self.sock, msg_req.to_cbor())
@@ -174,8 +179,7 @@ class IPCSocketClient:
             return self.merkle_tree_row(block_hash, level)  # recurse
 
     # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
-    def transaction_offsets_batched(self,
-            block_hashes: list[bytes]) -> Iterator['array.ArrayType[int]']:
+    def transaction_offsets_batched(self, block_hashes: list[bytes]) -> Iterator["array.ArrayType[int]"]:
         try:
             msg_req = ipc_sock_msg_types.TransactionOffsetsBatchedRequest(block_hashes)
             send_msg(self.sock, msg_req.to_cbor())
@@ -206,8 +210,9 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.block_metadata_batched(block_hashes)  # recurse
 
-    def headers_batched(self, start_height: int, batch_size: int) \
-            -> ipc_sock_msg_types.HeadersBatchedResponse:
+    def headers_batched(
+        self, start_height: int, batch_size: int
+    ) -> ipc_sock_msg_types.HeadersBatchedResponse:
         try:
             # Request
             msg_req = ipc_sock_msg_types.HeadersBatchedRequest(start_height, batch_size)
@@ -224,8 +229,9 @@ class IPCSocketClient:
             self.wait_for_connection()
             return self.headers_batched(start_height, batch_size)  # recurse
 
-    def reorg_differential(self, old_hashes: ChainHashes, new_hashes: ChainHashes) -> \
-            ipc_sock_msg_types.ReorgDifferentialResponse:
+    def reorg_differential(
+        self, old_hashes: ChainHashes, new_hashes: ChainHashes
+    ) -> ipc_sock_msg_types.ReorgDifferentialResponse:
         try:
             # Request
             msg_req = ipc_sock_msg_types.ReorgDifferentialRequest(old_hashes, new_hashes)
@@ -250,11 +256,16 @@ if __name__ == "__main__":
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     storage_path = MODULE_DIR / "test_lmdb"
-    net_config = NetworkConfig(network_type=REGTEST, node_host='127.0.0.1', node_port=18444,
-        node_rpc_host='127.0.0.1', node_rpc_port=18332)
-    block_headers = setup_headers_store(net_config,
-        "../conduit_raw/conduit_raw/sock_server/test_headers.mmap")
-
+    net_config = NetworkConfig(
+        network_type=REGTEST,
+        node_host="127.0.0.1",
+        node_port=18444,
+        node_rpc_host="127.0.0.1",
+        node_rpc_port=18332,
+    )
+    block_headers = setup_headers_store(
+        net_config, "../conduit_raw/conduit_raw/sock_server/test_headers.mmap"
+    )
 
     block_hash = block_headers.longest_chain().tip.hash
     block_hashes = [block_hash, block_hash, block_hash]
@@ -297,4 +308,3 @@ if __name__ == "__main__":
     #
     # while True:
     #     client.ping()
-

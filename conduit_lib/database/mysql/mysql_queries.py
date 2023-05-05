@@ -22,9 +22,13 @@ if typing.TYPE_CHECKING:
 
 
 class MySQLQueries:
-
-    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables, bulk_loads:
-            MySQLBulkLoads, mysql_db: 'MySQLDatabase') -> None:
+    def __init__(
+        self,
+        mysql_conn: MySQLdb.Connection,
+        mysql_tables: MySQLTables,
+        bulk_loads: MySQLBulkLoads,
+        mysql_db: "MySQLDatabase",
+    ) -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn
@@ -39,25 +43,37 @@ class MySQLQueries:
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s\n" % (row) for row in mined_tx_hashes]
-            column_names = ['mined_tx_hash', 'blk_num']
-            self.bulk_loads._load_data_infile("temp_mined_tx_hashes", string_rows, column_names,
-                binary_column_indices=[0])
+            column_names = ["mined_tx_hash", "blk_num"]
+            self.bulk_loads._load_data_infile(
+                "temp_mined_tx_hashes",
+                string_rows,
+                column_names,
+                binary_column_indices=[0],
+            )
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def mysql_load_temp_inbound_tx_hashes(self, inbound_tx_hashes: list[tuple[str]],
-            inbound_tx_table_name: str) -> None:
+    def mysql_load_temp_inbound_tx_hashes(
+        self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
+    ) -> None:
         """columns: tx_hashes, blk_height"""
         self.mysql_tables.mysql_create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
         string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
-        column_names = ['inbound_tx_hashes']
-        self.bulk_loads._load_data_infile(f'{inbound_tx_table_name}', string_rows, column_names,
-            binary_column_indices=[0])
+        column_names = ["inbound_tx_hashes"]
+        self.bulk_loads._load_data_infile(
+            f"{inbound_tx_table_name}",
+            string_rows,
+            column_names,
+            binary_column_indices=[0],
+        )
 
-
-    def mysql_get_unprocessed_txs(self, is_reorg: bool, new_tx_hashes: list[tuple[str]],
-            inbound_tx_table_name: str) -> set[bytes]:
+    def mysql_get_unprocessed_txs(
+        self,
+        is_reorg: bool,
+        new_tx_hashes: list[tuple[str]],
+        inbound_tx_table_name: str,
+    ) -> set[bytes]:
         """
         Usually if all mempool txs have been processed, this function will only return
         the coinbase tx. If a reorg has occurred it will use the temp_orphaned_txs to avoid
@@ -130,9 +146,13 @@ class MySQLQueries:
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s\n" % (tx_hash.hex()) for tx_hash in removals_from_mempool]
-            column_names = ['tx_hash']
-            self.bulk_loads._load_data_infile("temp_mempool_removals", string_rows, column_names,
-                binary_column_indices=[0])
+            column_names = ["tx_hash"]
+            self.bulk_loads._load_data_infile(
+                "temp_mempool_removals",
+                string_rows,
+                column_names,
+                binary_column_indices=[0],
+            )
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -144,9 +164,13 @@ class MySQLQueries:
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s\n" % (tx_hash.hex(), dt.isoformat()) for tx_hash in additions_to_mempool]
-            column_names = ['tx_hash', 'tx_timestamp']
-            self.bulk_loads._load_data_infile("temp_mempool_additions", string_rows, column_names,
-                binary_column_indices=[0])
+            column_names = ["tx_hash", "tx_timestamp"]
+            self.bulk_loads._load_data_infile(
+                "temp_mempool_additions",
+                string_rows,
+                column_names,
+                binary_column_indices=[0],
+            )
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -157,9 +181,13 @@ class MySQLQueries:
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s\n" % tx_hash.hex() for tx_hash in orphaned_tx_hashes]
-            column_names = ['tx_hash']
-            self.bulk_loads._load_data_infile("temp_orphaned_txs", string_rows, column_names,
-                binary_column_indices=[0])
+            column_names = ["tx_hash"]
+            self.bulk_loads._load_data_infile(
+                "temp_orphaned_txs",
+                string_rows,
+                column_names,
+                binary_column_indices=[0],
+            )
         finally:
             if os.path.exists(outfile):
                 os.remove(outfile)
@@ -205,8 +233,9 @@ class MySQLQueries:
         finally:
             self.mysql_db.commit_transaction()
 
-    def mysql_get_checkpoint_state(self) -> tuple[int, bytes, bool, bytes, bytes, bytes,
-            bytes] | None:
+    def mysql_get_checkpoint_state(
+        self,
+    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
         """We 'allocate' work up to a given block hash and then we set the new checkpoint only
         after every block in the batch is successfully flushed"""
         try:
@@ -223,9 +252,15 @@ class MySQLQueries:
                 last_allocated_block_hash = row[5]
                 old_hashes_array = row[6]
                 new_hashes_array = row[7]
-                return best_flushed_block_height, best_flushed_block_hash, reorg_was_allocated, \
-                    first_allocated_block_hash, last_allocated_block_hash, old_hashes_array, \
-                    new_hashes_array
+                return (
+                    best_flushed_block_height,
+                    best_flushed_block_hash,
+                    reorg_was_allocated,
+                    first_allocated_block_hash,
+                    last_allocated_block_hash,
+                    old_hashes_array,
+                    new_hashes_array,
+                )
             else:
                 return None
         finally:
@@ -247,8 +282,10 @@ class MySQLQueries:
             result = self.mysql_conn.store_result()
             count = result.num_rows()
             if count != 0:
-                self.logger.warning(f"The database was abruptly shutdown ({count} unsafe txs for "
-                    f"rollback) - beginning repair process...")
+                self.logger.warning(
+                    f"The database was abruptly shutdown ({count} unsafe txs for "
+                    f"rollback) - beginning repair process..."
+                )
             return cast(Iterator[Any], result.fetch_row(0))
         finally:
             self.mysql_db.commit_transaction()
@@ -257,16 +294,17 @@ class MySQLQueries:
         # Deletion is very slow for large batch sizes
         t0 = time.time()
         BATCH_SIZE = 2000
-        BATCHES_COUNT = math.ceil(len(tx_hash_hexes)/BATCH_SIZE)
+        BATCHES_COUNT = math.ceil(len(tx_hash_hexes) / BATCH_SIZE)
         for i in range(BATCHES_COUNT):
             self.mysql_db.start_transaction()
             try:
                 if i == BATCHES_COUNT - 1:
-                    tx_hash_hexes_batch = tx_hash_hexes[i*BATCH_SIZE:]
+                    tx_hash_hexes_batch = tx_hash_hexes[i * BATCH_SIZE :]
                 else:
-                    tx_hash_hexes_batch = tx_hash_hexes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-                stringified_tx_hash_hexes = ','.join(
-                    [f"X'{tx_hash_hex}'" for tx_hash_hex in tx_hash_hexes_batch])
+                    tx_hash_hexes_batch = tx_hash_hexes[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
+                stringified_tx_hash_hexes = ",".join(
+                    [f"X'{tx_hash_hex}'" for tx_hash_hex in tx_hash_hexes_batch]
+                )
 
                 query = f"""
                     DELETE FROM confirmed_transactions
@@ -275,9 +313,9 @@ class MySQLQueries:
             finally:
                 self.mysql_db.commit_transaction()
         t1 = time.time() - t0
-        self.logger.log(PROFILING,
-            f"elapsed time for bulk delete of transactions = {t1} seconds for "
-            f"{len(tx_hash_hexes)}"
+        self.logger.log(
+            PROFILING,
+            f"elapsed time for bulk delete of transactions = {t1} seconds for " f"{len(tx_hash_hexes)}",
         )
 
     # TODO Double check that rows are indeed overwritten then delete all of this
@@ -355,22 +393,22 @@ class MySQLQueries:
     #     self.logger.log(PROFILING,
     #         f"elapsed time for delete of header row = {t1} seconds")
 
-    def mysql_get_duplicate_tx_hashes(self, tx_rows: list[ConfirmedTransactionRow]) \
-            -> list[ConfirmedTransactionRow]:
+    def mysql_get_duplicate_tx_hashes(
+        self, tx_rows: list[ConfirmedTransactionRow]
+    ) -> list[ConfirmedTransactionRow]:
         try:
             candidate_tx_hashes = [(row[0],) for row in tx_rows]
 
             t0 = time.time()
             BATCH_SIZE = 2000
-            BATCHES_COUNT = math.ceil(len(candidate_tx_hashes)/BATCH_SIZE)
+            BATCHES_COUNT = math.ceil(len(candidate_tx_hashes) / BATCH_SIZE)
             results = []
             for i in range(BATCHES_COUNT):
                 if i == BATCHES_COUNT - 1:
-                    batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:]
+                    batched_unsafe_txs = candidate_tx_hashes[i * BATCH_SIZE :]
                 else:
-                    batched_unsafe_txs = candidate_tx_hashes[i*BATCH_SIZE:(i+1)*BATCH_SIZE]
-                stringified_tx_hashes = ','.join([f"UNHEX('{(row[0])}')" for row in
-                    batched_unsafe_txs])
+                    batched_unsafe_txs = candidate_tx_hashes[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
+                stringified_tx_hashes = ",".join([f"UNHEX('{(row[0])}')" for row in batched_unsafe_txs])
 
                 query = f"""
                     SELECT * FROM confirmed_transactions
@@ -380,9 +418,10 @@ class MySQLQueries:
                 for row in result.fetch_row(0):
                     results.append(row)
             t1 = time.time() - t0
-            self.logger.log(PROFILING,
+            self.logger.log(
+                PROFILING,
                 f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for "
-                f"{len(candidate_tx_hashes)}"
+                f"{len(candidate_tx_hashes)}",
             )
             return results
         finally:
@@ -402,9 +441,14 @@ class MySQLQueries:
             finally:
                 self.mysql_db.commit_transaction()
 
-    def update_allocated_state(self, reorg_was_allocated: bool, first_allocated: bitcoinx.Header,
-            last_allocated: bitcoinx.Header, old_hashes: ChainHashes | None,
-            new_hashes: ChainHashes | None) -> None:
+    def update_allocated_state(
+        self,
+        reorg_was_allocated: bool,
+        first_allocated: bitcoinx.Header,
+        last_allocated: bitcoinx.Header,
+        old_hashes: ChainHashes | None,
+        new_hashes: ChainHashes | None,
+    ) -> None:
         # old_hashes and new_hashes are null unless there there was a reorg in which case we
         # need to be precise about how we do the db repair / rollback (if ever needed)
         if old_hashes is not None:
@@ -448,8 +492,10 @@ class MySQLQueries:
             self.mysql_db.commit_transaction()
 
     def get_mempool_size(self) -> int:
-        sql = "SELECT TABLE_ROWS FROM information_schema.tables " \
-              "WHERE table_schema = DATABASE() and table_name = 'mempool_transactions';"
+        sql = (
+            "SELECT TABLE_ROWS FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() and table_name = 'mempool_transactions';"
+        )
         self.mysql_db.mysql_conn.query(sql)
         result = self.mysql_db.mysql_conn.store_result()
         return int(result.fetch_row()[0][0])

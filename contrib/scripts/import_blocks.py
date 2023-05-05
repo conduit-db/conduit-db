@@ -12,13 +12,19 @@ import os
 import requests
 import sys
 
-
 RPC_URI = "http://rpcuser:rpcpassword@127.0.0.1:18332"
 
 
 def submit_block(block_bytes: bytes) -> None:
     block_bytes_hex = block_bytes.hex()
-    payload = json.dumps({"jsonrpc": "2.0", "method": "submitblock", "params": [ block_bytes_hex ], "id": 0})
+    payload = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "submitblock",
+            "params": [block_bytes_hex],
+            "id": 0,
+        }
+    )
     result = requests.post(f"{RPC_URI}", data=payload, timeout=10.0)
     result.raise_for_status()
 
@@ -79,4 +85,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

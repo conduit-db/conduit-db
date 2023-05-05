@@ -28,7 +28,7 @@ class HeadersAPIThreadsafe:
     def chain_work_for_chain_and_heigth(self, chain: Chain, height: int) -> int:
         return cast(int, self.headers.chainwork_to_height(chain, height))
 
-    def connect_headers(self, stream: io.BytesIO, lock: bool=False) -> tuple[bytes, bool]:
+    def connect_headers(self, stream: io.BytesIO, lock: bool = False) -> tuple[bytes, bool]:
         count = bitcoinx.read_varint(stream.read)
         success = True
         first_header_of_batch = b""
@@ -58,7 +58,7 @@ class HeadersAPIThreadsafe:
             if lock:
                 self.headers_lock.release()
 
-    def get_header_for_height(self, height: int, lock: bool=True) -> bitcoinx.Header:
+    def get_header_for_height(self, height: int, lock: bool = True) -> bitcoinx.Header:
         try:
             if lock:
                 self.headers_lock.acquire()
@@ -69,7 +69,7 @@ class HeadersAPIThreadsafe:
             if lock:
                 self.headers_lock.release()
 
-    def get_header_for_hash(self, block_hash: bytes, lock: bool=True) -> bitcoinx.Header:
+    def get_header_for_hash(self, block_hash: bytes, lock: bool = True) -> bitcoinx.Header:
         """raises `bitcoinx.errors.MissingHeader`"""
         try:
             if lock:
@@ -80,8 +80,13 @@ class HeadersAPIThreadsafe:
             if lock:
                 self.headers_lock.release()
 
-    def find_common_parent(self, reorg_node_tip: Header, orphaned_tip: Header, chains: list[Chain],
-            lock: bool=False) -> tuple[bitcoinx.Chain, int]:
+    def find_common_parent(
+        self,
+        reorg_node_tip: Header,
+        orphaned_tip: Header,
+        chains: list[Chain],
+        lock: bool = False,
+    ) -> tuple[bitcoinx.Chain, int]:
         try:
             if lock:
                 self.headers_lock.acquire()
@@ -95,7 +100,10 @@ class HeadersAPIThreadsafe:
                     orphaned_chain = chain
 
             if reorg_chain is not None and orphaned_chain is not None:
-                chain, common_parent_height = reorg_chain.common_chain_and_height(orphaned_chain)
+                (
+                    chain,
+                    common_parent_height,
+                ) = reorg_chain.common_chain_and_height(orphaned_chain)
                 return reorg_chain, common_parent_height
             elif reorg_chain is not None and orphaned_chain is None:
                 return reorg_chain, 0
@@ -106,20 +114,28 @@ class HeadersAPIThreadsafe:
             if lock:
                 self.headers_lock.release()
 
-    def reorg_detect(self, old_tip: bitcoinx.Header, new_tip: bitcoinx.Header, chains: list[Chain],
-            lock: bool=False) -> tuple[int, Header, Header] | None:
+    def reorg_detect(
+        self,
+        old_tip: bitcoinx.Header,
+        new_tip: bitcoinx.Header,
+        chains: list[Chain],
+        lock: bool = False,
+    ) -> tuple[int, Header, Header] | None:
         try:
             if lock:
                 self.headers_lock.acquire()
             assert new_tip.height > old_tip.height
             common_parent_chain, common_parent_height = self.find_common_parent(
-                new_tip, old_tip, chains, lock)
+                new_tip, old_tip, chains, lock
+            )
 
             if common_parent_height < old_tip.height:
                 depth = old_tip.height - common_parent_height
-                logger.debug(f"Reorg detected of depth: {depth}. "
-                             f"Syncing missing blocks from height: "
-                             f"{common_parent_height + 1} to {new_tip.height}")
+                logger.debug(
+                    f"Reorg detected of depth: {depth}. "
+                    f"Syncing missing blocks from height: "
+                    f"{common_parent_height + 1} to {new_tip.height}"
+                )
                 return common_parent_height, new_tip, old_tip
             return None
         except Exception:
@@ -129,8 +145,7 @@ class HeadersAPIThreadsafe:
             if lock:
                 self.headers_lock.release()
 
-    def _get_chain_hashes_back_to_common_parent(self, tip: Header, common_parent_height: int) \
-            -> ChainHashes:
+    def _get_chain_hashes_back_to_common_parent(self, tip: Header, common_parent_height: int) -> ChainHashes:
         """Used in reorg handling see: lmdb.get_reorg_differential"""
         common_parent = self.get_header_for_height(common_parent_height)
 
@@ -143,8 +158,9 @@ class HeadersAPIThreadsafe:
 
         return chain_hashes
 
-    def connect_headers_reorg_safe(self, message: bytes) -> tuple[
-        bool, Header, Header, ChainHashes | None, ChainHashes | None]:
+    def connect_headers_reorg_safe(
+        self, message: bytes
+    ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         """This needs to ingest a p2p messaging protocol style headers message and if they do indeed
         constitute a reorg event, they need to go far back enough to include the common parent
         height, so it can connect to our local headers longest chain. Otherwise, raises
@@ -173,12 +189,12 @@ class HeadersAPIThreadsafe:
                 common_parent_height, new_tip, old_tip = reorg_info
                 start_header = self.get_header_for_height(common_parent_height + 1, lock=False)
                 stop_header = new_tip
-                logger.debug(f"Reorg detected - common parent height: {common_parent_height}; "
-                             f"old_tip={old_tip}; new_tip={new_tip}")
-                old_chain = self._get_chain_hashes_back_to_common_parent(old_tip,
-                    common_parent_height)
-                new_chain = self._get_chain_hashes_back_to_common_parent(new_tip,
-                    common_parent_height)
+                logger.debug(
+                    f"Reorg detected - common parent height: {common_parent_height}; "
+                    f"old_tip={old_tip}; new_tip={new_tip}"
+                )
+                old_chain = self._get_chain_hashes_back_to_common_parent(old_tip, common_parent_height)
+                new_chain = self._get_chain_hashes_back_to_common_parent(new_tip, common_parent_height)
             else:
                 start_header = self.get_header_for_hash(double_sha256(first_header_of_batch))
                 stop_header = new_tip

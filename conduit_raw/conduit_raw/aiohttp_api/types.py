@@ -49,22 +49,30 @@ class OutpointStateUpdate(NamedTuple):
     worker_id: int | None
 
     def __str__(self) -> str:
-        return f"""OutpointStateUpdate(request_id={self.request_id},
+        return (
+            f"""OutpointStateUpdate(request_id={self.request_id},
                command={repr(OutpointMessageType(self.command))},
                outpoint={OutpointType.from_outpoint_struct(self.outpoint)
                     if self.outpoint else None},
                output_spend={OutputSpendRow.from_output_spend_struct(self.output_spend) 
                     if self.output_spend else None},
-               worker_id={self.worker_id})""".replace("\n", "").replace(" ", "").replace("\t", "")
+               worker_id={self.worker_id})""".replace(
+                "\n", ""
+            )
+            .replace(" ", "")
+            .replace("\t", "")
+        )
 
 
 class TipFilterRegistrationEntry(NamedTuple):
     pushdata_hash: bytes
-    duration_seconds: int   # when unregistering duration_seconds=0xffffffff
+    duration_seconds: int  # when unregistering duration_seconds=0xffffffff
 
     def __str__(self) -> str:
-        return f"TipFilterRegistrationEntry(pushdata_hash={self.pushdata_hash.hex()}, " \
-               f"duration_seconds={self.duration_seconds})"
+        return (
+            f"TipFilterRegistrationEntry(pushdata_hash={self.pushdata_hash.hex()}, "
+            f"duration_seconds={self.duration_seconds})"
+        )
 
 
 class PushdataFilterMessageType(IntEnum):
@@ -82,11 +90,14 @@ class PushdataFilterStateUpdate(NamedTuple):
     block_hash: bytes | None
 
     def __str__(self) -> str:
-        return f"PushdataFilterStateUpdate(request_id={self.request_id}, " \
-               f"command={repr(PushdataFilterMessageType(self.command))}, " \
-               f"entries={[str(TipFilterRegistrationEntry(*entry)) for entry in self.entries]}, " \
-               f"matches={self.matches}, " \
-               f"block_hash={hash_to_hex_str(self.block_hash) if self.block_hash is not None else None})"
+        return (
+            f"PushdataFilterStateUpdate(request_id={self.request_id}, "
+            f"command={repr(PushdataFilterMessageType(self.command))}, "
+            f"entries={[str(TipFilterRegistrationEntry(*entry)) for entry in self.entries]}, "
+            f"matches={self.matches}, "
+            f"block_hash={hash_to_hex_str(self.block_hash) if self.block_hash is not None else None})"
+        )
+
 
 class OutputSpendRow(NamedTuple):
     out_tx_hash: bytes
@@ -96,8 +107,14 @@ class OutputSpendRow(NamedTuple):
     block_hash: Optional[bytes]
 
     @classmethod
-    def from_output_spend_struct(cls, buf: bytes) -> 'OutputSpendRow':
-        out_tx_hash, out_idx, in_tx_hash, in_idx, block_hash = output_spend_struct.unpack(buf)
+    def from_output_spend_struct(cls, buf: bytes) -> "OutputSpendRow":
+        (
+            out_tx_hash,
+            out_idx,
+            in_tx_hash,
+            in_idx,
+            block_hash,
+        ) = output_spend_struct.unpack(buf)
         return cls(out_tx_hash, out_idx, in_tx_hash, in_idx, block_hash)
 
 
@@ -115,7 +132,7 @@ class RestorationFilterJSONResponse(TypedDict):
 
 
 class RestorationFilterResult(NamedTuple):
-    flags: int # one byte integer
+    flags: int  # one byte integer
     push_data_hash: bytes
     locking_transaction_hash: bytes
     locking_output_index: int
@@ -131,23 +148,24 @@ filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
 
 
 class IndexerPushdataRegistrationFlag(enum.IntFlag):
-    NONE                            = 0
-    FINALISED                       = 1 << 0
-    DELETING                        = 1 << 1
+    NONE = 0
+    FINALISED = 1 << 0
+    DELETING = 1 << 1
 
     MASK_ALL = ~NONE
-    MASK_DELETING_CLEAR             = ~DELETING
-    MASK_FINALISED_CLEAR            = ~FINALISED
-    MASK_FINALISED_DELETING_CLEAR   = ~(FINALISED | DELETING)
+    MASK_DELETING_CLEAR = ~DELETING
+    MASK_FINALISED_CLEAR = ~FINALISED
+    MASK_FINALISED_DELETING_CLEAR = ~(FINALISED | DELETING)
 
 
 def le_int_to_char(le_int: int) -> bytes:
-    return struct.pack('<I', le_int)[0:1]
+    return struct.pack("<I", le_int)[0:1]
 
 
 class TxOrId(enum.IntEnum):
     TRANSACTION_ID = 0
     FULL_TRANSACTION = 1 << 0
+
 
 class TargetType(enum.IntEnum):
     HASH = 0
@@ -165,8 +183,9 @@ class CompositeProof(enum.IntEnum):
     COMPOSITE_PROOF = 1 << 4
 
 
-def tsc_merkle_proof_json_to_binary(tsc_json: dict[str, Any], include_full_tx: bool,
-        target_type: str) -> bytearray:
+def tsc_merkle_proof_json_to_binary(
+    tsc_json: dict[str, Any], include_full_tx: bool, target_type: str
+) -> bytearray:
     """{'index': 0, 'txOrId': txOrId, 'target': target, 'nodes': []}"""
     response = bytearray()
 
@@ -174,11 +193,11 @@ def tsc_merkle_proof_json_to_binary(tsc_json: dict[str, Any], include_full_tx: b
     if include_full_tx:
         flags = flags | TxOrId.FULL_TRANSACTION
 
-    if target_type == 'hash':
+    if target_type == "hash":
         flags = flags | TargetType.HASH
-    elif target_type == 'header':
+    elif target_type == "header":
         flags = flags | TargetType.HEADER
-    elif target_type == 'merkleroot':
+    elif target_type == "merkleroot":
         flags = flags | TargetType.MERKLE_ROOT
     else:
         raise NotImplementedError(f"Invalid target_type value '{target_type}'")
@@ -187,25 +206,25 @@ def tsc_merkle_proof_json_to_binary(tsc_json: dict[str, Any], include_full_tx: b
     flags = flags | CompositeProof.SINGLE_PROOF  # CompositeProof.COMPOSITE_PROOF not supported
 
     response += le_int_to_char(flags)
-    response += bitcoinx.pack_varint(tsc_json['index'])
+    response += bitcoinx.pack_varint(tsc_json["index"])
 
     if include_full_tx:
-        txLength = len(tsc_json['txOrId']) // 2
+        txLength = len(tsc_json["txOrId"]) // 2
         response += bitcoinx.pack_varint(txLength)
-        response += bytes.fromhex(tsc_json['txOrId'])
+        response += bytes.fromhex(tsc_json["txOrId"])
     else:
-        response += bitcoinx.hex_str_to_hash(tsc_json['txOrId'])
+        response += bitcoinx.hex_str_to_hash(tsc_json["txOrId"])
 
-    if target_type in {'hash', 'merkleroot'}:
-        response += bitcoinx.hex_str_to_hash(tsc_json['target'])
+    if target_type in {"hash", "merkleroot"}:
+        response += bitcoinx.hex_str_to_hash(tsc_json["target"])
     else:  # header
-        response += bytes.fromhex(tsc_json['target'])
+        response += bytes.fromhex(tsc_json["target"])
 
-    nodeCount = bitcoinx.pack_varint(len(tsc_json['nodes']))
+    nodeCount = bitcoinx.pack_varint(len(tsc_json["nodes"]))
     response += nodeCount
-    for node in tsc_json['nodes']:
+    for node in tsc_json["nodes"]:
         if node == "*":
-            duplicate_type_node = b'\x01'
+            duplicate_type_node = b"\x01"
             response += duplicate_type_node
         else:
             hash_type_node = b"\x00"
@@ -249,6 +268,7 @@ class TipFilterPushDataMatchesData(TypedDict):
     blockId: str | None
     matches: list[TipFilterNotificationMatch]
 
+
 class OutboundDataRow(NamedTuple):
     outbound_data_id: Optional[int]
     outbound_data: bytes
@@ -256,8 +276,10 @@ class OutboundDataRow(NamedTuple):
     date_created: int
     date_last_tried: int
 
+
 class HeaderJSONType(TypedDict):
     """Compatible with 'HeaderSV' service json response object"""
+
     hash: str
     version: int
     prevBlockHash: str
@@ -274,8 +296,10 @@ class HeaderTipState:
     LONGEST_CHAIN = "LONGEST_CHAIN"
     STALE = "STALE"
 
+
 class HeaderTipJSONType(TypedDict):
     """Compatible with 'HeaderSV' service json response object"""
+
     header: HeaderJSONType
     state: str
     chainWork: int

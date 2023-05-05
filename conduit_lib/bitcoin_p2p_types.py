@@ -36,13 +36,13 @@ class BlockChunkData(NamedTuple):
     num_chunks: int
     block_hash: bytes
     raw_block_chunk: bytes
-    tx_offsets_for_chunk: 'array.ArrayType[int]'
+    tx_offsets_for_chunk: "array.ArrayType[int]"
 
 
 class BlockDataMsg(NamedTuple):
     block_type: BlockType
     block_hash: bytes
-    tx_offsets: 'array.ArrayType[int]'
+    tx_offsets: "array.ArrayType[int]"
     block_size: int
     # SMALL BLOCK
     small_block_data: bytes | None

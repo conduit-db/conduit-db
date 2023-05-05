@@ -1,6 +1,12 @@
 import asyncio
 import bitcoinx
-from bitcoinx import (read_le_uint64, read_be_uint16, double_sha256, Network, sha256)
+from bitcoinx import (
+    read_le_uint64,
+    read_be_uint16,
+    double_sha256,
+    Network,
+    sha256,
+)
 import stat
 import concurrent.futures
 import io
@@ -16,10 +22,16 @@ from typing import Any, cast, Callable, Coroutine, TypeVar
 import zmq
 from zmq.asyncio import Socket as AsyncZMQSocket
 
-
 from .commands import BLOCK_BIN
-from .constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME, CONDUIT_RAW_SERVICE_NAME, \
-    TESTNET, SCALINGTESTNET, REGTEST, MAINNET
+from .constants import (
+    PROFILING,
+    CONDUIT_INDEX_SERVICE_NAME,
+    CONDUIT_RAW_SERVICE_NAME,
+    TESTNET,
+    SCALINGTESTNET,
+    REGTEST,
+    MAINNET,
+)
 from .deserializer_types import NodeAddr
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -29,10 +41,9 @@ logger.setLevel(logging.DEBUG)
 
 
 def is_docker() -> bool:
-    path = '/proc/self/cgroup'
+    path = "/proc/self/cgroup"
     return (
-        os.path.exists('/.dockerenv') or
-        os.path.isfile(path) and any('docker' in line for line in open(path))
+        os.path.exists("/.dockerenv") or os.path.isfile(path) and any("docker" in line for line in open(path))
     )
 
 
@@ -63,10 +74,8 @@ def mapped_ipv6_to_ipv4(f: io.BytesIO) -> NodeAddr:
 # NOTE(AustEcon) - This is untested and probably wrong - I've never used it
 def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     """two parameters that need to be chosen. One is the size of the filter in bytes. The other
-        is the number of hash functions to use. See bip37."""
-    filter_size = (
-        -1 / math.pow(math.log(2), 2) * n_elements * math.log(false_positive_rate)
-    ) / 8
+    is the number of hash functions to use. See bip37."""
+    filter_size = (-1 / math.pow(math.log(2), 2) * n_elements * math.log(false_positive_rate)) / 8
     return int(filter_size)
 
 
@@ -85,31 +94,31 @@ def unpack_varint_from_mv(buffer: bytes) -> tuple[int, int]:
 
 def get_log_level(service_name: str) -> int:
     if service_name == CONDUIT_INDEX_SERVICE_NAME:
-        level = os.getenv(f'CONDUIT_INDEX_LOG_LEVEL', 'DEBUG')
+        level = os.getenv(f"CONDUIT_INDEX_LOG_LEVEL", "DEBUG")
     elif service_name == CONDUIT_RAW_SERVICE_NAME:
-        level = os.getenv(f'CONDUIT_RAW_LOG_LEVEL', 'DEBUG')
+        level = os.getenv(f"CONDUIT_RAW_LOG_LEVEL", "DEBUG")
     else:
-        level = 'DEBUG'
+        level = "DEBUG"
 
-    if level == 'CRITICAL':
+    if level == "CRITICAL":
         return logging.CRITICAL
-    if level == 'ERROR':
+    if level == "ERROR":
         return logging.ERROR
-    if level == 'WARNING':
+    if level == "WARNING":
         return logging.WARNING
-    if level == 'INFO':
+    if level == "INFO":
         return logging.INFO
-    if level == 'DEBUG':
+    if level == "DEBUG":
         return logging.DEBUG
-    if level == 'PROFILING':
+    if level == "PROFILING":
         return PROFILING
     else:
         return logging.DEBUG
 
 
 def get_conduit_raw_host_and_port() -> tuple[str, int]:
-    IPC_SOCKET_SERVER_HOST: str = os.environ.get('IPC_SOCKET_SERVER_HOST', 'localhost')
-    IPC_SOCKET_SERVER_PORT: int = int(os.environ.get('IPC_SOCKET_SERVER_PORT', '50000'))
+    IPC_SOCKET_SERVER_HOST: str = os.environ.get("IPC_SOCKET_SERVER_HOST", "localhost")
+    IPC_SOCKET_SERVER_PORT: int = int(os.environ.get("IPC_SOCKET_SERVER_PORT", "50000"))
     return IPC_SOCKET_SERVER_HOST, IPC_SOCKET_SERVER_PORT
 
 
@@ -130,15 +139,19 @@ class InvalidNetworkException(Exception):
 def get_network_type() -> str:
     nets = [TESTNET, SCALINGTESTNET, REGTEST, MAINNET]
     for key, val in os.environ.items():
-        if key == 'NETWORK':
+        if key == "NETWORK":
             if val.lower() not in nets:
                 raise InvalidNetworkException(f"Network not found: must be one of: {nets}")
             return val.lower()
     raise ValueError("There is no 'NETWORK' key in os.environ")
 
 
-def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str | None = None,
-        timeout: float | None = None) -> None:
+def zmq_send_no_block(
+    sock: zmq.Socket[bytes],
+    msg: bytes,
+    on_blocked_msg: str | None = None,
+    timeout: float | None = None,
+) -> None:
     start_time = time.time()
     while True:
         try:
@@ -152,8 +165,12 @@ def zmq_send_no_block(sock: zmq.Socket[bytes], msg: bytes, on_blocked_msg: str |
             time.sleep(0.1)
 
 
-async def zmq_send_no_block_async(sock: 'AsyncZMQSocket', msg: bytes,
-        on_blocked_msg: str | None = None, timeout: float | None = None) -> None:
+async def zmq_send_no_block_async(
+    sock: "AsyncZMQSocket",
+    msg: bytes,
+    on_blocked_msg: str | None = None,
+    timeout: float | None = None,
+) -> None:
     start_time = time.time()
     while True:
         try:
@@ -167,9 +184,12 @@ async def zmq_send_no_block_async(sock: 'AsyncZMQSocket', msg: bytes,
             await asyncio.sleep(0.1)
 
 
-def maybe_process_batch(process_batch_func: Callable[[list[bytes]], None],
-        work_items: list[bytes], prev_time_check: float, batching_rate: float=0.3) \
-            -> tuple[list[bytes], float]:
+def maybe_process_batch(
+    process_batch_func: Callable[[list[bytes]], None],
+    work_items: list[bytes],
+    prev_time_check: float,
+    batching_rate: float = 0.3,
+) -> tuple[list[bytes], float]:
     time_diff = time.time() - prev_time_check
     if time_diff > batching_rate:
         prev_time_check = time.time()
@@ -179,9 +199,13 @@ def maybe_process_batch(process_batch_func: Callable[[list[bytes]], None],
     return work_items, prev_time_check
 
 
-def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket[bytes],
-        process_batch_func: Callable[[list[bytes]], None], on_blocked_msg: str | None=None,
-        batching_rate: float=0.3, poll_timeout_ms: int=1000) -> None:
+def zmq_recv_and_process_batchwise_no_block(
+    sock: zmq.Socket[bytes],
+    process_batch_func: Callable[[list[bytes]], None],
+    on_blocked_msg: str | None = None,
+    batching_rate: float = 0.3,
+    poll_timeout_ms: int = 1000,
+) -> None:
     work_items: list[bytes] = []
     prev_time_check: float = time.time()
     try:
@@ -195,13 +219,21 @@ def zmq_recv_and_process_batchwise_no_block(sock: zmq.Socket[bytes],
 
                     time_diff = time.time() - prev_time_check
                     if time_diff > batching_rate:
-                        work_items, prev_time_check = maybe_process_batch(process_batch_func,
-                            work_items, prev_time_check, batching_rate)
+                        work_items, prev_time_check = maybe_process_batch(
+                            process_batch_func,
+                            work_items,
+                            prev_time_check,
+                            batching_rate,
+                        )
                 else:
                     if on_blocked_msg:
                         logger.debug(on_blocked_msg)
-                    work_items, prev_time_check = maybe_process_batch(process_batch_func,
-                        work_items, prev_time_check, batching_rate)
+                    work_items, prev_time_check = maybe_process_batch(
+                        process_batch_func,
+                        work_items,
+                        prev_time_check,
+                        batching_rate,
+                    )
             except zmq.error.Again:
                 logger.debug(f"zmq.error.Again")
                 continue
@@ -260,7 +292,6 @@ def network_str_to_bitcoinx_network(network: str) -> bitcoinx.Network:
         raise NotImplementedError(f"Unrecognized network type: '{network}'")
 
 
-def remove_readonly(func: Callable[[Path], None], path: Path,
-        excinfo: BaseException | None) -> None:
+def remove_readonly(func: Callable[[Path], None], path: Path, excinfo: BaseException | None) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)

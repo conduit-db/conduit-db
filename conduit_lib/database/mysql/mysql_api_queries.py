@@ -7,17 +7,25 @@ from bitcoinx import hash_to_hex_str
 
 from .mysql_tables import MySQLTables
 from ...constants import MAX_UINT32
-from ...types import TxMetadata, TxLocation, RestorationFilterQueryResult, \
-    BlockHeaderRow, PushdataMatchFlags
+from ...types import (
+    TxMetadata,
+    TxLocation,
+    RestorationFilterQueryResult,
+    BlockHeaderRow,
+    PushdataMatchFlags,
+)
 
 if typing.TYPE_CHECKING:
     from ... import MySQLDatabase
 
 
 class MySQLAPIQueries:
-
-    def __init__(self, mysql_conn: MySQLdb.Connection, mysql_tables: MySQLTables,
-            mysql_db: 'MySQLDatabase') -> None:
+    def __init__(
+        self,
+        mysql_conn: MySQLdb.Connection,
+        mysql_tables: MySQLTables,
+        mysql_db: "MySQLDatabase",
+    ) -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.mysql_conn = mysql_conn
@@ -42,28 +50,55 @@ class MySQLAPIQueries:
             if len(rows) == 0:
                 return None
             elif len(rows) == 1:  # no reorgs
-                tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
-                return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
-                    block_height)
+                (
+                    tx_hash,
+                    tx_block_num,
+                    tx_position,
+                    block_num,
+                    block_hash,
+                    block_height,
+                ) = rows[0]
+                return TxMetadata(
+                    tx_hash,
+                    tx_block_num,
+                    tx_position,
+                    block_num,
+                    block_hash,
+                    block_height,
+                )
             else:
                 # TODO Investigate why this is happening
                 # If it's a duplicate entry let it return
                 block_nums = [row[3] for row in rows]
                 if all([block_nums[0] == block_num for block_num in block_nums]):
                     self.logger.debug(f"Got duplicate tx row for transaction: {tx_hashX.hex()}")
-                    tx_hash, tx_block_num, tx_position, block_num, block_hash, block_height = rows[0]
-                    return TxMetadata(tx_hash, tx_block_num, tx_position, block_num, block_hash,
-                        block_height)
+                    (
+                        tx_hash,
+                        tx_block_num,
+                        tx_position,
+                        block_num,
+                        block_hash,
+                        block_height,
+                    ) = rows[0]
+                    return TxMetadata(
+                        tx_hash,
+                        tx_block_num,
+                        tx_position,
+                        block_num,
+                        block_hash,
+                        block_height,
+                    )
 
-                raise ValueError(f"More than a single tx_hashX was returned for: {tx_hashX.hex()} "
+                raise ValueError(
+                    f"More than a single tx_hashX was returned for: {tx_hashX.hex()} "
                     f"from the MySQL query. This should never happen. It should always give a "
-                    f"materialized view of the longest chain")  # i.e. WHERE HD.is_orphaned = 0
+                    f"materialized view of the longest chain"
+                )  # i.e. WHERE HD.is_orphaned = 0
 
         finally:
             self.mysql_db.commit_transaction()
 
-    def get_header_data(self, block_hash: bytes, raw_header_data: bool=True) \
-            -> BlockHeaderRow | None:
+    def get_header_data(self, block_hash: bytes, raw_header_data: bool = True) -> BlockHeaderRow | None:
         try:
             if raw_header_data:
                 sql = f"""
@@ -86,21 +121,42 @@ class MySQLAPIQueries:
                 return None
 
             if raw_header_data:
-                block_num, block_hash, block_height, block_header, block_tx_count, block_size, \
-                    is_orphaned = rows[0]
+                (
+                    block_num,
+                    block_hash,
+                    block_height,
+                    block_header,
+                    block_tx_count,
+                    block_size,
+                    is_orphaned,
+                ) = rows[0]
                 block_header = block_header.hex()
             else:
                 block_header = None
-                block_num, block_hash, block_height, block_tx_count, block_size, is_orphaned = \
-                    rows[0]
+                (
+                    block_num,
+                    block_hash,
+                    block_height,
+                    block_tx_count,
+                    block_size,
+                    is_orphaned,
+                ) = rows[0]
 
-            return BlockHeaderRow(block_num, hash_to_hex_str(block_hash), block_height,
-                block_header, block_tx_count, block_size, is_orphaned)
+            return BlockHeaderRow(
+                block_num,
+                hash_to_hex_str(block_hash),
+                block_height,
+                block_header,
+                block_tx_count,
+                block_size,
+                is_orphaned,
+            )
         finally:
             self.mysql_db.commit_transaction()
 
-    def get_pushdata_filter_matches(self, pushdata_hashXes: list[str]) \
-            -> Generator[RestorationFilterQueryResult, None, None]:
+    def get_pushdata_filter_matches(
+        self, pushdata_hashXes: list[str]
+    ) -> Generator[RestorationFilterQueryResult, None, None]:
         try:
             query_format_pushdata_hashes = [f"X'{pd_hashX}'" for pd_hashX in pushdata_hashXes]
             sql = f"""
@@ -138,7 +194,7 @@ class MySQLAPIQueries:
                     spend_transaction_hash=in_tx_hash,
                     transaction_output_index=idx,
                     spend_input_index=in_idx,
-                    tx_location=tx_location
+                    tx_location=tx_location,
                 )
         finally:
             self.mysql_db.commit_transaction()

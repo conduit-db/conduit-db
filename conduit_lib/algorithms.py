@@ -10,8 +10,13 @@ from typing import NamedTuple
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.database.mysql.types import ConfirmedTransactionRow, OutputRow, \
-    MempoolTransactionRow, PushdataRowParsed, InputRowParsed
+from conduit_lib.database.mysql.types import (
+    ConfirmedTransactionRow,
+    OutputRow,
+    MempoolTransactionRow,
+    PushdataRowParsed,
+    InputRowParsed,
+)
 from conduit_lib.types import PushdataMatchFlags
 
 _sha256 = hashlib.sha256
@@ -20,13 +25,12 @@ MTreeLevel = int
 MTreeNodeArray = list[bytes]
 MTree = dict[MTreeLevel, MTreeNodeArray]
 
-
 HEADER_OFFSET = 80
 OP_PUSH_20 = 20
 OP_PUSH_32 = 32
 OP_PUSH_33 = 33
 OP_PUSH_65 = 65
-OP_RETURN = 0x6a
+OP_RETURN = 0x6A
 OP_DROP = 0x75
 OP_ELSE = 0x67
 SET_OTHER_PUSH_OPS = set(range(1, 76))
@@ -39,11 +43,9 @@ struct_OP_20 = Struct("<20s")
 struct_OP_33 = Struct("<33s")
 struct_OP_65 = Struct("<65s")
 
-
 OP_PUSHDATA1 = 0x4C
 OP_PUSHDATA2 = 0x4D
 OP_PUSHDATA4 = 0x4E
-
 
 logger = logging.getLogger("algorithms")
 logger.setLevel(logging.DEBUG)
@@ -67,6 +69,7 @@ def unpack_varint(buf: bytes | memoryview, offset: int) -> tuple[int, int]:
         return struct_le_I.unpack_from(buf, offset + 1)[0], offset + 5
     return struct_le_Q.unpack_from(buf, offset + 1)[0], offset + 9
 
+
 # -------------------- PREPROCESSOR -------------------- #
 
 
@@ -86,8 +89,7 @@ def skip_one_tx(buffer: bytes, offset: int) -> int:
     count_tx_out, offset = unpack_varint(buffer, offset)
     for i in range(count_tx_out):
         offset += 8  # value
-        script_pubkey_len, offset = unpack_varint(buffer,
-            offset)  # script_pubkey
+        script_pubkey_len, offset = unpack_varint(buffer, offset)  # script_pubkey
         offset += script_pubkey_len  # script_sig
 
     # lock_time
@@ -95,7 +97,7 @@ def skip_one_tx(buffer: bytes, offset: int) -> int:
     return offset
 
 
-def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple['array.ArrayType[int]', int]:
+def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple["array.ArrayType[int]", int]:
     """
     Call this function iteratively as more slices of the raw block become available from the
     p2p socket.
@@ -105,7 +107,7 @@ def preprocessor(buffer: bytes, offset: int, adjustment: int) -> tuple['array.Ar
     `offset` is the offset WITHIN the chunk
     `adjustment` shifts the final set of tx_offsets up by this amount
     """
-    tx_offsets: 'array.ArrayType[int]' = array.array('Q')
+    tx_offsets: "array.ArrayType[int]" = array.array("Q")
     tx_offsets.append(offset + adjustment)
     last_tx_offset_in_chunk = offset
     try:
@@ -131,8 +133,14 @@ class PushdataMatch(NamedTuple):
 
 
 # Todo - unittest coverage
-def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
-        flags: PushdataMatchFlags, tx_pos: int, genesis_height: int) -> list[PushdataMatch]:
+def get_pk_and_pkh_from_script(
+    script: bytes,
+    tx_hash: bytes,
+    idx: int,
+    flags: PushdataMatchFlags,
+    tx_pos: int,
+    genesis_height: int,
+) -> list[PushdataMatch]:
     i = 0
     all_pushdata: set[tuple[bytes, PushdataMatchFlags]] = set()
     pd_matches: list[PushdataMatch] = []
@@ -149,12 +157,17 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
                 elif script[i] == OP_ELSE:
                     unreachable_code = False
                     i += 1
-                elif script[i] in {OP_PUSH_20, OP_PUSH_32, OP_PUSH_33, OP_PUSH_65}:
+                elif script[i] in {
+                    OP_PUSH_20,
+                    OP_PUSH_32,
+                    OP_PUSH_33,
+                    OP_PUSH_65,
+                }:
                     length = script[i]
                     i += 1
                     if unreachable_code:
                         flags |= PushdataMatchFlags.DATA
-                    all_pushdata.add((bytes(script[i: i + length]), flags))
+                    all_pushdata.add((bytes(script[i : i + length]), flags))
                     i += length
                 elif script[i] in SET_OTHER_PUSH_OPS:
                     length = script[i]
@@ -197,24 +210,45 @@ def get_pk_and_pkh_from_script(script: bytes, tx_hash: bytes, idx: int,
                 # pushdatas correctly) e.g. see:
                 # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
                 # especially on testnet - lots of bad output scripts...
-                logger.error(f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s, "
-                    f"tx_pos: %s", hash_to_hex_str(tx_hash), idx, flags, tx_pos)
+                logger.error(
+                    f"Ignored a bad script for tx_hash: %s, idx: %s, ref_type: %s, " f"tx_pos: %s",
+                    hash_to_hex_str(tx_hash),
+                    idx,
+                    flags,
+                    tx_pos,
+                )
 
         for pushdata, flags in all_pushdata:
             pd_matches.append(PushdataMatch(sha256(pushdata), flags))
 
         return pd_matches
     except Exception as e:
-        logger.exception(f"Bad script for tx_hash: %s, idx: %s, ref_type: %s, tx_pos: %s",
-            hash_to_hex_str(tx_hash), idx, flags, tx_pos)
+        logger.exception(
+            f"Bad script for tx_hash: %s, idx: %s, ref_type: %s, tx_pos: %s",
+            hash_to_hex_str(tx_hash),
+            idx,
+            flags,
+            tx_pos,
+        )
         raise
 
 
-def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
-        block_num_or_timestamp: int, confirmed: bool, first_tx_pos_batch: int=0,
-        already_seen_offsets: set[int] | None=None) -> tuple[
-    list[ConfirmedTransactionRow], list[MempoolTransactionRow], list[InputRowParsed], list[
-        OutputRow], list[PushdataRowParsed], list[InputRowParsed], list[PushdataRowParsed]]:
+def parse_txs(
+    buffer: bytes,
+    tx_offsets: "array.ArrayType[int]",
+    block_num_or_timestamp: int,
+    confirmed: bool,
+    first_tx_pos_batch: int = 0,
+    already_seen_offsets: set[int] | None = None,
+) -> tuple[
+    list[ConfirmedTransactionRow],
+    list[MempoolTransactionRow],
+    list[InputRowParsed],
+    list[OutputRow],
+    list[PushdataRowParsed],
+    list[InputRowParsed],
+    list[PushdataRowParsed],
+]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -227,7 +261,7 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
     result because these have already been flushed to disc earlier - this could be from either
     a reorg or from mempool processing
     """
-    genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
+    genesis_height = int(os.environ["GENESIS_ACTIVATION_HEIGHT"])
     tx_rows_confirmed = []
     tx_rows_mempool = []
     in_rows = []
@@ -272,7 +306,7 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
             count_tx_in, offset = unpack_varint(buffer, offset)
             # in_offset_start = offset + adjustment
             for in_idx in range(count_tx_in):
-                in_prevout_hash = buffer[offset: offset + 32]
+                in_prevout_hash = buffer[offset : offset + 32]
                 offset += 32
                 in_prevout_idx = struct_le_I.unpack_from(buffer[offset : offset + 4])[0]
                 offset += 4
@@ -314,14 +348,23 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
 
-                pushdata_matches = get_pk_and_pkh_from_script(scriptpubkey, tx_hash=tx_hash,
-                    idx=out_idx, flags=PushdataMatchFlags.OUTPUT, tx_pos=tx_pos,
-                    genesis_height=genesis_height)
+                pushdata_matches = get_pk_and_pkh_from_script(
+                    scriptpubkey,
+                    tx_hash=tx_hash,
+                    idx=out_idx,
+                    flags=PushdataMatchFlags.OUTPUT,
+                    tx_pos=tx_pos,
+                    genesis_height=genesis_height,
+                )
 
                 if len(pushdata_matches):
                     for out_pushdata_hash, flags in set(pushdata_matches):
                         pushdata_row = PushdataRowParsed(
-                            out_pushdata_hash, tx_hash, out_idx, int(flags), )
+                            out_pushdata_hash,
+                            tx_hash,
+                            out_idx,
+                            int(flags),
+                        )
 
                         # Regardless of whether or not `previously_processed` is true or false
                         # we always notify for pushdata matches (This could include reorgs or
@@ -340,14 +383,22 @@ def parse_txs(buffer: bytes, tx_offsets: 'array.ArrayType[int]',
 
             # NOTE: when partitioning blocks ensure position is correct!
             if confirmed:
-                tx_rows_confirmed.append(ConfirmedTransactionRow(tx_hashX.hex(),
-                    block_num_or_timestamp, tx_pos))
+                tx_rows_confirmed.append(
+                    ConfirmedTransactionRow(tx_hashX.hex(), block_num_or_timestamp, tx_pos)
+                )
             else:
                 # Note mempool uses full length tx_hash
                 tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
         assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
-        return tx_rows_confirmed, tx_rows_mempool, in_rows, out_rows, set_pd_rows, utxo_spends, \
-            pushdata_matches_tip_filter
+        return (
+            tx_rows_confirmed,
+            tx_rows_mempool,
+            in_rows,
+            out_rows,
+            set_pd_rows,
+            utxo_spends,
+            pushdata_matches_tip_filter,
+        )
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -363,8 +414,13 @@ def calc_depth(leaves_count: int) -> int:
     return ceil(log(leaves_count, 2)) + 1
 
 
-def calc_mtree_base_level(base_level: int, leaves_count: int, mtree: MTree, raw_block: bytes,
-        tx_offsets: 'array.ArrayType[int]') -> MTree:
+def calc_mtree_base_level(
+    base_level: int,
+    leaves_count: int,
+    mtree: MTree,
+    raw_block: bytes,
+    tx_offsets: "array.ArrayType[int]",
+) -> MTree:
     mtree[base_level] = []
     for i in range(leaves_count):
         if i < (leaves_count - 1):
@@ -396,7 +452,7 @@ def build_mtree_from_base(base_level: MTreeLevel, mtree: MTree) -> MTree:
     return mtree
 
 
-def calc_mtree(raw_block: bytes, tx_offsets: 'array.ArrayType[int]') -> MTree:
+def calc_mtree(raw_block: bytes, tx_offsets: "array.ArrayType[int]") -> MTree:
     """base_level refers to the bottom/widest part of the mtree (merkle root is level=0)"""
     # This is a naive, brute force implementation
     mtree: MTree = {}

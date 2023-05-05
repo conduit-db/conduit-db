@@ -14,12 +14,11 @@ import math
 import struct
 import time
 
-env = lmdb.open('test_lmdb')
+env = lmdb.open("test_lmdb")
 env.set_mapsize(1024 * 1024 * 1024)  # 1GB
 with env.begin(write=True) as txn:
     db = env.open_db()
     txn.drop(db)
-
 
 val_size = 2  # MB
 val_size_bytes = math.floor(1024 * 1024 * val_size)
@@ -38,10 +37,7 @@ with env.begin(write=True) as txn:
         # keys.append(i)
         # txn.put(struct.pack('<i', i), val)
 t1 = time.time() - t0
-print(
-    f"time for {niters} inserts x {val_size} MB each for tot={total} bytes: {t1} "
-    f"seconds"
-)
+print(f"time for {niters} inserts x {val_size} MB each for tot={total} bytes: {t1} " f"seconds")
 
 t0 = time.time()
 with env.begin(write=True, buffers=True) as txn:
@@ -50,14 +46,10 @@ with env.begin(write=True, buffers=True) as txn:
         result = txn.get(struct.pack("<i", i))
         results.append(len(result))
 t1 = time.time() - t0
-print(
-    f"time for {niters} gets x {val_size} MB each for tot={total} bytes: {t1} "
-    f"seconds"
-)
+print(f"time for {niters} gets x {val_size} MB each for tot={total} bytes: {t1} " f"seconds")
 print(env.info())
 print(env.stat())
 print(4096 * (env.stat()["leaf_pages"] + env.stat()["overflow_pages"]))
-
 """
 sequential keys
 ---------------

@@ -19,8 +19,14 @@ if typing.TYPE_CHECKING:
 
 from conduit_lib.algorithms import calc_depth
 from conduit_lib.database.lmdb.types import MerkleTreeRow
-from conduit_lib.types import TxLocation, BlockMetadata, TxMetadata, ChainHashes, Slice, \
-    DataLocation
+from conduit_lib.types import (
+    TxLocation,
+    BlockMetadata,
+    TxMetadata,
+    ChainHashes,
+    Slice,
+    DataLocation,
+)
 
 try:
     from ...constants import PROFILING
@@ -33,11 +39,11 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 class LMDB_Database:
     """Simple interface to LMDB - This interface must be used at all times for thread-safety"""
 
-    def __init__(self, storage_path: str | None=None, lock: bool=True) -> None:
+    def __init__(self, storage_path: str | None = None, lock: bool = True) -> None:
         self.logger = logging.getLogger("lmdb-database")
         self.logger.setLevel(PROFILING)
 
-        lmdb_database_dir: str = str(Path(os.environ["DATADIR_SSD"]) / 'lmdb_data')
+        lmdb_database_dir: str = str(Path(os.environ["DATADIR_SSD"]) / "lmdb_data")
 
         if not storage_path:
             storage_path = lmdb_database_dir
@@ -47,8 +53,14 @@ class LMDB_Database:
 
         self._map_size = pow(1024, 3) * 5
         self._storage_path = storage_path
-        self.env = lmdb.open(self._storage_path, max_dbs=5, readahead=False, sync=False,
-            map_size=self._map_size, lock=lock)
+        self.env = lmdb.open(
+            self._storage_path,
+            max_dbs=5,
+            readahead=False,
+            sync=False,
+            map_size=self._map_size,
+            lock=lock,
+        )
         self._opened = True
 
         self.blocks = LmdbBlocks(self)
@@ -75,8 +87,9 @@ class LMDB_Database:
         chain_tx_hashes = set()
         for block_hash in chain:
             block_metadata = self.get_block_metadata(block_hash)
-            assert block_metadata is not None, \
-                "all necessary block metadata should always be available for reorg handling"
+            assert (
+                block_metadata is not None
+            ), "all necessary block metadata should always be available for reorg handling"
             base_level = calc_depth(block_metadata.tx_count) - 1
             mtree_row = self.get_mtree_row(block_hash, level=base_level)
             assert mtree_row is not None
@@ -105,8 +118,7 @@ class LMDB_Database:
                 cursor = txn.cursor()
                 return self.merkle_tree.get_mtree_node(block_hash, level, position, cursor)
 
-    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: lmdb.Cursor | None=None) \
-            -> bytes | None:
+    def get_mtree_row(self, blk_hash: bytes, level: int, cursor: lmdb.Cursor | None = None) -> bytes | None:
         with self.global_lock:
             return self.merkle_tree.get_mtree_row(blk_hash, level, cursor)
 
@@ -122,10 +134,8 @@ class LMDB_Database:
         with self.global_lock:
             return self.tx_offsets.get_rawtx_by_loc(tx_loc)
 
-    async def get_rawtx_by_loc_async(self, executor: ThreadPoolExecutor, tx_loc: TxLocation) \
-            -> bytes | None:
-        return await asyncio.get_running_loop().run_in_executor(executor,
-            self.get_rawtx_by_loc, tx_loc)
+    async def get_rawtx_by_loc_async(self, executor: ThreadPoolExecutor, tx_loc: TxLocation) -> bytes | None:
+        return await asyncio.get_running_loop().run_in_executor(executor, self.get_rawtx_by_loc, tx_loc)
 
     def get_single_tx_slice(self, tx_loc: TxLocation) -> Slice | None:
         with self.global_lock:
@@ -135,8 +145,7 @@ class LMDB_Database:
         with self.global_lock:
             return self.tx_offsets.get_tx_offsets(block_hash)
 
-    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, 'array.ArrayType[int]']]) \
-            -> None:
+    def put_tx_offsets(self, batched_tx_offsets: list[tuple[bytes, "array.ArrayType[int]"]]) -> None:
         with self.global_lock:
             return self.tx_offsets.put_tx_offsets(batched_tx_offsets)
 
@@ -155,8 +164,9 @@ class LMDB_Database:
             data_location = self.blocks.get_data_location(block_num)
             assert data_location is not None
             file_size = os.path.getsize(data_location.file_path)
-            assert data_location.end_offset <= file_size, \
-                f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
+            assert (
+                data_location.end_offset <= file_size
+            ), f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
 
         # Ensure that the merkle tree table and tx offsets table are aligned to return the
         # correct coinbase transaction from the raw block data.
@@ -202,12 +212,14 @@ class LMDB_Database:
         # be some wasted / dead disc usage that will never be reclaimed but at least the server
         # can remain operational.
         except Exception:
-            self.logger.exception(f"Failed to complete full purge of block data for block hash: "
-                                  f"{hash_to_hex_str(block_hash)}")
+            self.logger.exception(
+                f"Failed to complete full purge of block data for block hash: "
+                f"{hash_to_hex_str(block_hash)}"
+            )
         finally:
             self.global_lock.release()
 
-    def get_block(self, block_num: int, slice: Slice | None=None) -> bytes | None:
+    def get_block(self, block_num: int, slice: Slice | None = None) -> bytes | None:
         with self.global_lock:
             return self.blocks.get_block(block_num, slice)
 
@@ -223,24 +235,25 @@ class LMDB_Database:
         with self.global_lock:
             return self.blocks.put_big_block(big_block)
 
-    def get_reorg_differential(self, old_chain: ChainHashes, new_chain: ChainHashes) \
-            -> tuple[set[bytes], set[bytes], set[bytes]]:
+    def get_reorg_differential(
+        self, old_chain: ChainHashes, new_chain: ChainHashes
+    ) -> tuple[set[bytes], set[bytes], set[bytes]]:
         """This query basically wants to find out the ** differential ** in terms of tx hashes
-         between the orphaned chain of blocks vs the new reorging longest chain.
-         It should go without saying that we only care about the block hashes going back to
-         the common parent height.
+        between the orphaned chain of blocks vs the new reorging longest chain.
+        It should go without saying that we only care about the block hashes going back to
+        the common parent height.
 
-         We want two sets:
-         1) What tx hashes must be put back to the current mempool
-         2) What tx hashes must be removed from the current mempool
+        We want two sets:
+        1) What tx hashes must be put back to the current mempool
+        2) What tx hashes must be removed from the current mempool
 
-         NOTE technically if there was a second, rapid-fire reorg covering overlapping
-         transactions, the mempool diff only needs the prev. longest chain and doesn't care about
-         older orphans. However, there could be some rows from the oldest of the three overlapping
-         chains that get overwritten with the current model. So long as the pushdata, input, output
-         rows etc. are indeed ** overwritten ** and no duplicate rows result from flushing the same
-         rows twice, everything should be okay.
-         """
+        NOTE technically if there was a second, rapid-fire reorg covering overlapping
+        transactions, the mempool diff only needs the prev. longest chain and doesn't care about
+        older orphans. However, there could be some rows from the oldest of the three overlapping
+        chains that get overwritten with the current model. So long as the pushdata, input, output
+        rows etc. are indeed ** overwritten ** and no duplicate rows result from flushing the same
+        rows twice, everything should be okay.
+        """
         # NOTE: This could in theory use a lot of memory but the reorg would have to be very
         # deep to cause problems. It wouldn't be too hard to run the same check in bite sized
         # chunks to avoid too much memory allocation but I don't want to spend the time on it.
@@ -250,4 +263,8 @@ class LMDB_Database:
             additions_to_mempool = old_chain_tx_hashes - new_chain_tx_hashes
 
             removals_from_mempool = new_chain_tx_hashes - old_chain_tx_hashes
-            return removals_from_mempool, additions_to_mempool, old_chain_tx_hashes
+            return (
+                removals_from_mempool,
+                additions_to_mempool,
+                old_chain_tx_hashes,
+            )

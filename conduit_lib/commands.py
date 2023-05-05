@@ -30,7 +30,6 @@ BLOCKTXN = "blocktxn"
 SENDCMPCT = "sendcmpct"
 EXTMSG = "extmsg"
 
-
 VERSION_BIN = struct.pack("12s", "version".encode("ASCII"))
 VERACK_BIN = struct.pack("12s", "verack".encode("ASCII"))
 PROTOCONF_BIN = struct.pack("12s", "protoconf".encode("ASCII"))
@@ -51,9 +50,7 @@ REPLY_BIN = struct.pack("12s", "reply".encode("ASCII"))
 PING_BIN = struct.pack("12s", "ping".encode("ASCII"))
 PONG_BIN = struct.pack("12s", "pong".encode("ASCII"))
 REJECT_BIN = struct.pack("12s", "reject".encode("ASCII"))
-FILTERCLEAR_BIN = struct.pack(
-    "12s", "filterclear".encode("ASCII")
-)  # ignore filterload & filteradd
+FILTERCLEAR_BIN = struct.pack("12s", "filterclear".encode("ASCII"))  # ignore filterload & filteradd
 FILTERLOAD_BIN = struct.pack("12s", "filterload".encode("ASCII"))
 MERKELBLOCK_BIN = struct.pack("12s", "merkleblock".encode("ASCII"))
 SENDHEADERS_BIN = struct.pack("12s", "sendheaders".encode("ASCII"))

@@ -12,14 +12,17 @@ import struct
 
 from . import NetworkConfig, Serializer
 from .algorithms import unpack_varint, preprocessor
-from .bitcoin_p2p_types import BlockType, BlockChunkData, BlockDataMsg, \
-    BitcoinPeerInstance, ExtendedP2PHeader
+from .bitcoin_p2p_types import (
+    BlockType,
+    BlockChunkData,
+    BlockDataMsg,
+    BitcoinPeerInstance,
+    ExtendedP2PHeader,
+)
 from .commands import BLOCK_BIN, VERACK_BIN, EXTMSG_BIN
 from .constants import HEADER_LENGTH, EXTENDED_HEADER_LENGTH
 from .handlers import MessageHandlerProtocol
 from .utils import create_task, bin_p2p_command_to_ascii
-
-
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,18 +43,36 @@ def unpack_msg_header(header: bytes) -> ExtendedP2PHeader:
     magic, command, length, checksum = struct.unpack_from("<4s12sI4s", header, offset=0)
     ext_command: bytes | None = None
     ext_length: int | None = None
-    return ExtendedP2PHeader(magic=magic, command=command, payload_size=length, checksum=checksum,
-        ext_command=ext_command, ext_length=ext_length)
+    return ExtendedP2PHeader(
+        magic=magic,
+        command=command,
+        payload_size=length,
+        checksum=checksum,
+        ext_command=ext_command,
+        ext_length=ext_length,
+    )
 
 
 def unpack_extended_msg_header(header: bytes) -> ExtendedP2PHeader:
-    magic, command, length, checksum, ext_command, ext_length = \
-        struct.unpack_from("<4s12sI4s12sQ", header, offset=0)
+    (
+        magic,
+        command,
+        length,
+        checksum,
+        ext_command,
+        ext_length,
+    ) = struct.unpack_from("<4s12sI4s12sQ", header, offset=0)
     assert command == "extmsg"
-    assert length == 0xffffffff
+    assert length == 0xFFFFFFFF
     assert checksum == 0x00000000
-    return ExtendedP2PHeader(magic=magic, command=command, payload_size=length, checksum=checksum,
-        ext_command=ext_command, ext_length=ext_length)
+    return ExtendedP2PHeader(
+        magic=magic,
+        command=command,
+        payload_size=length,
+        checksum=checksum,
+        ext_command=ext_command,
+        ext_length=ext_length,
+    )
 
 
 class BitcoinP2PClient:
@@ -64,9 +85,16 @@ class BitcoinP2PClient:
     concatenated in memory before writing them all to the same file. Otherwise the spinning HDD
     discs will 'stutter' with too many tiny writes.
     """
-    def __init__(self, remote_host: str, remote_port: int, message_handler: MessageHandlerProtocol,
-            net_config: NetworkConfig, reader: StreamReader | None=None,
-            writer: StreamWriter | None=None) -> None:
+
+    def __init__(
+        self,
+        remote_host: str,
+        remote_port: int,
+        message_handler: MessageHandlerProtocol,
+        net_config: NetworkConfig,
+        reader: StreamReader | None = None,
+        writer: StreamWriter | None = None,
+    ) -> None:
         self.remote_host = remote_host
         self.remote_port = remote_port
         self.message_handler = message_handler
@@ -90,10 +118,9 @@ class BitcoinP2PClient:
 
         # Network Buffer Manipulation
         try:
-            self.BUFFER_SIZE = int(os.environ['NETWORK_BUFFER_SIZE'])
+            self.BUFFER_SIZE = int(os.environ["NETWORK_BUFFER_SIZE"])
         except KeyError:
-            raise BitcoinP2PClientError("The environment variable 'NETWORK_BUFFER_SIZE' "
-                "needs to be set")
+            raise BitcoinP2PClientError("The environment variable 'NETWORK_BUFFER_SIZE' " "needs to be set")
         self.network_buffer: bytearray = bytearray(self.BUFFER_SIZE)
         self.cur_msg_end_pos = 0
         self.cur_msg_start_pos = 0
@@ -115,8 +142,7 @@ class BitcoinP2PClient:
         logger.info("Connection made")
         self.reader = reader
         self.writer = writer
-        self.peer = BitcoinPeerInstance(self.reader, self.writer, self.remote_host,
-            self.remote_port)
+        self.peer = BitcoinPeerInstance(self.reader, self.writer, self.remote_host, self.remote_port)
         self.tasks.append(create_task(self._start_session()))
 
     async def wait_for_connection(self) -> None:
@@ -127,8 +153,10 @@ class BitcoinP2PClient:
                 logger.debug(f"Bitcoin node on: {self.remote_host}:{self.remote_port} is available")
                 return
             except ConnectionRefusedError:
-                logger.debug(f"Bitcoin node on:  {self.remote_host}:{self.remote_port} currently unavailable "
-                             f"- waiting...")
+                logger.debug(
+                    f"Bitcoin node on:  {self.remote_host}:{self.remote_port} currently unavailable "
+                    f"- waiting..."
+                )
                 await asyncio.sleep(5)
 
     async def send_message(self, message: bytes) -> None:
@@ -148,7 +176,6 @@ class BitcoinP2PClient:
                 except asyncio.CancelledError:
                     pass
 
-
     async def handle_message_task_async(self) -> None:
         while True:
             command, message = await self.message_queue.get()
@@ -164,8 +191,8 @@ class BitcoinP2PClient:
     def rotate_buffer(self) -> tuple[int, int]:
         """takes the remainder of buffer and places it at the start then extends to size"""
         assert self.BUFFER_SIZE - self.pos == 0
-        remainder = self.network_buffer[self.last_msg_end_pos:]
-        self.network_buffer[0: len(remainder)] = remainder
+        remainder = self.network_buffer[self.last_msg_end_pos :]
+        self.network_buffer[0 : len(remainder)] = remainder
         self.pos = self.pos - self.last_msg_end_pos
         self.last_msg_end_pos = 0
         return self.pos, self.last_msg_end_pos
@@ -199,14 +226,13 @@ class BitcoinP2PClient:
         data = await self.reader.readexactly(self.BUFFER_SIZE - self.pos)
         if not data:
             raise ConnectionResetError
-        self.network_buffer[self.pos:] = data
+        self.network_buffer[self.pos :] = data
         self.pos += len(data)
         assert self.pos == self.BUFFER_SIZE
         return data
 
     def clip_p2p_header_from_front_of_buffer(self) -> None:
-        self.network_buffer[:-self.cur_header.length()] = self.network_buffer[
-        self.cur_header.length():]
+        self.network_buffer[: -self.cur_header.length()] = self.network_buffer[self.cur_header.length() :]
         self.pos = self.pos - self.cur_header.length()
 
     async def handle_block(self, block_type: BlockType) -> None:
@@ -229,7 +255,7 @@ class BitcoinP2PClient:
         raises `ConnectionResetError`
         """
         # Init local variables - Keeping them local avoids polluting instance state
-        tx_offsets_all: 'array.ArrayType[int]' = array.array('Q')
+        tx_offsets_all: "array.ArrayType[int]" = array.array("Q")
         block_hash = bytes()
         last_tx_offset_in_chunk: int | None = None
         adjustment = 0
@@ -239,23 +265,28 @@ class BitcoinP2PClient:
             block_hash = double_sha256(raw_block_header)
             tx_count, var_int_size = unpack_varint(raw_block[80:89], 0)
             offset = 80 + var_int_size
-            tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(raw_block, offset,
-                adjustment)
+            tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(raw_block, offset, adjustment)
             tx_offsets_all.extend(tx_offsets_for_chunk)
             assert last_tx_offset_in_chunk == len(raw_block) == self.cur_header.payload_size
-            block_data_msg = BlockDataMsg(block_type, block_hash, array.array('Q', tx_offsets_all),
-                self.cur_header.payload_size, raw_block, big_block_filepath=None)
+            block_data_msg = BlockDataMsg(
+                block_type,
+                block_hash,
+                array.array("Q", tx_offsets_all),
+                self.cur_header.payload_size,
+                raw_block,
+                big_block_filepath=None,
+            )
             await self.message_handler.on_block(block_data_msg, self.peer)
             return
 
         logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
         chunk_num = 0
-        num_chunks = math.ceil(self.cur_header.payload_size/self.BUFFER_SIZE)
+        num_chunks = math.ceil(self.cur_header.payload_size / self.BUFFER_SIZE)
         expected_tx_count_for_block = 0
         total_block_bytes_read = 0
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
-        file = open(big_block_filepath, 'ab')
+        file = open(big_block_filepath, "ab")
         try:
             assert self.reader is not None
             while total_block_bytes_read < self.cur_header.payload_size:
@@ -264,14 +295,13 @@ class BitcoinP2PClient:
                     self.clip_p2p_header_from_front_of_buffer()
                     _data = await self.read_until_buffer_full()
                     self.pos, self.last_msg_end_pos = self.rotate_buffer()
-                    next_chunk: bytes = cast(bytes, self.network_buffer[0:self.BUFFER_SIZE])
+                    next_chunk: bytes = cast(bytes, self.network_buffer[0 : self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
                     logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
                 else:
                     next_chunk = await self.read_block_chunk(total_block_bytes_read)
                     total_block_bytes_read += len(next_chunk)
                     logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
-
 
                 # ---------- TxOffsets logic start ---------- #
                 if chunk_num == 1:
@@ -285,8 +315,9 @@ class BitcoinP2PClient:
                     adjustment = last_tx_offset_in_chunk
 
                 modified_chunk = remainder + next_chunk
-                tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk,
-                    offset, adjustment)
+                tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(
+                    modified_chunk, offset, adjustment
+                )
                 tx_offsets_all.extend(tx_offsets_for_chunk)
                 len_slice = last_tx_offset_in_chunk - adjustment
                 remainder = modified_chunk[len_slice:]
@@ -298,8 +329,13 @@ class BitcoinP2PClient:
                 # Big blocks use a file for writing to incrementally
                 if file:
                     await self.write_file_async(file, next_chunk)
-                    block_chunk_data = BlockChunkData(chunk_num, num_chunks, block_hash,
-                        slice_for_worker, tx_offsets_for_chunk)
+                    block_chunk_data = BlockChunkData(
+                        chunk_num,
+                        num_chunks,
+                        block_hash,
+                        slice_for_worker,
+                        tx_offsets_for_chunk,
+                    )
                     await self.message_handler.on_block_chunk(block_chunk_data, self.peer)
 
                 if chunk_num == num_chunks:
@@ -322,40 +358,50 @@ class BitcoinP2PClient:
         assert len(remainder) == 0
         assert len(tx_offsets_all) == expected_tx_count_for_block
 
-        block_data_msg = BlockDataMsg(block_type, block_hash, tx_offsets_all,
-            self.cur_header.payload_size, small_block_data=None,
-            big_block_filepath=big_block_filepath)
+        block_data_msg = BlockDataMsg(
+            block_type,
+            block_hash,
+            tx_offsets_all,
+            self.cur_header.payload_size,
+            small_block_data=None,
+            big_block_filepath=big_block_filepath,
+        )
         await self.message_handler.on_block(block_data_msg, self.peer)
 
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:
-        await asyncio.get_running_loop().run_in_executor(self.file_write_executor,
-            file.write, data)
+        await asyncio.get_running_loop().run_in_executor(self.file_write_executor, file.write, data)
 
     def log_buffer_full_message(self) -> None:
-        logger.debug(f"Buffer is full for command: "
-                     f"'{bin_p2p_command_to_ascii(self.cur_header.command)}', "
-                     f"payload size: {self.cur_header.payload_size}")
+        logger.debug(
+            f"Buffer is full for command: "
+            f"'{bin_p2p_command_to_ascii(self.cur_header.command)}', "
+            f"payload size: {self.cur_header.payload_size}"
+        )
 
     def get_next_p2p_header(self) -> ExtendedP2PHeader:
         from_offset = self.last_msg_end_pos
         to_offset = self.last_msg_end_pos + HEADER_LENGTH
-        header_data = self.network_buffer[from_offset: to_offset]
+        header_data = self.network_buffer[from_offset:to_offset]
         self.cur_header = unpack_msg_header(header_data)
         return self.cur_header
 
     def get_next_extended_p2p_header(self) -> ExtendedP2PHeader:
         from_offset = self.last_msg_end_pos
         to_offset = self.last_msg_end_pos + EXTENDED_HEADER_LENGTH
-        header_data = self.network_buffer[from_offset: to_offset]
+        header_data = self.network_buffer[from_offset:to_offset]
         self.cur_header = unpack_extended_msg_header(header_data)
         return self.cur_header
 
     def get_next_payload(self) -> bytes:
-        return self.network_buffer[self.cur_msg_start_pos:self.cur_msg_end_pos]
+        return self.network_buffer[self.cur_msg_start_pos : self.cur_msg_end_pos]
 
     async def send_version(self, local_host: str, local_port: int) -> None:
-        message = self.serializer.version(recv_host=self.remote_host, recv_port=self.remote_port,
-            send_host=local_host, send_port=local_port, )
+        message = self.serializer.version(
+            recv_host=self.remote_host,
+            recv_port=self.remote_port,
+            send_host=local_host,
+            send_port=local_port,
+        )
         await self.send_message(message)
 
     async def handshake(self, local_host: str, local_port: int) -> None:
@@ -388,7 +434,7 @@ class BitcoinP2PClient:
             if not data:
                 raise ConnectionResetError
 
-            self.network_buffer[self.pos:self.pos + len(data)] = data
+            self.network_buffer[self.pos : self.pos + len(data)] = data
             self.pos += len(data)
 
             while self.next_header_available():
@@ -403,14 +449,13 @@ class BitcoinP2PClient:
 
                 if next_payload_available:
                     self.cur_msg_start_pos = self.last_msg_end_pos + HEADER_LENGTH
-                    self.cur_msg_end_pos = self.last_msg_end_pos + HEADER_LENGTH + \
-                                           self.cur_header.payload_size
-                    if self.cur_header.command == BLOCK_BIN or \
-                            self.cur_header.ext_command == BLOCK_BIN:
+                    self.cur_msg_end_pos = (
+                        self.last_msg_end_pos + HEADER_LENGTH + self.cur_header.payload_size
+                    )
+                    if self.cur_header.command == BLOCK_BIN or self.cur_header.ext_command == BLOCK_BIN:
                         await self.handle_block(block_type=BlockType.SMALL_BLOCK)
                     else:
-                        await self.message_queue.put((self.cur_header.command,
-                            self.get_next_payload()))
+                        await self.message_queue.put((self.cur_header.command, self.get_next_payload()))
                     self.last_msg_end_pos = self.cur_msg_end_pos
                 else:
                     break  # read more data -> try to get enough for the full next payload
@@ -420,7 +465,7 @@ class BitcoinP2PClient:
                 self.pos, self.last_msg_end_pos = self.rotate_buffer()
 
                 # Big Block exceeding network buffer size -> next full payload is not possible
-                if (self.cur_header.command == BLOCK_BIN or
-                        self.cur_header.ext_command == BLOCK_BIN) and \
-                        self.cur_header.payload_size > self.BUFFER_SIZE:
+                if (
+                    self.cur_header.command == BLOCK_BIN or self.cur_header.ext_command == BLOCK_BIN
+                ) and self.cur_header.payload_size > self.BUFFER_SIZE:
                     await self.handle_block(block_type=BlockType.BIG_BLOCK)
