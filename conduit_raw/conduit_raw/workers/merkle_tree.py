@@ -16,7 +16,6 @@ from conduit_lib.algorithms import (
     calc_depth,
     unpack_varint,
 )
-from conduit_lib.types import MultiprocessingQueue
 
 
 class MTreeCalculator(multiprocessing.Process):
@@ -36,7 +35,7 @@ class MTreeCalculator(multiprocessing.Process):
     def __init__(
         self,
         worker_id: int,
-        worker_ack_queue_mtree: MultiprocessingQueue[bytes],
+        worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]',  # pylint: disable=E1136
     ) -> None:
         super(MTreeCalculator, self).__init__()
         self.worker_id = worker_id

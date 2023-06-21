@@ -292,6 +292,6 @@ def network_str_to_bitcoinx_network(network: str) -> bitcoinx.Network:
         raise NotImplementedError(f"Unrecognized network type: '{network}'")
 
 
-def remove_readonly(func: Callable[[Path], None], path: Path, excinfo: BaseException | None) -> None:
+def remove_readonly(func: Callable[..., Any], path: str, excinfo: Any) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)

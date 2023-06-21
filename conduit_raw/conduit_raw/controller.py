@@ -29,7 +29,7 @@ from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
-from conduit_lib.types import HeaderSpan, MultiprocessingQueue
+from conduit_lib.types import HeaderSpan
 from conduit_lib.utils import create_task, get_conduit_raw_host_and_port
 from conduit_lib.wait_for_dependencies import wait_for_mysql
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
@@ -103,7 +103,7 @@ class Controller(ControllerBase):
         ] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
-        self.worker_ack_queue_mtree: MultiprocessingQueue[bytes] = multiprocessing.Queue()
+        self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = multiprocessing.Queue()  # pylint: disable=E1136
         self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
 

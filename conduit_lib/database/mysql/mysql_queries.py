@@ -1,4 +1,3 @@
-from datetime import datetime
 import logging
 import math
 import os
@@ -160,10 +159,9 @@ class MySQLQueries:
     def mysql_load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
         self.mysql_tables.mysql_create_temp_mempool_additions_table()
 
-        dt = datetime.utcnow()
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s\n" % (tx_hash.hex(), dt.isoformat()) for tx_hash in additions_to_mempool]
+            string_rows = ["%s,%s\n" % (tx_hash.hex(), int(time.time())) for tx_hash in additions_to_mempool]
             column_names = ["tx_hash", "tx_timestamp"]
             self.bulk_loads._load_data_infile(
                 "temp_mempool_additions",
