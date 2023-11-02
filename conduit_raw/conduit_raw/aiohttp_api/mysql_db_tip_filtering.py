@@ -20,6 +20,7 @@ import MySQLdb
 from conduit_lib.algorithms import calc_depth
 from conduit_lib.constants import HashXLength
 from conduit_lib.types import TxLocation, TxMetadata, OutpointType
+from conduit_lib.utils import index_exists
 from .constants import AccountFlag, OutboundDataFlag, MARIADB_MAX_BIND_VARIABLES
 from .types import (
     AccountMetadata,
@@ -190,9 +191,11 @@ class MySQLTipFilterQueries:
         )
         """
         )
-        self.mysql_conn.query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS accounts_external_id_idx " "ON accounts (external_account_id)"
-        )
+        if not index_exists(self.mysql_conn, 'accounts_external_id_idx',
+                'external_account_id'):
+            self.mysql_conn.query(
+                "CREATE UNIQUE INDEX accounts_external_id_idx " "ON accounts (external_account_id)"
+            )
         self.mysql_conn.commit()
 
     def drop_accounts_table(self) -> None:
@@ -211,9 +214,10 @@ class MySQLTipFilterQueries:
         )
         """
         )
-        self.mysql_conn.query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS tip_filter_registrations_idx "
-            "ON tip_filter_registrations (account_id, pushdata_hash)"
+        if not index_exists(self.mysql_conn, 'tip_filter_registrations_idx',
+                'tip_filter_registrations'):
+            self.mysql_conn.query("CREATE UNIQUE INDEX tip_filter_registrations_idx "
+                    "ON tip_filter_registrations (account_id, pushdata_hash)"
         )
         self.mysql_conn.commit()
 

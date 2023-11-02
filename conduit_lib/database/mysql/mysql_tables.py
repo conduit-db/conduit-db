@@ -4,6 +4,7 @@ from typing import cast, Sequence
 import MySQLdb
 
 from conduit_lib.constants import HashXLength
+from conduit_lib.utils import index_exists
 
 
 class MySQLTables:
@@ -54,16 +55,16 @@ class MySQLTables:
         try:
             tables = [row[0] for row in self.get_tables()]
             if "confirmed_transactions" in tables:
-                self.mysql_conn.query("DROP INDEX IF EXISTS tx_idx ON confirmed_transactions")
+                self.mysql_conn.query("DROP INDEX tx_idx ON confirmed_transactions")
             if "headers" in tables:
-                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx ON headers;")
-                self.mysql_conn.query("DROP INDEX IF EXISTS headers_idx_height ON headers;")
+                self.mysql_conn.query("DROP INDEX headers_idx ON headers;")
+                self.mysql_conn.query("DROP INDEX headers_idx_height ON headers;")
             if "txo_table" in tables:
-                self.mysql_conn.query("DROP INDEX IF EXISTS txo_idx ON txo_table;")
+                self.mysql_conn.query("DROP INDEX txo_idx ON txo_table;")
             if "inputs_table" in tables:
-                self.mysql_conn.query("DROP INDEX IF EXISTS input_idx ON inputs_table;")
+                self.mysql_conn.query("DROP INDEX input_idx ON inputs_table;")
             if "pushdata" in tables:
-                self.mysql_conn.query("DROP INDEX IF EXISTS pushdata_idx ON pushdata;")
+                self.mysql_conn.query("DROP INDEX pushdata_idx ON pushdata;")
         except Exception as e:
             self.logger.exception("mysql_drop_tables failed unexpectedly")
         finally:
@@ -194,11 +195,9 @@ class MySQLTables:
                 """
             )
 
-            self.mysql_conn.query(
-                """
-                CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_hash);
-                """
-            )
+            if not index_exists(self.mysql_conn, "tx_idx", "confirmed_transactions"):
+                self.mysql_conn.query(
+                    """CREATE INDEX tx_idx ON confirmed_transactions (tx_hash);""")
 
             # block_offset is relative to start of rawtx
             self.mysql_conn.query(
@@ -211,11 +210,12 @@ class MySQLTables:
                 """
             )
 
-            self.mysql_conn.query(
-                """
-                CREATE INDEX IF NOT EXISTS txo_idx ON txo_table (out_tx_hash, out_idx);
-                """
-            )
+            if not index_exists(self.mysql_conn, "txo_idx", "txo_table"):
+                self.mysql_conn.query(
+                    """
+                    CREATE INDEX txo_idx ON txo_table (out_tx_hash, out_idx);
+                    """
+                )
 
             # block_offset is relative to start of rawtx
             # this table may look wasteful (due to repetition of the out_tx_hash but the
@@ -234,11 +234,12 @@ class MySQLTables:
                 """
             )
 
-            self.mysql_conn.query(
-                """
-                CREATE INDEX IF NOT EXISTS input_idx ON inputs_table (out_tx_hash, out_idx);
-                """
-            )
+            if not index_exists(self.mysql_conn, "input_idx", "inputs_table"):
+                self.mysql_conn.query(
+                    """
+                    CREATE INDEX input_idx ON inputs_table (out_tx_hash, out_idx);
+                    """
+                )
 
             # I think I can get away with not storing full pushdata hashes
             # unless they collide because the client provides the full pushdata_hash
@@ -256,11 +257,12 @@ class MySQLTables:
                 """
             )
 
-            self.mysql_conn.query(
+            if not index_exists(self.mysql_conn, "pushdata_idx", "pushdata"):
+                self.mysql_conn.query(
+                    """
+                    CREATE INDEX pushdata_idx ON pushdata (pushdata_hash);
                 """
-                CREATE INDEX IF NOT EXISTS pushdata_idx ON pushdata (pushdata_hash);
-            """
-            )
+                )
 
             self.mysql_conn.query(
                 """
@@ -291,16 +293,19 @@ class MySQLTables:
                 """
             )
 
-            self.mysql_conn.query(
-                """
-                CREATE INDEX IF NOT EXISTS headers_idx ON headers (block_hash);
-            """
-            )
-            self.mysql_conn.query(
-                """
-                CREATE INDEX IF NOT EXISTS headers_idx_height ON headers (block_height);
-            """
-            )
+            if not index_exists(self.mysql_conn, "headers_idx", "headers"):
+                self.mysql_conn.query(
+                    """
+                    CREATE INDEX headers_idx ON headers (block_hash);
+                    """
+                )
+
+            if not index_exists(self.mysql_conn, "headers_height_idx", "headers"):
+                self.mysql_conn.query(
+                    """
+                    CREATE INDEX headers_height_idx ON headers (block_height);
+                    """
+                )
         finally:
             self.commit_transaction()
 

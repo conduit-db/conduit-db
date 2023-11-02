@@ -1,4 +1,6 @@
 import asyncio
+
+import MySQLdb
 import bitcoinx
 from bitcoinx import (
     read_le_uint64,
@@ -295,3 +297,32 @@ def network_str_to_bitcoinx_network(network: str) -> bitcoinx.Network:
 def remove_readonly(func: Callable[..., Any], path: str, excinfo: Any) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
+
+def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: str) -> bool:
+    cursor = mysql_conn.cursor()
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE table_schema = DATABASE()
+        AND table_name = %s
+        AND index_name = %s
+    """,
+        (table_name, index_name),
+    )
+    rows = cursor.fetchone()
+    row_count = rows[0]
+    exists = row_count > 0
+    if not exists:
+        logger.debug(
+            f"index not found for: table_name={table_name}, index_name={index_name}, "
+            f"rows={rows}, row_count={row_count}"
+        )
+    else:
+        logger.debug(
+            f"index found: table_name={table_name}, index_name={index_name}, "
+            f"rows={rows}, row_count={row_count}"
+        )
+    cursor.close()
+    return exists

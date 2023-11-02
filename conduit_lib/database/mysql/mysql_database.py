@@ -45,7 +45,7 @@ class MySQLDatabase:
 
     def set_myrocks_settings(self) -> None:
         # SET global rocksdb_max_subcompactions=8
-        settings = f"""SET session rocksdb_max_row_locks={100_000_000};
+        settings = f"""SET global rocksdb_max_row_locks={100_000_000};
             SET global rocksdb_write_disable_wal=0;
             SET global rocksdb_wal_recovery_mode=0;
             SET global rocksdb_max_background_jobs=16;

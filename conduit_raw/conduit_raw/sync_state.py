@@ -80,7 +80,7 @@ class SyncState:
         block_height_deficit = to_height - from_height
 
         estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
-            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW
+            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW, self.controller.service_name
         )
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)

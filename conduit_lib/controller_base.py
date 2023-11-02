@@ -20,7 +20,7 @@ class ControllerBase:
     def __init__(self) -> None:
         self.headers_threadsafe: HeadersAPIThreadsafe
 
-    def get_ideal_block_batch_count(self, target_bytes: int) -> int:
+    def get_ideal_block_batch_count(self, target_bytes: int, service_type: str) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point
         of requesting 1 block at a time.
 
@@ -30,7 +30,10 @@ class ControllerBase:
         estimated_ideal_block_count = math.ceil(
             (target_bytes / (1024**2)) / self.estimated_moving_av_block_size_mb
         )
-        MAX_BLOCK_COUNT = 250
+        if service_type == 'conduit_index':
+            MAX_BLOCK_COUNT = 50
+        else:
+            MAX_BLOCK_COUNT = 250
         estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count
