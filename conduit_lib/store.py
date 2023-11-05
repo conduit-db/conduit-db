@@ -9,10 +9,10 @@ import threading
 from pathlib import Path
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.mysql_database import (
+from .database.mysql.db import (
     MySQLDatabase,
-    load_mysql_database,
-    mysql_connect,
+    load_database,
+    connect,
 )
 from .constants import REGTEST
 from .networks import HeadersRegTestMod, NetworkConfig
@@ -31,10 +31,10 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        mysql_database: MySQLDatabase | None,
+        database: MySQLDatabase | None,
         lmdb: LMDB_Database | None,
     ) -> None:
-        self.mysql_database = mysql_database
+        self.database = database
         self.headers = headers
         self.headers_lock = threading.RLock()
         self.block_headers = block_headers
@@ -42,8 +42,8 @@ class Storage:
         self.lmdb = lmdb
 
     async def close(self) -> None:
-        if self.mysql_database:
-            self.mysql_database.close()
+        if self.database:
+            self.database.close()
 
     # External API
 
@@ -95,12 +95,12 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
 
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
-        mysql_database = mysql_connect()
+        database = connect()
         try:
-            mysql_database.tables.mysql_drop_indices()
-            mysql_database.mysql_drop_tables()
+            database.tables.drop_indices()
+            database.drop_tables()
         finally:
-            mysql_database.close()
+            database.close()
 
     DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
     DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
@@ -130,14 +130,14 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     block_headers = setup_headers_store(net_config, block_headers_path)
 
     if os.environ["SERVER_TYPE"] == "ConduitIndex":
-        mysql_database = load_mysql_database()
+        database = load_database()
     else:
-        mysql_database = None
+        database = None
 
     if os.environ["SERVER_TYPE"] == "ConduitRaw":
         lmdb_db = LMDB_Database(lock=True)
     else:
         lmdb_db = None
 
-    storage = Storage(headers, block_headers, mysql_database, lmdb_db)
+    storage = Storage(headers, block_headers, database, lmdb_db)
     return storage

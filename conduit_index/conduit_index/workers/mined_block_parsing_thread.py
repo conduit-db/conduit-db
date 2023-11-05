@@ -40,14 +40,14 @@ from ..types import (
     WorkItemId,
 )
 from ..workers.common import (
-    maybe_refresh_mysql_connection,
+    maybe_refresh_connection,
     convert_pushdata_rows_for_flush,
     convert_input_rows_for_flush,
 )
 
 from conduit_lib import IPCSocketClient, MySQLDatabase
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
-from conduit_lib.database.mysql.mysql_database import mysql_connect
+from conduit_lib.database.mysql.db import connect
 from conduit_lib.database.mysql.types import (
     MySQLFlushBatch,
     PushdataRowParsed,
@@ -88,7 +88,7 @@ class MinedBlockParsingThread(threading.Thread):
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f"inbound_tx_table_{worker_id}"
 
-        self.last_mysql_activity = int(time.time())
+        self.last_activity = int(time.time())
 
         # Metrics
         self.total_unprocessed_tx_sorting_time = 0.0
@@ -146,7 +146,7 @@ class MinedBlockParsingThread(threading.Thread):
                 )
 
     def run(self) -> None:
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+        db: MySQLDatabase = connect(worker_id=self.worker_id)
         socket_mined_tx = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55555",
@@ -170,7 +170,7 @@ class MinedBlockParsingThread(threading.Thread):
             process_batch_func: Callable[[list[bytes]], None] = partial(
                 self.process_work_items,
                 ipc_socket_client=ipc_socket_client,
-                mysql_db=mysql_db,
+                db=db,
             )
 
             zmq_recv_and_process_batchwise_no_block(
@@ -534,7 +534,7 @@ class MinedBlockParsingThread(threading.Thread):
         merged_offsets_map: dict[bytes, int],
         merged_tx_to_work_item_id_map: dict[bytes, int],
         merged_part_tx_hash_rows: TxHashRows,
-        mysql_db: MySQLDatabase,
+        db: MySQLDatabase,
     ) -> tuple[NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
@@ -559,7 +559,7 @@ class MinedBlockParsingThread(threading.Thread):
 
         try:
             # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
-            unprocessed_tx_hashes = mysql_db.mysql_get_unprocessed_txs(
+            unprocessed_tx_hashes = db.get_unprocessed_txs(
                 is_reorg, merged_part_tx_hash_rows, self.inbound_tx_table_name
             )
 
@@ -601,7 +601,7 @@ class MinedBlockParsingThread(threading.Thread):
         self,
         work_items: list[bytes],
         ipc_socket_client: IPCSocketClient,
-        mysql_db: MySQLDatabase,
+        db: MySQLDatabase,
     ) -> None:
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
@@ -610,8 +610,8 @@ class MinedBlockParsingThread(threading.Thread):
         NOTE: For a very large block the work_items can arrive out of sequential order
         (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10)
         """
-        mysql_db, self.last_mysql_activity = maybe_refresh_mysql_connection(
-            mysql_db, self.last_mysql_activity, self.logger
+        db, self.last_activity = maybe_refresh_connection(
+            db, self.last_activity, self.logger
         )
 
         (
@@ -631,7 +631,7 @@ class MinedBlockParsingThread(threading.Thread):
             merged_offsets_map,
             merged_tx_to_work_item_id_map,
             merged_part_tx_hash_rows,
-            mysql_db,
+            db,
         )
-        self.last_mysql_activity = int(time.time())
+        self.last_activity = int(time.time())
         self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets, batched_raw_block_slices, acks)

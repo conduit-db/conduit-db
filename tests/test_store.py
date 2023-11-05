@@ -33,8 +33,8 @@ class TestStorage:
     )
     # storage = setup_storage(config, net_config)
     # redis = None  # NotImplemented
-    # mysql_db: MySQLDatabase
-    # mysql_available: bool
+    # db: MySQLDatabase
+    # db_available: bool
     # logger = logging.getLogger("TestStorage")
 
     @classmethod

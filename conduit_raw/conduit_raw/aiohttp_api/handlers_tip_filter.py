@@ -17,7 +17,7 @@ from conduit_lib.types import (
     outpoint_struct,
     output_spend_struct,
 )
-from .mysql_db_tip_filtering import (
+from .db_tip_filtering import (
     MySQLTipFilterQueries,
     DatabaseStateModifiedError,
 )
@@ -73,9 +73,9 @@ async def get_output_spends(request: web.Request) -> web.Response:
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
 
-    mysql_db: MySQLTipFilterQueries = app_state.mysql_db_tip_filter_queries
+    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
     lmdb: LMDB_Database = app_state.lmdb
-    existing_rows = mysql_db.get_spent_outpoints(client_outpoints, lmdb)
+    existing_rows = db.get_spent_outpoints(client_outpoints, lmdb)
 
     if accept_type == "application/octet-stream":
         result_bytes = b""
@@ -259,7 +259,7 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    mysql_db: MySQLTipFilterQueries = app_state.mysql_db_tip_filter_queries
+    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
 
     accept_type = request.headers.get("Accept", "*/*")
     if accept_type == "*/*":
@@ -338,7 +338,7 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     # these registrations if any of the given pushdatas are already registered.
     if not await asyncio.get_running_loop().run_in_executor(
         app_state.executor,
-        mysql_db.create_tip_filter_registrations_write,
+        db.create_tip_filter_registrations_write,
         external_account_id,
         date_created,
         registration_entries,
@@ -375,7 +375,7 @@ async def indexer_post_transaction_filter_delete(
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    mysql_db: MySQLTipFilterQueries = app_state.mysql_db_tip_filter_queries
+    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
 
     content_type = request.headers.get("Content-Type")
     if content_type not in (
@@ -422,7 +422,7 @@ async def indexer_post_transaction_filter_delete(
     try:
         await asyncio.get_running_loop().run_in_executor(
             app_state.executor,
-            mysql_db.update_tip_filter_registrations_flags_write,
+            db.update_tip_filter_registrations_flags_write,
             external_account_id,
             pushdata_hash_list,
             IndexerPushdataRegistrationFlag.DELETING,
@@ -437,7 +437,7 @@ async def indexer_post_transaction_filter_delete(
     try:
         await asyncio.get_running_loop().run_in_executor(
             app_state.executor,
-            mysql_db.delete_tip_filter_registrations_write,
+            db.delete_tip_filter_registrations_write,
             external_account_id,
             pushdata_hash_list,
             IndexerPushdataRegistrationFlag.FINALISED,

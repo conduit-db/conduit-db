@@ -47,21 +47,21 @@ def extend_batched_rows(
     return MySQLFlushBatch(txs, txs_mempool, ins, outs, pds)
 
 
-def mysql_flush_ins_outs_and_pushdata_rows(
+def flush_ins_outs_and_pushdata_rows(
     in_rows: list[InputRow],
     out_rows: list[OutputRow],
     pd_rows: list[PushdataRow],
-    mysql_db: MySQLDatabase,
+    db: MySQLDatabase,
 ) -> None:
-    mysql_db.mysql_bulk_load_output_rows(out_rows)
-    mysql_db.mysql_bulk_load_input_rows(in_rows)
-    mysql_db.mysql_bulk_load_pushdata_rows(pd_rows)
+    db.bulk_load_output_rows(out_rows)
+    db.bulk_load_input_rows(in_rows)
+    db.bulk_load_pushdata_rows(pd_rows)
 
 
-def mysql_flush_rows_confirmed(
+def flush_rows_confirmed(
     worker: "FlushConfirmedTransactionsThread",
     flush_batch_with_acks: MySQLFlushBatchWithAcks,
-    mysql_db: MySQLDatabase,
+    db: MySQLDatabase,
 ) -> None:
     (
         tx_rows,
@@ -72,8 +72,8 @@ def mysql_flush_rows_confirmed(
         acks,
     ) = flush_batch_with_acks
     try:
-        mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
-        mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
+        db.bulk_load_confirmed_tx_rows(tx_rows)
+        flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, db)
 
         # Ack for all flushed blocks
         assert worker.socket_mined_tx_ack is not None
@@ -99,10 +99,10 @@ def mysql_flush_rows_confirmed(
         raise
 
 
-def mysql_flush_rows_mempool(
+def flush_rows_mempool(
     worker: "FlushMempoolTransactionsThread",
     flush_batch_with_acks: MySQLFlushBatchWithAcksMempool,
-    mysql_db: MySQLDatabase,
+    db: MySQLDatabase,
 ) -> None:
     (
         tx_rows,
@@ -113,8 +113,8 @@ def mysql_flush_rows_mempool(
         acks,
     ) = flush_batch_with_acks
     try:
-        mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows_mempool)
-        mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
+        db.bulk_load_mempool_tx_rows(tx_rows_mempool)
+        flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, db)
     except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise
@@ -158,19 +158,19 @@ def reset_rows_mempool() -> (
     return txs, txs_mempool, ins, outs, pds, acks
 
 
-def maybe_refresh_mysql_connection(
-    mysql_db: MySQLDatabase, last_mysql_activity: int, logger: logging.Logger
+def maybe_refresh_connection(
+    db: MySQLDatabase, last_activity: int, logger: logging.Logger
 ) -> tuple[MySQLDatabase, int]:
     REFRESH_TIMEOUT = 600
-    if int(time.time()) - last_mysql_activity > REFRESH_TIMEOUT:
+    if int(time.time()) - last_activity > REFRESH_TIMEOUT:
         logger.info(
             f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} " f"second refresh timeout"
         )
-        mysql_db.mysql_conn.ping()
-        last_mysql_activity = int(time.time())
-        return mysql_db, last_mysql_activity
+        db.conn.ping()
+        last_activity = int(time.time())
+        return db, last_activity
     else:
-        return mysql_db, last_mysql_activity
+        return db, last_activity
 
 
 def convert_pushdata_rows_for_flush(

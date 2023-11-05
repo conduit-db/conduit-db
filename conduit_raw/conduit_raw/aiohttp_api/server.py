@@ -19,7 +19,7 @@ import zmq.asyncio
 
 from conduit_lib import NetworkConfig
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.database.mysql.mysql_database import load_mysql_database
+from conduit_lib.database.mysql.db import load_database
 from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.utils import (
@@ -36,7 +36,7 @@ from .constants import (
     OutboundDataFlag,
 )
 from . import handlers_restoration, handlers_tip_filter, handlers_headers
-from .mysql_db_tip_filtering import MySQLTipFilterQueries
+from .db_tip_filtering import MySQLTipFilterQueries
 from .server_websocket import WSClient, ReferenceServerWebSocket
 from .types import (
     OutboundDataRow,
@@ -74,9 +74,9 @@ class ApplicationState(object):
         self.BITCOINX_COIN = network_str_to_bitcoinx_network(net_config.NET)
         self.net_config = net_config
 
-        self.mysql_db = load_mysql_database()
-        self.mysql_db_tip_filter_queries = MySQLTipFilterQueries(self.mysql_db)
-        self.mysql_db_tip_filter_queries.setup()
+        self.db = load_database()
+        self.db_tip_filter_queries = MySQLTipFilterQueries(self.db)
+        self.db_tip_filter_queries.setup()
         self.lmdb = lmdb
         self.headers_threadsafe = headers_threadsafe
         self.executor = ThreadPoolExecutor(max_workers=1)
@@ -100,13 +100,13 @@ class ApplicationState(object):
 
         self._outbound_data_delivery_event = asyncio.Event()
         self.tasks: list[asyncio.Task[Any]] = []
-        self.worker_state_manager = WorkerStateManager(self, self.mysql_db_tip_filter_queries)
+        self.worker_state_manager = WorkerStateManager(self, self.db_tip_filter_queries)
 
-    async def refresh_mysql_connection_task(self) -> None:
+    async def refresh_connection_task(self) -> None:
         REFRESH_TIMEOUT = 600
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
-            self.mysql_db.mysql_conn.ping()
+            self.db.conn.ping()
 
     def start_threads(self) -> None:
         threading.Thread(target=self.push_notifications_thread, daemon=True).start()
@@ -118,7 +118,7 @@ class ApplicationState(object):
         self.tasks = [
             create_task(self._attempt_outbound_data_delivery_task()),
             create_task(self.listen_for_reorg_event_job()),
-            create_task(self.refresh_mysql_connection_task()),
+            create_task(self.refresh_connection_task()),
             create_task(self.wait_for_new_tip()),
         ]
         self.worker_state_manager.spawn_tasks()
@@ -215,7 +215,7 @@ class ApplicationState(object):
             # No point in trying if there is no reference server connected.
             next_check_delay = MAXIMUM_DELAY
             if len(self.get_ws_clients()) > 0:
-                rows = self.mysql_db_tip_filter_queries.read_pending_outbound_datas(
+                rows = self.db_tip_filter_queries.read_pending_outbound_datas(
                     OutboundDataFlag.NONE,
                     OutboundDataFlag.DISPATCHED_SUCCESSFULLY,
                 )
@@ -269,7 +269,7 @@ class ApplicationState(object):
                 if len(delivery_updates) > 0:
                     await asyncio.get_running_loop().run_in_executor(
                         self.executor,
-                        self.mysql_db_tip_filter_queries.update_outbound_data_last_tried_write,
+                        self.db_tip_filter_queries.update_outbound_data_last_tried_write,
                         delivery_updates,
                     )
             else:
@@ -320,7 +320,7 @@ class ApplicationState(object):
                 matches_by_hash[match.pushdata_hash] = [match]
 
         # Get all the accounts and which pushdata they have registered.
-        rows = self.mysql_db_tip_filter_queries.read_indexer_filtering_registrations_for_notifications(
+        rows = self.db_tip_filter_queries.read_indexer_filtering_registrations_for_notifications(
             list(matches_by_hash)
         )
         self.logger.debug("Found %d registrations for tip filter notifications", len(rows))
@@ -350,7 +350,7 @@ class ApplicationState(object):
         #     delivered.
         metadata_by_account_id = {
             row.account_id: row
-            for row in self.mysql_db_tip_filter_queries.read_account_metadata(list(matches_by_account_id))
+            for row in self.db_tip_filter_queries.read_account_metadata(list(matches_by_account_id))
         }
         block_id = hash_to_hex_str(block_hash) if block_hash is not None else None
 
@@ -424,7 +424,7 @@ class ApplicationState(object):
 
         await asyncio.get_running_loop().run_in_executor(
             self.executor,
-            self.mysql_db_tip_filter_queries.create_outbound_data_write,
+            self.db_tip_filter_queries.create_outbound_data_write,
             creation_row,
         )
 

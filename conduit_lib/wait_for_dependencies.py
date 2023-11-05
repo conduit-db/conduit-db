@@ -8,7 +8,7 @@ import time
 import MySQLdb
 
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
+from .database.mysql.db import MySQLDatabase, load_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
@@ -66,8 +66,8 @@ def wait_for_mysql() -> None:
         is_available = False
         try:
             # Attempt to connect
-            mysql_db: MySQLDatabase = load_mysql_database()
-            _result = mysql_db.tables.get_tables()
+            db: MySQLDatabase = load_database()
+            _result = db.tables.get_tables()
             is_available = True
             break
         except ConnectionRefusedError:

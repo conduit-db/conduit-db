@@ -19,7 +19,7 @@ from conduit_index.conduit_index.workers.common import (
 )
 from conduit_lib import IPCSocketClient, setup_storage, NetworkConfig
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.database.mysql.mysql_database import load_mysql_database
+from conduit_lib.database.mysql.db import load_database
 from conduit_lib.types import BlockSliceRequestType, Slice
 from conduit_lib.utils import (
     get_header_for_hash,
@@ -49,7 +49,7 @@ class DbRepairTool:
         os.environ["RESET_CONDUIT_INDEX"] = "0"
         os.environ["RESET_CONDUIT_RAW"] = "0"
 
-        self.mysql_db = load_mysql_database()
+        self.db = load_database()
         headers_dir = MODULE_DIR.parent.parent / "conduit_index"
         net_config = NetworkConfig(get_network_type(), node_host="127.0.0.1", node_port=18444)
         self.storage = setup_storage(net_config, headers_dir)
@@ -68,9 +68,9 @@ class DbRepairTool:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
         block hash, we need to purge those rows from the tables before we resume synchronization.
         """
-        result = self.mysql_db.queries.mysql_get_checkpoint_state()
+        result = self.db.queries.get_checkpoint_state()
         if not result:
-            self.mysql_db.tables.initialise_checkpoint_state()
+            self.db.tables.initialise_checkpoint_state()
             return None
 
         (
@@ -90,8 +90,8 @@ class DbRepairTool:
         )
 
         # Drop and re-create mempool table
-        self.mysql_db.tables.mysql_drop_mempool_table()
-        self.mysql_db.tables.mysql_create_mempool_table()
+        self.db.tables.drop_mempool_table()
+        self.db.tables.create_mempool_table()
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
@@ -159,11 +159,11 @@ class DbRepairTool:
 
             # Delete
             tx_hashes = [row[0] for row in tx_rows]
-            self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-            self.mysql_db.queries.mysql_delete_pushdata_rows(pushdata_rows_for_flushing)
-            self.mysql_db.queries.mysql_delete_output_rows(out_rows)
-            self.mysql_db.queries.mysql_delete_input_rows(input_rows_for_flushing)
-            self.mysql_db.queries.mysql_delete_header_row(block_hash)
+            self.db.queries.delete_transaction_rows(tx_hashes)
+            self.db.queries.delete_pushdata_rows(pushdata_rows_for_flushing)
+            self.db.queries.delete_output_rows(out_rows)
+            self.db.queries.delete_input_rows(input_rows_for_flushing)
+            self.db.queries.delete_header_row(block_hash)
 
 
 async def main() -> None:

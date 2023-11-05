@@ -61,19 +61,19 @@ T2 = TypeVar("T2")
 # TODO Add LRU caching for these but clear the caches if there is a reorg because it
 #  could result invalidating some of the cached results, Would greatly improve performance
 #  for 1) Heavy key reuse 2) Multiple pushdata matches in the same transaction
-def _get_tx_metadata(tx_hash: bytes, mysql_db: MySQLDatabase) -> TxMetadata | None:
+def _get_tx_metadata(tx_hash: bytes, db: MySQLDatabase) -> TxMetadata | None:
     """Truncates full hash -> hashX length"""
-    tx_metadata = mysql_db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
+    tx_metadata = db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
         return None
     return tx_metadata
 
 
 async def _get_tx_metadata_async(
-    tx_hash: bytes, mysql_db: MySQLDatabase, executor: ThreadPoolExecutor
+    tx_hash: bytes, db: MySQLDatabase, executor: ThreadPoolExecutor
 ) -> TxMetadata | None:
     tx_metadata = await asyncio.get_running_loop().run_in_executor(
-        executor, _get_tx_metadata, tx_hash, mysql_db
+        executor, _get_tx_metadata, tx_hash, db
     )
     return tx_metadata
 
@@ -104,7 +104,7 @@ def read_rows_by_id(
     batch_size = MARIADB_MAX_BIND_VARIABLES - len(params)
     remaining_ids = ids
     params = tuple(params)
-    cursor: MySQLdb.cursors.Cursor = mysqldb.mysql_conn.cursor()
+    cursor: MySQLdb.cursors.Cursor = mysqldb.conn.cursor()
     try:
         while len(remaining_ids):
             batch_ids = tuple(remaining_ids[:batch_size])
@@ -121,7 +121,7 @@ def read_rows_by_id(
             remaining_ids = remaining_ids[batch_size:]
         return results
     finally:
-        mysqldb.mysql_conn.commit()
+        mysqldb.conn.commit()
         cursor.close()
 
 
@@ -139,7 +139,7 @@ def read_rows_by_ids(
     batch_size = MARIADB_MAX_BIND_VARIABLES // 2 - len(sql_values)
     results: list[T1] = []
     remaining_ids = ids
-    cursor: MySQLdb.cursors.Cursor = mysqldb.mysql_conn.cursor()
+    cursor: MySQLdb.cursors.Cursor = mysqldb.conn.cursor()
     try:
         while len(remaining_ids):
             batch = remaining_ids[:batch_size]
@@ -153,16 +153,16 @@ def read_rows_by_ids(
             remaining_ids = remaining_ids[batch_size:]
         return results
     finally:
-        mysqldb.mysql_conn.commit()
+        mysqldb.conn.commit()
         cursor.close()
 
 
 class MySQLTipFilterQueries:
-    def __init__(self, mysql_db: "MySQLDatabase") -> None:
+    def __init__(self, db: "MySQLDatabase") -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
-        self.mysql_conn: MySQLdb.Connection = mysql_db.mysql_conn
-        self.mysql_db = mysql_db
+        self.conn: MySQLdb.Connection = db.conn
+        self.db = db
 
     def setup(self) -> None:
         if int(os.getenv("RESET_EXTERNAL_API_DATABASE_TABLES", "0")):
@@ -182,7 +182,7 @@ class MySQLTipFilterQueries:
         self.drop_outbound_data_table()
 
     def create_accounts_table(self) -> None:
-        self.mysql_conn.query(
+        self.conn.query(
             """
         CREATE TABLE IF NOT EXISTS accounts (
             account_id                  INT UNSIGNED     NOT NULL  AUTO_INCREMENT PRIMARY KEY,
@@ -191,19 +191,18 @@ class MySQLTipFilterQueries:
         )
         """
         )
-        if not index_exists(self.mysql_conn, 'accounts_external_id_idx',
-                'external_account_id'):
-            self.mysql_conn.query(
+        if not index_exists(self.conn, 'accounts_external_id_idx', 'external_account_id'):
+            self.conn.query(
                 "CREATE UNIQUE INDEX accounts_external_id_idx " "ON accounts (external_account_id)"
             )
-        self.mysql_conn.commit()
+        self.conn.commit()
 
     def drop_accounts_table(self) -> None:
-        self.mysql_conn.query("DROP TABLE IF EXISTS accounts")
-        self.mysql_conn.commit()
+        self.conn.query("DROP TABLE IF EXISTS accounts")
+        self.conn.commit()
 
     def create_tip_filter_registrations_table(self) -> None:
-        self.mysql_conn.query(
+        self.conn.query(
             """
         CREATE TABLE IF NOT EXISTS tip_filter_registrations (
             account_id              INT UNSIGNED     NOT NULL,
@@ -214,19 +213,19 @@ class MySQLTipFilterQueries:
         )
         """
         )
-        if not index_exists(self.mysql_conn, 'tip_filter_registrations_idx',
-                'tip_filter_registrations'):
-            self.mysql_conn.query("CREATE UNIQUE INDEX tip_filter_registrations_idx "
-                    "ON tip_filter_registrations (account_id, pushdata_hash)"
-        )
-        self.mysql_conn.commit()
+        if not index_exists(self.conn, 'tip_filter_registrations_idx', 'tip_filter_registrations'):
+            self.conn.query(
+                "CREATE UNIQUE INDEX tip_filter_registrations_idx "
+                "ON tip_filter_registrations (account_id, pushdata_hash)"
+            )
+        self.conn.commit()
 
     def drop_tip_filter_registrations_table(self) -> None:
-        self.mysql_conn.query("DROP TABLE IF EXISTS tip_filter_registrations")
-        self.mysql_conn.commit()
+        self.conn.query("DROP TABLE IF EXISTS tip_filter_registrations")
+        self.conn.commit()
 
     def create_outbound_data_table(self) -> None:
-        self.mysql_conn.query(
+        self.conn.query(
             """
         CREATE TABLE IF NOT EXISTS outbound_data (
             outbound_data_id        INT UNSIGNED     PRIMARY KEY,
@@ -237,18 +236,18 @@ class MySQLTipFilterQueries:
         )
         """
         )
-        self.mysql_conn.commit()
+        self.conn.commit()
 
     def drop_outbound_data_table(self) -> None:
-        self.mysql_conn.query("DROP TABLE IF EXISTS outbound_data")
-        self.mysql_conn.commit()
+        self.conn.query("DROP TABLE IF EXISTS outbound_data")
+        self.conn.commit()
 
     def create_account_write(self, external_account_id: int) -> int:
         """
         This does partial updates depending on what is in `settings`.
         """
         sql_values: tuple[Any, ...]
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.execute(
                 "SELECT account_id FROM accounts WHERE external_account_id=%s",
@@ -274,7 +273,7 @@ class MySQLTipFilterQueries:
             logger.debug("Created account in indexer settings db callback %d", row[0])
             return cast(int, row[0])
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
@@ -283,10 +282,10 @@ class MySQLTipFilterQueries:
             FROM accounts
             WHERE account_id IN ({})
         """
-        return read_rows_by_id(self.mysql_db, AccountMetadata, sql, [], account_ids)
+        return read_rows_by_id(self.db, AccountMetadata, sql, [], account_ids)
 
     def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         cursor = cursor.execute(
             "SELECT account_id FROM accounts WHERE external_account_id=%s",
             (external_account_id,),
@@ -327,7 +326,7 @@ class MySQLTipFilterQueries:
                 parts.append(sql_condition)
         parts.append(")")
 
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         query = " ".join(parts)
         try:
             cursor.execute(query)
@@ -359,7 +358,7 @@ class MySQLTipFilterQueries:
 
             return output_spend_rows
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def create_tip_filter_registrations_write(
@@ -386,7 +385,7 @@ class MySQLTipFilterQueries:
                     date_created + entry.duration_seconds,
                 )
             )
-        cursor = self.mysql_conn.cursor()
+        cursor = self.conn.cursor()
         try:
             cursor.executemany(sql, insert_rows)
         except MySQLdb.IntegrityError:
@@ -396,7 +395,7 @@ class MySQLTipFilterQueries:
         else:
             return True
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def read_tip_filter_registrations(
@@ -419,12 +418,12 @@ class MySQLTipFilterQueries:
         if date_expires is not None:
             sql += " AND date_expires < %s"
             sql_values.append(date_expires)
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.execute(sql, sql_values)
             return [TipFilterRegistrationEntry(*row) for row in cursor.fetchall()]
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def read_indexer_filtering_registrations_for_notifications(
@@ -444,7 +443,7 @@ class MySQLTipFilterQueries:
             int(IndexerPushdataRegistrationFlag.FINALISED),
         ]
         return read_rows_by_id(
-            self.mysql_db,
+            self.db,
             FilterNotificationRow,
             sql,
             sql_values,
@@ -484,13 +483,13 @@ class MySQLTipFilterQueries:
                     int(filter_flags),
                 )
             )
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.executemany(sql, update_rows)
             if require_all and cursor.rowcount != len(pushdata_hashes):
                 raise DatabaseStateModifiedError
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def expire_tip_filter_registrationss(self, date_expires: int) -> list[bytes]:
@@ -508,14 +507,14 @@ class MySQLTipFilterQueries:
         expected_flags = IndexerPushdataRegistrationFlag.FINALISED
         mask_flags = IndexerPushdataRegistrationFlag.DELETING | expected_flags
         sql_values = (mask_flags, expected_flags, date_expires)
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.execute(sql_deletion, sql_values)
             cursor.execute(sql_select, sql_values)
             rows = cursor.fetchall()
             return [cast(bytes, row[0]) for row in rows]
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def delete_tip_filter_registrations_write(
@@ -536,11 +535,11 @@ class MySQLTipFilterQueries:
         for pushdata_value in pushdata_hashes:
             update_rows.append((account_id, pushdata_value, int(mask), int(expected_flags)))
 
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.executemany(sql, update_rows)
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
@@ -549,7 +548,7 @@ class MySQLTipFilterQueries:
             "date_created, date_last_tried) VALUES (%s, %s, %s, %s, %s)"
         )
         sql_select = "SELECT outbound_data_id FROM outbound_data WHERE outbound_data_id=%s"
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.execute(sql, creation_row)
             cursor.execute(sql_select, [creation_row.outbound_data_id])
@@ -558,7 +557,7 @@ class MySQLTipFilterQueries:
                 raise DatabaseInsertConflict()
             return cast(int, result_row[0])
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def read_pending_outbound_datas(
@@ -570,20 +569,20 @@ class MySQLTipFilterQueries:
             "ORDER BY date_last_tried ASC"
         )
         sql_values = (mask, flags)
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             cursor.execute(sql, sql_values)
             rows = cursor.fetchall()
             return [OutboundDataRow(row[0], row[1], OutboundDataFlag(row[2]), row[3], row[4]) for row in rows]
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()
 
     def update_outbound_data_last_tried_write(self, entries: list[tuple[OutboundDataFlag, int, int]]) -> None:
         sql = (
             "UPDATE outbound_data SET outbound_data_flags=%s, date_last_tried=%s " "WHERE outbound_data_id=%s"
         )
-        cursor: MySQLdb.cursors.Cursor = self.mysql_conn.cursor()
+        cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             entries_with_flag_as_int: list[tuple[int, int, int]] = [
                 (int(outbound_data_flags), date_last_tried, outbound_data_id)
@@ -592,5 +591,5 @@ class MySQLTipFilterQueries:
             cursor.executemany(sql, entries_with_flag_as_int)
             assert cursor.rowcount == len(entries)
         finally:
-            self.mysql_conn.commit()
+            self.conn.commit()
             cursor.close()

@@ -17,7 +17,7 @@ from conduit_lib.utils import create_task, zmq_send_no_block_async
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .constants import UTXO_REGISTRATION_TOPIC, PUSHDATA_REGISTRATION_TOPIC
 
-from .mysql_db_tip_filtering import MySQLTipFilterQueries
+from .db_tip_filtering import MySQLTipFilterQueries
 from .types import (
     OutputSpendRow,
     OutpointStateUpdate,
@@ -42,10 +42,10 @@ class WorkerStateManager:
     def __init__(
         self,
         app_state: "ApplicationState",
-        mysql_db_tip_filter_queries: MySQLTipFilterQueries,
+        db_tip_filter_queries: MySQLTipFilterQueries,
     ) -> None:
         self.app_state = app_state
-        self.mysql_db = mysql_db_tip_filter_queries
+        self.db = db_tip_filter_queries
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")
@@ -168,7 +168,7 @@ class WorkerStateManager:
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
         # Subsequent notifications are send via the web socket.
         logger.debug(f"Successfully sent utxo registrations for {len(outpoints)} outpoints")
-        return self.mysql_db.get_spent_outpoints(outpoints, self.app_state.lmdb)
+        return self.db.get_spent_outpoints(outpoints, self.app_state.lmdb)
 
     async def unregister_output_spend_notifications(self, outpoints: list[OutpointType]) -> None:
         """raises `BackendWorkerOfflineError"""

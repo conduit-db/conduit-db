@@ -14,7 +14,7 @@ from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.database.mysql.mysql_database import MySQLDatabase
+from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.types import (
     TxMetadata,
     TxLocation,
@@ -28,7 +28,7 @@ from conduit_lib.types import (
     _pack_pushdata_match_response_json,
 )
 from conduit_lib.utils import address_to_pushdata_hash
-from .mysql_db_tip_filtering import _get_full_tx_hash, _get_tx_metadata_async
+from .db_tip_filtering import _get_full_tx_hash, _get_tx_metadata_async
 
 if TYPE_CHECKING:
     from .server import ApplicationState
@@ -87,7 +87,7 @@ async def error(request: web.Request) -> web.Response:
 
 def _get_tsc_merkle_proof(
     tx_metadata: TxMetadata,
-    mysql_db: MySQLDatabase,
+    db: MySQLDatabase,
     lmdb: LMDB_Database,
     include_full_tx: bool = True,
     target_type: str = "hash",
@@ -116,7 +116,7 @@ def _get_tsc_merkle_proof(
     # Sanity check - Todo: remove when satisfied
     header_row = cast(
         BlockHeaderRow,
-        mysql_db.api_queries.get_header_data(tx_metadata.block_hash, raw_header_data=True),
+        db.api_queries.get_header_data(tx_metadata.block_hash, raw_header_data=True),
     )
     root_from_header: bytes = bytes.fromhex(header_row.block_header)[36 : 36 + 32]
     if target_type == "merkleroot" and merkle_root != hash_to_hex_str(root_from_header):
@@ -143,7 +143,7 @@ def _get_tsc_merkle_proof(
 async def _get_tsc_merkle_proof_async(
     executor: ThreadPoolExecutor,
     tx_metadata: TxMetadata,
-    mysql_db: MySQLDatabase,
+    db: MySQLDatabase,
     lmdb: LMDB_Database,
     include_full_tx: bool = True,
     target_type: str = "hash",
@@ -152,7 +152,7 @@ async def _get_tsc_merkle_proof_async(
         executor,
         _get_tsc_merkle_proof,
         tx_metadata,
-        mysql_db,
+        db,
         lmdb,
         include_full_tx,
         target_type,
@@ -163,7 +163,7 @@ async def _get_tsc_merkle_proof_async(
 async def _get_pushdata_filter_matches(request: web.Request, match_format: MatchFormat) -> StreamResponse:
     try:
         app_state: "ApplicationState" = request.app["app_state"]
-        mysql_db: MySQLDatabase = app_state.mysql_db
+        db: MySQLDatabase = app_state.db
         lmdb: LMDB_Database = app_state.lmdb
         accept_type = request.headers.get("Accept")
         body = await request.content.read()
@@ -203,7 +203,7 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
 
         count = 0
         try:
-            result_generator = mysql_db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+            result_generator = db.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
         except MySQLdb.OperationalError:
             # I have only seen this when MySQL is on spinning HDD during the midst of initial
             # block download when it is under heavy strain
@@ -222,7 +222,7 @@ async def _get_pushdata_filter_matches(request: web.Request, match_format: Match
             full_pushdata_hash = pushdata_hashX_map[match.pushdata_hashX.hex().lower()].lower()
             if match.spend_transaction_hash is not None:
                 tx_metadata = await _get_tx_metadata_async(
-                    match.spend_transaction_hash, mysql_db, app_state.executor
+                    match.spend_transaction_hash, db, app_state.executor
                 )
                 assert tx_metadata is not None
                 spend_tx_loc = TxLocation(
@@ -310,7 +310,7 @@ async def get_transaction(request: web.Request) -> web.Response:
 
 async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
     app_state: "ApplicationState" = request.app["app_state"]
-    mysql_db: MySQLDatabase = app_state.mysql_db
+    db: MySQLDatabase = app_state.db
     lmdb: LMDB_Database = app_state.lmdb
     accept_type = request.headers.get("Accept")
 
@@ -326,14 +326,14 @@ async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
 
     # Construct JSON format TSC merkle proof
     tx_hash = bitcoinx.hex_str_to_hash(txid)
-    tx_metadata = await _get_tx_metadata_async(tx_hash, mysql_db, app_state.executor)
+    tx_metadata = await _get_tx_metadata_async(tx_hash, db, app_state.executor)
     if not tx_metadata:
         raise web.HTTPNotFound(reason="transaction metadata not found")
     assert target_type is not None
     tsc_merkle_proof = await _get_tsc_merkle_proof_async(
         app_state.executor,
         tx_metadata,
-        mysql_db,
+        db,
         lmdb,
         include_full_tx,
         target_type,

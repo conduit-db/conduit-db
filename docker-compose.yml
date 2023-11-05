@@ -27,6 +27,14 @@ services:
       MYSQL_USER: conduitadmin
       MYSQL_PASSWORD: conduitpass
 
+  scylladb:
+    image: scylladb/scylla
+    ports:
+      - "9042:9042"
+    environment:
+      SCYLLA_USERNAME: conduitdb
+      SCYLLA_PASSWORD: conduitpass
+
   reference_server:
     container_name: reference_server
     depends_on:
@@ -90,6 +98,7 @@ services:
     depends_on:
       - node
       - mysql
+      - scylladb
       - conduit-raw
     environment:
       - IPC_SOCKET_SERVER_HOST=conduit-raw:50000

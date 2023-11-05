@@ -11,7 +11,7 @@ import time
 import os
 from pathlib import Path
 
-from conduit_lib.database.mysql.mysql_database import load_mysql_database
+from conduit_lib.database.mysql.db import load_database
 from conduit_lib.logging_server import TCPLoggingServer
 
 try:
@@ -26,7 +26,7 @@ except ModuleNotFoundError:
 
 from contrib.bench_and_experiments.utils import (
     print_results,
-    print_results_mysql_bench,
+    print_results_bench,
 )
 
 from conduit_lib.logging_client import setup_tcp_logging
@@ -44,9 +44,9 @@ if __name__ == "__main__":
     time.sleep(2)
 
     async def main():
-        mysql_db = load_mysql_database()
-        mysql_db.mysql_drop_tables()
-        mysql_db.tables.mysql_create_permanent_tables()
+        db = load_database()
+        db.drop_tables()
+        db.tables.create_permanent_tables()
 
         with open(MODULE_DIR.parent.joinpath("data/block413567.raw"), "rb") as f:
             raw_block = array.array("B", (f.read()))
@@ -141,20 +141,20 @@ if __name__ == "__main__":
         # This dataset is waaaaaaay too small to give meaningful benchmark results but this
         # code helps me to test things like collision handling
         t0 = time.perf_counter()
-        mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
-        mysql_db.mysql_bulk_load_output_rows(out_rows)
-        mysql_db.mysql_bulk_load_input_rows(in_rows)
-        mysql_db.mysql_bulk_load_pushdata_rows(set_pd_rows)
+        db.bulk_load_confirmed_tx_rows(tx_rows)
+        db.bulk_load_output_rows(out_rows)
+        db.bulk_load_input_rows(in_rows)
+        db.bulk_load_pushdata_rows(set_pd_rows)
         t1 = time.perf_counter() - t0
-        print_results_mysql_bench(count_added, t1)
+        print_results_bench(count_added, t1)
 
-        mysql_db.mysql_conn.query("select * from confirmed_transactions;")
-        result = mysql_db.mysql_conn.store_result()
+        db.conn.query("select * from confirmed_transactions;")
+        result = db.conn.store_result()
         for row in result.fetch_row(0):
             # print(row)
             pass
         # Close the connection.
-        mysql_db.close()
+        db.close()
 
     asyncio.get_event_loop().run_until_complete(main())
 

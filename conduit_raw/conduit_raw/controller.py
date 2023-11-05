@@ -103,7 +103,9 @@ class Controller(ControllerBase):
         ] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
-        self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = multiprocessing.Queue()  # pylint: disable=E1136
+        self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = (
+            multiprocessing.Queue()
+        )  # pylint: disable=E1136
         self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
 

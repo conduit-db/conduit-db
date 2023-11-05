@@ -8,3 +8,7 @@ cbor2
 aiohttp
 fasteners
 refcuckoo
+scylla-driver
+lz4
+python-snappy
+scales

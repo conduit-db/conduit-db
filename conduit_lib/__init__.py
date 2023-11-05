@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.mysql_database import MySQLDatabase
+from .database.mysql.db import MySQLDatabase
 from .deserializer import Deserializer
 from .ipc_sock_client import IPCSocketClient
 from .serializer import Serializer

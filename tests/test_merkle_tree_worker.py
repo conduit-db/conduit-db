@@ -61,8 +61,8 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     worker_ack_queue_mtree = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
     lmdb = LMDB_Database(lock=True)
-    mock_mysql_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
-    mysql_db: MySQLDatabase = MySQLDatabase(mock_mysql_conn, worker_id=1)
+    mock_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
+    db: MySQLDatabase = MySQLDatabase(mock_conn, worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -71,7 +71,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
     block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
-    mysql_db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
+    db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
     lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
 
     # Whole block as a single chunk
@@ -138,7 +138,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
         )
         result = _get_tsc_merkle_proof(
             tx_metadata,
-            mysql_db,
+            db,
             lmdb,
             include_full_tx=False,
             target_type="hash",
@@ -156,8 +156,8 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     worker_ack_queue_mtree = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
     lmdb = LMDB_Database(lock=True)
-    mock_mysql_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
-    mysql_db: MySQLDatabase = MySQLDatabase(mock_mysql_conn, worker_id=1)
+    mock_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
+    db: MySQLDatabase = MySQLDatabase(mock_conn, worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -166,7 +166,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
     block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
-    mysql_db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
+    db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
     lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
 
     # Same block processed in 4 chunks
@@ -250,7 +250,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
         )
         result = _get_tsc_merkle_proof(
             tx_metadata,
-            mysql_db,
+            db,
             lmdb,
             include_full_tx=False,
             target_type="hash",

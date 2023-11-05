@@ -12,7 +12,7 @@ import refcuckoo
 import zmq
 
 from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.mysql_database import mysql_connect
+from conduit_lib.database.mysql.db import connect
 from conduit_lib.database.mysql.types import (
     InputRowParsed,
     MySQLFlushBatch,
@@ -21,7 +21,7 @@ from conduit_lib.database.mysql.types import (
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.types import OutpointType, output_spend_struct
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
-from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import (
+from conduit_raw.conduit_raw.aiohttp_api.db_tip_filtering import (
     MySQLTipFilterQueries,
 )
 from conduit_raw.conduit_raw.aiohttp_api.types import (
@@ -61,7 +61,7 @@ class TxParser(multiprocessing.Process):
             ]
         ] | None = None
 
-        self.last_mysql_activity: float = time.time()
+        self.last_activity: float = time.time()
         self.worker_id = worker_id
 
     def run(self) -> None:
@@ -127,8 +127,8 @@ class TxParser(multiprocessing.Process):
             sys.exit(0)
 
     def setup_tip_filtering(self) -> None:
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-        mysql_db_tip_filter_queries = MySQLTipFilterQueries(mysql_db)
+        db: MySQLDatabase = connect(worker_id=self.worker_id)
+        db_tip_filter_queries = MySQLTipFilterQueries(db)
 
         self.unspent_output_registrations: set[OutpointType] = set()
 
@@ -138,7 +138,7 @@ class TxParser(multiprocessing.Process):
         # Note that at the time of writing the bits per item is 12 (compiled into `refcuckoo`).
         self.common_cuckoo = refcuckoo.CuckooFilter(500000)  # pylint: disable=I1101
         self._filter_expiry_next_time = int(time.time()) + 30
-        registration_entries = mysql_db_tip_filter_queries.read_tip_filter_registrations(
+        registration_entries = db_tip_filter_queries.read_tip_filter_registrations(
             mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,
             expected_flags=IndexerPushdataRegistrationFlag.FINALISED,
         )

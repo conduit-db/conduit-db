@@ -299,8 +299,8 @@ def remove_readonly(func: Callable[..., Any], path: str, excinfo: Any) -> None:
     func(path)
 
 
-def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: str) -> bool:
-    cursor = mysql_conn.cursor()
+def index_exists(conn: MySQLdb.Connection, index_name: str, table_name: str) -> bool:
+    cursor = conn.cursor()
     cursor.execute(
         """
         SELECT COUNT(*)
@@ -312,7 +312,7 @@ def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: st
         (table_name, index_name),
     )
     rows = cursor.fetchone()
-    row_count = rows[0]
+    row_count: int = rows[0]
     exists = row_count > 0
     if not exists:
         logger.debug(

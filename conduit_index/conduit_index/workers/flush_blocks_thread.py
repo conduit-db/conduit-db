@@ -7,7 +7,7 @@ import zmq
 
 from conduit_lib.database.mysql.types import MySQLFlushBatch
 from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.mysql_database import mysql_connect
+from conduit_lib.database.mysql.db import connect
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 from ..types import (
@@ -17,8 +17,8 @@ from ..types import (
 )
 from ..workers.common import (
     reset_rows,
-    maybe_refresh_mysql_connection,
-    mysql_flush_rows_confirmed,
+    maybe_refresh_connection,
+    flush_rows_confirmed,
     extend_batched_rows,
 )
 
@@ -56,11 +56,11 @@ class FlushConfirmedTransactionsThread(threading.Thread):
         # A dedicated in-memory only table exclusive to this worker
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f"inbound_tx_table_{worker_id}"
-        self.last_mysql_activity: int = int(time.time())
+        self.last_activity: int = int(time.time())
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+        db: MySQLDatabase = connect(worker_id=self.worker_id)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55889",
@@ -95,13 +95,13 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         (
-                            mysql_db,
-                            self.last_mysql_activity,
-                        ) = maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity, self.logger)
-                        mysql_flush_rows_confirmed(
+                            db,
+                            self.last_activity,
+                        ) = maybe_refresh_connection(db, self.last_activity, self.logger)
+                        flush_rows_confirmed(
                             self,
                             MySQLFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
-                            mysql_db=mysql_db,
+                            db=db,
                         )
                         for tfn in all_tip_filter_notifications:
                             self.parent.send_utxo_spend_notifications(tfn.utxo_spends, tfn.block_hash)
@@ -115,13 +115,13 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                 except queue.Empty:
                     if len(txs) != 0:
                         (
-                            mysql_db,
-                            self.last_mysql_activity,
-                        ) = maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity, self.logger)
-                        mysql_flush_rows_confirmed(
+                            db,
+                            self.last_activity,
+                        ) = maybe_refresh_connection(db, self.last_activity, self.logger)
+                        flush_rows_confirmed(
                             self,
                             MySQLFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
-                            mysql_db=mysql_db,
+                            db=db,
                         )
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()
                     for tfn in all_tip_filter_notifications:
@@ -135,7 +135,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             self.logger.exception("Caught exception")
             raise e
         finally:
-            mysql_db.close()
+            db.close()
             if self.socket_mined_tx_ack:
                 self.socket_mined_tx_ack.close()
             if self.socket_mined_tx_parsed_ack:

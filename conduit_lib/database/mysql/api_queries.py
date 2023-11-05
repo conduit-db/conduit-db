@@ -5,7 +5,7 @@ import MySQLdb
 import typing
 from bitcoinx import hash_to_hex_str
 
-from .mysql_tables import MySQLTables
+from .tables import MySQLTables
 from ...constants import MAX_UINT32
 from ...types import (
     TxMetadata,
@@ -22,15 +22,15 @@ if typing.TYPE_CHECKING:
 class MySQLAPIQueries:
     def __init__(
         self,
-        mysql_conn: MySQLdb.Connection,
-        mysql_tables: MySQLTables,
-        mysql_db: "MySQLDatabase",
+        conn: MySQLdb.Connection,
+        tables: MySQLTables,
+        db: "MySQLDatabase",
     ) -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
-        self.mysql_conn = mysql_conn
-        self.mysql_tables = mysql_tables
-        self.mysql_db = mysql_db
+        self.conn = conn
+        self.tables = tables
+        self.db = db
 
     def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata | None:
         try:
@@ -42,10 +42,10 @@ class MySQLAPIQueries:
                 WHERE CT.tx_hash = X'{tx_hashX.hex()}'
                 AND HD.is_orphaned = 0;"""
 
-            self.mysql_conn.query(sql)
-            result = self.mysql_conn.store_result()
+            self.conn.query(sql)
+            result = self.conn.store_result()
             rows = result.fetch_row(0)
-            self.mysql_conn.commit()
+            self.conn.commit()
 
             if len(rows) == 0:
                 return None
@@ -96,7 +96,7 @@ class MySQLAPIQueries:
                 )  # i.e. WHERE HD.is_orphaned = 0
 
         finally:
-            self.mysql_db.commit_transaction()
+            self.db.commit_transaction()
 
     def get_header_data(self, block_hash: bytes, raw_header_data: bool = True) -> BlockHeaderRow | None:
         try:
@@ -106,17 +106,17 @@ class MySQLAPIQueries:
                     FROM headers HD
                     WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
-                self.mysql_conn.query(sql)
+                self.conn.query(sql)
             else:
                 sql = f"""
                     SELECT block_num, block_hash, block_height, block_tx_count, block_size
                     FROM headers HD
                     WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
-                self.mysql_conn.query(sql)
-            result = self.mysql_conn.store_result()
+                self.conn.query(sql)
+            result = self.conn.store_result()
             rows = result.fetch_row(0)
-            self.mysql_conn.commit()
+            self.conn.commit()
             if len(rows) == 0:
                 return None
 
@@ -152,7 +152,7 @@ class MySQLAPIQueries:
                 is_orphaned,
             )
         finally:
-            self.mysql_db.commit_transaction()
+            self.db.commit_transaction()
 
     def get_pushdata_filter_matches(
         self, pushdata_hashXes: list[str]
@@ -172,8 +172,8 @@ class MySQLAPIQueries:
                 WHERE PD.pushdata_hash IN ({",".join(query_format_pushdata_hashes)})
                 AND HD.is_orphaned = 0
                 LIMIT 1000;"""
-            self.mysql_conn.query(sql)
-            result = self.mysql_conn.store_result()
+            self.conn.query(sql)
+            result = self.conn.store_result()
             for row in result.fetch_row(0):
                 pushdata_hashX: bytes = row[0]
                 tx_hash: bytes = row[1]
@@ -197,4 +197,4 @@ class MySQLAPIQueries:
                     tx_location=tx_location,
                 )
         finally:
-            self.mysql_db.commit_transaction()
+            self.db.commit_transaction()
