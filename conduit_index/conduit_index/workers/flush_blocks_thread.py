@@ -5,16 +5,11 @@ import time
 import typing
 import zmq
 
-from conduit_lib.database.mysql.types import MySQLFlushBatch
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.db import connect
+from conduit_lib import DBInterface
+from conduit_lib.database.db_interface.types import MySQLFlushBatch, ProcessedBlockAcks, \
+    TipFilterNotifications, DBFlushBatchWithAcks
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
-from ..types import (
-    ProcessedBlockAcks,
-    MySQLFlushBatchWithAcks,
-    TipFilterNotifications,
-)
 from ..workers.common import (
     reset_rows,
     maybe_refresh_connection,
@@ -60,7 +55,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        db: MySQLDatabase = connect(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55889",
@@ -100,7 +95,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_confirmed(
                             self,
-                            MySQLFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
                             db=db,
                         )
                         for tfn in all_tip_filter_notifications:
@@ -120,7 +115,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_confirmed(
                             self,
-                            MySQLFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
                             db=db,
                         )
                         txs, txs_mempool, ins, outs, pds, acks = reset_rows()

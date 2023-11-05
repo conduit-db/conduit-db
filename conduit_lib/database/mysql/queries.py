@@ -12,12 +12,12 @@ import bitcoinx
 
 from .bulk_loads import MySQLBulkLoads
 from .tables import MySQLTables
-from .types import ConfirmedTransactionRow, MinedTxHashes
+from ..db_interface.types import ConfirmedTransactionRow, MinedTxHashes
 from ...constants import PROFILING
 from ...types import ChainHashes
 
 if typing.TYPE_CHECKING:
-    from ... import MySQLDatabase
+    from .db import MySQLDatabase
 
 
 class MySQLQueries:

@@ -11,22 +11,23 @@ from aiohttp import web
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib import LMDB_Database
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.db_interface.tip_filter_types import (
+    TipFilterRegistrationEntry,
+    IndexerPushdataRegistrationFlag,
+    DatabaseStateModifiedError,
+)
 from conduit_lib.types import (
     OutpointJSONType,
     OutpointType,
     outpoint_struct,
     output_spend_struct,
 )
-from .db_tip_filtering import (
-    MySQLTipFilterQueries,
-    DatabaseStateModifiedError,
-)
+
 from .types import (
-    IndexerPushdataRegistrationFlag,
     TipFilterRegistrationResponse,
     ZEROED_OUTPOINT,
     tip_filter_entry_struct,
-    TipFilterRegistrationEntry,
     BackendWorkerOfflineError,
     PushdataRegistrationJSONType,
 )
@@ -73,7 +74,7 @@ async def get_output_spends(request: web.Request) -> web.Response:
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
 
-    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
+    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
     lmdb: LMDB_Database = app_state.lmdb
     existing_rows = db.get_spent_outpoints(client_outpoints, lmdb)
 
@@ -259,7 +260,7 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
+    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
 
     accept_type = request.headers.get("Accept", "*/*")
     if accept_type == "*/*":
@@ -375,7 +376,7 @@ async def indexer_post_transaction_filter_delete(
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    db: MySQLTipFilterQueries = app_state.db_tip_filter_queries
+    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
 
     content_type = request.headers.get("Content-Type")
     if content_type not in (

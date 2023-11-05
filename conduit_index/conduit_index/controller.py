@@ -20,15 +20,11 @@ from zmq.asyncio import Context as AsyncZMQContext
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
-from conduit_lib.database.mysql.types import MinedTxHashes
+from conduit_lib.database.db_interface.types import MinedTxHashes
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
-from conduit_lib.database.mysql.db import (
-    MySQLDatabase,
-    load_database,
-)
 from conduit_lib.deserializer import Deserializer
-from conduit_lib import Peer
+from conduit_lib import Peer, DBInterface
 from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import (
     HeadersBatchedResponse,
@@ -181,7 +177,7 @@ class Controller(ControllerBase):
         self.mempool_tx_count: int = 0
 
         # Database Interfaces
-        self.db: MySQLDatabase | None = None
+        self.db: DBInterface | None = None
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.0
         self.estimated_moving_av_block_size_mb = (
@@ -189,11 +185,11 @@ class Controller(ControllerBase):
         )
 
     def setup(self) -> None:
-        self.db = load_database()
+        self.db = DBInterface.load_db()
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
-        self.db.tables.drop_mempool_table()
-        self.db.tables.create_permanent_tables()
+        self.db.drop_mempool_table()
+        self.db.create_permanent_tables()
 
     async def run(self) -> None:
         self.running = True
@@ -285,9 +281,9 @@ class Controller(ControllerBase):
         block hash, we need to purge those rows from the tables before we resume synchronization.
         """
         assert self.db is not None
-        result = self.db.queries.get_checkpoint_state()
+        result = self.db.get_checkpoint_state()
         if not result:
-            self.db.tables.initialise_checkpoint_state()
+            self.db.initialise_checkpoint_state()
             return None
 
         (
@@ -308,8 +304,8 @@ class Controller(ControllerBase):
         )
 
         # Drop and re-create mempool table
-        self.db.tables.drop_mempool_table()
-        self.db.tables.create_mempool_table()
+        self.db.drop_mempool_table()
+        self.db.create_mempool_table()
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
@@ -401,15 +397,15 @@ class Controller(ControllerBase):
 
         # Delete All
         tx_hashes = [row[0] for row in batched_tx_rows]
-        self.db.queries.delete_transaction_rows(tx_hashes)
+        self.db.delete_transaction_rows(tx_hashes)
 
         # Commented out because way too slow... Need to rely on overwriting these records instead
         # ScyllaDB will be a different story because of merge operator under the hood
-        # self.db.queries.delete_pushdata_rows(batched_pd_rows)
-        # self.db.queries.delete_output_rows(batched_out_rows)
-        # self.db.queries.delete_input_rows(batched_in_rows)
+        # self.db.delete_pushdata_rows(batched_pd_rows)
+        # self.db.delete_output_rows(batched_out_rows)
+        # self.db.delete_input_rows(batched_in_rows)
         # for block_hash in batched_header_hashes:
-        #     self.db.queries.delete_header_row(block_hash)
+        #     self.db.delete_header_row(block_hash)
 
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
@@ -555,7 +551,7 @@ class Controller(ControllerBase):
                 is_orphaned=0,
             )
             header_rows.append(row)
-        self.db.bulk_loads.bulk_load_headers(header_rows)
+        self.db.bulk_load_headers(header_rows)
 
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header height {tip.height}, " f"hash {hash_to_hex_str(tip.hash)}")
@@ -766,16 +762,16 @@ class Controller(ControllerBase):
         self, old_hashes: ChainHashes, new_hashes: ChainHashes
     ) -> None:
         assert self.db is not None
-        self.db.queries.update_orphaned_headers(old_hashes)
+        self.db.update_orphaned_headers(old_hashes)
         (
             removals_from_mempool,
             additions_to_mempool,
             orphaned_tx_hashes,
         ) = await self._get_differential_post_reorg(old_hashes, new_hashes)
 
-        self.db.queries.load_temp_mempool_additions(additions_to_mempool)
-        self.db.queries.load_temp_mempool_removals(removals_from_mempool)
-        self.db.queries.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+        self.db.load_temp_mempool_additions(additions_to_mempool)
+        self.db.load_temp_mempool_removals(removals_from_mempool)
+        self.db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
 
     async def index_blocks(
         self,
@@ -815,7 +811,7 @@ class Controller(ControllerBase):
         self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
         # Mark the block hashes we have allocated work for so we can auto-db-repair if needed
-        self.db.queries.update_allocated_state(
+        self.db.update_allocated_state(
             reorg_was_allocated=is_reorg,
             first_allocated=start_header,
             last_allocated=stop_header,
@@ -847,7 +843,7 @@ class Controller(ControllerBase):
             )
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
-            self.db.tables.drop_temp_orphaned_txs()
+            self.db.drop_temp_orphaned_txs()
 
         else:
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
@@ -869,7 +865,7 @@ class Controller(ControllerBase):
     async def log_current_mempool_size_task_async(self) -> None:
         assert self.db is not None
         while True:
-            self.logger.debug(f"Mempool size: {self.db.queries.get_mempool_size()} " f"transactions")
+            self.logger.debug(f"Mempool size: {self.db.get_mempool_size()} " f"transactions")
             await asyncio.sleep(60)
 
     async def sync_all_blocks_job(self) -> None:
@@ -971,8 +967,8 @@ class Controller(ControllerBase):
         self.db.drop_temp_mined_tx_hashes()  # not required so discard it
         self.db.start_transaction()
         try:
-            self.db.queries.remove_from_mempool()
-            self.db.queries.add_to_mempool()
+            self.db.remove_from_mempool()
+            self.db.add_to_mempool()
             self.db.update_checkpoint_tip(best_flushed_block_tip)
         finally:
             self.db.commit_transaction()

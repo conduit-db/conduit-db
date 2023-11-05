@@ -268,3 +268,15 @@ class LMDB_Database:
                 additions_to_mempool,
                 old_chain_tx_hashes,
             )
+
+
+def get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
+    # get base level of merkle tree with the tx hashes array
+    block_metadata = lmdb.get_block_metadata(tx_location.block_hash)
+    if block_metadata is None:
+        return None
+    base_level = calc_depth(block_metadata.tx_count) - 1
+
+    tx_loc = TxLocation(tx_location.block_hash, tx_location.block_num, tx_location.tx_position)
+    tx_hash = lmdb.get_tx_hash_by_loc(tx_loc, base_level)
+    return tx_hash

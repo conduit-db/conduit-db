@@ -10,9 +10,9 @@ from http import HTTPStatus
 import aiohttp
 from bitcoinx import PrivateKey, hash_to_hex_str
 from datetime import datetime
-from typing import TypedDict, cast, NamedTuple, Any, List, Dict
+from typing import TypedDict, cast, NamedTuple, Any
 
-from conduit_raw.conduit_raw.aiohttp_api.types import output_spend_struct
+from conduit_lib.database.db_interface.tip_filter_types import output_spend_struct
 from tests_functional.data.pushdata_registrations import PUSHDATAS
 from tests_functional.data.utxo_spends import UTXO_REGISTRATIONS
 

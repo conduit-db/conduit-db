@@ -11,12 +11,21 @@ import time
 from typing import Callable, cast
 import zmq
 
+from conduit_lib.database.db_interface.tip_filter_types import TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    ConfirmedTransactionRow,
+    MempoolTransactionRow,
+    InputRowParsed,
+    OutputRow,
+    PushdataRowParsed, ProcessedBlockAcks, TipFilterNotifications, WorkItemId, ProcessedBlockAck,
+    NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets,
+)
 from conduit_raw.conduit_raw.aiohttp_api.constants import (
     UTXO_REGISTRATION_TOPIC,
     PUSHDATA_REGISTRATION_TOPIC,
 )
 from conduit_raw.conduit_raw.aiohttp_api.types import (
-    TipFilterRegistrationEntry,
     PushdataFilterStateUpdate,
     PushdataFilterMessageType,
     OutpointStateUpdate,
@@ -26,18 +35,12 @@ from conduit_raw.conduit_raw.aiohttp_api.types import (
 from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import (
     BlockSliceOffsets,
-    TipFilterNotifications,
     TxHashes,
     WorkPart,
     TxHashToOffsetMap,
     TxHashToWorkIdMap,
     TxHashRows,
     BatchedRawBlockSlices,
-    ProcessedBlockAcks,
-    ProcessedBlockAck,
-    AlreadySeenMempoolTxOffsets,
-    NewNotSeenBeforeTxOffsets,
-    WorkItemId,
 )
 from ..workers.common import (
     maybe_refresh_connection,
@@ -45,17 +48,8 @@ from ..workers.common import (
     convert_input_rows_for_flush,
 )
 
-from conduit_lib import IPCSocketClient, MySQLDatabase
+from conduit_lib import IPCSocketClient, DBInterface
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
-from conduit_lib.database.mysql.db import connect
-from conduit_lib.database.mysql.types import (
-    MySQLFlushBatch,
-    PushdataRowParsed,
-    ConfirmedTransactionRow,
-    MempoolTransactionRow,
-    OutputRow,
-    InputRowParsed,
-)
 from conduit_lib.types import BlockSliceRequestType, OutpointType
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
@@ -146,7 +140,7 @@ class MinedBlockParsingThread(threading.Thread):
                 )
 
     def run(self) -> None:
-        db: MySQLDatabase = connect(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
         socket_mined_tx = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55555",
@@ -534,7 +528,7 @@ class MinedBlockParsingThread(threading.Thread):
         merged_offsets_map: dict[bytes, int],
         merged_tx_to_work_item_id_map: dict[bytes, int],
         merged_part_tx_hash_rows: TxHashRows,
-        db: MySQLDatabase,
+        db: DBInterface,
     ) -> tuple[NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets]:
         """
         input rows, output rows and pushdata rows must not be inserted again if this has
@@ -601,7 +595,7 @@ class MinedBlockParsingThread(threading.Thread):
         self,
         work_items: list[bytes],
         ipc_socket_client: IPCSocketClient,
-        db: MySQLDatabase,
+        db: DBInterface,
     ) -> None:
         """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
         latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
@@ -610,9 +604,7 @@ class MinedBlockParsingThread(threading.Thread):
         NOTE: For a very large block the work_items can arrive out of sequential order
         (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10)
         """
-        db, self.last_activity = maybe_refresh_connection(
-            db, self.last_activity, self.logger
-        )
+        db, self.last_activity = maybe_refresh_connection(db, self.last_activity, self.logger)
 
         (
             merged_offsets_map,

@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Any,
     cast,
-    NamedTuple,
     Optional,
     Sequence,
     ParamSpec,
@@ -17,40 +16,31 @@ from typing import (
 
 import MySQLdb
 
-from conduit_lib.algorithms import calc_depth
 from conduit_lib.constants import HashXLength
-from conduit_lib.types import TxLocation, TxMetadata, OutpointType
-from conduit_lib.utils import index_exists
-from .constants import AccountFlag, OutboundDataFlag, MARIADB_MAX_BIND_VARIABLES
-from .types import (
+from conduit_lib.database.db_interface.tip_filter_types import (
     AccountMetadata,
-    IndexerPushdataRegistrationFlag,
-    OutboundDataRow,
+    AccountFlag,
     OutputSpendRow,
     TipFilterRegistrationEntry,
+    IndexerPushdataRegistrationFlag,
+    OutboundDataFlag,
+    OutboundDataRow,
+    FilterNotificationRow,
+    DatabaseStateModifiedError,
+    DatabaseInsertConflict,
 )
-from conduit_lib import MySQLDatabase, LMDB_Database
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.lmdb.lmdb_database import get_full_tx_hash
+from conduit_lib.database.mysql.db import MySQLDatabase
+from conduit_lib.types import TxLocation, TxMetadata, OutpointType
+from conduit_lib.utils import index_exists
+from conduit_lib import LMDB_Database
 
 logger = logging.getLogger("sqlite-database")
 mined_tx_hashes_table_lock = threading.RLock()
 
 
-class DatabaseError(Exception):
-    pass
-
-
-class DatabaseStateModifiedError(DatabaseError):
-    # The database state was not as we required it to be in some way.
-    pass
-
-
-class DatabaseInsertConflict(DatabaseError):
-    pass
-
-
-class FilterNotificationRow(NamedTuple):
-    account_id: int
-    pushdata_hash: bytes
+MARIADB_MAX_BIND_VARIABLES = 2 ^ 16 - 1
 
 
 P1 = ParamSpec("P1")
@@ -61,33 +51,19 @@ T2 = TypeVar("T2")
 # TODO Add LRU caching for these but clear the caches if there is a reorg because it
 #  could result invalidating some of the cached results, Would greatly improve performance
 #  for 1) Heavy key reuse 2) Multiple pushdata matches in the same transaction
-def _get_tx_metadata(tx_hash: bytes, db: MySQLDatabase) -> TxMetadata | None:
+def get_tx_metadata(tx_hash: bytes, db: MySQLDatabase) -> TxMetadata | None:
     """Truncates full hash -> hashX length"""
-    tx_metadata = db.api_queries.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
+    tx_metadata = db.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
         return None
     return tx_metadata
 
 
-async def _get_tx_metadata_async(
+async def get_tx_metadata_async(
     tx_hash: bytes, db: MySQLDatabase, executor: ThreadPoolExecutor
 ) -> TxMetadata | None:
-    tx_metadata = await asyncio.get_running_loop().run_in_executor(
-        executor, _get_tx_metadata, tx_hash, db
-    )
+    tx_metadata = await asyncio.get_running_loop().run_in_executor(executor, get_tx_metadata, tx_hash, db)
     return tx_metadata
-
-
-def _get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
-    # get base level of merkle tree with the tx hashes array
-    block_metadata = lmdb.get_block_metadata(tx_location.block_hash)
-    if block_metadata is None:
-        return None
-    base_level = calc_depth(block_metadata.tx_count) - 1
-
-    tx_loc = TxLocation(tx_location.block_hash, tx_location.block_num, tx_location.tx_position)
-    tx_hash = lmdb.get_tx_hash_by_loc(tx_loc, base_level)
-    return tx_hash
 
 
 def read_rows_by_id(
@@ -157,8 +133,8 @@ def read_rows_by_ids(
         cursor.close()
 
 
-class MySQLTipFilterQueries:
-    def __init__(self, db: "MySQLDatabase") -> None:
+class MySQLTipFilterQueries(TipFilterQueryAPI):
+    def __init__(self, db: MySQLDatabase) -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.conn: MySQLdb.Connection = db.conn
@@ -282,6 +258,7 @@ class MySQLTipFilterQueries:
             FROM accounts
             WHERE account_id IN ({})
         """
+        self.db = cast(MySQLDatabase, self.db)
         return read_rows_by_id(self.db, AccountMetadata, sql, [], account_ids)
 
     def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
@@ -346,12 +323,12 @@ class MySQLTipFilterQueries:
 
                 # Get full length tx hash for input tx
                 input_tx_location = TxLocation(in_block_hash, in_block_num, in_tx_position)
-                in_tx_hash = _get_full_tx_hash(input_tx_location, lmdb)
+                in_tx_hash = get_full_tx_hash(input_tx_location, lmdb)
                 assert in_tx_hash is not None
 
                 # Get full length tx hash for output tx
                 output_tx_location = TxLocation(out_block_hash, out_block_num, out_tx_position)
-                out_tx_hash = _get_full_tx_hash(output_tx_location, lmdb)
+                out_tx_hash = get_full_tx_hash(output_tx_location, lmdb)
                 assert out_tx_hash is not None
                 output_spend_row = OutputSpendRow(out_tx_hash, out_idx, in_tx_hash, in_idx, in_block_hash)
                 output_spend_rows.append(output_spend_row)
@@ -442,6 +419,7 @@ class MySQLTipFilterQueries:
             int(IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING),
             int(IndexerPushdataRegistrationFlag.FINALISED),
         ]
+        self.db = cast(MySQLDatabase, self.db)
         return read_rows_by_id(
             self.db,
             FilterNotificationRow,

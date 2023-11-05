@@ -1,4 +1,3 @@
-import gc
 import io
 import json
 import os
@@ -9,6 +8,8 @@ import bitcoinx
 import pytest
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
+from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, InputRowParsed, \
+    OutputRow
 from .conftest import TEST_RAW_BLOCK_413567
 from .data.block413567_offsets import TX_OFFSETS
 
@@ -28,7 +29,7 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
 
 
-def print_results(count_txs, t1, block_view):
+def print_results(count_txs: int, t1: float, block_view: bytes) -> None:
     rate = count_txs / t1
     av_tx_size = round(len(block_view) / count_txs)
     bytes_per_sec = rate * av_tx_size
@@ -42,7 +43,7 @@ def print_results(count_txs, t1, block_view):
     )
 
 
-def test_preprocessor_whole_block_as_a_single_chunk():
+def test_preprocessor_whole_block_as_a_single_chunk() -> None:
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -50,9 +51,9 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
 
     # Whole block as a single chunk
-    tx_offsets_all = []
+    tx_offsets_all: list[int] = []
     remainder = b""
-    last_tx_offset_in_chunk = None
+    last_tx_offset_in_chunk = 0
     for idx, chunk in enumerate([full_block]):
         if idx == 0:
             tx_count, var_int_size = unpack_varint(full_block[80:89], 0)
@@ -62,7 +63,8 @@ def test_preprocessor_whole_block_as_a_single_chunk():
             adjustment = last_tx_offset_in_chunk
             offset = 0
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
+            adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         remainder = modified_chunk[last_tx_offset_in_chunk - adjustment :]
 
@@ -70,7 +72,7 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     assert last_tx_offset_in_chunk == len(full_block)
 
 
-def test_preprocessor_with_block_divided_into_four_chunks():
+def test_preprocessor_with_block_divided_into_four_chunks() -> None:
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -84,9 +86,9 @@ def test_preprocessor_with_block_divided_into_four_chunks():
 
     t0 = time.perf_counter()
 
-    tx_offsets_all = []
+    tx_offsets_all: list[int] = []
     remainder = b""
-    last_tx_offset_in_chunk = None
+    last_tx_offset_in_chunk = 0
     for idx, chunk in enumerate(chunks):
         if idx == 0:
             tx_count, var_int_size = unpack_varint(full_block[80:89], 0)
@@ -96,7 +98,8 @@ def test_preprocessor_with_block_divided_into_four_chunks():
             offset = 0
             adjustment = last_tx_offset_in_chunk
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
+            adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         remainder = modified_chunk[last_tx_offset_in_chunk - adjustment :]
 
@@ -124,7 +127,7 @@ def test_preprocessor_with_block_divided_into_four_chunks():
 # This will only work if you have downloaded the >250MB block at height 593161 and downloaded
 # it to data/block593161.hex. It's too large to include in CI/CD but I have included it here
 # because it uncovered a bug in the preprocessor when I struck it on mainnet.
-def test_preprocessor_on_256mb_block_593161():
+def test_preprocessor_on_256mb_block_593161() -> None:
     block593161_filepath = MODULE_DIR / "data" / "block593161.hex"
     if not block593161_filepath.exists():
         pytest.skip(
@@ -164,9 +167,9 @@ def test_preprocessor_on_256mb_block_593161():
 
     t0 = time.perf_counter()
 
-    tx_offsets_all = []
+    tx_offsets_all: list[int] = []
     remainder = b""
-    last_tx_offset_in_chunk = None
+    last_tx_offset_in_chunk = 0
     for idx, chunk in enumerate(chunks):
         if idx == 0:
             tx_count, var_int_size = unpack_varint(big_block[80:89], 0)
@@ -188,12 +191,14 @@ def test_preprocessor_on_256mb_block_593161():
     assert tx_offsets_all == bitcoinx_tx_offsets[:-1]
 
 
-def test_parse_txs():
+def test_parse_txs() -> None:
     """This is performance critical so needs to maintain acceptable throughput rates.
 
     Check validity against bitcoinx.Tx.read - which is well battle tested code
     """
-    tx_rows, in_rows, out_rows, pd_rows = [], [], [], []
+    tx_rows: list[ConfirmedTransactionRow] = []
+    in_rows: list[InputRowParsed] = []
+    out_rows: list[OutputRow] = []
 
     # Check unpack_varint
     for i in range(1, 1_000):
@@ -236,13 +241,16 @@ def test_parse_txs():
         tx = bitcoinx.Tx.read(stream.read)
 
         # Check tx_hash matches
+        tx_hash: str
+        tx_height: int
+        tx_position: int
         tx_hash, tx_height, tx_position = tx_rows[i]
         assert tx.hash()[0:HashXLength] == bytes.fromhex(tx_hash)[0:HashXLength]
 
         for idx, input in enumerate(tx.inputs):
             pd_hashes = get_pk_and_pkh_from_script(
                 input.script_sig.to_bytes(),
-                tx_hash,
+                bytes.fromhex(tx_hash),
                 idx,
                 PushdataMatchFlags.INPUT,
                 tx_pos=i,
@@ -268,7 +276,8 @@ def test_parse_txs():
     assert len(txs) == len(tx_rows)
 
     # This is slow but I don't care!
-    def scan_inputs_for_hash_and_idx_match(prev_out_hash, prev_idx, in_rows):
+    def scan_inputs_for_hash_and_idx_match(prev_out_hash: bytes, prev_idx: int,
+            in_rows: list[InputRowParsed]) -> bool:
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in in_rows:
             out_tx_hash, out_idx, in_tx_hash, in_idx = row
@@ -280,7 +289,8 @@ def test_parse_txs():
                 pass
         return False
 
-    def scan_outputs_for_hash_and_idx_match(tx_hash, idx, value, out_rows):
+    def scan_outputs_for_hash_and_idx_match(tx_hash: bytes, idx: int, value: int, out_rows:
+            list[OutputRow]) -> bool:
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in out_rows:
             out_tx_hash, out_idx, out_value = row
@@ -349,7 +359,7 @@ def test_get_mtree_node_counts_per_level() -> None:
     assert get_mtree_node_counts_per_level(base_node_count) == [1, 2, 4, 7, 13]
 
 
-def test_calc_mtree_base_level():
+def test_calc_mtree_base_level() -> None:
     tx_hashes = [b"aa" * 32, b"bb" * 32, b"cc" * 32, b"dd" * 32, b"ee" * 32]
     tx_count = len(tx_hashes)
 

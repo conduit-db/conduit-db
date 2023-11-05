@@ -16,7 +16,7 @@ from ...types import (
 )
 
 if typing.TYPE_CHECKING:
-    from ... import MySQLDatabase
+    from .db import MySQLDatabase
 
 
 class MySQLAPIQueries:

@@ -1,18 +1,21 @@
 import json
 import shutil
+from modulefinder import Module
 
-import MySQLdb.connections
 import bitcoinx
+import pytest
 from bitcoinx import hash_to_hex_str
 import io
 import multiprocessing
 import os
 from pathlib import Path
-import unittest.mock
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from conduit_lib import LMDB_Database, MySQLDatabase
+from pytest_asyncio.plugin import FixtureFunction
+
+from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.bitcoin_p2p_types import BlockChunkData
+from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
 from conduit_lib.utils import remove_readonly
@@ -28,41 +31,37 @@ from .data.block413567_offsets import TX_OFFSETS
 
 from conduit_lib.algorithms import unpack_varint, preprocessor
 
+
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
 DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
 DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
 # BITCOINX
-full_block = TEST_RAW_BLOCK_413567
-tx_count, offset = unpack_varint(full_block[80:89], 0)
-adjustment = 80 + offset
-bitcoinx_tx_offsets = [adjustment]
+full_block_bx = TEST_RAW_BLOCK_413567
+tx_count_bx, offset_bx = unpack_varint(full_block_bx[80:89], 0)
+adjustment_bx = 80 + offset_bx
+bitcoinx_tx_offsets = [adjustment_bx]
 BITCOINX_TX_HASHES = []
-stream = io.BytesIO(full_block[80 + offset :])
-for i in range(tx_count):
+stream = io.BytesIO(full_block_bx[80 + offset_bx :])
+for i in range(tx_count_bx):
     tx = bitcoinx.Tx.read(stream.read)
-    offset += len(tx.to_bytes())
-    bitcoinx_tx_offsets.append(offset)
+    offset_bx += len(tx.to_bytes())
+    bitcoinx_tx_offsets.append(offset_bx)
     BITCOINX_TX_HASHES.append(tx.hash())
 
-assert len(bitcoinx_tx_offsets) == tx_count + 1
-assert len(BITCOINX_TX_HASHES) == tx_count
+assert len(bitcoinx_tx_offsets) == tx_count_bx + 1
+assert len(BITCOINX_TX_HASHES) == tx_count_bx
 
 
-def teardown_module(module) -> None:
+def teardown_module(module: Module) -> None:
     if Path(DATADIR_HDD).exists():
         shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
     if Path(DATADIR_SSD).exists():
         shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 
-
-def test_preprocessor_whole_block_as_a_single_chunk():
-    worker_ack_queue_mtree = multiprocessing.Queue()
-    worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
-    lmdb = LMDB_Database(lock=True)
-    mock_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
-    db: MySQLDatabase = MySQLDatabase(mock_conn, worker_id=1)
+@pytest.fixture
+def mock_get_header_data():
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -71,13 +70,41 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
     block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
-    db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
-    lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
+    # Note: We must patch the concrete implementation `MySQLDatabase` not the interface DBInterface
+    with patch.object(MySQLDatabase, 'get_header_data') as mock:
+        mock.return_value = block_header_row
+        yield mock
+
+# Create a fixture for get_block_metadata
+@pytest.fixture
+def mock_get_block_metadata():
+    full_block = bytearray(TEST_RAW_BLOCK_413567)
+    tx_count, offset = unpack_varint(full_block[80:89], 0)
+    assert tx_count == 1557
+    with patch.object(LMDB_Database, 'get_block_metadata') as mock:
+        mock.return_value = BlockMetadata(len(full_block), tx_count)
+        yield mock
+
+
+def test_preprocessor_whole_block_as_a_single_chunk(mock_get_header_data: FixtureFunction,
+        mock_get_block_metadata: FixtureFunction) \
+        -> None:
+    worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
+    worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
+    lmdb = LMDB_Database(lock=True)
+    db: DBInterface = DBInterface.load_db(worker_id=1)
+    full_block = bytearray(TEST_RAW_BLOCK_413567)
+    tx_count, offset = unpack_varint(full_block[80:89], 0)
+    assert tx_count == 1557
+    raw_header = full_block[0:80]
+    block_hash = bitcoinx.double_sha256(raw_header)
+    block_hash_hex = hash_to_hex_str(block_hash)
+    assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
 
     # Whole block as a single chunk
-    tx_offsets_all = []
+    tx_offsets_all: list[int] = []
     remainder = b""
-    last_tx_offset_in_chunk = None
+    last_tx_offset_in_chunk = 0
     num_chunks = 1
     chunk_num = 1
     block_hash = bitcoinx.double_sha256(full_block[0:80])
@@ -92,7 +119,8 @@ def test_preprocessor_whole_block_as_a_single_chunk():
             adjustment = last_tx_offset_in_chunk
             offset = 0
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
+            adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         len_slice = last_tx_offset_in_chunk - adjustment
         remainder = modified_chunk[len_slice:]
@@ -152,12 +180,12 @@ def test_preprocessor_whole_block_as_a_single_chunk():
     del worker
 
 
-def test_preprocessor_with_block_divided_into_four_chunks():
-    worker_ack_queue_mtree = multiprocessing.Queue()
+def test_preprocessor_with_block_divided_into_four_chunks(mock_get_header_data: FixtureFunction,
+        mock_get_block_metadata: FixtureFunction) -> None:
+    worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
     lmdb = LMDB_Database(lock=True)
-    mock_conn = unittest.mock.Mock(MySQLdb.connections.Connection)
-    db: MySQLDatabase = MySQLDatabase(mock_conn, worker_id=1)
+    db: DBInterface = DBInterface.load_db(worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -166,8 +194,9 @@ def test_preprocessor_with_block_divided_into_four_chunks():
     block_hash_hex = hash_to_hex_str(block_hash)
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
     block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
-    db.api_queries.get_header_data = MagicMock(return_value=block_header_row)
-    lmdb.get_block_metadata = MagicMock(return_value=BlockMetadata(len(full_block), tx_count))
+
+    mock_get_header_data.return_value = block_header_row
+    mock_get_block_metadata.return_value = BlockMetadata(len(full_block), tx_count)
 
     # Same block processed in 4 chunks
     chunks = [
@@ -177,9 +206,9 @@ def test_preprocessor_with_block_divided_into_four_chunks():
         full_block[750_000:],
     ]
 
-    tx_offsets_all = []
+    tx_offsets_all: list[int] = []
     remainder = b""
-    last_tx_offset_in_chunk = None
+    last_tx_offset_in_chunk = 0
     num_chunks = len(chunks)
     for idx, chunk in enumerate(chunks):
         chunk_num = idx + 1

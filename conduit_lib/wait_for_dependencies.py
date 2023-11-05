@@ -7,8 +7,8 @@ import time
 
 import MySQLdb
 
+from . import DBInterface
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .database.mysql.db import MySQLDatabase, load_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
@@ -61,13 +61,12 @@ def wait_for_mysql() -> None:
     logger = logging.getLogger("wait-for-dependencies")
 
     # Node
-    client = None
     while True:
         is_available = False
         try:
             # Attempt to connect
-            db: MySQLDatabase = load_database()
-            _result = db.tables.get_tables()
+            db = DBInterface.load_db()
+            _result = db.get_tables()
             is_available = True
             break
         except ConnectionRefusedError:
@@ -79,8 +78,6 @@ def wait_for_mysql() -> None:
         finally:
             if is_available:
                 logger.debug(f"MySQL server is available")
-                if client:
-                    client.close()
             else:
                 logger.debug(f"MySQL server currently unavailable - waiting...")
                 time.sleep(5)

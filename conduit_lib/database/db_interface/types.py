@@ -78,3 +78,44 @@ class MySQLFlushBatch(NamedTuple):
     in_rows: list[InputRow]
     out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
+
+
+class ProcessedBlockAck(NamedTuple):
+    block_num: int
+    work_item_id: int
+    block_hash: bytes
+    partition_block_hashes: list[bytes]
+
+
+ProcessedBlockAcks = list[ProcessedBlockAck]
+class DBFlushBatchWithAcks(NamedTuple):
+    tx_rows: list[ConfirmedTransactionRow]
+    tx_rows_mempool: list[MempoolTransactionRow]
+    in_rows: list[InputRow]
+    out_rows: list[OutputRow]
+    pd_rows: list[PushdataRow]
+    acks: ProcessedBlockAcks
+
+
+MempoolTxAck = int
+
+
+class DBFlushBatchWithAcksMempool(NamedTuple):
+    tx_rows: list[ConfirmedTransactionRow]
+    tx_rows_mempool: list[MempoolTransactionRow]
+    in_rows: list[InputRow]
+    out_rows: list[OutputRow]
+    pd_rows: list[PushdataRow]
+    acks: MempoolTxAck
+
+
+WorkItemId = int
+TxOffset = int
+AlreadySeenMempoolTxOffsets = dict[WorkItemId, set[TxOffset]]
+NewNotSeenBeforeTxOffsets = dict[WorkItemId, set[TxOffset]]
+
+
+class TipFilterNotifications(NamedTuple):
+    utxo_spends: list[InputRowParsed]
+    pushdata_matches: list[PushdataRowParsed]
+    block_hash: bytes

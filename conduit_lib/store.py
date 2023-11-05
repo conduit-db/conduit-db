@@ -9,11 +9,7 @@ import threading
 from pathlib import Path
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.db import (
-    MySQLDatabase,
-    load_database,
-    connect,
-)
+from .database.db_interface.db import DBInterface
 from .constants import REGTEST
 from .networks import HeadersRegTestMod, NetworkConfig
 from .utils import remove_readonly
@@ -31,7 +27,7 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        database: MySQLDatabase | None,
+        database: DBInterface | None,
         lmdb: LMDB_Database | None,
     ) -> None:
         self.database = database
@@ -95,9 +91,9 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
 
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
-        database = connect()
+        database = DBInterface.load_db()
         try:
-            database.tables.drop_indices()
+            database.drop_indices()
             database.drop_tables()
         finally:
             database.close()
@@ -130,7 +126,7 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     block_headers = setup_headers_store(net_config, block_headers_path)
 
     if os.environ["SERVER_TYPE"] == "ConduitIndex":
-        database = load_database()
+        database = DBInterface.load_db()
     else:
         database = None
 

@@ -9,13 +9,8 @@ import typing
 
 import MySQLdb
 
-from .types import (
-    PushdataRow,
-    InputRow,
-    OutputRow,
-    ConfirmedTransactionRow,
-    MempoolTransactionRow,
-)
+from ..db_interface.types import ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, \
+    InputRow, PushdataRow
 from ...constants import PROFILING, BULK_LOADING_BATCH_SIZE_ROW_COUNT
 from ...types import BlockHeaderRow
 from ...utils import get_log_level
@@ -23,7 +18,7 @@ from ...utils import get_log_level
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if typing.TYPE_CHECKING:
-    from ... import MySQLDatabase
+    from .db import MySQLDatabase
 
 
 class FailedMySQLOperation(Exception):

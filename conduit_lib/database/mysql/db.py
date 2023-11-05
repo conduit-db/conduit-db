@@ -1,8 +1,10 @@
+import time
+
 import bitcoinx
 import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import TypeVar
+from typing import TypeVar, Generator, Sequence
 
 import MySQLdb
 from MySQLdb.connections import Connection
@@ -11,20 +13,16 @@ from .api_queries import MySQLAPIQueries
 from .bulk_loads import MySQLBulkLoads
 from .queries import MySQLQueries
 from .tables import MySQLTables
-from .types import (
-    PushdataRow,
-    InputRow,
-    OutputRow,
-    ConfirmedTransactionRow,
-    MempoolTransactionRow,
-    MinedTxHashes,
-)
+from ..db_interface.db import DBInterface
+from ..db_interface.types import MinedTxHashes, ConfirmedTransactionRow, MempoolTransactionRow, \
+    OutputRow, InputRow, PushdataRow
+from ...types import ChainHashes, BlockHeaderRow, TxMetadata, RestorationFilterQueryResult
 from ...utils import get_log_level
 
 T1 = TypeVar("T1")
 
 
-class MySQLDatabase:
+class MySQLDatabase(DBInterface):
     def __init__(self, conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
         self.conn = conn  # passed into constructor for easier unit-testing
         self.worker_id = worker_id
@@ -63,6 +61,22 @@ class MySQLDatabase:
 
     def rollback_transaction(self) -> None:
         self.conn.query("""ROLLBACK;""")
+
+    def ping(self) -> None:
+        self.conn.ping()
+
+    def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) \
+            -> tuple[DBInterface, int]:
+        REFRESH_TIMEOUT = 600
+        if int(time.time()) - last_activity > REFRESH_TIMEOUT:
+            logger.info(
+                f"Refreshing DB connection due to {REFRESH_TIMEOUT} " f"second refresh timeout"
+            )
+            self.ping()
+            last_activity = int(time.time())
+            return self, last_activity
+        else:
+            return self, last_activity
 
     # TABLES
     def drop_tables(self) -> None:
@@ -119,6 +133,93 @@ class MySQLDatabase:
     def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
         self.bulk_loads.bulk_load_pushdata_rows(pd_rows)
 
+    def drop_indices(self) -> None:
+        self.tables.drop_indices()
+
+    def get_tables(self) -> Sequence[tuple[str]]:
+        return self.tables.get_tables()
+
+    def drop_mempool_table(self) -> None:
+        self.tables.drop_mempool_table()
+
+    def create_mempool_table(self) -> None:
+        self.tables.create_mempool_table()
+
+    def create_permanent_tables(self) -> None:
+        self.tables.create_permanent_tables()
+
+    def get_checkpoint_state(
+        self,
+    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+        return self.queries.get_checkpoint_state()
+
+    def initialise_checkpoint_state(self) -> None:
+        self.tables.initialise_checkpoint_state()
+
+    def delete_transaction_rows(self, tx_hash_hexes: list[str]) -> None:
+        self.queries.delete_transaction_rows(tx_hash_hexes)
+
+    def update_orphaned_headers(self, block_hashes: list[bytes]) -> None:
+        self.queries.update_orphaned_headers(block_hashes)
+
+    def load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
+        self.queries.load_temp_mempool_additions(additions_to_mempool)
+
+    def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
+        self.queries.load_temp_mempool_removals(removals_from_mempool)
+
+    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
+        self.queries.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+
+    def update_allocated_state(
+        self,
+        reorg_was_allocated: bool,
+        first_allocated: bitcoinx.Header,
+        last_allocated: bitcoinx.Header,
+        old_hashes: ChainHashes | None,
+        new_hashes: ChainHashes | None,
+    ) -> None:
+        self.queries.update_allocated_state(reorg_was_allocated, first_allocated, last_allocated,
+            old_hashes, new_hashes)
+
+    def drop_temp_orphaned_txs(self) -> None:
+        self.tables.drop_temp_orphaned_txs()
+
+    def get_mempool_size(self) -> int:
+        return self.queries.get_mempool_size()
+
+    def remove_from_mempool(self) -> None:
+        self.queries.remove_from_mempool()
+
+    def add_to_mempool(self) -> None:
+        self.queries.add_to_mempool()
+
+    def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
+        raise NotImplementedError()
+
+    def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
+        raise NotImplementedError()
+
+    def delete_input_rows(self, input_rows: list[InputRow]) -> None:
+        raise NotImplementedError()
+
+    def delete_header_row(self, block_hash: bytes) -> None:
+        raise NotImplementedError()
+
+    def get_header_data(self, block_hash: bytes,
+            raw_header_data: bool = True) -> BlockHeaderRow | None:
+        return self.api_queries.get_header_data(block_hash, raw_header_data)
+
+    def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata | None:
+        return self.api_queries.get_transaction_metadata_hashX(tx_hashX)
+
+    def get_pushdata_filter_matches(self, pushdata_hashXes: list[str]) \
+            -> Generator[RestorationFilterQueryResult, None, None]:
+        return self.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
+
+    def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
+        return self.bulk_loads.bulk_load_headers(block_header_rows)
+
 
 def get_connection() -> Connection:
     host = os.environ.get("MYSQL_HOST", "127.0.0.1")
@@ -138,9 +239,6 @@ def get_connection() -> Connection:
     return conn
 
 
-def connect(worker_id: int | None = None) -> MySQLDatabase:
+def load_mysql_database(worker_id: int | None = None) -> DBInterface:
     conn = get_connection()
     return MySQLDatabase(conn, worker_id=worker_id)
-
-
-load_database = connect

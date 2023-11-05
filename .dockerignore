@@ -1,6 +1,8 @@
 .git/**
 *.dll
 
+tests
+tests_functional
 **/test_lmdb/**
 **/raw_blocks/**
 **/merkle_trees/**

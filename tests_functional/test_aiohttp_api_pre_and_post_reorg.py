@@ -233,18 +233,18 @@ class TestAiohttpRESTAPI:
     def teardown_class(klass) -> None:
         pass
 
-    def test_ping(klass):
+    def test_ping(klass) -> None:
         result = requests.get(PING_URL)
         assert result.json() is True
 
-    def test_error(klass):
+    def test_error(klass) -> None:
         result = requests.get(ERROR_URL)
         assert result.status_code == 400, result.reason
         assert result.reason is not None
         assert isinstance(result.reason, str)
 
     @pytest.mark.timeout(20)
-    def test_utxo_notifications(self):
+    def test_utxo_notifications(self) -> None:
         expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
         len_expected_utxo_spends = len(expected_utxo_spends)
         for _ in range(len_expected_utxo_spends):
@@ -260,7 +260,7 @@ class TestAiohttpRESTAPI:
         assert len(expected_utxo_spends) == 0
 
     @pytest.mark.timeout(20)
-    def test_pushdata_notifications(self):
+    def test_pushdata_notifications(self) -> None:
         expected_count = 5
         count = 0
         while True:
@@ -287,55 +287,55 @@ class TestAiohttpRESTAPI:
                 logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
                 time.sleep(1)
 
-    def test_get_transaction_json(self):
+    def test_get_transaction_json(self) -> None:
         headers = {"Accept": "application/json"}
         for txid, rawtx_hex in pre_reorg_test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200, f"reason={result.reason}, txid={txid}"
             assert result.json() == rawtx_hex
 
-    def test_get_transaction_binary(self):
+    def test_get_transaction_binary(self) -> None:
         headers = {"Accept": "application/octet-stream"}
         for txid, rawtx_hex in pre_reorg_test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200, result.reason
             assert result.content == bytes.fromhex(rawtx_hex)
 
-    def test_get_tsc_merkle_proof_json(self):
+    def test_get_tsc_merkle_proof_json(self) -> None:
         utils._get_tsc_merkle_proof_target_hash_json()
         utils._get_tsc_merkle_proof_target_merkleroot_json()
         utils._get_tsc_merkle_proof_target_header_json()
         utils._get_tsc_merkle_proof_include_rawtx_json()
 
-    def test_pushdata_no_match_json(self):
+    def test_pushdata_no_match_json(self) -> None:
         utils._pushdata_no_match_json()
 
-    def test_mining_txs_json(self):
+    def test_mining_txs_json(self) -> None:
         utils._mining_txs_json_post_reorg()
 
-    def test_p2pk_json(self):
+    def test_p2pk_json(self) -> None:
         utils._p2pk_json(post_reorg=False)
 
-    def test_p2pkh_json(self):
+    def test_p2pkh_json(self) -> None:
         utils._p2pkh_json(post_reorg=False)
 
-    def test_p2sh_json(self):
+    def test_p2sh_json(self) -> None:
         utils._p2sh_json(post_reorg=False)
 
-    def test_p2ms_json(self):
+    def test_p2ms_json(self) -> None:
         utils._p2ms_json(post_reorg=False)
 
-    def test_p2ms2_json(self):
+    def test_p2ms2_json(self) -> None:
         utils._p2ms2_json(post_reorg=False)
 
-    def test_submit_reorg_blocks(self):
+    def test_submit_reorg_blocks(self) -> None:
         blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_118_0ebc17"
         import_blocks(str(blockchain_dir))
         time.sleep(10)
         assert True
 
     @pytest.mark.timeout(10)
-    def test_utxo_notifications_post_reorg(self):
+    def test_utxo_notifications_post_reorg(self) -> None:
         # TODO test re-registration and initial status fetch
         expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
         len_expected_utxo_spends = len(expected_utxo_spends)
@@ -352,7 +352,7 @@ class TestAiohttpRESTAPI:
         assert len(expected_utxo_spends) == 0
 
     @pytest.mark.timeout(20)
-    def test_pushdata_notifications_post_reorg(self):
+    def test_pushdata_notifications_post_reorg(self) -> None:
         expected_count = 5
         count = 0
         while True:
@@ -379,29 +379,29 @@ class TestAiohttpRESTAPI:
                 logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
                 time.sleep(1)
 
-    def test_get_tsc_merkle_proof_json_post_reorg(self):
+    def test_get_tsc_merkle_proof_json_post_reorg(self) -> None:
         utils._get_tsc_merkle_proof_target_hash_json(post_reorg=True)
         utils._get_tsc_merkle_proof_target_merkleroot_json(post_reorg=True)
         utils._get_tsc_merkle_proof_target_header_json(post_reorg=True)
         utils._get_tsc_merkle_proof_include_rawtx_json(post_reorg=True)
 
-    def test_pushdata_no_match_json_post_reorg(self):
+    def test_pushdata_no_match_json_post_reorg(self) -> None:
         utils._pushdata_no_match_json()
 
-    def test_mining_txs_json_post_reorg(self):
+    def test_mining_txs_json_post_reorg(self) -> None:
         utils._mining_txs_json_post_reorg()
 
-    def test_p2pk_json_post_reorg(self):
+    def test_p2pk_json_post_reorg(self) -> None:
         utils._p2pk_json(post_reorg=True)
 
-    def test_p2pkh_json_post_reorg(self):
+    def test_p2pkh_json_post_reorg(self) -> None:
         utils._p2pkh_json(post_reorg=True)
 
-    def test_p2sh_json_post_reorg(self):
+    def test_p2sh_json_post_reorg(self) -> None:
         utils._p2sh_json(post_reorg=True)
 
-    def test_p2ms_json_post_reorg(self):
+    def test_p2ms_json_post_reorg(self) -> None:
         utils._p2ms_json(post_reorg=True)
 
-    def test_p2ms2_json_post_reorg(self):
+    def test_p2ms2_json_post_reorg(self) -> None:
         utils._p2ms2_json(post_reorg=True)

@@ -17,10 +17,11 @@ from typing import AsyncIterator, Optional, Any
 import zmq
 import zmq.asyncio
 
-from conduit_lib import NetworkConfig
+from conduit_lib import NetworkConfig, DBInterface
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.db_interface.tip_filter_types import OutboundDataFlag, OutboundDataRow
+from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.database.mysql.db import load_database
-from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.utils import (
     create_task,
@@ -33,13 +34,10 @@ from .constants import (
     REFERENCE_SERVER_SCHEME,
     REFERENCE_SERVER_HOST,
     REFERENCE_SERVER_PORT,
-    OutboundDataFlag,
 )
 from . import handlers_restoration, handlers_tip_filter, handlers_headers
-from .db_tip_filtering import MySQLTipFilterQueries
 from .server_websocket import WSClient, ReferenceServerWebSocket
 from .types import (
-    OutboundDataRow,
     TipFilterNotificationEntry,
     TipFilterNotificationBatch,
 )
@@ -74,8 +72,8 @@ class ApplicationState(object):
         self.BITCOINX_COIN = network_str_to_bitcoinx_network(net_config.NET)
         self.net_config = net_config
 
-        self.db = load_database()
-        self.db_tip_filter_queries = MySQLTipFilterQueries(self.db)
+        self.db = DBInterface.load_db()
+        self.db_tip_filter_queries = TipFilterQueryAPI.from_db(self.db)
         self.db_tip_filter_queries.setup()
         self.lmdb = lmdb
         self.headers_threadsafe = headers_threadsafe
@@ -106,7 +104,7 @@ class ApplicationState(object):
         REFRESH_TIMEOUT = 600
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
-            self.db.conn.ping()
+            self.db.ping()
 
     def start_threads(self) -> None:
         threading.Thread(target=self.push_notifications_thread, daemon=True).start()

@@ -11,22 +11,16 @@ import time
 import refcuckoo
 import zmq
 
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.db import connect
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
+from conduit_lib import DBInterface
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.db_interface.tip_filter_types import IndexerPushdataRegistrationFlag
+from conduit_lib.database.db_interface.types import MySQLFlushBatch, InputRowParsed, \
+    PushdataRowParsed, ProcessedBlockAcks, TipFilterNotifications, MempoolTxAck
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.types import OutpointType, output_spend_struct
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
-from conduit_raw.conduit_raw.aiohttp_api.db_tip_filtering import (
-    MySQLTipFilterQueries,
-)
 from conduit_raw.conduit_raw.aiohttp_api.types import (
     CuckooResult,
-    IndexerPushdataRegistrationFlag,
     OutpointMessageType,
     OutpointStateUpdate,
     PushdataFilterMessageType,
@@ -34,7 +28,6 @@ from conduit_raw.conduit_raw.aiohttp_api.types import (
 )
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
-from ..types import ProcessedBlockAcks, MempoolTxAck, TipFilterNotifications
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -127,8 +120,8 @@ class TxParser(multiprocessing.Process):
             sys.exit(0)
 
     def setup_tip_filtering(self) -> None:
-        db: MySQLDatabase = connect(worker_id=self.worker_id)
-        db_tip_filter_queries = MySQLTipFilterQueries(db)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
+        db_tip_filter_queries = TipFilterQueryAPI.from_db(db)
 
         self.unspent_output_registrations: set[OutpointType] = set()
 

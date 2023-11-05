@@ -11,20 +11,20 @@ import zmq.asyncio
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.constants import ZERO_HASH
-from conduit_lib.database.mysql.types import PushdataRowParsed
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, \
+    TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.types import outpoint_struct, OutpointType, output_spend_struct
 from conduit_lib.utils import create_task, zmq_send_no_block_async
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .constants import UTXO_REGISTRATION_TOPIC, PUSHDATA_REGISTRATION_TOPIC
 
-from .db_tip_filtering import MySQLTipFilterQueries
 from .types import (
-    OutputSpendRow,
     OutpointStateUpdate,
     OutpointMessageType,
     RequestId,
     PushdataFilterStateUpdate,
-    TipFilterRegistrationEntry,
     PushdataFilterMessageType,
     BackendWorkerOfflineError,
 )
@@ -42,7 +42,7 @@ class WorkerStateManager:
     def __init__(
         self,
         app_state: "ApplicationState",
-        db_tip_filter_queries: MySQLTipFilterQueries,
+        db_tip_filter_queries: TipFilterQueryAPI,
     ) -> None:
         self.app_state = app_state
         self.db = db_tip_filter_queries

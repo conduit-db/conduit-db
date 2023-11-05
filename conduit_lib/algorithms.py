@@ -10,12 +10,12 @@ from typing import NamedTuple
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.database.mysql.types import (
+from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
-    OutputRow,
     MempoolTransactionRow,
-    PushdataRowParsed,
     InputRowParsed,
+    OutputRow,
+    PushdataRowParsed,
 )
 from conduit_lib.types import PushdataMatchFlags
 

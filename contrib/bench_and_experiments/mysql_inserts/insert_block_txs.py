@@ -11,7 +11,7 @@ import time
 import os
 from pathlib import Path
 
-from conduit_lib.database.mysql.db import load_database
+from conduit_lib import DBInterface
 from conduit_lib.logging_server import TCPLoggingServer
 
 try:
@@ -44,9 +44,9 @@ if __name__ == "__main__":
     time.sleep(2)
 
     async def main():
-        db = load_database()
+        db = DBInterface.load_db()
         db.drop_tables()
-        db.tables.create_permanent_tables()
+        db.create_permanent_tables()
 
         with open(MODULE_DIR.parent.joinpath("data/block413567.raw"), "rb") as f:
             raw_block = array.array("B", (f.read()))

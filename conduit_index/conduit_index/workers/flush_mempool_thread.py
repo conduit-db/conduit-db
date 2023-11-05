@@ -5,21 +5,15 @@ import threading
 import time
 import typing
 
-from ..types import MySQLFlushBatchWithAcksMempool, MempoolTxAck
+from conduit_lib import DBInterface
+from conduit_lib.database.db_interface.types import MySQLFlushBatch, InputRowParsed, \
+    PushdataRowParsed, DBFlushBatchWithAcksMempool, MempoolTxAck
 from ..workers.common import (
     maybe_refresh_connection,
     flush_rows_mempool,
     extend_batched_rows,
     reset_rows_mempool,
 )
-
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.db import connect
 
 if typing.TYPE_CHECKING:
     from .transaction_parser import TxParser
@@ -57,7 +51,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
         txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
         utxo_spends: list[InputRowParsed] = []
         pushdata_matches_tip_filter: list[PushdataRowParsed] = []
-        db: MySQLDatabase = connect(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
         try:
             while True:
                 try:
@@ -86,7 +80,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
 
                         flush_rows_mempool(
                             self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
                             db=db,
                         )
 
@@ -112,7 +106,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_mempool(
                             self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
                             db=db,
                         )
                         self.parent.send_utxo_spend_notifications(utxo_spends, None)

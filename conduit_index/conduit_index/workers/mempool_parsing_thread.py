@@ -8,19 +8,15 @@ from queue import Queue
 import typing
 import zmq
 
+from conduit_lib.database.db_interface.types import MySQLFlushBatch, MempoolTxAck, InputRowParsed, \
+    PushdataRowParsed
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 from .common import (
     convert_pushdata_rows_for_flush,
     convert_input_rows_for_flush,
 )
 from .flush_mempool_thread import FlushMempoolTransactionsThread
-from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 
 if typing.TYPE_CHECKING:

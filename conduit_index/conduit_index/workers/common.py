@@ -1,28 +1,14 @@
 import MySQLdb
 import cbor2
 import logging
-import time
 import typing
 
 from conduit_lib.constants import HashXLength
+from conduit_lib.database.db_interface.types import MySQLFlushBatch, ConfirmedTransactionRow, \
+    MempoolTransactionRow, InputRow, OutputRow, PushdataRow, PushdataRowParsed, InputRowParsed, \
+    DBFlushBatchWithAcks, DBFlushBatchWithAcksMempool, ProcessedBlockAcks, MempoolTxAck
 from conduit_lib.utils import zmq_send_no_block
-from ..types import (
-    ProcessedBlockAcks,
-    MySQLFlushBatchWithAcks,
-    MySQLFlushBatchWithAcksMempool,
-    MempoolTxAck,
-)
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.types import (
-    MempoolTransactionRow,
-    ConfirmedTransactionRow,
-    InputRow,
-    OutputRow,
-    PushdataRow,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-    InputRowParsed,
-)
+from conduit_lib import DBInterface
 
 if typing.TYPE_CHECKING:
     from .flush_blocks_thread import FlushConfirmedTransactionsThread
@@ -51,7 +37,7 @@ def flush_ins_outs_and_pushdata_rows(
     in_rows: list[InputRow],
     out_rows: list[OutputRow],
     pd_rows: list[PushdataRow],
-    db: MySQLDatabase,
+    db: DBInterface,
 ) -> None:
     db.bulk_load_output_rows(out_rows)
     db.bulk_load_input_rows(in_rows)
@@ -60,8 +46,8 @@ def flush_ins_outs_and_pushdata_rows(
 
 def flush_rows_confirmed(
     worker: "FlushConfirmedTransactionsThread",
-    flush_batch_with_acks: MySQLFlushBatchWithAcks,
-    db: MySQLDatabase,
+    flush_batch_with_acks: DBFlushBatchWithAcks,
+    db: DBInterface,
 ) -> None:
     (
         tx_rows,
@@ -101,8 +87,8 @@ def flush_rows_confirmed(
 
 def flush_rows_mempool(
     worker: "FlushMempoolTransactionsThread",
-    flush_batch_with_acks: MySQLFlushBatchWithAcksMempool,
-    db: MySQLDatabase,
+    flush_batch_with_acks: DBFlushBatchWithAcksMempool,
+    db: DBInterface,
 ) -> None:
     (
         tx_rows,
@@ -159,18 +145,9 @@ def reset_rows_mempool() -> (
 
 
 def maybe_refresh_connection(
-    db: MySQLDatabase, last_activity: int, logger: logging.Logger
-) -> tuple[MySQLDatabase, int]:
-    REFRESH_TIMEOUT = 600
-    if int(time.time()) - last_activity > REFRESH_TIMEOUT:
-        logger.info(
-            f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} " f"second refresh timeout"
-        )
-        db.conn.ping()
-        last_activity = int(time.time())
-        return db, last_activity
-    else:
-        return db, last_activity
+    db: DBInterface, last_activity: int, logger: logging.Logger
+) -> tuple[DBInterface, int]:
+    return db.maybe_refresh_connection(last_activity, logger)
 
 
 def convert_pushdata_rows_for_flush(
