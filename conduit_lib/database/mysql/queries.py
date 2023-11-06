@@ -59,7 +59,7 @@ class MySQLQueries:
         """columns: tx_hashes, blk_height"""
         self.tables.create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
         string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
-        column_names = ["inbound_tx_hashes"]
+        column_names = ["inbound_tx_hash"]
         self.bulk_loads._load_data_infile(
             f"{inbound_tx_table_name}",
             string_rows,
@@ -87,7 +87,7 @@ class MySQLQueries:
                 SELECT *
                 FROM {inbound_tx_table_name}
                 LEFT OUTER JOIN mempool_transactions
-                ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
+                ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hash)
                 WHERE mempool_transactions.mp_tx_hash IS NULL
                 ;"""
             )
@@ -102,7 +102,7 @@ class MySQLQueries:
         else:
             try:
                 self.conn.query(f"""SELECT * FROM temp_orphaned_txs;""")
-                # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hashes
+                # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hash
                 result = self.conn.store_result()
                 orphaned_txs = set(x[0] for x in result.fetch_row(0))
             finally:

@@ -363,7 +363,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                    inbound_tx_hashes BINARY(32) PRIMARY KEY
+                    inbound_tx_hash BINARY(32) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """
             )

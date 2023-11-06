@@ -9,7 +9,7 @@ from ..scylla.types import MinedTxHashes
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if typing.TYPE_CHECKING:
-    from .scylladb import ScyllaDB
+    from .db import ScyllaDB
 
 
 class ScyllaDBQueries:
@@ -54,10 +54,9 @@ class ScyllaDBQueries:
                 SELECT *
                 FROM {inbound_tx_table_name}
                 LEFT OUTER JOIN mempool_transactions
-                ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
+                ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hash)
                 WHERE mempool_transactions.mp_tx_hash IS NULL;"""
-            self.session.execute()
-            result = self.conn.store_result()
+            result = self.session.execute()
             final_result = set(x[0] for x in result.fetch_row(0))
         finally:
             self.db.commit_transaction()
@@ -68,7 +67,7 @@ class ScyllaDBQueries:
         else:
             try:
                 self.conn.query(f"""SELECT * FROM temp_orphaned_txs;""")
-                # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hashes
+                # Todo - Where tx_hash = inbound_tx_table_name.inbound_tx_hash
                 result = self.conn.store_result()
                 orphaned_txs = set(x[0] for x in result.fetch_row(0))
             finally:
