@@ -2,18 +2,20 @@ import os
 import typing
 from pathlib import Path
 
+from cassandra.cluster import Session
+
 from ..scylla.types import MinedTxHashes
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if typing.TYPE_CHECKING:
-    from .scylladb import ScyllaDatabase
+    from .scylladb import ScyllaDB
 
 
 class ScyllaDBQueries:
-    def __init__(self, scylladb: "ScyllaDatabase") -> None:
+    def __init__(self, scylladb: "ScyllaDB") -> None:
         self.scylladb = scylladb
-        self.session = self.scylladb.session
+        self.session: Session = self.scylladb.session
 
     def scylla_load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         """columns: tx_hashes, blk_num"""
@@ -47,16 +49,14 @@ class ScyllaDBQueries:
         """
         self.scylladb.load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
         try:
-            self.conn.query(
-                f"""
+            cql = f"""
                 -- tx_hash ISNULL implies no match therefore not previously processed yet
                 SELECT *
                 FROM {inbound_tx_table_name}
                 LEFT OUTER JOIN mempool_transactions
                 ON (mempool_transactions.mp_tx_hash = {inbound_tx_table_name}.inbound_tx_hashes)
-                WHERE mempool_transactions.mp_tx_hash IS NULL
-                ;"""
-            )
+                WHERE mempool_transactions.mp_tx_hash IS NULL;"""
+            self.session.execute()
             result = self.conn.store_result()
             final_result = set(x[0] for x in result.fetch_row(0))
         finally:

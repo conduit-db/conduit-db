@@ -60,6 +60,7 @@ def teardown_module(module: Module) -> None:
     if Path(DATADIR_SSD).exists():
         shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
 
+
 @pytest.fixture
 def mock_get_header_data():
     full_block = bytearray(TEST_RAW_BLOCK_413567)
@@ -75,6 +76,7 @@ def mock_get_header_data():
         mock.return_value = block_header_row
         yield mock
 
+
 # Create a fixture for get_block_metadata
 @pytest.fixture
 def mock_get_block_metadata():
@@ -86,9 +88,9 @@ def mock_get_block_metadata():
         yield mock
 
 
-def test_preprocessor_whole_block_as_a_single_chunk(mock_get_header_data: FixtureFunction,
-        mock_get_block_metadata: FixtureFunction) \
-        -> None:
+def test_preprocessor_whole_block_as_a_single_chunk(
+    mock_get_header_data: FixtureFunction, mock_get_block_metadata: FixtureFunction
+) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
     lmdb = LMDB_Database(lock=True)
@@ -119,8 +121,7 @@ def test_preprocessor_whole_block_as_a_single_chunk(mock_get_header_data: Fixtur
             adjustment = last_tx_offset_in_chunk
             offset = 0
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
-            adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         len_slice = last_tx_offset_in_chunk - adjustment
         remainder = modified_chunk[len_slice:]
@@ -180,8 +181,9 @@ def test_preprocessor_whole_block_as_a_single_chunk(mock_get_header_data: Fixtur
     del worker
 
 
-def test_preprocessor_with_block_divided_into_four_chunks(mock_get_header_data: FixtureFunction,
-        mock_get_block_metadata: FixtureFunction) -> None:
+def test_preprocessor_with_block_divided_into_four_chunks(
+    mock_get_header_data: FixtureFunction, mock_get_block_metadata: FixtureFunction
+) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
     lmdb = LMDB_Database(lock=True)

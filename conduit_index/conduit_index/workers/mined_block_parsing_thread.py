@@ -18,8 +18,13 @@ from conduit_lib.database.db_interface.types import (
     MempoolTransactionRow,
     InputRowParsed,
     OutputRow,
-    PushdataRowParsed, ProcessedBlockAcks, TipFilterNotifications, WorkItemId, ProcessedBlockAck,
-    NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets,
+    PushdataRowParsed,
+    ProcessedBlockAcks,
+    TipFilterNotifications,
+    WorkItemId,
+    ProcessedBlockAck,
+    NewNotSeenBeforeTxOffsets,
+    AlreadySeenMempoolTxOffsets,
 )
 from conduit_raw.conduit_raw.aiohttp_api.constants import (
     UTXO_REGISTRATION_TOPIC,

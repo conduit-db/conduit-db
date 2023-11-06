@@ -4,9 +4,20 @@ import logging
 import typing
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.database.db_interface.types import MySQLFlushBatch, ConfirmedTransactionRow, \
-    MempoolTransactionRow, InputRow, OutputRow, PushdataRow, PushdataRowParsed, InputRowParsed, \
-    DBFlushBatchWithAcks, DBFlushBatchWithAcksMempool, ProcessedBlockAcks, MempoolTxAck
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    ConfirmedTransactionRow,
+    MempoolTransactionRow,
+    InputRow,
+    OutputRow,
+    PushdataRow,
+    PushdataRowParsed,
+    InputRowParsed,
+    DBFlushBatchWithAcks,
+    DBFlushBatchWithAcksMempool,
+    ProcessedBlockAcks,
+    MempoolTxAck,
+)
 from conduit_lib.utils import zmq_send_no_block
 from conduit_lib import DBInterface
 

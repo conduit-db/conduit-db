@@ -28,6 +28,7 @@ T2 = TypeVar("T2")
 def get_tx_metadata(tx_hash: bytes, db: DBInterface) -> TxMetadata | None:
     from conduit_lib.database.mysql.tip_filtering import get_tx_metadata
     from conduit_lib.database.mysql.db import MySQLDatabase
+
     db = cast(MySQLDatabase, db)
     return get_tx_metadata(tx_hash, db)
 
@@ -37,6 +38,7 @@ async def get_tx_metadata_async(
 ) -> TxMetadata | None:
     from conduit_lib.database.mysql.tip_filtering import get_tx_metadata_async
     from conduit_lib.database.mysql.db import MySQLDatabase
+
     db = cast(MySQLDatabase, db)
     return await get_tx_metadata_async(tx_hash, db, executor)
 
@@ -102,10 +104,6 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
-        ...
-
-    @abc.abstractmethod
-    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         ...
 
     @abc.abstractmethod

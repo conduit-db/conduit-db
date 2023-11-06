@@ -4,6 +4,8 @@ import logging
 import bitcoinx
 from typing import TypeVar, Generator, Any, Sequence
 
+from conduit_lib import LMDB_Database
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
     ConfirmedTransactionRow,
@@ -12,7 +14,13 @@ from conduit_lib.database.db_interface.types import (
     InputRow,
     PushdataRow,
 )
-from conduit_lib.types import ChainHashes, BlockHeaderRow, TxMetadata, RestorationFilterQueryResult
+from conduit_lib.types import (
+    ChainHashes,
+    BlockHeaderRow,
+    TxMetadata,
+    RestorationFilterQueryResult,
+    OutpointType,
+)
 
 T1 = TypeVar("T1")
 
@@ -35,6 +43,7 @@ class DBInterface(abc.ABC):
     @classmethod
     def load_db(cls, worker_id: int | None = None) -> "DBInterface":
         from conduit_lib.database.mysql.db import load_mysql_database
+
         return load_mysql_database(worker_id)
 
     @abc.abstractmethod
@@ -237,4 +246,8 @@ class DBInterface(abc.ABC):
 
     @abc.abstractmethod
     def ping(self) -> None:
+        ...
+
+    @abc.abstractmethod
+    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         ...

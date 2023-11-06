@@ -14,11 +14,11 @@ from .exceptions import FailedScyllaOperation
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if typing.TYPE_CHECKING:
-    from .scylladb import ScyllaDatabase
+    from .scylladb import ScyllaDB
 
 
 class ScyllaDBTables:
-    def __init__(self, scylla_db: "ScyllaDatabase") -> None:
+    def __init__(self, scylla_db: "ScyllaDB") -> None:
         self.scylla_db = scylla_db
         self.worker_id = self.scylla_db.worker_id
         if self.worker_id:

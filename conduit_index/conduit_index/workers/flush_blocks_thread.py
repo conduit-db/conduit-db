@@ -6,8 +6,12 @@ import typing
 import zmq
 
 from conduit_lib import DBInterface
-from conduit_lib.database.db_interface.types import MySQLFlushBatch, ProcessedBlockAcks, \
-    TipFilterNotifications, DBFlushBatchWithAcks
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    ProcessedBlockAcks,
+    TipFilterNotifications,
+    DBFlushBatchWithAcks,
+)
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 from ..workers.common import (

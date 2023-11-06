@@ -10,10 +10,9 @@ import zmq
 import zmq.asyncio
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib import DBInterface
 from conduit_lib.constants import ZERO_HASH
-from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
-from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, \
-    TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, TipFilterRegistrationEntry
 from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.types import outpoint_struct, OutpointType, output_spend_struct
 from conduit_lib.utils import create_task, zmq_send_no_block_async
@@ -42,10 +41,10 @@ class WorkerStateManager:
     def __init__(
         self,
         app_state: "ApplicationState",
-        db_tip_filter_queries: TipFilterQueryAPI,
+        db: DBInterface,
     ) -> None:
         self.app_state = app_state
-        self.db = db_tip_filter_queries
+        self.db = db
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")

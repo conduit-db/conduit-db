@@ -10,7 +10,7 @@ import MySQLdb
 from aiohttp import web
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
-from conduit_lib import LMDB_Database
+from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.db_interface.tip_filter_types import (
     TipFilterRegistrationEntry,
@@ -74,7 +74,7 @@ async def get_output_spends(request: web.Request) -> web.Response:
     else:
         raise web.HTTPBadRequest(reason="unknown request body content type")
 
-    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
+    db: DBInterface = app_state.db
     lmdb: LMDB_Database = app_state.lmdb
     existing_rows = db.get_spent_outpoints(client_outpoints, lmdb)
 

@@ -9,8 +9,13 @@ import typing
 
 import MySQLdb
 
-from ..db_interface.types import ConfirmedTransactionRow, MempoolTransactionRow, OutputRow, \
-    InputRow, PushdataRow
+from ..db_interface.types import (
+    ConfirmedTransactionRow,
+    MempoolTransactionRow,
+    OutputRow,
+    InputRow,
+    PushdataRow,
+)
 from ...constants import PROFILING, BULK_LOADING_BATCH_SIZE_ROW_COUNT
 from ...types import BlockHeaderRow
 from ...utils import get_log_level

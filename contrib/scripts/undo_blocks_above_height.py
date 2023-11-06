@@ -47,8 +47,7 @@ class DbRepairTool:
         headers_dir = MODULE_DIR.parent.parent / "conduit_index"
         net_config = NetworkConfig(get_network_type(), node_host="127.0.0.1", node_port=18444)
         self.storage = setup_storage(net_config, headers_dir)
-        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers,
-            self.storage.headers_lock)
+        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
         return self.headers_threadsafe.get_header_for_hash(block_hash)

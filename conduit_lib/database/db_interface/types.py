@@ -88,6 +88,8 @@ class ProcessedBlockAck(NamedTuple):
 
 
 ProcessedBlockAcks = list[ProcessedBlockAck]
+
+
 class DBFlushBatchWithAcks(NamedTuple):
     tx_rows: list[ConfirmedTransactionRow]
     tx_rows_mempool: list[MempoolTransactionRow]

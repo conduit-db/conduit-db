@@ -1,21 +1,14 @@
-import time
-
-import bitcoinx
 import logging
 import os
-from concurrent.futures.thread import ThreadPoolExecutor
+
+import bitcoinx
+from cassandra.cluster import Cluster, Session
+from cassandra.auth import PlainTextAuthProvider
 from typing import TypeVar, Generator, Sequence
 
-import MySQLdb
-from MySQLdb.connections import Connection
-
-from .api_queries import MySQLAPIQueries
-from .bulk_loads import MySQLBulkLoads
-from .queries import MySQLQueries
-from .tables import MySQLTables
-from ..db_interface.db import DBInterface
-from ..db_interface.tip_filter_types import OutputSpendRow
-from ..db_interface.types import (
+from conduit_lib import LMDB_Database
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
+from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
@@ -23,67 +16,40 @@ from ..db_interface.types import (
     InputRow,
     PushdataRow,
 )
-from ... import LMDB_Database
-from ...types import ChainHashes, BlockHeaderRow, TxMetadata, RestorationFilterQueryResult, OutpointType
-from ...utils import get_log_level
+from conduit_lib.database.scylladb.scylladb_api_queries import ScyllaDBAPIQueries
+from conduit_lib.database.scylladb.scylladb_bulk_loads import ScyllaDBBulkLoads
+from conduit_lib.database.scylladb.scylladb_queries import ScyllaDBQueries
+from conduit_lib.database.scylladb.scylladb_tables import ScyllaDBTables
+from conduit_lib.types import (
+    RestorationFilterQueryResult,
+    BlockHeaderRow,
+    TxMetadata,
+    OutpointType,
+    ChainHashes,
+)
 
 T1 = TypeVar("T1")
 
+KEYSPACE = 'conduitdb'
 
-class MySQLDatabase(DBInterface):
-    def __init__(self, conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
-        self.conn = conn  # passed into constructor for easier unit-testing
+
+class ScyllaDB:
+    def __init__(self, cluster: Cluster, session: Session, worker_id: int | None = None) -> None:
+        self.cluster = cluster
+        self.session = session
         self.worker_id = worker_id
-        self.tables = MySQLTables(self.conn)
-        self.bulk_loads = MySQLBulkLoads(self.conn, self)
-        self.queries = MySQLQueries(self.conn, self.tables, self.bulk_loads, self)
-        self.api_queries = MySQLAPIQueries(self.conn, self.tables, self)
 
-        self.start_transaction()
-        # self.bulk_loads.set_rocks_db_bulk_load_off()
-        self._set_myrocks_settings()
-        self.commit_transaction()
+        self.tables = ScyllaDBTables(self)
+        self.bulk_loads = ScyllaDBBulkLoads(self)
+        self.queries = ScyllaDBQueries(self)
+        self.api_queries = ScyllaDBAPIQueries(self)
 
-        self.executor = ThreadPoolExecutor(max_workers=1)
-        self.logger = logging.getLogger("mysql-database")
-        self.logger.setLevel(get_log_level("conduit_index"))
-
-    def _set_myrocks_settings(self) -> None:
-        # SET global rocksdb_max_subcompactions=8
-        settings = f"""SET global rocksdb_max_row_locks={100_000_000};
-            SET global rocksdb_write_disable_wal=0;
-            SET global rocksdb_wal_recovery_mode=0;
-            SET global rocksdb_max_background_jobs=16;
-            SET global rocksdb_block_cache_size={1024 ** 3 * 8};"""
-        for sql in settings.splitlines(keepends=False):
-            self.conn.query(sql)
+        self.logger = logging.getLogger("scylla-database")
+        self.logger.setLevel(logging.INFO)
 
     def close(self) -> None:
-        self.conn.close()
+        self.cluster.shutdown()
 
-    def start_transaction(self) -> None:
-        self.conn.query("""START TRANSACTION;""")
-
-    def commit_transaction(self) -> None:
-        self.conn.query("""COMMIT;""")
-
-    def rollback_transaction(self) -> None:
-        self.conn.query("""ROLLBACK;""")
-
-    def ping(self) -> None:
-        self.conn.ping()
-
-    def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
-        REFRESH_TIMEOUT = 600
-        if int(time.time()) - last_activity > REFRESH_TIMEOUT:
-            logger.info(f"Refreshing DB connection due to {REFRESH_TIMEOUT} " f"second refresh timeout")
-            self.ping()
-            last_activity = int(time.time())
-            return self, last_activity
-        else:
-            return self, last_activity
-
-    # TABLES
     def drop_tables(self) -> None:
         self.tables.drop_tables()
 
@@ -230,24 +196,15 @@ class MySQLDatabase(DBInterface):
         return self.api_queries.get_spent_outpoints(entries, lmdb)
 
 
-def get_connection() -> Connection:
-    host = os.environ.get("MYSQL_HOST", "127.0.0.1")
-    port = int(os.environ.get("MYSQL_PORT", 52525))  # not 3306 because of docker issues
-    user = os.getenv("MYSQL_USER", "root")
-    password = os.getenv("MYSQL_PASSWORD", "conduitpass")
-    database = os.getenv("MYSQL_DATABASE", "conduitdb")
-
-    conn: MySQLdb.Connection = MySQLdb.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database,
-        local_infile=1,
+def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
+    auth_provider = PlainTextAuthProvider(
+        username=os.environ['SCYLLA_USERNAME'],
+        password=os.environ['SCYLLA_PASSWORD'],
     )
-    return conn
-
-
-def load_mysql_database(worker_id: int | None = None) -> DBInterface:
-    conn = get_connection()
-    return MySQLDatabase(conn, worker_id=worker_id)
+    cluster = Cluster(
+        contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
+        port=int(os.getenv('SCYLLA_PORT', 9042)),
+        auth_provider=auth_provider,
+    )
+    session = cluster.connect(KEYSPACE, wait_for_all_pools=True)
+    return ScyllaDB(cluster, session, worker_id=worker_id)

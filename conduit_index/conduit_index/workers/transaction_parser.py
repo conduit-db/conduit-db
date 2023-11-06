@@ -14,8 +14,14 @@ import zmq
 from conduit_lib import DBInterface
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.db_interface.tip_filter_types import IndexerPushdataRegistrationFlag
-from conduit_lib.database.db_interface.types import MySQLFlushBatch, InputRowParsed, \
-    PushdataRowParsed, ProcessedBlockAcks, TipFilterNotifications, MempoolTxAck
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    InputRowParsed,
+    PushdataRowParsed,
+    ProcessedBlockAcks,
+    TipFilterNotifications,
+    MempoolTxAck,
+)
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.types import OutpointType, output_spend_struct
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket

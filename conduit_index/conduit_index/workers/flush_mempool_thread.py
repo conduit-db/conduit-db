@@ -6,8 +6,13 @@ import time
 import typing
 
 from conduit_lib import DBInterface
-from conduit_lib.database.db_interface.types import MySQLFlushBatch, InputRowParsed, \
-    PushdataRowParsed, DBFlushBatchWithAcksMempool, MempoolTxAck
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    InputRowParsed,
+    PushdataRowParsed,
+    DBFlushBatchWithAcksMempool,
+    MempoolTxAck,
+)
 from ..workers.common import (
     maybe_refresh_connection,
     flush_rows_mempool,

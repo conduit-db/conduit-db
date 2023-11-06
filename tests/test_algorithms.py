@@ -8,8 +8,7 @@ import bitcoinx
 import pytest
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
-from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, InputRowParsed, \
-    OutputRow
+from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, InputRowParsed, OutputRow
 from .conftest import TEST_RAW_BLOCK_413567
 from .data.block413567_offsets import TX_OFFSETS
 
@@ -63,8 +62,7 @@ def test_preprocessor_whole_block_as_a_single_chunk() -> None:
             adjustment = last_tx_offset_in_chunk
             offset = 0
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
-            adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         remainder = modified_chunk[last_tx_offset_in_chunk - adjustment :]
 
@@ -98,8 +96,7 @@ def test_preprocessor_with_block_divided_into_four_chunks() -> None:
             offset = 0
             adjustment = last_tx_offset_in_chunk
         modified_chunk = remainder + chunk
-        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset,
-            adjustment)
+        tx_offsets_for_chunk, last_tx_offset_in_chunk = preprocessor(modified_chunk, offset, adjustment)
         tx_offsets_all.extend(tx_offsets_for_chunk)
         remainder = modified_chunk[last_tx_offset_in_chunk - adjustment :]
 
@@ -276,8 +273,9 @@ def test_parse_txs() -> None:
     assert len(txs) == len(tx_rows)
 
     # This is slow but I don't care!
-    def scan_inputs_for_hash_and_idx_match(prev_out_hash: bytes, prev_idx: int,
-            in_rows: list[InputRowParsed]) -> bool:
+    def scan_inputs_for_hash_and_idx_match(
+        prev_out_hash: bytes, prev_idx: int, in_rows: list[InputRowParsed]
+    ) -> bool:
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in in_rows:
             out_tx_hash, out_idx, in_tx_hash, in_idx = row
@@ -289,8 +287,9 @@ def test_parse_txs() -> None:
                 pass
         return False
 
-    def scan_outputs_for_hash_and_idx_match(tx_hash: bytes, idx: int, value: int, out_rows:
-            list[OutputRow]) -> bool:
+    def scan_outputs_for_hash_and_idx_match(
+        tx_hash: bytes, idx: int, value: int, out_rows: list[OutputRow]
+    ) -> bool:
         """Must reverse the hex rows endianness to match bitcoinx"""
         for row in out_rows:
             out_tx_hash, out_idx, out_value = row

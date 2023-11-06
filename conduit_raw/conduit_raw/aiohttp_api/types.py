@@ -7,8 +7,7 @@ from typing import Any, Optional, NamedTuple, TypedDict
 
 from bitcoinx import hash_to_hex_str
 
-from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, \
-    TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, TipFilterRegistrationEntry
 from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.types import OutpointType
 

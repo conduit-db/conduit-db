@@ -126,9 +126,7 @@ class TestLMDBDatabase:
         assert expected_block_size == actual_block_size_ipc
 
         actual_raw_block = self.lmdb.get_block(expected_block_num)
-        block_requests = list(
-            [BlockSliceRequestType(expected_block_num, Slice(0, 0))]
-        )
+        block_requests = list([BlockSliceRequestType(expected_block_num, Slice(0, 0))])
         batched_block_slices = self.ipc_sock_client.block_batched(block_requests)
 
         block_num, len_slice = struct.unpack_from(f"<IQ", batched_block_slices, 0)
@@ -233,7 +231,7 @@ class TestLMDBDatabase:
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=0)
         slice = self.lmdb.get_single_tx_slice(tx_loc)
         assert slice is not None
-        coinbase_start_offset,coinbase_end_offset = slice
+        coinbase_start_offset, coinbase_end_offset = slice
         assert coinbase_start_offset == 83
         assert coinbase_end_offset == 268
 
