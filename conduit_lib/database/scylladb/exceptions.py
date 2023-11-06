@@ -1,0 +1,2 @@
+class FailedScyllaOperation(Exception):
+    pass
