@@ -7,8 +7,7 @@ from typing import (
     cast,
 )
 
-from conduit_lib.types import OutpointType, TxMetadata
-from conduit_lib import LMDB_Database
+from conduit_lib.types import TxMetadata
 from .db import DBInterface
 from .tip_filter_types import (
     OutboundDataFlag,

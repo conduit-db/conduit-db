@@ -1,12 +1,17 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import bitcoinx
+from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure
 from cassandra.cluster import Cluster, Session
 from cassandra.auth import PlainTextAuthProvider
-from typing import TypeVar, Generator, Sequence
+from typing import TypeVar, Generator, Sequence, Any
 
-from conduit_lib import LMDB_Database
+from cassandra.concurrent import execute_concurrent_with_args
+from cassandra.query import PreparedStatement
+
+from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
@@ -16,10 +21,10 @@ from conduit_lib.database.db_interface.types import (
     InputRow,
     PushdataRow,
 )
-from conduit_lib.database.scylladb.scylladb_api_queries import ScyllaDBAPIQueries
-from conduit_lib.database.scylladb.scylladb_bulk_loads import ScyllaDBBulkLoads
-from conduit_lib.database.scylladb.scylladb_queries import ScyllaDBQueries
-from conduit_lib.database.scylladb.scylladb_tables import ScyllaDBTables
+from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
+from conduit_lib.database.scylladb.bulk_loads import ScyllaDBBulkLoads
+from conduit_lib.database.scylladb.queries import ScyllaDBQueries
+from conduit_lib.database.scylladb.tables import ScyllaDBTables
 from conduit_lib.types import (
     RestorationFilterQueryResult,
     BlockHeaderRow,
@@ -33,10 +38,10 @@ T1 = TypeVar("T1")
 KEYSPACE = 'conduitdb'
 
 
-class ScyllaDB:
+class ScyllaDB(DBInterface):
     def __init__(self, cluster: Cluster, session: Session, worker_id: int | None = None) -> None:
-        self.cluster = cluster
-        self.session = session
+        self.cluster: Cluster = cluster
+        self.session: Session = session
         self.worker_id = worker_id
 
         self.tables = ScyllaDBTables(self)
@@ -44,11 +49,26 @@ class ScyllaDB:
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
 
+        self.executor = ThreadPoolExecutor(max_workers=4)
+
         self.logger = logging.getLogger("scylla-database")
         self.logger.setLevel(logging.INFO)
 
     def close(self) -> None:
         self.cluster.shutdown()
+
+    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[...]]):
+        self.bulk_loads.load_data_batched(insert_statement, rows)
+
+    def execute_with_concurrency(self, prepared_statement: PreparedStatement,
+            rows: Sequence[tuple[Any, ...]], concurrency: int=50) -> list:
+        try:
+            return execute_concurrent_with_args(
+                self.session, prepared_statement, rows, concurrency=concurrency,
+                raise_on_first_error=True,
+            )
+        except (WriteTimeout, WriteFailure) as e:
+            self.logger.error(f"Error occurred during concurrent write operations: {str(e)}")
 
     def drop_tables(self) -> None:
         self.tables.drop_tables()
@@ -195,6 +215,15 @@ class ScyllaDB:
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         return self.api_queries.get_spent_outpoints(entries, lmdb)
 
+    def create_temp_mempool_removals_table(self) -> None:
+        self.tables.create_temp_mempool_removals_table()
+
+    def create_temp_mempool_additions_table(self) -> None:
+        self.tables.create_temp_mempool_additions_table()
+
+    def create_temp_orphaned_txs_table(self) -> None:
+        self.tables.create_temp_orphaned_txs_table()
+
 
 def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
     auth_provider = PlainTextAuthProvider(
@@ -207,4 +236,5 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
         auth_provider=auth_provider,
     )
     session = cluster.connect(KEYSPACE, wait_for_all_pools=True)
+    session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
     return ScyllaDB(cluster, session, worker_id=worker_id)

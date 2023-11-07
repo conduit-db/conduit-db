@@ -54,7 +54,7 @@ class BlockHeaderRow(NamedTuple):
     block_num: int
     block_hash: str
     block_height: int
-    block_header: str
+    block_header: str | None
     block_tx_count: int
     block_size: int
     is_orphaned: int  # mysql TINYINT either 1 or zero

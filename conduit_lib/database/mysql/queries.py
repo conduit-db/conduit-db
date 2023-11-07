@@ -140,7 +140,7 @@ class MySQLQueries:
 
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
-        self.tables.create_temp_mempool_removals_table()
+        self.db.create_temp_mempool_removals_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
@@ -157,7 +157,7 @@ class MySQLQueries:
                 os.remove(outfile)
 
     def load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
-        self.tables.create_temp_mempool_additions_table()
+        self.db.create_temp_mempool_additions_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
@@ -174,7 +174,7 @@ class MySQLQueries:
                 os.remove(outfile)
 
     def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        self.tables.create_temp_orphaned_txs_table()
+        self.db.create_temp_orphaned_txs_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:

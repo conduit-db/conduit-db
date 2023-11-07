@@ -249,5 +249,12 @@ class DBInterface(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
+    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) \
+            -> list[OutputSpendRow]:
+        ...
+    @abc.abstractmethod
+    def create_temp_mempool_removals_table(self) -> None:
+        ...
+    @abc.abstractmethod
+    def create_temp_mempool_additions_table(self) -> None:
         ...

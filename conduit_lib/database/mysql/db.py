@@ -229,6 +229,15 @@ class MySQLDatabase(DBInterface):
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         return self.api_queries.get_spent_outpoints(entries, lmdb)
 
+    def create_temp_mempool_removals_table(self) -> None:
+        self.tables.create_temp_mempool_removals_table()
+
+    def create_temp_mempool_additions_table(self) -> None:
+        self.tables.create_temp_mempool_additions_table()
+
+    def create_temp_orphaned_txs_table(self) -> None:
+        self.tables.create_temp_orphaned_txs_table()
+
 
 def get_connection() -> Connection:
     host = os.environ.get("MYSQL_HOST", "127.0.0.1")

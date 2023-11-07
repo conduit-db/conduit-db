@@ -98,7 +98,7 @@ class ApplicationState(object):
 
         self._outbound_data_delivery_event = asyncio.Event()
         self.tasks: list[asyncio.Task[Any]] = []
-        self.worker_state_manager = WorkerStateManager(self, self.db_tip_filter_queries)
+        self.worker_state_manager = WorkerStateManager(self, self.db)
 
     async def refresh_connection_task(self) -> None:
         REFRESH_TIMEOUT = 600

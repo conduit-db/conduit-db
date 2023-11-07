@@ -7,8 +7,8 @@ import time
 import typing
 from pathlib import Path
 
-from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure
-from cassandra.concurrent import execute_concurrent_with_args
+from cassandra import ConsistencyLevel
+from cassandra.cluster import Session
 from cassandra.query import BatchStatement, BatchType
 
 from .exceptions import FailedScyllaOperation
@@ -26,7 +26,7 @@ from ...utils import get_log_level
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 if typing.TYPE_CHECKING:
-    from .scylladb import ScyllaDB
+    from .db import ScyllaDB
 
 
 class ScyllaDBBulkLoads:
@@ -37,7 +37,7 @@ class ScyllaDBBulkLoads:
             self.logger = logging.getLogger(f"scylla-tables-{self.worker_id}")
         else:
             self.logger = logging.getLogger(f"scylla-tables")
-        self.session = self.db.session
+        self.session: Session = self.db.session
         self.logger.setLevel(get_log_level("conduit_index"))
         self.total_db_time = 0.0
         self.total_rows_flushed_since_startup = 0  # for current controller
@@ -69,46 +69,13 @@ class ScyllaDBBulkLoads:
                 rows_batch = rows[i * BATCH_SIZE :]
             else:
                 rows_batch = rows[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
-
-            # Execute the statements in parallel using execute_concurrent_with_args
-            execute_concurrent_with_args(
-                self.session,  # Assuming self.session is a Cassandra cluster session
-                insert_statement,
-                rows_batch,
-                concurrency=50,
-                raise_on_first_error=True,
-            )
+            self.db.execute_with_concurrency(insert_statement, rows_batch)
         self.total_rows_flushed_since_startup += len(rows)
         self.logger.log(
             PROFILING,
             f"total rows flushed since startup (worker_id={self.worker_id if self.worker_id else 'None'})="
             f"{self.total_rows_flushed_since_startup}",
         )
-
-    def load_data_concurrently(self, insert_statement, rows):
-        try:
-            # Execute the statements in parallel using execute_concurrent_with_args
-            execute_concurrent_with_args(
-                self.session,  # Assuming self.session is a Cassandra cluster session
-                insert_statement,
-                rows,
-                concurrency=50,  # Setting the desired concurrency level
-                raise_on_first_error=True,  # Will raise an exception on first error
-            )
-            # If all operations succeed, update the total count
-            self.total_rows_flushed_since_startup += len(rows)
-
-            # Log the success
-            self.logger.log(
-                PROFILING,
-                f"Total rows successfully flushed since startup (worker_id={self.worker_id if self.worker_id else 'None'}): "
-                f"{self.total_rows_flushed_since_startup}",
-            )
-
-        except (WriteTimeout, WriteFailure) as e:
-            # Handle the exception as needed (log, retry, etc.)
-            self.logger.error(f"Error occurred during concurrent write operations: {str(e)}")
-            # If needed, implement a retry mechanism here
 
     def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
