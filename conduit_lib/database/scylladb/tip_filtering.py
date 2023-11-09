@@ -38,7 +38,8 @@ from conduit_lib.database.db_interface.tip_filter_types import (
     OutboundDataFlag,
     OutboundDataRow,
     FilterNotificationRow,
-    DatabaseInsertConflict, DatabaseStateModifiedError,
+    DatabaseInsertConflict,
+    DatabaseStateModifiedError,
 )
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.scylladb.db import ScyllaDB
@@ -135,6 +136,8 @@ def read_rows_by_ids(
     return results
 
 
+# TODO(db) just add this as another compositional attribute of the DBInterface
+#  TipFilterQueryAPI requires a DBInterface instance anyway. And it will make it easier to test.
 class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
     def __init__(self, db: ScyllaDB) -> None:
         self.logger = logging.getLogger("scylladb-queries")
@@ -293,13 +296,11 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         Load the non-expired tip filter registrations from the database to populate the tip filter.
         """
         assert account_id is not None, "Needed for ScyllaDB implementation"
-        cql = "SELECT pushdata_hash, date_expires FROM tip_filter_registrations " \
-              "WHERE account_id=?"
+        cql = "SELECT pushdata_hash, date_expires FROM tip_filter_registrations " "WHERE account_id=?"
 
         # WARNING: These are hard-coded in the ScyllaDB implementation
         assert expected_flags == IndexerPushdataRegistrationFlag.FINALISED
-        assert mask == IndexerPushdataRegistrationFlag.DELETING | \
-               IndexerPushdataRegistrationFlag.FINALISED
+        assert mask == IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED
         finalised_flag = 1
         deleting_flag = 0
 
@@ -317,7 +318,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         return [TipFilterRegistrationEntry(row.pushdata_hash, row.date_expires) for row in rows]
 
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: int|None=None
+        self, pushdata_hashes: list[bytes], account_id: int | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -336,8 +337,11 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             bound_statement1 = prepared_select.bind([account_id, pushdata_hash])
             batch.add(bound_statement1)
         for rows in self.session.execute(batch):
-            results.extend(FilterNotificationRow(row.account_id, row.pushdata_hash) for row in rows
-                if (row.finalised_flag == 1 and row.deleting_flag == 0))
+            results.extend(
+                FilterNotificationRow(row.account_id, row.pushdata_hash)
+                for row in rows
+                if (row.finalised_flag == 1 and row.deleting_flag == 0)
+            )
         return results
 
     def update_tip_filter_registrations_flags_write(
@@ -363,17 +367,22 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         # if any other combination of flags is used, an exception will be raised to be sure that
         # this workaround does not create unexpected bugs in future.
         #
-        assert update_flags==IndexerPushdataRegistrationFlag.DELETING
-        assert update_mask==None
-        assert filter_flags==IndexerPushdataRegistrationFlag.FINALISED
-        assert filter_mask==IndexerPushdataRegistrationFlag.FINALISED | \
-               IndexerPushdataRegistrationFlag.DELETING
+        assert update_flags == IndexerPushdataRegistrationFlag.DELETING
+        assert update_mask == None
+        assert filter_flags == IndexerPushdataRegistrationFlag.FINALISED
+        assert (
+            filter_mask
+            == IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING
+        )
 
         account_id = self.create_account_write(external_account_id)
+
         def _read_and_update(session: Session, pushdata_value: bytes, account_id: int) -> None:
-            update_cql = "UPDATE tip_filter_registrations SET deleting_flag=1 " \
-                         "WHERE account_id=? AND pushdata_hash=? " \
-                         "IF finalised_flag=1 AND deleting_flag=0"
+            update_cql = (
+                "UPDATE tip_filter_registrations SET deleting_flag=1 "
+                "WHERE account_id=? AND pushdata_hash=? "
+                "IF finalised_flag=1 AND deleting_flag=0"
+            )
             # For the ScyllaDB implementation we do not use the update_mask or filter_mask
             result = session.execute(update_cql, (account_id, pushdata_value))
             was_applied = result.one().applied
@@ -382,8 +391,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
 
         futures = []
         for pushdata_value in pushdata_hashes:
-            future = self.db.executor.submit(_read_and_update, self.session, pushdata_value,
-                account_id)
+            future = self.db.executor.submit(_read_and_update, self.session, pushdata_value, account_id)
             futures.append(future)
 
         for future in futures:
@@ -430,9 +438,13 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         if creation_row.outbound_data_flags & OutboundDataFlag.DISPATCHED_SUCCESSFULLY:
             dispatched_successfully_flag = 1
 
-        params = (creation_row.outbound_data_id, creation_row.outbound_data,
-            tip_filter_notification_flag, dispatched_successfully_flag, creation_row.date_created,
-            creation_row.date_last_tried
+        params = (
+            creation_row.outbound_data_id,
+            creation_row.outbound_data,
+            tip_filter_notification_flag,
+            dispatched_successfully_flag,
+            creation_row.date_created,
+            creation_row.date_last_tried,
         )
         result = self.session.execute(insert_cql, params)
         if not result[0].applied:
@@ -441,7 +453,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         return result[0].outbound_data_id
 
     def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int|None=None
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
     ) -> list[OutboundDataRow]:
         select_cql = """
         SELECT outbound_data_id, outbound_data, dispatched_successfully_flag, date_created, 

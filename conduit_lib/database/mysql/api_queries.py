@@ -37,13 +37,12 @@ class MySQLAPIQueries:
 
     def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata | None:
         try:
+            assert len(tx_hashX) == HashXLength
             sql = f"""
                 SELECT CT.tx_hash, CT.tx_block_num, CT.tx_position, HD.block_num, HD.block_hash,
                     HD.block_height FROM confirmed_transactions CT
-                INNER JOIN headers HD
-                ON HD.block_num = CT.tx_block_num
-                WHERE CT.tx_hash = X'{tx_hashX.hex()}'
-                AND HD.is_orphaned = 0;"""
+                INNER JOIN headers HD ON HD.block_num = CT.tx_block_num
+                WHERE CT.tx_hash = X'{tx_hashX.hex()}' AND HD.is_orphaned = 0;"""
 
             self.conn.query(sql)
             result = self.conn.store_result()
@@ -52,7 +51,7 @@ class MySQLAPIQueries:
 
             if len(rows) == 0:
                 return None
-            elif len(rows) == 1:  # no reorgs
+            elif len(rows) == 1:
                 (
                     tx_hash,
                     tx_block_num,
@@ -70,34 +69,12 @@ class MySQLAPIQueries:
                     block_height,
                 )
             else:
-                # TODO Investigate why this is happening
-                # If it's a duplicate entry let it return
-                block_nums = [row[3] for row in rows]
-                if all([block_nums[0] == block_num for block_num in block_nums]):
-                    self.logger.debug(f"Got duplicate tx row for transaction: {tx_hashX.hex()}")
-                    (
-                        tx_hash,
-                        tx_block_num,
-                        tx_position,
-                        block_num,
-                        block_hash,
-                        block_height,
-                    ) = rows[0]
-                    return TxMetadata(
-                        tx_hash,
-                        tx_block_num,
-                        tx_position,
-                        block_num,
-                        block_hash,
-                        block_height,
-                    )
-
-                raise ValueError(
-                    f"More than a single tx_hashX was returned for: {tx_hashX.hex()} "
+                raise AssertionError(
+                    f"More than a single tx_hashX was returned for hashX: {tx_hashX.hex()} "
                     f"from the MySQL query. This should never happen. It should always give a "
-                    f"materialized view of the longest chain"
-                )  # i.e. WHERE HD.is_orphaned = 0
-
+                    f"materialized view of the longest chain where the header's is_orphaned "
+                    f"field is set to False"
+                )
         finally:
             self.db.commit_transaction()
 
@@ -105,14 +82,14 @@ class MySQLAPIQueries:
         try:
             if raw_header_data:
                 sql = f"""
-                    SELECT *
+                    SELECT block_num, block_hash, block_height, block_header, block_tx_count, block_size, is_orphaned
                     FROM headers HD
                     WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
                 self.conn.query(sql)
             else:
                 sql = f"""
-                    SELECT block_num, block_hash, block_height, block_tx_count, block_size
+                    SELECT block_num, block_hash, block_height, NULL, block_tx_count, block_size, is_orphaned
                     FROM headers HD
                     WHERE HD.block_hash = X'{block_hash.hex()}'
                     AND HD.is_orphaned = 0;"""
@@ -122,34 +99,20 @@ class MySQLAPIQueries:
             self.conn.commit()
             if len(rows) == 0:
                 return None
-
-            if raw_header_data:
-                (
-                    block_num,
-                    block_hash,
-                    block_height,
-                    block_header,
-                    block_tx_count,
-                    block_size,
-                    is_orphaned,
-                ) = rows[0]
-                block_header = block_header.hex()
-            else:
-                block_header = None
-                (
-                    block_num,
-                    block_hash,
-                    block_height,
-                    block_tx_count,
-                    block_size,
-                    is_orphaned,
-                ) = rows[0]
-
+            (
+                block_num,
+                block_hash,
+                block_height,
+                block_header,
+                block_tx_count,
+                block_size,
+                is_orphaned,
+            ) = rows[0]
             return BlockHeaderRow(
                 block_num,
                 hash_to_hex_str(block_hash),
                 block_height,
-                block_header,
+                None if not block_header else block_header.hex(),
                 block_tx_count,
                 block_size,
                 is_orphaned,

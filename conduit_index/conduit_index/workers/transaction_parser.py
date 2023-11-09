@@ -215,9 +215,6 @@ class TxParser(multiprocessing.Process):
             result = self.common_cuckoo.contains(pushdata_match.pushdata_hash)
             if result == CuckooResult.OK:
                 filter_matches.append(pushdata_match)
-            else:
-                # TODO: DEBUGGING - MUST REMOVE - THIS IS VERY WASTEFUL
-                assert self.common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.NOT_FOUND
 
         if len(filter_matches):
             # NOTE: if there is message delivery failure, the acks

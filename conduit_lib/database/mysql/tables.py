@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import cast, Sequence
 
 import MySQLdb
@@ -31,7 +32,7 @@ class MySQLTables:
 
     def drop_tables(self) -> None:
         try:
-            result = [
+            tables = [
                 "checkpoint_state",
                 "confirmed_transactions",
                 "headers",
@@ -39,9 +40,15 @@ class MySQLTables:
                 "mempool_transactions",
                 "pushdata",
                 "txo_table",
+                "temp_mempool_additions",
+                "temp_mempool_removals",
+                "temp_mined_tx_hashes",
             ]
+            WORKER_COUNT_TX_PARSERS = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
+            for worker_id in range(1, WORKER_COUNT_TX_PARSERS + 1):
+                tables.append(f'inbound_tx_table_{worker_id}')
             queries = []
-            for table_name in result:
+            for table_name in tables:
                 # table = row[0].decode()
                 queries.append(f"DROP TABLE IF EXISTS {table_name}")
             for query in queries:
@@ -297,6 +304,7 @@ class MySQLTables:
             self.commit_transaction()
 
     def create_temp_mined_tx_hashes_table(self) -> None:
+        # TODO(db): Should be able to remove the blk_num field
         try:
             self.conn.query(
                 f"""

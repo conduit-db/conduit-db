@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 import time
 import typing
@@ -11,8 +10,7 @@ from cassandra import ConsistencyLevel
 from cassandra.cluster import Session
 from cassandra.query import BatchStatement
 
-from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, \
-    OutputRow
+from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, OutputRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -32,15 +30,18 @@ class ScyllaDBQueries:
         self.logger = logging.getLogger('scylladb-queries')
 
     def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
-        pairs = [(bytes.fromhex(row.txid), row.block_number) for row in mined_tx_hashes]
-        self.db.cache.bulk_load_in_namespace(namespace=b'temp_mined_tx_hashes', pairs=pairs)
+        # NOTE: the row.block_number value is not actually used because no queries
+        # actually use it!
+        if mined_tx_hashes:
+            values_to_add = [bytes.fromhex(row.txid) for row in mined_tx_hashes]
+            self.db.cache.r.sadd('temp_mined_tx_hashes', *values_to_add)
 
     def load_temp_inbound_tx_hashes(
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
     ) -> None:
-        pairs = [(bytes.fromhex(row[0]), b"") for row in inbound_tx_hashes]
-        self.db.cache.bulk_load_in_namespace(
-            namespace=inbound_tx_table_name.encode(), pairs=pairs)
+        if inbound_tx_hashes:
+            values_to_add = [bytes.fromhex(row[0]) for row in inbound_tx_hashes]
+            self.db.cache.r.sadd(inbound_tx_table_name, *values_to_add)
 
     def get_unprocessed_txs(
         self,
@@ -48,6 +49,7 @@ class ScyllaDBQueries:
         new_tx_hashes: list[tuple[str]],
         inbound_tx_table_name: str,
     ) -> set[bytes]:
+        # TODO: Use the redis SET datatypes for this
         """
         Usually if all mempool txs have been processed, this function will only return
         the coinbase tx. If a reorg has occurred it will use the temp_orphaned_txs to avoid
@@ -56,7 +58,7 @@ class ScyllaDBQueries:
         """
         try:
             self.db.load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
-            result_set = self.session.execute(f"SELECT inbound_tx_hashes FROM {inbound_tx_table_name}")
+            result_set = self.session.execute(f"SELECT inbound_tx_hash FROM {inbound_tx_table_name}")
             inbound_tx_hashes = [row.inbound_tx_hash for row in result_set]
             prepared_statement = self.session.prepare(
                 "SELECT mp_tx_hash FROM mempool_transactions WHERE mp_tx_hash = ?"
@@ -79,57 +81,47 @@ class ScyllaDBQueries:
             self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
     def get_temp_mined_tx_hashes(self) -> list[bytes]:
-        mined_tx_hashes_result_set = self.session.execute(
-            "SELECT mined_tx_hash FROM temp_mined_tx_hashes")
+        mined_tx_hashes_result_set = self.session.execute("SELECT mined_tx_hash FROM temp_mined_tx_hashes")
         mined_tx_hashes = [row.mined_tx_hash for row in mined_tx_hashes_result_set]
-        self.logger.debug("get_temp_mined_tx_hashes: %s",
-            [hash_to_hex_str(x[0]) for x in mined_tx_hashes])
+        self.logger.debug("get_temp_mined_tx_hashes: %s", [hash_to_hex_str(x[0]) for x in mined_tx_hashes])
         return mined_tx_hashes
 
     def invalidate_mempool_rows(self) -> None:
         self.logger.debug(f"Deleting mined mempool txs")
         mined_tx_hashes = self.get_temp_mined_tx_hashes()
-        delete_statement = self.session.prepare("DELETE FROM mempool_transactions WHERE mp_tx_hash = ?")
-        delete_args = [(tx_hash,) for tx_hash in mined_tx_hashes]
-        self.db.execute_with_concurrency(delete_statement, delete_args)
+        pairs = [(tx_hash, b"") for tx_hash in mined_tx_hashes]
+        self.db.cache.bulk_delete_in_namespace(namespace=b"mempool", pairs=pairs)
 
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
-        pairs = [(x, b"") for x in removals_from_mempool]
-        self.db.cache.bulk_load_in_namespace(namespace=b"temp_mempool_removals", pairs=pairs)
+        if removals_from_mempool:
+            self.db.cache.r.sadd("temp_mempool_removals", *removals_from_mempool)
 
     def load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
-        pairs = [(x, b"") for x in additions_to_mempool]
-        self.db.cache.bulk_load_in_namespace(namespace=b"temp_mempool_additions", pairs=pairs)
+        if additions_to_mempool:
+            self.db.cache.r.sadd("temp_mempool_additions", *additions_to_mempool)
 
     def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        pairs = [(x, b"") for x in orphaned_tx_hashes]
-        self.db.cache.bulk_load_in_namespace(namespace=b"temp_orphaned_tx_hashes", pairs=pairs)
+        if orphaned_tx_hashes:
+            self.db.cache.r.sadd("temp_orphaned_txs", *orphaned_tx_hashes)
 
     def remove_from_mempool(self) -> None:
         self.logger.debug("Removing reorg differential from mempool")
-        tx_hashes_to_remove = self.session.execute(
-            "SELECT tx_hash FROM temp_mempool_removals"
-        )
+        tx_hashes_to_remove = self.session.execute("SELECT tx_hash FROM temp_mempool_removals")
         batch = BatchStatement()
         for tx_hash_row in tx_hashes_to_remove:
-            batch.add(
-                "DELETE FROM mempool_transactions WHERE mp_tx_hash = %s",
-                (tx_hash_row.tx_hash,)
-            )
+            batch.add("DELETE FROM mempool_transactions WHERE mp_tx_hash = %s", (tx_hash_row.tx_hash,))
         self.session.execute(batch)
         self.db.tables.drop_temp_mempool_removals()
 
     def add_to_mempool(self) -> None:
         self.logger.debug("Adding reorg differential to mempool")
-        additions = self.session.execute(
-            "SELECT tx_hash, tx_timestamp FROM temp_mempool_additions"
-        )
+        additions = self.session.execute("SELECT tx_hash, tx_timestamp FROM temp_mempool_additions")
         batch = BatchStatement()
         for addition in additions:
             batch.add(
                 "INSERT INTO mempool_transactions (mp_tx_hash, mp_tx_timestamp) VALUES (%s, %s)",
-                (addition.tx_hash, addition.tx_timestamp)
+                (addition.tx_hash, addition.tx_timestamp),
             )
         self.session.execute(batch)
         self.db.tables.drop_temp_mempool_additions()
@@ -144,7 +136,7 @@ class ScyllaDBQueries:
                 best_flushed_block_hash = %s
             WHERE id = %s
             """,
-            (checkpoint_tip.height, block_hash_bytes, 0)
+            (checkpoint_tip.height, block_hash_bytes, 0),
         )
 
     def get_checkpoint_state(self) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
@@ -204,8 +196,7 @@ class ScyllaDBQueries:
                 batch.clear()
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk delete of transactions = {t1} seconds for {len(tx_hash_hexes)}"
+            PROFILING, f"elapsed time for bulk delete of transactions = {t1} seconds for {len(tx_hash_hexes)}"
         )
 
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
@@ -216,14 +207,15 @@ class ScyllaDBQueries:
             tx_hash_bytes = bytes.fromhex(tx_hash)
             batch.add(
                 "DELETE FROM pushdata WHERE pushdata_hash = %s AND tx_hash = %s AND idx = %s AND ref_type = %s",
-                (pushdata_bytes, tx_hash_bytes, idx, ref_type))
+                (pushdata_bytes, tx_hash_bytes, idx, ref_type),
+            )
             if (i + 1) % BATCH_SIZE == 0 or i == len(pushdata_rows) - 1:
                 self.session.execute(batch)
                 batch.clear()
         t1 = time.time() - t0
         self.logger.log(
             PROFILING,
-            f"elapsed time for bulk delete of pushdata rows = {t1} seconds for {len(pushdata_rows)}"
+            f"elapsed time for bulk delete of pushdata rows = {t1} seconds for {len(pushdata_rows)}",
         )
 
     def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
@@ -231,15 +223,15 @@ class ScyllaDBQueries:
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
         for i, (out_tx_hash, out_idx, out_value) in enumerate(output_rows):
             out_tx_hash_bytes = bytes.fromhex(out_tx_hash)
-            batch.add("DELETE FROM txo_table WHERE out_tx_hash = %s AND out_idx = %s",
-                (out_tx_hash_bytes, out_idx))
+            batch.add(
+                "DELETE FROM txo_table WHERE out_tx_hash = %s AND out_idx = %s", (out_tx_hash_bytes, out_idx)
+            )
             if (i + 1) % BATCH_SIZE == 0 or i == len(output_rows) - 1:
                 self.session.execute(batch)
                 batch.clear()
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk delete of output rows = {t1} seconds for {len(output_rows)}"
+            PROFILING, f"elapsed time for bulk delete of output rows = {t1} seconds for {len(output_rows)}"
         )
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:
@@ -250,14 +242,14 @@ class ScyllaDBQueries:
             in_tx_hash_bytes = bytes.fromhex(in_tx_hash)
             batch.add(
                 "DELETE FROM inputs_table WHERE out_tx_hash = %s AND out_idx = %s AND in_tx_hash = %s AND in_idx = %s",
-                (out_tx_hash_bytes, out_idx, in_tx_hash_bytes, in_idx))
+                (out_tx_hash_bytes, out_idx, in_tx_hash_bytes, in_idx),
+            )
             if (i + 1) % BATCH_SIZE == 0 or i == len(input_rows) - 1:
                 self.session.execute(batch)
                 batch.clear()
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk delete of input rows = {t1} seconds for {len(input_rows)}"
+            PROFILING, f"elapsed time for bulk delete of input rows = {t1} seconds for {len(input_rows)}"
         )
 
     def delete_header_row(self, block_hash: bytes) -> None:
@@ -275,12 +267,12 @@ class ScyllaDBQueries:
         self.session.execute(batch)
 
     def update_allocated_state(
-            self,
-            reorg_was_allocated: bool,
-            first_allocated: bitcoinx.Header,
-            last_allocated: bitcoinx.Header,
-            old_hashes: ChainHashes | None,
-            new_hashes: ChainHashes | None,
+        self,
+        reorg_was_allocated: bool,
+        first_allocated: bitcoinx.Header,
+        last_allocated: bitcoinx.Header,
+        old_hashes: ChainHashes | None,
+        new_hashes: ChainHashes | None,
     ) -> None:
         # Convert hashes to bytearray if they exist
         old_hashes_array = bytearray().join(old_hashes) if old_hashes else None

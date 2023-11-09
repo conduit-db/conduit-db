@@ -56,13 +56,16 @@ class DBInterface(abc.ABC):
         self.conn: Connection | None = None  # MySQLDB
 
     @classmethod
-    def load_db(cls, worker_id: int | None = None, db_type: DatabaseType=DatabaseType.MySQL) \
-            -> "DBInterface":
+    def load_db(
+        cls, worker_id: int | None = None, db_type: DatabaseType = DatabaseType.MySQL
+    ) -> "DBInterface":
         if db_type == DatabaseType.MySQL:
             from conduit_lib.database.mysql.db import load_mysql_database
+
             return load_mysql_database(worker_id)
         elif db_type == DatabaseType.ScyllaDB:
             from conduit_lib.database.scylladb.db import load_scylla_database
+
             return load_scylla_database(worker_id)
         raise ValueError(f"Unsupported db_type: {db_type}")
 
@@ -271,12 +274,21 @@ class DBInterface(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) \
-            -> list[OutputSpendRow]:
+    def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         ...
+
     @abc.abstractmethod
     def create_temp_mempool_removals_table(self) -> None:
         ...
+
     @abc.abstractmethod
     def create_temp_mempool_additions_table(self) -> None:
+        ...
+
+    @abc.abstractmethod
+    def drop_temp_mempool_removals(self) -> None:
+        ...
+
+    @abc.abstractmethod
+    def drop_temp_mempool_additions(self) -> None:
         ...

@@ -130,7 +130,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_indexer_filtering_registrations_for_notifications(
-            self, pushdata_hashes: list[bytes], account_id: int | None = None
+        self, pushdata_hashes: list[bytes], account_id: int | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -181,7 +181,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int|None=None
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
     ) -> list[OutboundDataRow]:
         ...
 

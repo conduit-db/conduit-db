@@ -329,8 +329,7 @@ def index_exists(conn: MySQLdb.Connection, index_name: str, table_name: str) -> 
 
 
 class Timer:
-
-    def __init__(self, count: int | None = None, name: str|None=None):
+    def __init__(self, count: int | None = None, name: str | None = None):
         self.count = count
         self.name = name
 
@@ -343,5 +342,6 @@ class Timer:
         self.interval = self.end - self.start
         logger.debug(f"Timer{'['+ self.name+ ']'}: interval of {self.interval:.4f} seconds")
         if self.count:
-            logger.debug(f"Timer{'['+ self.name+ ']'}: throughput rate: "
-                         f"{int(self.count/self.interval)} per second")
+            logger.debug(
+                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{int(self.count/self.interval)} per second"
+            )

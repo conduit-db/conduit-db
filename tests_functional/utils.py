@@ -3,7 +3,7 @@ import logging
 import requests
 import tests_functional._pre_reorg_data as pre_reorg_test_data
 import tests_functional._post_reorg_data as post_reorg_test_data
-from conduit_lib.algorithms import PushdataMatchFlags
+from conduit_lib.types import PushdataMatchFlags
 
 BASE_URL = f"http://127.0.0.1:34525"
 GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"

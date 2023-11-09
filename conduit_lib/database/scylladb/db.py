@@ -38,8 +38,7 @@ T1 = TypeVar("T1")
 
 
 class ScyllaDB(DBInterface):
-    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache,
-            worker_id: int) -> None:
+    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int) -> None:
         self.cluster: Cluster = cluster
         self.session: Session = session
         self.db_type = DatabaseType.ScyllaDB
@@ -54,7 +53,7 @@ class ScyllaDB(DBInterface):
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
 
-        self.executor = ThreadPoolExecutor(max_workers=10)
+        self.executor = ThreadPoolExecutor(max_workers=20)
 
         self.logger = logging.getLogger("scylla-database")
         self.logger.setLevel(logging.INFO)
@@ -81,11 +80,15 @@ class ScyllaDB(DBInterface):
     def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[...]]):
         self.bulk_loads.load_data_batched(insert_statement, rows)
 
-    def execute_with_concurrency(self, prepared_statement: PreparedStatement,
-            rows: Sequence[tuple[Any, ...]], concurrency: int=50) -> list:
+    def execute_with_concurrency(
+        self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 50
+    ) -> list:
         try:
             return execute_concurrent_with_args(
-                self.session, prepared_statement, rows, concurrency=concurrency,
+                self.session,
+                prepared_statement,
+                rows,
+                concurrency=concurrency,
                 raise_on_first_error=True,
             )
         except (WriteTimeout, WriteFailure) as e:
@@ -250,6 +253,12 @@ class ScyllaDB(DBInterface):
     def create_temp_orphaned_txs_table(self) -> None:
         # This is not needed in the ScyllaDB implementation. Redis is used for this.
         pass
+
+    def drop_temp_mempool_removals(self) -> None:
+        self.tables.drop_temp_mempool_removals()
+
+    def drop_temp_mempool_additions(self) -> None:
+        self.tables.drop_temp_mempool_additions()
 
 
 def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:

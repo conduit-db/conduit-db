@@ -413,7 +413,7 @@ class MySQLQueries:
         old_hashes: ChainHashes | None,
         new_hashes: ChainHashes | None,
     ) -> None:
-        # old_hashes and new_hashes are null unless there there was a reorg in which case we
+        # old_hashes and new_hashes are null unless there was a reorg in which case we
         # need to be precise about how we do the db repair / rollback (if ever needed)
         if old_hashes is not None:
             old_hashes_array = bytearray()

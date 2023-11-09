@@ -241,6 +241,12 @@ class MySQLDatabase(DBInterface):
     def create_temp_orphaned_txs_table(self) -> None:
         self.tables.create_temp_orphaned_txs_table()
 
+    def drop_temp_mempool_removals(self) -> None:
+        self.tables.drop_temp_mempool_removals()
+
+    def drop_temp_mempool_additions(self) -> None:
+        self.tables.drop_temp_mempool_additions()
+
 
 def get_connection() -> Connection:
     host = os.environ.get("MYSQL_HOST", "127.0.0.1")

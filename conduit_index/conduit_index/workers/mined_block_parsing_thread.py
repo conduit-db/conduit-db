@@ -373,7 +373,7 @@ class MinedBlockParsingThread(threading.Thread):
         """
         # Merge into big data structures for batch-wise processing
         merged_offsets_map: TxHashToOffsetMap = {}  # tx_hash: byte offset in block
-        merged_tx_to_work_item_id_map: TxHashToWorkIdMap = {}  # tx_hash: block_num
+        merged_tx_to_work_item_id_map: TxHashToWorkIdMap = {}  # tx_hash: work_item_id
         merged_part_tx_hash_rows: TxHashRows = []
         batched_raw_block_slices: BatchedRawBlockSlices = []
         acks: dict[WorkItemId, ProcessedBlockAcks] = {}
@@ -458,6 +458,7 @@ class MinedBlockParsingThread(threading.Thread):
     ) -> None:
         assert self.confirmed_tx_flush_queue is not None
 
+        # TODO(black): unpack inside the loop
         for (
             raw_block_slice,
             work_item,
@@ -471,6 +472,8 @@ class MinedBlockParsingThread(threading.Thread):
             in_rows_parsed: list[InputRowParsed]
             out_rows: list[OutputRow]
             pd_rows_parsed: list[PushdataRowParsed]
+            # TODO(black): don't initialize multiple things on a single line because Black formatter
+            #  does this to it...
             (
                 tx_rows,
                 tx_rows_mempool,

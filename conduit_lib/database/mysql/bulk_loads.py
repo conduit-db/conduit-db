@@ -197,6 +197,8 @@ class MySQLBulkLoads:
     ) -> None:
         t0 = time.time()
         try:
+            if tx_rows:
+                assert isinstance(tx_rows[0].tx_hash, str)
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
             column_names = ["tx_hash", "tx_block_num", "tx_position"]
             self._load_data_infile_batched(
@@ -270,6 +272,8 @@ class MySQLBulkLoads:
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
         """block_num, block_hash, block_height, block_header"""
+        if block_header_rows:
+            assert isinstance(block_header_rows[0].is_orphaned, int)
         string_rows = ["%s,%s,%s,%s,%s,%s,%s\n" % (row) for row in block_header_rows]
         column_names = [
             "block_num",

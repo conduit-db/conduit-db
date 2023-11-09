@@ -73,8 +73,7 @@ class ScyllaDBTables:
                 "SELECT index_name FROM system_schema.indexes WHERE keyspace_name = 'your_keyspace_name';"
             )
 
-            indexes_to_drop = [row.index_name for row in index_query_result if
-                row.index_name is not None]
+            indexes_to_drop = [row.index_name for row in index_query_result if row.index_name is not None]
 
             for index_name in indexes_to_drop:
                 self.execute_query(f"DROP INDEX IF EXISTS {index_name};")
@@ -91,23 +90,25 @@ class ScyllaDBTables:
             raise FailedScyllaOperation from e
 
     def drop_temp_mined_tx_hashes(self) -> None:
-        self.db.cache.bulk_delete_in_namespace(b"temp_mined_tx_hashes")
+        self.db.cache.r.delete(b'temp_mined_tx_hashes')
 
     def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
-        self.db.cache.bulk_delete_in_namespace(b"temp_inbound_tx_hashes" + f"_{inbound_tx_table_name}".encode())
+        self.db.cache.r.delete(inbound_tx_table_name)
 
     def drop_temp_mempool_removals(self) -> None:
-        self.db.cache.bulk_delete_in_namespace(b"temp_mempool_removals")
+        self.db.cache.r.delete(b"temp_mempool_removals")
 
     def drop_temp_mempool_additions(self) -> None:
-        self.db.cache.bulk_delete_in_namespace(b"temp_mempool_additions")
+        self.db.cache.bulk_delete_all_in_namespace(b"temp_mempool_additions")
 
     def drop_temp_orphaned_txs(self) -> None:
-        self.db.cache.bulk_delete_in_namespace(b"temp_orphaned_txs")
+        self.db.cache.r.delete(b"temp_orphaned_txs")
 
     def create_permanent_tables(self) -> None:
-        self.session.execute(f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
-                             "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }")
+        self.session.execute(
+            f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
+            "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }"
+        )
         self.session.set_keyspace(KEYSPACE)
 
         try:
@@ -163,7 +164,7 @@ class ScyllaDBTables:
                     id int PRIMARY KEY,
                     best_flushed_block_height int,
                     best_flushed_block_hash blob,
-                    reorg_was_allocated smallint,
+                    reorg_was_allocated boolean,
                     first_allocated_block_hash blob,
                     last_allocated_block_hash blob,
                     old_hashes_array blob,
@@ -217,10 +218,9 @@ class ScyllaDBTables:
                         old_hashes_array,
                         new_hashes_array
                     ) VALUES (
-                        0, 0, NULL, 0, NULL, NULL, NULL, NULL
+                        0, 0, NULL, FALSE, NULL, NULL, NULL, NULL
                     )
                     """
                 )
         except Exception:
             self.logger.exception("initialise_checkpoint_state failed unexpectedly")
-

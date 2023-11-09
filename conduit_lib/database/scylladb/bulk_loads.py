@@ -67,16 +67,17 @@ class ScyllaDBBulkLoads:
         raise NotImplementedError()  # Can just always drop these from tx_rows if detected
 
     def bulk_load_confirmed_tx_rows(
-            self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
     ) -> None:
+        if tx_rows:
+            assert isinstance(tx_rows[0].tx_hash, str)
         t0 = time.time()
         if check_duplicates:  # should only be True for blocks: 91812, 91842, 91722, 91880
             self.handle_coinbase_dup_tx_hash(tx_rows)
         insert_statement = self.session.prepare(
             "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) " "VALUES (?, ?, ?)"
         )
-        insert_rows = [
-            (bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position) for row in tx_rows]
+        insert_rows = [(bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position) for row in tx_rows]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
@@ -100,8 +101,7 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO txo_table (out_tx_hash, out_idx, out_value) VALUES (?, ?, ?)"
         )
-        insert_rows = [
-            (bytes.fromhex(row.out_tx_hash), row.out_idx, row.out_value) for row in out_rows]
+        insert_rows = [(bytes.fromhex(row.out_tx_hash), row.out_idx, row.out_value) for row in out_rows]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
@@ -113,8 +113,10 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO inputs_table (out_tx_hash, out_idx, in_tx_hash, in_idx) VALUES (?, ?, ?, ?)"
         )
-        insert_rows = [(bytes.fromhex(row.out_tx_hash), row.out_idx, bytes.fromhex(row.in_tx_hash),
-                row.in_idx) for row in in_rows]
+        insert_rows = [
+            (bytes.fromhex(row.out_tx_hash), row.out_idx, bytes.fromhex(row.in_tx_hash), row.in_idx)
+            for row in in_rows
+        ]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
@@ -124,8 +126,10 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO pushdata (pushdata_hash, tx_hash, idx, ref_type) VALUES (?, ?, ?, ?)"
         )
-        insert_rows = [(bytes.fromhex(row.pushdata_hash), bytes.fromhex(row.tx_hash),
-            row.idx, row.idx) for row in pd_rows]
+        insert_rows = [
+            (bytes.fromhex(row.pushdata_hash), bytes.fromhex(row.tx_hash), row.idx, row.ref_type)
+            for row in pd_rows
+        ]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
@@ -139,9 +143,18 @@ class ScyllaDBBulkLoads:
             "block_tx_count, block_size, is_orphaned) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
-        insert_rows = [(row.block_num, bytes.fromhex(row.block_hash), row.block_height,
-            bytes.fromhex(row.block_header), row.block_tx_count, row.block_size, row.is_orphaned)
-            for row in block_header_rows]
+        insert_rows = [
+            (
+                row.block_num,
+                bytes.fromhex(row.block_hash),
+                row.block_height,
+                bytes.fromhex(row.block_header),
+                row.block_tx_count,
+                row.block_size,
+                row.is_orphaned,
+            )
+            for row in block_header_rows
+        ]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
