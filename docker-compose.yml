@@ -35,6 +35,11 @@ services:
       SCYLLA_USERNAME: conduitdb
       SCYLLA_PASSWORD: conduitpass
 
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
   reference_server:
     container_name: reference_server
     depends_on:

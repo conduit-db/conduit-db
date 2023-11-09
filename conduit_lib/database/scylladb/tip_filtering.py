@@ -1,3 +1,9 @@
+"""
+These database access functions maintain the same API as the MySQL implementation which in turn is a
+direct translation of the SQLite ElectrumSV reference implementation:
+https://github.com/electrumsv/simple-indexer/blob/master/simple_indexer/sqlite_db.py
+"""
+
 import asyncio
 import datetime
 import logging
@@ -5,19 +11,19 @@ import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from operator import attrgetter
 from typing import (
     Any,
-    cast,
     Optional,
     Sequence,
     ParamSpec,
     TypeVar,
     Type,
-    Collection, Iterable,
+    Collection,
+    Iterable,
 )
 from uuid import uuid4
 
-import MySQLdb
 from cassandra import WriteTimeout, ConsistencyLevel
 from cassandra.cluster import Session
 from cassandra.concurrent import execute_concurrent_with_args
@@ -27,22 +33,16 @@ from conduit_lib.constants import HashXLength
 from conduit_lib.database.db_interface.tip_filter_types import (
     AccountMetadata,
     AccountFlag,
-    OutputSpendRow,
     TipFilterRegistrationEntry,
     IndexerPushdataRegistrationFlag,
     OutboundDataFlag,
     OutboundDataRow,
     FilterNotificationRow,
-    DatabaseStateModifiedError,
-    DatabaseInsertConflict,
+    DatabaseInsertConflict, DatabaseStateModifiedError,
 )
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
-from conduit_lib.database.lmdb.lmdb_database import get_full_tx_hash
-from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.database.scylladb.db import ScyllaDB
-from conduit_lib.types import TxLocation, TxMetadata, OutpointType
-from conduit_lib.utils import index_exists
-from conduit_lib import LMDB_Database
+from conduit_lib.types import TxMetadata
 
 logger = logging.getLogger("sqlite-database")
 mined_tx_hashes_table_lock = threading.RLock()
@@ -87,11 +87,11 @@ def split_into_batches(iterable: Iterable[T2], batch_size: int) -> list[list[T2]
 
 
 def read_rows_by_id(
-        scylla_session: Session,
-        return_type: Type[T1],
-        cql: str,
-        params: Sequence[Any],
-        ids: Sequence[T2],
+    scylla_session: Session,
+    return_type: Type[T1],
+    cql: str,
+    params: Sequence[Any],
+    ids: Sequence[T2],
 ) -> list[T1]:
     """
     Concurrently read rows, raising an exception if any operation fails.
@@ -101,8 +101,8 @@ def read_rows_by_id(
     query_parameters = [(tuple(params) + (batch_id,)) for batch_id in ids]
     try:
         for rows in execute_concurrent_with_args(
-                scylla_session, prepared_statement, query_parameters,
-                concurrency=100, raise_on_first_error=True):
+            scylla_session, prepared_statement, query_parameters, concurrency=100, raise_on_first_error=True
+        ):
             results.extend(return_type(*row) for row in rows[1])
     except Exception as e:
         raise e
@@ -111,12 +111,12 @@ def read_rows_by_id(
 
 
 def read_rows_by_ids(
-        scylla_session: Session,
-        return_type: Type[T1],
-        cql: str,
-        cql_condition: str,
-        cql_values: list[Any],
-        ids: Sequence[Collection[T2]],
+    scylla_session: Session,
+    return_type: Type[T1],
+    cql: str,
+    cql_condition: str,
+    cql_values: list[Any],
+    ids: Sequence[Collection[T2]],
 ) -> list[T1]:
     """
     Concurrently read rows in from ScyllaDB, raising an exception if any operation fails.
@@ -126,8 +126,8 @@ def read_rows_by_ids(
     query_parameters = [cql_values + list(batch_id) for batch_id in ids]
     try:
         for rows in execute_concurrent_with_args(
-                scylla_session, prepared_statement, query_parameters,
-                concurrency=100, raise_on_first_error=True):
+            scylla_session, prepared_statement, query_parameters, concurrency=100, raise_on_first_error=True
+        ):
             results.extend(return_type(*row) for row in rows[1])
     except Exception as e:
         raise e
@@ -136,10 +136,11 @@ def read_rows_by_ids(
 
 
 class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
-    def __init__(self, session: Session) -> None:
+    def __init__(self, db: ScyllaDB) -> None:
         self.logger = logging.getLogger("scylladb-queries")
         self.logger.setLevel(logging.DEBUG)
-        self.session = session
+        self.db = db
+        self.session = db.session
 
     def setup(self) -> None:
         if int(os.getenv("RESET_EXTERNAL_API_DATABASE_TABLES", "0")):
@@ -152,7 +153,6 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             CREATE TABLE IF NOT EXISTS accounts (
                 account_id                  UUID PRIMARY KEY,
                 external_account_id         INT,
-                account_flags               INT
             ) WITH CLUSTERING ORDER BY (external_account_id DESC);
             """
         )
@@ -168,15 +168,17 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             CREATE TABLE IF NOT EXISTS tip_filter_registrations (
                 account_id              UUID,
                 pushdata_hash           BLOB,
-                flags                   INT,
+                finalised_flag          BOOLEAN,
+                deleting_flag           BOOLEAN,
                 date_expires            TIMESTAMP,
                 date_created            TIMESTAMP,
                 PRIMARY KEY (account_id, pushdata_hash)
             ) WITH CLUSTERING ORDER BY (pushdata_hash ASC);
             """
         )
-        # Composite primary key consists of the partition key and clustering key(s).
-        # In this case, account_id is the partition key, and pushdata_hash is the clustering key.
+        self.session.execute("CREATE INDEX date_expires_idx ON tip_filter_registrations (date_expires);")
+        # Deletes tip filter notifications after 30 days
+        self.session.execute("ALTER TABLE tip_filter_registrations WITH default_time_to_live = 2592000;")
 
     def drop_tip_filter_registrations_table(self) -> None:
         self.session.execute("DROP TABLE IF EXISTS tip_filter_registrations")
@@ -185,11 +187,12 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         self.session.execute(
             """
             CREATE TABLE IF NOT EXISTS outbound_data (
-                outbound_data_id        UUID PRIMARY KEY,
-                outbound_data           BLOB,
-                outbound_data_flags     INT,
-                date_created            TIMESTAMP,
-                date_last_tried         TIMESTAMP
+                outbound_data_id                    UUID PRIMARY KEY,
+                outbound_data                       BLOB,
+                tip_filter_notification_flag        BOOLEAN,
+                dispatched_successfully_flag        BOOLEAN,
+                date_created                        TIMESTAMP,
+                date_last_tried                     TIMESTAMP
             );
             """
         )
@@ -202,9 +205,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         """
         Create a new account or return the account_id of an existing one.
         """
-        prepared_select = self.session.prepare(
-            "SELECT account_id FROM accounts WHERE external_account_id=?"
-        )
+        prepared_select = self.session.prepare("SELECT account_id FROM accounts WHERE external_account_id=?")
         rows = self.session.execute(prepared_select, [external_account_id])
         row = rows.one()
         if row:
@@ -213,7 +214,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         # If the account doesn't exist, create a new account with a new UUID
         new_account_id = uuid4()
         prepared_insert = self.session.prepare(
-            "INSERT INTO accounts (account_id, external_account_id, account_flags) VALUES (?, ?, ?)"
+            "INSERT INTO accounts (account_id, external_account_id) VALUES (?, ?)"
         )
         self.session.execute(prepared_insert, [new_account_id, external_account_id, int(AccountFlag.NONE)])
 
@@ -225,7 +226,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         Read account metadata for a list of account_ids.
         """
         cql = """
-            SELECT account_id, external_account_id, account_flags FROM accounts WHERE account_id = ?
+            SELECT account_id, external_account_id FROM accounts WHERE account_id = ?
         """
         return read_rows_by_id(self.session, AccountMetadata, cql, [], account_ids)
 
@@ -233,9 +234,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         """
         Fetches the account_id for a given external_account_id from the accounts table.
         """
-        prepared_select = self.session.prepare(
-            "SELECT account_id FROM accounts WHERE external_account_id=?"
-        )
+        prepared_select = self.session.prepare("SELECT account_id FROM accounts WHERE external_account_id=?")
         rows = self.session.execute(prepared_select, [external_account_id])
         row = rows.one()
         if row is not None:
@@ -253,22 +252,28 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         Creates tip filter registrations for a given account and registration entries.
         """
         account_id = self.create_account_write(external_account_id)
-        prepared_insert = self.session.prepare("""
-            INSERT INTO tip_filter_registrations (account_id, pushdata_hash, flags, date_created, date_expires)
+        prepared_insert = self.session.prepare(
+            """
+            INSERT INTO tip_filter_registrations (account_id, pushdata_hash, finalised_flag, date_created, date_expires)
             VALUES (?, ?, ?, ?, ?)
-        """)
+        """
+        )
 
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
         for entry in registration_entries:
             import datetime
+
             date_expires = date_created + datetime.timedelta(seconds=entry.duration_seconds)
-            batch.add(prepared_insert, (
-                account_id,
-                entry.pushdata_hash,
-                int(IndexerPushdataRegistrationFlag.FINALISED),
-                date_created,
-                date_expires,
-            ))
+            batch.add(
+                prepared_insert,
+                (
+                    account_id,
+                    entry.pushdata_hash,
+                    1,
+                    date_created,
+                    date_expires,
+                ),
+            )
 
         try:
             self.session.execute(batch)
@@ -278,22 +283,28 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             return False
 
     def read_tip_filter_registrations(
-            self,
-            account_id: Optional[uuid.UUID] = None,
-            date_expires: Optional[datetime.datetime] = None,
-            expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-            mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+        self,
+        account_id: Optional[uuid.UUID] = None,
+        date_expires: Optional[datetime.datetime] = None,
+        expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+        mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
     ) -> list[TipFilterRegistrationEntry]:
         """
         Load the non-expired tip filter registrations from the database to populate the tip filter.
         """
-        # Construct CQL query dynamically based on provided arguments
-        cql = "SELECT pushdata_hash, date_expires FROM tip_filter_registrations WHERE flags&?=?"
-        cql_values: list[Any] = [mask.value, expected_flags.value]
+        assert account_id is not None, "Needed for ScyllaDB implementation"
+        cql = "SELECT pushdata_hash, date_expires FROM tip_filter_registrations " \
+              "WHERE account_id=?"
 
-        if account_id is not None:
-            cql += " AND account_id=?"
-            cql_values.append(account_id)
+        # WARNING: These are hard-coded in the ScyllaDB implementation
+        assert expected_flags == IndexerPushdataRegistrationFlag.FINALISED
+        assert mask == IndexerPushdataRegistrationFlag.DELETING | \
+               IndexerPushdataRegistrationFlag.FINALISED
+        finalised_flag = 1
+        deleting_flag = 0
+
+        cql_values: list[Any] = [finalised_flag, deleting_flag]
+
         if date_expires is not None:
             cql += " AND date_expires<?"
             cql_values.append(date_expires)
@@ -306,132 +317,154 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         return [TipFilterRegistrationEntry(row.pushdata_hash, row.date_expires) for row in rows]
 
     def read_indexer_filtering_registrations_for_notifications(
-            self, pushdata_hashes: list[bytes]
+        self, pushdata_hashes: list[bytes], account_id: int|None=None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
         present (correctly or falsely) in the common cuckoo filter.
         """
-        # Note: ScyllaDB does not support the IN clause with prepared statements for non-primary key columns.
-        # If pushdata_hash is not a primary key, you may need to execute multiple queries or restructure the schema.
-
+        assert account_id is not None, "the account_id is needed for the ScyllaDB implementation"
         results = []
         prepared_select = self.session.prepare(
-            "SELECT account_id, pushdata_hash FROM tip_filter_registrations "
-            "WHERE flags&?=? AND pushdata_hash=?"
+            "SELECT account_id, pushdata_hash, finalised_flag, deleting_flag "
+            "FROM tip_filter_registrations "
+            "WHERE account_id=? AND pushdata_hash=?"
         )
-        flags_value = IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING
-
         # Fetch rows individually per pushdata_hash
+        batch = BatchStatement(consistency_level=ConsistencyLevel.LOCAL_ONE)
         for pushdata_hash in pushdata_hashes:
-            bound_statement = prepared_select.bind(
-                [flags_value.value, IndexerPushdataRegistrationFlag.FINALISED.value, pushdata_hash])
-            rows = self.session.execute(bound_statement)
-            results.extend(FilterNotificationRow(row.account_id, row.pushdata_hash) for row in rows)
-
+            bound_statement1 = prepared_select.bind([account_id, pushdata_hash])
+            batch.add(bound_statement1)
+        for rows in self.session.execute(batch):
+            results.extend(FilterNotificationRow(row.account_id, row.pushdata_hash) for row in rows
+                if (row.finalised_flag == 1 and row.deleting_flag == 0))
         return results
 
-    def update_tip_filter_registrations_flags_write(self, ...):
-        # Similar logic to build the UPDATE CQL statement based on provided flags
-        # CQL doesn't support bitwise operations in UPDATE statements directly
-        # You would need to retrieve the current flags first, perform the bitwise operation in Python, then update
+    def update_tip_filter_registrations_flags_write(
+        self,
+        external_account_id: int,
+        pushdata_hashes: list[bytes],
+        update_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+        update_mask: Optional[IndexerPushdataRegistrationFlag] = None,
+        filter_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+        filter_mask: Optional[IndexerPushdataRegistrationFlag] = None,
+        require_all: bool = False,
+    ) -> None:
+        # WARNING: ScyllaDB does not allow bitwise operators and it is too complicated to maintain
+        # the same API to this function call whilst implementing the same behaviour. So instead,
+        # I notice that this function is only called once with one set of flags
+        # - update_flags=IndexerPushdataRegistrationFlag.DELETING
+        # - update_mask=None
+        # - filter_flags=IndexerPushdataRegistrationFlag.FINALISED
+        # - filter_mask=IndexerPushdataRegistrationFlag.FINALISED |
+        #               IndexerPushdataRegistrationFlag.DELETING
+        #
+        # I will therefore implement the equivalent behaviour for ONLY this set of flags.
+        # if any other combination of flags is used, an exception will be raised to be sure that
+        # this workaround does not create unexpected bugs in future.
+        #
+        assert update_flags==IndexerPushdataRegistrationFlag.DELETING
+        assert update_mask==None
+        assert filter_flags==IndexerPushdataRegistrationFlag.FINALISED
+        assert filter_mask==IndexerPushdataRegistrationFlag.FINALISED | \
+               IndexerPushdataRegistrationFlag.DELETING
 
-        # Pseudocode for the logic since CQL does not support bitwise operations in UPDATE statements
-        select_cql = "SELECT flags FROM tip_filter_registrations WHERE account_id=? AND pushdata_hash=?"
-        update_cql = "UPDATE tip_filter_registrations SET flags=? WHERE account_id=? AND pushdata_hash=?"
+        account_id = self.create_account_write(external_account_id)
+        def _read_and_update(session: Session, pushdata_value: bytes, account_id: int) -> None:
+            update_cql = "UPDATE tip_filter_registrations SET deleting_flag=1 " \
+                         "WHERE account_id=? AND pushdata_hash=? " \
+                         "IF finalised_flag=1 AND deleting_flag=0"
+            # For the ScyllaDB implementation we do not use the update_mask or filter_mask
+            result = session.execute(update_cql, (account_id, pushdata_value))
+            was_applied = result.one().applied
+            if not was_applied:
+                raise DatabaseStateModifiedError
 
-        # Begin a batch statement
-        batch = BatchStatement()
-
+        futures = []
         for pushdata_value in pushdata_hashes:
-            current_flags = session.execute(select_cql, (account_id, pushdata_value)).one()['flags']
-            new_flags = (current_flags & int(final_update_mask)) | int(update_flags)
+            future = self.db.executor.submit(_read_and_update, self.session, pushdata_value,
+                account_id)
+            futures.append(future)
 
-            # Apply filter conditions here as per your logic
+        for future in futures:
+            try:
+                future.result()  # This will block until the individual query is done
+            except DatabaseStateModifiedError:
+                self.logger.exception("Database is in an unexpected state")
 
-            batch.add(update_cql, (new_flags, account_id, pushdata_value))
+    def expire_tip_filter_registrations(self, date_expires: int) -> list[bytes]:
+        raise NotImplementedError("ScyllaDB can use a TTL setting instead")
 
-        session.execute(batch)
-
-    def expire_tip_filter_registrations(self, date_expires):
-        # ScyllaDB also doesn't support SELECT and DELETE in the same operation. You need to perform them separately.
-        select_cql = """
-        SELECT pushdata_hash FROM tip_filter_registrations 
-        WHERE flags=? AND date_expires<?
-        """
+    def delete_tip_filter_registrations_write(
+        self,
+        external_account_id: int,
+        pushdata_hashes: list[bytes],
+        expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+        mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
+    ) -> None:
+        # WARNING: finalised_flag is hard-coded to 1 for the ScyllaDB implementation.
+        # If this function is called with different flags, it will need updating.
+        assert expected_flags == IndexerPushdataRegistrationFlag.FINALISED
+        assert mask == IndexerPushdataRegistrationFlag.FINALISED
         delete_cql = """
         DELETE FROM tip_filter_registrations 
-        WHERE flags=? AND date_expires<?
+        WHERE account_id=? AND pushdata_hash=? IF finalised_flag=1
         """
-
-        expired_rows = session.execute(select_cql, (expected_flags, date_expires))
-        pushdata_hashes = [row['pushdata_hash'] for row in expired_rows]
-
-        # Now, delete the expired rows
-        session.execute(delete_cql, (expected_flags, date_expires))
-
-        return pushdata_hashes
-
-    def delete_tip_filter_registrations_write(self, ...):
-        # Build and execute a DELETE CQL statement for each pushdata_hash
-        delete_cql = """
-        DELETE FROM tip_filter_registrations 
-        WHERE account_id=? AND pushdata_hash=? AND flags=?
-        """
-
         batch = BatchStatement()
         for pushdata_value in pushdata_hashes:
-            batch.add(delete_cql, (account_id, pushdata_value, int(mask) & int(expected_flags)))
+            batch.add(delete_cql, (external_account_id, pushdata_value))
 
-        session.execute(batch)
+        self.session.execute(batch)
 
-    def create_outbound_data_write(self, creation_row):
+    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
         # ScyllaDB uses INSERT INTO ... IF NOT EXISTS to prevent overwriting existing rows
         insert_cql = """
-        INSERT INTO outbound_data (outbound_data_id, outbound_data, outbound_data_flags, 
-        date_created, date_last_tried) VALUES (?, ?, ?, ?, ?) IF NOT EXISTS
+        INSERT INTO outbound_data (outbound_data_id, outbound_data, 
+        tip_filter_notification_flag, dispatched_successfully_flag, 
+        date_created, date_last_tried) VALUES (?, ?, ?, ?, ?, ?) IF NOT EXISTS
         """
+        tip_filter_notification_flag = 0
+        if creation_row.outbound_data_flags & OutboundDataFlag.TIP_FILTER_NOTIFICATIONS:
+            tip_filter_notification_flag = 1
+        dispatched_successfully_flag = 0
+        if creation_row.outbound_data_flags & OutboundDataFlag.DISPATCHED_SUCCESSFULLY:
+            dispatched_successfully_flag = 1
 
-        result = self.session.execute(insert_cql, creation_row)
-
-        # Check applied status to see if the insert was successful
+        params = (creation_row.outbound_data_id, creation_row.outbound_data,
+            tip_filter_notification_flag, dispatched_successfully_flag, creation_row.date_created,
+            creation_row.date_last_tried
+        )
+        result = self.session.execute(insert_cql, params)
         if not result[0].applied:
             raise DatabaseInsertConflict()
 
         return result[0].outbound_data_id
 
     def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int|None=None
     ) -> list[OutboundDataRow]:
-        # ScyllaDB doesn't support bitwise operations in WHERE clauses, so you would have to fetch the rows
-        # and perform the bitwise operation in your application code.
-
         select_cql = """
-        SELECT outbound_data_id, outbound_data, outbound_data_flags, date_created, 
-        date_last_tried FROM outbound_data
+        SELECT outbound_data_id, outbound_data, dispatched_successfully_flag, date_created, 
+        date_last_tried FROM outbound_data 
+        WHERE account_id=?
         """
+        # Filter by dispatched_successfully_flag and sort by date_last_tried
+        rows = self.session.execute(select_cql, (account_id,))
+        filtered_rows = filter(lambda row: row.dispatched_successfully_flag == 0, rows)
+        sorted_rows = sorted(filtered_rows, key=attrgetter('date_last_tried'))
+        return [OutboundDataRow(*row) for row in sorted_rows]
 
-        rows = self.session.execute(select_cql)
-        filtered_rows = [
-            row for row in rows
-            if int(row.outbound_data_flags) & mask == flags
-        ]
+    def update_outbound_data_last_tried_write(self, entries: list[tuple[OutboundDataFlag, int, int]]) -> None:
+        """This implementation is hard-coded to only set the dispatched_successfully_flag=1
+        because bitwise operators are not possible with CQL"""
 
-        # Sort the filtered rows by date_last_tried in ascending order in application code
-        filtered_rows.sort(key=lambda x: x.date_last_tried)
-
-        return [OutboundDataRow(*row) for row in filtered_rows]
-
-    def update_outbound_data_last_tried_write(self,
-            entries: list[tuple[OutboundDataFlag, int, int]]) -> None:
         update_cql = """
-        UPDATE outbound_data SET outbound_data_flags=?, date_last_tried=? 
+        UPDATE outbound_data SET dispatched_successfully_flag=1, date_last_tried=? 
         WHERE outbound_data_id=?
         """
-
         batch = BatchStatement()
         for entry in entries:
-            batch.add(update_cql, entry)
+            batch.add(update_cql, (entry[1], entry[2]))
 
         result = self.session.execute(batch)
         assert len(result) == len(entries)

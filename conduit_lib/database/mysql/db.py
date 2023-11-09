@@ -13,7 +13,7 @@ from .api_queries import MySQLAPIQueries
 from .bulk_loads import MySQLBulkLoads
 from .queries import MySQLQueries
 from .tables import MySQLTables
-from ..db_interface.db import DBInterface
+from ..db_interface.db import DBInterface, DatabaseType
 from ..db_interface.tip_filter_types import OutputSpendRow
 from ..db_interface.types import (
     MinedTxHashes,
@@ -34,6 +34,7 @@ class MySQLDatabase(DBInterface):
     def __init__(self, conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
         self.conn = conn  # passed into constructor for easier unit-testing
         self.worker_id = worker_id
+        self.db_type = DatabaseType.MySQL
         self.tables = MySQLTables(self.conn)
         self.bulk_loads = MySQLBulkLoads(self.conn, self)
         self.queries = MySQLQueries(self.conn, self.tables, self.bulk_loads, self)
@@ -87,6 +88,9 @@ class MySQLDatabase(DBInterface):
     def drop_tables(self) -> None:
         self.tables.drop_tables()
 
+    def create_permanent_tables(self) -> None:
+        self.tables.create_permanent_tables()
+
     def drop_temp_mined_tx_hashes(self) -> None:
         self.tables.drop_temp_mined_tx_hashes()
 
@@ -123,7 +127,9 @@ class MySQLDatabase(DBInterface):
         self.queries.update_checkpoint_tip(checkpoint_tip)
 
     # BULK LOADS
-    def bulk_load_confirmed_tx_rows(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def bulk_load_confirmed_tx_rows(
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+    ) -> None:
         self.bulk_loads.bulk_load_confirmed_tx_rows(tx_rows)
 
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
@@ -149,9 +155,6 @@ class MySQLDatabase(DBInterface):
 
     def create_mempool_table(self) -> None:
         self.tables.create_mempool_table()
-
-    def create_permanent_tables(self) -> None:
-        self.tables.create_permanent_tables()
 
     def get_checkpoint_state(
         self,

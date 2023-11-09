@@ -34,7 +34,6 @@ class OutboundDataFlag(IntFlag):
 class AccountMetadata(NamedTuple):
     account_id: int
     external_account_id: int
-    account_flags: AccountFlag
 
 
 class IndexerPushdataRegistrationFlag(IntFlag):

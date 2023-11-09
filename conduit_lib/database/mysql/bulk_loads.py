@@ -44,6 +44,7 @@ class MySQLBulkLoads:
         self.total_db_time = 0.0
         self.total_rows_flushed_since_startup = 0  # for current controller
         self.newline_symbol = r"'\r\n'" if sys.platform == "win32" else r"'\n'"
+        # self.newline_symbol = r"'\n'"
         self.TEMP_FILES_DIR = Path(os.environ["DATADIR_SSD"]) / "temp_files"
 
     def set_local_infile_on(self) -> None:
@@ -136,7 +137,6 @@ class MySQLBulkLoads:
             self.db.start_transaction()
             try:
                 self.conn.query(query)
-                self.conn.commit()
             finally:
                 self.db.commit_transaction()
         except MySQLdb.OperationalError as e:
@@ -192,7 +192,9 @@ class MySQLBulkLoads:
         self.logger.debug(f"bulk loading new tx rows")
         self.bulk_load_confirmed_tx_rows(new_tx_rows)  # retry without problematic coinbase tx
 
-    def bulk_load_confirmed_tx_rows(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def bulk_load_confirmed_tx_rows(
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+    ) -> None:
         t0 = time.time()
         try:
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
@@ -264,22 +266,6 @@ class MySQLBulkLoads:
         self.logger.log(
             PROFILING,
             f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}",
-        )
-
-    def bulk_load_temp_unsafe_txs(self, unsafe_tx_rows: list[str]) -> None:
-        t0 = time.time()
-        string_rows = ["%s\n" % (row) for row in unsafe_tx_rows]
-        column_names = ["tx_hash"]
-        self._load_data_infile_batched(
-            "temp_unsafe_txs",
-            string_rows,
-            column_names,
-            binary_column_indices=[0],
-        )
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk_load_temp_unsafe_txs = {t1} seconds for " f"{len(unsafe_tx_rows)}",
         )
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:

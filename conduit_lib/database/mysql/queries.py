@@ -391,40 +391,6 @@ class MySQLQueries:
     #     self.logger.log(PROFILING,
     #         f"elapsed time for delete of header row = {t1} seconds")
 
-    def get_duplicate_tx_hashes(
-        self, tx_rows: list[ConfirmedTransactionRow]
-    ) -> list[ConfirmedTransactionRow]:
-        try:
-            candidate_tx_hashes = [(row[0],) for row in tx_rows]
-
-            t0 = time.time()
-            BATCH_SIZE = 2000
-            BATCHES_COUNT = math.ceil(len(candidate_tx_hashes) / BATCH_SIZE)
-            results = []
-            for i in range(BATCHES_COUNT):
-                if i == BATCHES_COUNT - 1:
-                    batched_unsafe_txs = candidate_tx_hashes[i * BATCH_SIZE :]
-                else:
-                    batched_unsafe_txs = candidate_tx_hashes[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
-                stringified_tx_hashes = ",".join([f"UNHEX('{(row[0])}')" for row in batched_unsafe_txs])
-
-                query = f"""
-                    SELECT * FROM confirmed_transactions
-                    WHERE tx_hash in ({stringified_tx_hashes})"""
-                self.conn.query(query)
-                result = self.conn.store_result()
-                for row in result.fetch_row(0):
-                    results.append(row)
-            t1 = time.time() - t0
-            self.logger.log(
-                PROFILING,
-                f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for "
-                f"{len(candidate_tx_hashes)}",
-            )
-            return results
-        finally:
-            self.db.commit_transaction()
-
     def update_orphaned_headers(self, block_hashes: list[bytes]) -> None:
         """This allows us to filter out any query results that do not lie on the longest chain"""
         for block_hash in block_hashes:

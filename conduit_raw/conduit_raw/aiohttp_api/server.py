@@ -77,7 +77,7 @@ class ApplicationState(object):
         self.db_tip_filter_queries.setup()
         self.lmdb = lmdb
         self.headers_threadsafe = headers_threadsafe
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.executor = ThreadPoolExecutor(max_workers=10)
 
         self.zmq_context = zmq.asyncio.Context.instance()
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")

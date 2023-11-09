@@ -87,15 +87,10 @@ class ScyllaDBAPIQueries:
         self.db = db
         self.session: Session = self.db.session
         self.logger = logging.getLogger('scylla-api-queries')
-        # Cache prepared statements to avoid overhead on each call
-        self.get_pushdata_filter_matches_stmts = GetPushdataFilterMatchesStatements(self.session)
-        self.get_spent_outpoints_stmts = GetSpentOutpointsStatements(self.session)
-
-    from cassandra.cluster import Cluster
-
-    # Assuming you've initialized the Cluster and Session elsewhere
-    cluster = Cluster(['scylla-node1', 'scylla-node2'])
-    session = cluster.connect('your_keyspace')
+        # Lazy load and cache prepared statements
+        self.prepared_statements_cached = False
+        self.get_spent_outpoints_stmts: GetSpentOutpointsStatements|None = None
+        self.get_pushdata_filter_matches_stmts: GetPushdataFilterMatchesStatements|None = None
 
     def get_transaction_metadata_hashX(self, tx_hashX: bytes) -> TxMetadata | None:
         try:
@@ -179,6 +174,8 @@ class ScyllaDBAPIQueries:
             raise
 
     def get_pushdata_filter_matches(self, pushdata_hashXes: list[str]):
+        if not self.prepared_statements_cached:
+            self.get_pushdata_filter_matches_stmts = GetPushdataFilterMatchesStatements(self.session)
         pushdata_stmt = self.get_pushdata_filter_matches_stmts.pushdata_stmt
         inputs_stmt = self.get_pushdata_filter_matches_stmts.inputs_stmt
         confirmed_transactions_stmt = self.get_pushdata_filter_matches_stmts.confirmed_transactions_stmt
@@ -252,6 +249,8 @@ class ScyllaDBAPIQueries:
 
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) \
             -> list[OutputSpendRow]:
+        if not self.prepared_statements_cached:
+            self.get_spent_outpoints_stmts = GetSpentOutpointsStatements(self.session)
         inputs_stmt = self.get_spent_outpoints_stmts.inputs_stmt
         txs_stmt = self.get_spent_outpoints_stmts.txs_stmt
         input_headers_stmt = self.get_spent_outpoints_stmts.input_headers_stmt

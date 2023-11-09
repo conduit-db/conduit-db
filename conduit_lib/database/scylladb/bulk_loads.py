@@ -7,11 +7,8 @@ import time
 import typing
 from pathlib import Path
 
-from cassandra import ConsistencyLevel
 from cassandra.cluster import Session
-from cassandra.query import BatchStatement, BatchType
 
-from .exceptions import FailedScyllaOperation
 from ..db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
@@ -45,21 +42,6 @@ class ScyllaDBBulkLoads:
         self.newline_symbol = r"'\r\n'" if sys.platform == "win32" else r"'\n'"
         self.TEMP_FILES_DIR = Path(os.environ["DATADIR_SSD"]) / "temp_files"
 
-    def _prepare_batch_statement(self):
-        return BatchStatement(consistency_level=ConsistencyLevel.QUORUM, batch_type=BatchType.UNLOGGED)
-
-    def _execute_batch(self, batch):
-        t0 = time.time()
-        try:
-            self.session.execute(batch)
-        except Exception as e:
-            self.logger.exception("unexpected exception in _execute_batch")
-            raise FailedScyllaOperation(f"Failed to execute batch operation: {e}")
-        finally:
-            t1 = time.time() - t0
-            self.total_db_time += t1
-            self.logger.log(PROFILING, f"total db flush time={self.total_db_time}")
-
     def load_data_batched(self, insert_statement, rows):
         BATCH_SIZE = BULK_LOADING_BATCH_SIZE_ROW_COUNT
         BATCHES_COUNT = math.ceil(len(rows) / BATCH_SIZE)
@@ -85,7 +67,7 @@ class ScyllaDBBulkLoads:
         raise NotImplementedError()  # Can just always drop these from tx_rows if detected
 
     def bulk_load_confirmed_tx_rows(
-        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+            self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
     ) -> None:
         t0 = time.time()
         if check_duplicates:  # should only be True for blocks: 91812, 91842, 91722, 91880
@@ -93,7 +75,9 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) " "VALUES (?, ?, ?)"
         )
-        self.load_data_batched(insert_statement, tx_rows)
+        insert_rows = [
+            (bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position) for row in tx_rows]
+        self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING,
@@ -101,11 +85,11 @@ class ScyllaDBBulkLoads:
         )
 
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
+        """This uses redis but it is included here to make it easier to translate from
+        MySQL to ScyllaDB"""
         t0 = time.time()
-        insert_statement = self.session.prepare(
-            "INSERT INTO mempool_transactions (mp_tx_hash, mp_tx_timestamp) VALUES (?, ?)"
-        )
-        self.load_data_batched(insert_statement, tx_rows)
+        pairs = [(bytes.fromhex(row.mp_tx_hash), row.mp_tx_timestamp) for row in tx_rows]
+        self.db.cache.bulk_load_in_namespace(namespace=b'mempool', pairs=pairs)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING, f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
@@ -116,7 +100,9 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO txo_table (out_tx_hash, out_idx, out_value) VALUES (?, ?, ?)"
         )
-        self.load_data_batched(insert_statement, out_rows)
+        insert_rows = [
+            (bytes.fromhex(row.out_tx_hash), row.out_idx, row.out_value) for row in out_rows]
+        self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING, f"elapsed time for bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
@@ -127,7 +113,9 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO inputs_table (out_tx_hash, out_idx, in_tx_hash, in_idx) VALUES (?, ?, ?, ?)"
         )
-        self.load_data_batched(insert_statement, in_rows)
+        insert_rows = [(bytes.fromhex(row.out_tx_hash), row.out_idx, bytes.fromhex(row.in_tx_hash),
+                row.in_idx) for row in in_rows]
+        self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
 
@@ -136,20 +124,12 @@ class ScyllaDBBulkLoads:
         insert_statement = self.session.prepare(
             "INSERT INTO pushdata (pushdata_hash, tx_hash, idx, ref_type) VALUES (?, ?, ?, ?)"
         )
-        self.load_data_batched(insert_statement, pd_rows)
+        insert_rows = [(bytes.fromhex(row.pushdata_hash), bytes.fromhex(row.tx_hash),
+            row.idx, row.idx) for row in pd_rows]
+        self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
-        )
-
-    def bulk_load_temp_unsafe_txs(self, unsafe_tx_rows: list[str]) -> None:
-        t0 = time.time()
-        insert_statement = self.session.prepare("INSERT INTO temp_unsafe_txs (tx_hash) VALUES (?)")
-        self.load_data_batched(insert_statement, unsafe_tx_rows)
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk_load_temp_unsafe_txs = {t1} seconds for {len(unsafe_tx_rows)}",
         )
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
@@ -159,7 +139,10 @@ class ScyllaDBBulkLoads:
             "block_tx_count, block_size, is_orphaned) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
-        self.load_data_batched(insert_statement, block_header_rows)
+        insert_rows = [(row.block_num, bytes.fromhex(row.block_hash), row.block_height,
+            bytes.fromhex(row.block_header), row.block_tx_count, row.block_size, row.is_orphaned)
+            for row in block_header_rows]
+        self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING,

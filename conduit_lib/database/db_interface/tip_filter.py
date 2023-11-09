@@ -15,7 +15,6 @@ from .tip_filter_types import (
     IndexerPushdataRegistrationFlag,
     TipFilterRegistrationEntry,
     AccountMetadata,
-    OutputSpendRow,
     FilterNotificationRow,
 )
 
@@ -131,7 +130,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes]
+            self, pushdata_hashes: list[bytes], account_id: int | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -150,10 +149,12 @@ class TipFilterQueryAPI(abc.ABC):
         filter_mask: Optional[IndexerPushdataRegistrationFlag] = None,
         require_all: bool = False,
     ) -> None:
+        """There is a MySQL and a ScyllaDB version of the update_tip_filter_registrations_flags_write
+        because ScyllaDB cannot handle bitwise operations in queries and updates."""
         ...
 
     @abc.abstractmethod
-    def expire_tip_filter_registrationss(self, date_expires: int) -> list[bytes]:
+    def expire_tip_filter_registrations(self, date_expires: int) -> list[bytes]:
         """
         Atomic call to locate expired registrations and to delete them. It will return the keys for
         all the rows that were deleted.
@@ -180,7 +181,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int|None=None
     ) -> list[OutboundDataRow]:
         ...
 

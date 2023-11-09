@@ -15,6 +15,9 @@ if typing.TYPE_CHECKING:
     from .db import ScyllaDB
 
 
+KEYSPACE = 'conduitdb'
+
+
 class ScyllaDBTables:
     def __init__(self, db: "ScyllaDB") -> None:
         self.db = db
@@ -87,97 +90,25 @@ class ScyllaDBTables:
             self.logger.exception("Failed to create table %s", table_name)
             raise FailedScyllaOperation from e
 
-    def drop_mempool_table(self) -> None:
-        try:
-            result = self.get_tables()
-            for row in result:
-                # table = row[0].decode()
-                table = row[0]
-                if table == "mempool_transactions":
-                    break
-            else:
-                return
-
-            self.session.execute("DROP TABLE IF EXISTS mempool_transactions;")
-        except Exception as e:
-            self.logger.exception("Caught exception")
-
     def drop_temp_mined_tx_hashes(self) -> None:
-        try:
-            self.session.execute(
-                """
-                DROP TABLE IF EXISTS temp_mined_tx_hashes;
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_mined_tx_hashes failed unexpectedly")
+        self.db.cache.bulk_delete_in_namespace(b"temp_mined_tx_hashes")
 
     def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
-        try:
-            self.session.execute(
-                f"""
-                DROP TABLE IF EXISTS {inbound_tx_table_name};
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_inbound_tx_hashes failed unexpectedly")
+        self.db.cache.bulk_delete_in_namespace(b"temp_inbound_tx_hashes" + f"_{inbound_tx_table_name}".encode())
 
     def drop_temp_mempool_removals(self) -> None:
-        try:
-            self.session.execute(
-                """
-                DROP TABLE IF EXISTS temp_mempool_removals;
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_mempool_removals failed unexpectedly")
+        self.db.cache.bulk_delete_in_namespace(b"temp_mempool_removals")
 
     def drop_temp_mempool_additions(self) -> None:
-        try:
-            self.session.execute(
-                """
-                DROP TABLE IF EXISTS temp_mempool_additions;
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_mempool_additions failed unexpectedly")
+        self.db.cache.bulk_delete_in_namespace(b"temp_mempool_additions")
 
     def drop_temp_orphaned_txs(self) -> None:
-        try:
-            self.session.execute(
-                """
-                DROP TABLE IF EXISTS temp_orphaned_txs;
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_orphaned_txs failed unexpectedly")
-
-    def drop_unsafe_txs(self) -> None:
-        try:
-            self.session.execute(
-                """
-                DROP TABLE IF EXISTS temp_unsafe_txs;
-                """
-            )
-        except Exception:
-            self.logger.exception("drop_unsafe_txs failed unexpectedly")
-
-    def create_mempool_table(self) -> None:
-        try:
-            self.session.execute(
-                """
-                CREATE TABLE IF NOT EXISTS mempool_transactions (
-                    mp_tx_hash BLOB PRIMARY KEY,
-                    mp_tx_timestamp INT
-                );
-                """
-            )
-        except Exception:
-            self.logger.exception("create_mempool_table failed unexpectedly")
+        self.db.cache.bulk_delete_in_namespace(b"temp_orphaned_txs")
 
     def create_permanent_tables(self) -> None:
-        # Assuming you have a function create_mempool_table similar to mysql_create_mempool_table
-        self.create_mempool_table()
+        self.session.execute(f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
+                             "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }")
+        self.session.set_keyspace(KEYSPACE)
 
         try:
             self.session.execute(
@@ -186,15 +117,8 @@ class ScyllaDBTables:
                     tx_hash blob,
                     tx_block_num int,
                     tx_position bigint,
-                    PRIMARY KEY (tx_hash)
+                    PRIMARY KEY (tx_hash, tx_block_num)
                 );
-                """
-            )
-
-            # Creating secondary index in Scylla is similar to MySQL
-            self.session.execute(
-                """
-                CREATE INDEX IF NOT EXISTS tx_idx ON confirmed_transactions (tx_block_num);
                 """
             )
 
@@ -216,7 +140,7 @@ class ScyllaDBTables:
                     out_idx int,
                     in_tx_hash blob,
                     in_idx int,
-                    PRIMARY KEY ((out_tx_hash, out_idx), in_tx_hash, in_idx)
+                    PRIMARY KEY (out_tx_hash, out_idx)
                 );
                 """
             )
@@ -228,7 +152,7 @@ class ScyllaDBTables:
                     tx_hash blob,
                     idx int,
                     ref_type smallint,
-                    PRIMARY KEY (pushdata_hash, tx_hash)
+                    PRIMARY KEY (pushdata_hash, tx_hash, idx, ref_type)
                 );
                 """
             )
@@ -276,95 +200,6 @@ class ScyllaDBTables:
             )
         except Exception:
             self.logger.debug(f"Exception creating tables")
-
-    def create_temp_mined_tx_hashes_table(self) -> None:
-        try:
-            self.session.execute(
-                """
-                CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
-                    mined_tx_hash BINARY(32) PRIMARY KEY,
-                    blk_num BIGINT
-                )
-                WITH compression = {}
-                AND read_repair_chance = '0'
-                AND speculative_retry = 'ALWAYS'
-                AND in_memory = 'true'
-                AND compaction = { 'class' : 'InMemoryCompactionStrategy' }
-                """
-            )
-        except Exception:
-            self.logger.exception("create_temp_mined_tx_hashes_table failed unexpectedly")
-
-    def create_temp_mempool_removals_table(self) -> None:
-        try:
-            self.session.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS temp_mempool_removals (
-                    tx_hash blob PRIMARY KEY
-                )
-                WITH compression = {{}}
-                AND read_repair_chance = '0'
-                AND speculative_retry = 'ALWAYS'
-                AND in_memory = 'true'
-                AND compaction = {{ 'class' : 'InMemoryCompactionStrategy' }}
-                """
-            )
-        except Exception:
-            self.logger.exception("create_temp_mempool_removals_table failed unexpectedly")
-
-    def create_temp_mempool_additions_table(self) -> None:
-        try:
-            self.session.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS temp_mempool_additions (
-                    tx_hash blob PRIMARY KEY,
-                    tx_timestamp timestamp
-                )
-                WITH compression = {{}}
-                AND read_repair_chance = '0'
-                AND speculative_retry = 'ALWAYS'
-                AND in_memory = 'true'
-                AND compaction = {{ 'class' : 'InMemoryCompactionStrategy' }}
-                """
-            )
-        except Exception:
-            self.logger.exception("create_temp_mempool_additions_table failed unexpectedly")
-
-    def create_temp_orphaned_txs_table(self) -> None:
-        try:
-            self.session.execute(
-                """
-                CREATE TABLE IF NOT EXISTS temp_orphaned_txs (
-                    tx_hash BINARY(32) PRIMARY KEY
-                )
-                WITH compression = {}
-                AND read_repair_chance = '0'
-                AND speculative_retry = 'ALWAYS'
-                AND in_memory = 'true'
-                AND compaction = { 'class' : 'InMemoryCompactionStrategy' }
-                """
-            )
-        except Exception:
-            self.logger.exception("create_temp_orphaned_txs_table failed unexpectedly")
-
-    def create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str) -> None:
-        try:
-            self.session.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                    inbound_tx_hash BINARY(32) PRIMARY KEY
-                )
-                """
-                + """
-                WITH compression = {}
-                AND read_repair_chance = '0'
-                AND speculative_retry = 'ALWAYS'
-                AND in_memory = 'true'
-                AND compaction = { 'class' : 'InMemoryCompactionStrategy' }
-                """
-            )
-        except Exception:
-            self.logger.exception("create_temp_inbound_tx_hashes_table failed unexpectedly")
 
     def initialise_checkpoint_state(self) -> None:
         try:

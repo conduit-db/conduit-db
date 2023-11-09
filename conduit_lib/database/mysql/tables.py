@@ -151,18 +151,6 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def drop_unsafe_txs(self) -> None:
-        try:
-            self.conn.query(
-                """
-                DROP TABLE IF EXISTS temp_unsafe_txs;
-            """
-            )
-        except Exception:
-            self.logger.exception("drop_temp_unsafe_txs failed unexpectedly")
-        finally:
-            self.commit_transaction()
-
     def create_mempool_table(self) -> None:
         try:
             # Note: MEMORY table doesn't support BLOB/TEXT columns - will need to find a different
@@ -380,7 +368,7 @@ class MySQLTables:
             if len(rows) == 0:
                 self.conn.query(
                     f"""
-                    INSERT INTO checkpoint_state VALUES(0, 0, NULL, NULL, false, NULL, NULL, NULL)
+                    INSERT INTO checkpoint_state VALUES(0, 0, NULL, false, NULL, NULL, NULL, NULL)
                 """
                 )
         finally:

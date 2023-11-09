@@ -1,8 +1,12 @@
 import abc
 import logging
+from enum import IntEnum
 
 import bitcoinx
 from typing import TypeVar, Generator, Any, Sequence
+
+from MySQLdb import Connection
+from cassandra.cluster import Session
 
 from conduit_lib import LMDB_Database
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
@@ -14,6 +18,7 @@ from conduit_lib.database.db_interface.types import (
     InputRow,
     PushdataRow,
 )
+from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.types import (
     ChainHashes,
     BlockHeaderRow,
@@ -23,6 +28,11 @@ from conduit_lib.types import (
 )
 
 T1 = TypeVar("T1")
+
+
+class DatabaseType(IntEnum):
+    MySQL = 1
+    ScyllaDB = 2
 
 
 class DBInterface(abc.ABC):
@@ -39,12 +49,22 @@ class DBInterface(abc.ABC):
         **kwargs: Any,
     ) -> None:
         self.worker_id = worker_id
+        self.db_type: DatabaseType | None = None
+
+        self.session: Session | None = None  # ScyllaDB
+        self.cache: RedisCache | None = None  # ScyllaDB
+        self.conn: Connection | None = None  # MySQLDB
 
     @classmethod
-    def load_db(cls, worker_id: int | None = None) -> "DBInterface":
-        from conduit_lib.database.mysql.db import load_mysql_database
-
-        return load_mysql_database(worker_id)
+    def load_db(cls, worker_id: int | None = None, db_type: DatabaseType=DatabaseType.MySQL) \
+            -> "DBInterface":
+        if db_type == DatabaseType.MySQL:
+            from conduit_lib.database.mysql.db import load_mysql_database
+            return load_mysql_database(worker_id)
+        elif db_type == DatabaseType.ScyllaDB:
+            from conduit_lib.database.scylladb.db import load_scylla_database
+            return load_scylla_database(worker_id)
+        raise ValueError(f"Unsupported db_type: {db_type}")
 
     @abc.abstractmethod
     def close(self) -> None:
@@ -114,7 +134,9 @@ class DBInterface(abc.ABC):
 
     @abc.abstractmethod
     # BULK LOADS
-    def bulk_load_confirmed_tx_rows(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def bulk_load_confirmed_tx_rows(
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+    ) -> None:
         ...
 
     @abc.abstractmethod

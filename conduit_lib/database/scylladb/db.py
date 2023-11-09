@@ -5,13 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 import bitcoinx
 from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure
 from cassandra.cluster import Cluster, Session
-from cassandra.auth import PlainTextAuthProvider
 from typing import TypeVar, Generator, Sequence, Any
 
 from cassandra.concurrent import execute_concurrent_with_args
 from cassandra.query import PreparedStatement
 
 from conduit_lib import LMDB_Database, DBInterface
+from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
@@ -21,6 +21,7 @@ from conduit_lib.database.db_interface.types import (
     InputRow,
     PushdataRow,
 )
+from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
 from conduit_lib.database.scylladb.bulk_loads import ScyllaDBBulkLoads
 from conduit_lib.database.scylladb.queries import ScyllaDBQueries
@@ -35,27 +36,47 @@ from conduit_lib.types import (
 
 T1 = TypeVar("T1")
 
-KEYSPACE = 'conduitdb'
-
 
 class ScyllaDB(DBInterface):
-    def __init__(self, cluster: Cluster, session: Session, worker_id: int | None = None) -> None:
+    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache,
+            worker_id: int) -> None:
         self.cluster: Cluster = cluster
         self.session: Session = session
+        self.db_type = DatabaseType.ScyllaDB
+        # Redis is needed to compensate for lack of in-memory only tables or SQL temp tables
+        self.cache: RedisCache = cache
+
         self.worker_id = worker_id
 
         self.tables = ScyllaDBTables(self)
+        self.create_permanent_tables()
         self.bulk_loads = ScyllaDBBulkLoads(self)
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
 
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.executor = ThreadPoolExecutor(max_workers=10)
 
         self.logger = logging.getLogger("scylla-database")
         self.logger.setLevel(logging.INFO)
 
     def close(self) -> None:
         self.cluster.shutdown()
+
+    def commit_transaction(self):
+        raise ValueError("Not used in the ScyllaDB implementation")
+
+    def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
+        raise ValueError("Not used in the ScyllaDB implementation")
+
+    def ping(self) -> None:
+        # The below query is lightweight and often used to test connectivity
+        rs = self.session.execute('SELECT now() FROM system.local')
+        print("Ping successful, connected to cluster: " + str(self.cluster.metadata.cluster_name))
+        for row in rs:
+            print("Date and time from ScyllaDB:", row[0])
+
+    def start_transaction(self) -> None:
+        raise ValueError("Not used in the ScyllaDB implementation")
 
     def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[...]]):
         self.bulk_loads.load_data_batched(insert_statement, rows)
@@ -80,10 +101,10 @@ class ScyllaDB(DBInterface):
         self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
     def create_temp_mined_tx_hashes_table(self) -> None:
-        self.tables.create_temp_mined_tx_hashes_table()
+        pass  # The ScyllaDB implementation uses Redis in place of MySQL temp tables
 
     def create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str) -> None:
-        self.tables.create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
+        pass  # The ScyllaDB implementation uses Redis in place of MySQL temp tables
 
     # QUERIES
     def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
@@ -109,7 +130,9 @@ class ScyllaDB(DBInterface):
         self.queries.update_checkpoint_tip(checkpoint_tip)
 
     # BULK LOADS
-    def bulk_load_confirmed_tx_rows(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def bulk_load_confirmed_tx_rows(
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+    ) -> None:
         self.bulk_loads.bulk_load_confirmed_tx_rows(tx_rows)
 
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
@@ -125,16 +148,17 @@ class ScyllaDB(DBInterface):
         self.bulk_loads.bulk_load_pushdata_rows(pd_rows)
 
     def drop_indices(self) -> None:
-        self.tables.drop_indices()
+        # Unnecessary in the ScyllaDB implementation
+        pass
 
     def get_tables(self) -> Sequence[tuple[str]]:
         return self.tables.get_tables()
 
     def drop_mempool_table(self) -> None:
-        self.tables.drop_mempool_table()
+        self.cache.r.flushall()  # On startup, wipe the redis cache clean entirely
 
     def create_mempool_table(self) -> None:
-        self.tables.create_mempool_table()
+        pass  # The ScyllaDB implementation uses Redis in place of MySQL temp tables
 
     def create_permanent_tables(self) -> None:
         self.tables.create_permanent_tables()
@@ -216,25 +240,31 @@ class ScyllaDB(DBInterface):
         return self.api_queries.get_spent_outpoints(entries, lmdb)
 
     def create_temp_mempool_removals_table(self) -> None:
-        self.tables.create_temp_mempool_removals_table()
+        # This is not needed in the ScyllaDB implementation. Redis is used for this.
+        pass
 
     def create_temp_mempool_additions_table(self) -> None:
-        self.tables.create_temp_mempool_additions_table()
+        # This is not needed in the ScyllaDB implementation. Redis is used for this.
+        pass
 
     def create_temp_orphaned_txs_table(self) -> None:
-        self.tables.create_temp_orphaned_txs_table()
+        # This is not needed in the ScyllaDB implementation. Redis is used for this.
+        pass
 
 
 def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
-    auth_provider = PlainTextAuthProvider(
-        username=os.environ['SCYLLA_USERNAME'],
-        password=os.environ['SCYLLA_PASSWORD'],
-    )
+    # auth_provider = PlainTextAuthProvider(
+    #     username=os.environ['SCYLLA_USERNAME'],
+    #     password=os.environ['SCYLLA_PASSWORD'],
+    # )
     cluster = Cluster(
         contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
         port=int(os.getenv('SCYLLA_PORT', 9042)),
-        auth_provider=auth_provider,
+        # auth_provider=auth_provider,
     )
-    session = cluster.connect(KEYSPACE, wait_for_all_pools=True)
+    session = cluster.connect()
+    session.default_timeout = 120
     session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
-    return ScyllaDB(cluster, session, worker_id=worker_id)
+
+    cache = RedisCache()
+    return ScyllaDB(cluster, session, cache, worker_id=worker_id)

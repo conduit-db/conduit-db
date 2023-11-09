@@ -11,7 +11,7 @@ from cassandra import ConsistencyLevel
 from cassandra.cluster import Session
 from cassandra.query import BatchStatement
 
-from ..db_interface.types import MinedTxHashes, ConfirmedTransactionRow, InputRow, PushdataRow, \
+from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, \
     OutputRow
 from ...constants import PROFILING
 from ...types import ChainHashes
@@ -32,22 +32,15 @@ class ScyllaDBQueries:
         self.logger = logging.getLogger('scylladb-queries')
 
     def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
-        """columns: tx_hashes, blk_num"""
-        self.db.tables.create_temp_mined_tx_hashes_table()
-        insert_statement = self.session.prepare(
-            "INSERT INTO temp_mined_tx_hashes (mined_tx_hash, blk_num) " "VALUES (?, ?)"
-        )
-        self.db.load_data_batched(insert_statement, mined_tx_hashes)
+        pairs = [(bytes.fromhex(row.txid), row.block_number) for row in mined_tx_hashes]
+        self.db.cache.bulk_load_in_namespace(namespace=b'temp_mined_tx_hashes', pairs=pairs)
 
     def load_temp_inbound_tx_hashes(
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
     ) -> None:
-        """columns: tx_hashes, blk_height"""
-        self.db.tables.self.create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
-        insert_statement = self.session.prepare(
-            "INSERT INTO inbound_tx_table_name (inbound_tx_hashes) VALUES (?)"
-        )
-        self.db.load_data_batched(insert_statement, inbound_tx_hashes)
+        pairs = [(bytes.fromhex(row[0]), b"") for row in inbound_tx_hashes]
+        self.db.cache.bulk_load_in_namespace(
+            namespace=inbound_tx_table_name.encode(), pairs=pairs)
 
     def get_unprocessed_txs(
         self,
@@ -102,22 +95,16 @@ class ScyllaDBQueries:
 
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
-        self.db.create_temp_mempool_removals_table()
-        insert_statement = self.session.prepare("INSERT INTO temp_mempool_removals (tx_hash) VALUES (?)")
-        insert_args = [(x,) for x in removals_from_mempool]
-        self.db.execute_with_concurrency(insert_statement, insert_args)
+        pairs = [(x, b"") for x in removals_from_mempool]
+        self.db.cache.bulk_load_in_namespace(namespace=b"temp_mempool_removals", pairs=pairs)
 
     def load_temp_mempool_additions(self, additions_to_mempool: set[bytes]) -> None:
-        self.db.create_temp_mempool_additions_table()
-        insert_statement = self.session.prepare("INSERT INTO temp_mempool_additions (tx_hash, tx_timestamp) VALUES (?,?)")
-        insert_args = [(x, int(time.time())) for x in additions_to_mempool]
-        self.db.execute_with_concurrency(insert_statement, insert_args)
+        pairs = [(x, b"") for x in additions_to_mempool]
+        self.db.cache.bulk_load_in_namespace(namespace=b"temp_mempool_additions", pairs=pairs)
 
     def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        self.db.create_temp_orphaned_txs_table()
-        insert_statement = self.session.prepare("INSERT INTO temp_orphaned_txs (tx_hash,) VALUES (?)")
-        insert_args = [(x,) for x in orphaned_tx_hashes]
-        self.db.execute_with_concurrency(insert_statement, insert_args)
+        pairs = [(x, b"") for x in orphaned_tx_hashes]
+        self.db.cache.bulk_load_in_namespace(namespace=b"temp_orphaned_tx_hashes", pairs=pairs)
 
     def remove_from_mempool(self) -> None:
         self.logger.debug("Removing reorg differential from mempool")
@@ -279,31 +266,6 @@ class ScyllaDBQueries:
         self.session.execute(query, (block_hash,))
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for delete of header row = {t1} seconds")
-
-    def get_duplicate_tx_hashes(self, tx_rows: list[ConfirmedTransactionRow]) -> list[
-        ConfirmedTransactionRow]:
-        t0 = time.time()
-        BATCH_SIZE = 2000
-        BATCHES_COUNT = math.ceil(len(tx_rows) / BATCH_SIZE)
-        results = []
-        for i in range(BATCHES_COUNT):
-            if i == BATCHES_COUNT - 1:
-                batched_txs = tx_rows[i * BATCH_SIZE:]
-            else:
-                batched_txs = tx_rows[i * BATCH_SIZE: (i + 1) * BATCH_SIZE]
-            # We need to convert each tx_hash to bytes because ScyllaDB/Cassandra
-            # expects blob data in this format.
-            batched_tx_hashes = [bytes.fromhex(row.tx_hash) for row in batched_txs]
-            # Use the IN clause with a tuple to select multiple rows.
-            query = "SELECT * FROM confirmed_transactions WHERE tx_hash IN %s"
-            fetched = self.session.execute(query, (tuple(batched_tx_hashes),))
-            results.extend(fetched)
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING,
-            f"elapsed time for selecting duplicate tx_hashes = {t1} seconds for {len(tx_rows)}",
-        )
-        return results
 
     def update_orphaned_headers(self, block_hashes: list[bytes]) -> None:
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)

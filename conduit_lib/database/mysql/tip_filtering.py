@@ -163,7 +163,6 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         CREATE TABLE IF NOT EXISTS accounts (
             account_id                  INT UNSIGNED     NOT NULL  AUTO_INCREMENT PRIMARY KEY,
             external_account_id         INT UNSIGNED     NOT NULL,
-            account_flags               INT UNSIGNED     NOT NULL
         )
         """
         )
@@ -234,8 +233,8 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
                 return cast(int, row[0])
 
             sql = """
-            INSERT INTO accounts (external_account_id, account_flags)
-            VALUES (%s, %s)
+            INSERT INTO accounts (external_account_id)
+            VALUES (%s,)
             """
             sql_values = (external_account_id, int(AccountFlag.NONE))
             cursor.execute(sql, sql_values)
@@ -254,7 +253,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
 
     def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
         sql = """
-            SELECT account_id, external_account_id, account_flags
+            SELECT account_id, external_account_id
             FROM accounts
             WHERE account_id IN ({})
         """
@@ -337,7 +336,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             cursor.close()
 
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes]
+            self, pushdata_hashes: list[bytes], account_id: int | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -403,7 +402,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             self.conn.commit()
             cursor.close()
 
-    def expire_tip_filter_registrationss(self, date_expires: int) -> list[bytes]:
+    def expire_tip_filter_registrations(self, date_expires: int) -> list[bytes]:
         """
         Atomic call to locate expired registrations and to delete them. It will return the keys for
         all the rows that were deleted.
@@ -472,8 +471,9 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             cursor.close()
 
     def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
     ) -> list[OutboundDataRow]:
+        assert account_id is not None, "Needed for ScyllaDB implementation"
         sql = (
             "SELECT outbound_data_id, outbound_data, outbound_data_flags, date_created, "
             "date_last_tried FROM outbound_data WHERE (outbound_data_flags&%s)=%s "
