@@ -66,21 +66,21 @@ class ScyllaDBTables:
             self.logger.exception("db.drop_tables failed unexpectedly")
             raise FailedScyllaOperation from e
 
-    def drop_indices(self) -> None:
-        try:
-            # Query ScyllaDB's system schema to get the names of all indices
-            index_query_result = self.session.execute(
-                "SELECT index_name FROM system_schema.indexes WHERE keyspace_name = 'your_keyspace_name';"
-            )
-
-            indexes_to_drop = [row.index_name for row in index_query_result if row.index_name is not None]
-
-            for index_name in indexes_to_drop:
-                self.execute_query(f"DROP INDEX IF EXISTS {index_name};")
-
-        except Exception as e:
-            self.logger.exception("drop_indices failed unexpectedly")
-            raise FailedScyllaOperation from e
+    # def drop_indices(self) -> None:
+    #     try:
+    #         # Query ScyllaDB's system schema to get the names of all indices
+    #         index_query_result = self.session.execute(
+    #             "SELECT index_name FROM system_schema.indexes WHERE keyspace_name = 'your_keyspace_name';"
+    #         )
+    #
+    #         indexes_to_drop = [row.index_name for row in index_query_result if row.index_name is not None]
+    #
+    #         for index_name in indexes_to_drop:
+    #             self.execute_query(f"DROP INDEX IF EXISTS {index_name};")
+    #
+    #     except Exception as e:
+    #         self.logger.exception("drop_indices failed unexpectedly")
+    #         raise FailedScyllaOperation from e
 
     def create_table(self, table_name: str, schema: str) -> None:
         try:

@@ -93,7 +93,7 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
         database = DBInterface.load_db()
         try:
-            database.drop_indices()
+            # database.drop_indices()
             database.drop_tables()
         finally:
             database.close()

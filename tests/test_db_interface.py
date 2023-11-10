@@ -178,7 +178,6 @@ class TestDBInterface:
             )
 
     def test_temp_mined_tx_hashes_table(self, db: DBInterface) -> None:
-        db.create_temp_mined_tx_hashes_table()
         db.load_temp_mined_tx_hashes([])
 
         txid1 = "aa" * 32
@@ -658,7 +657,7 @@ class TestDBInterface:
             rows = list(result.fetch_row(0))
             rows.sort()
             for table_name, index_name, columns in rows:
-                print(f"[Post-drop_indices] Table: {table_name}, Index: {index_name}, Columns: {columns}")
+                print(f"[Post-drop] Table: {table_name}, Index: {index_name}, Columns: {columns}")
             assert len(rows) == 0
 
     def test_get_header_data(self, db: DBInterface) -> None:

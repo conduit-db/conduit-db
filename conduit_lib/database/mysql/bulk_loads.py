@@ -34,10 +34,7 @@ class MySQLBulkLoads:
     def __init__(self, conn: MySQLdb.Connection, db: "MySQLDatabase") -> None:
         self.db = db
         self.worker_id = self.db.worker_id
-        if self.worker_id:
-            self.logger = logging.getLogger(f"mysql-tables-{self.worker_id}")
-        else:
-            self.logger = logging.getLogger(f"mysql-tables")
+        self.logger = logging.getLogger(f"mysql-tables-{self.worker_id}")
         self.conn = conn
 
         self.logger.setLevel(get_log_level("conduit_index"))

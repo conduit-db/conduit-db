@@ -12,7 +12,7 @@ set CONDUIT_TESTS_DIR=%~dp0\tests
 
 cd %ScriptDir%
 
-py -3.10 -m pip install pylint -U
+py -3.10 -m pip install -r contrib/requirements-dev.txt
 
 REM Run type checks
 mypy --config=%TLD%\mypy.ini %TLD%\conduit_raw --python-version 3.10 --namespace-packages --explicit-package-bases

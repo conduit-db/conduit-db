@@ -162,7 +162,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             """
         CREATE TABLE IF NOT EXISTS accounts (
             account_id                  INT UNSIGNED     NOT NULL  AUTO_INCREMENT PRIMARY KEY,
-            external_account_id         INT UNSIGNED     NOT NULL,
+            external_account_id         INT UNSIGNED     NOT NULL
         )
         """
         )

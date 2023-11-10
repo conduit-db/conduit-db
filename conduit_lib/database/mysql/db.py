@@ -97,12 +97,6 @@ class MySQLDatabase(DBInterface):
     def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
         self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
-    def create_temp_mined_tx_hashes_table(self) -> None:
-        self.tables.create_temp_mined_tx_hashes_table()
-
-    def create_temp_inbound_tx_hashes_table(self, inbound_tx_table_name: str) -> None:
-        self.tables.create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
-
     # QUERIES
     def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         self.queries.load_temp_mined_tx_hashes(mined_tx_hashes)
@@ -143,9 +137,6 @@ class MySQLDatabase(DBInterface):
 
     def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
         self.bulk_loads.bulk_load_pushdata_rows(pd_rows)
-
-    def drop_indices(self) -> None:
-        self.tables.drop_indices()
 
     def get_tables(self) -> Sequence[tuple[str]]:
         return self.tables.get_tables()

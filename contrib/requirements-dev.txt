@@ -1,0 +1,8 @@
+types-redis
+pytest
+pytest-cov
+pytest-timeout
+pytest-asyncio
+electrumsv_node
+pylint
+mypy

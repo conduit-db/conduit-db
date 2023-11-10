@@ -1,5 +1,5 @@
 import os
-from typing import Any, Sequence
+from typing import Sequence
 
 import redis
 
@@ -19,10 +19,10 @@ class RedisCache:
     def get(self, key: bytes) -> bytes | None:
         return self.r.get(key)
 
-    def set(self, key: bytes, value: bytes) -> bool:
+    def set(self, key: bytes, value: bytes) -> bool | None:
         return self.r.set(key, value)
 
-    def delete(self, key: bytes) -> bool:
+    def delete(self, key: bytes) -> int:
         return self.r.delete(key)
 
     def get_in_namespace(self, namespace: bytes, key: bytes) -> bytes | None:

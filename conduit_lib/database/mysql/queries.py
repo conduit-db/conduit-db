@@ -12,7 +12,7 @@ import bitcoinx
 
 from .bulk_loads import MySQLBulkLoads
 from .tables import MySQLTables
-from ..db_interface.types import ConfirmedTransactionRow, MinedTxHashes
+from ..db_interface.types import MinedTxHashes
 from ...constants import PROFILING
 from ...types import ChainHashes
 

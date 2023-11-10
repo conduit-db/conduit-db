@@ -333,15 +333,21 @@ class Timer:
         self.count = count
         self.name = name
 
-    def __enter__(self):
+    def __enter__(self) -> "Timer":
         self.start = time.time()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self) -> None:
         self.end = time.time()
         self.interval = self.end - self.start
-        logger.debug(f"Timer{'['+ self.name+ ']'}: interval of {self.interval:.4f} seconds")
-        if self.count:
+        if self.name:
+            logger.debug(f"Timer{'['+ self.name+ ']'}: interval of {self.interval:.4f} seconds")
+        else:
+            if self.name:
+                logger.debug(f"Timer: interval of {self.interval:.4f} seconds")
+        if self.count and self.name:
             logger.debug(
                 f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{int(self.count/self.interval)} per second"
             )
+        elif self.count:
+            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval)} per second")
