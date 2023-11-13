@@ -103,7 +103,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     # logger.debug(f"Client: {self.request.getpeername()} closed connection")
                     return
 
-                msg: dict[str, Any] = cbor2.loads(data)
+                msg = cast(dict[str, Any], cbor2.loads(data))
                 command = cast(str, msg["command"])
                 # logger.debug(f"Socket server: command {command} received")
 

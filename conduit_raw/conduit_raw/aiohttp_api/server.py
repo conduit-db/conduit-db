@@ -1,3 +1,5 @@
+import uuid
+
 import aiohttp
 from aiohttp import web
 import asyncio
@@ -13,7 +15,7 @@ import queue
 import os
 import time
 import threading
-from typing import AsyncIterator, Optional, Any
+from typing import AsyncIterator, Optional, Any, cast
 import zmq
 import zmq.asyncio
 
@@ -147,8 +149,8 @@ class ApplicationState(object):
         """
 
         while not self._exit_event.is_set():
-            cbor_msg = await self._reorg_event_socket.recv()
-            reorg_handling_complete, start_hash, stop_hash = cbor2.loads(cbor_msg)
+            cbor_msg = cast(bytes, await self._reorg_event_socket.recv())
+            reorg_handling_complete, start_hash, stop_hash = cast(tuple[bool, bytes, bytes], cbor2.loads(cbor_msg))
             self.logger.debug(
                 f"Reorg event received. "
                 f"reorg_handling_complete: {reorg_handling_complete} "
@@ -335,7 +337,7 @@ class ApplicationState(object):
         )
 
         # Gather the true matches for each account so that we can notify them of those matches.
-        matches_by_account_id = dict[int, list[PushdataRowParsed]]()
+        matches_by_account_id = dict[uuid.UUID, list[PushdataRowParsed]]()
         for row in rows:
             matched_rows = matches_by_hash[row.pushdata_hash]
             if row.account_id in matches_by_account_id:

@@ -4,7 +4,7 @@ import bitcoinx
 import logging
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
-from typing import TypeVar, Generator, Sequence
+from typing import TypeVar, Sequence, Iterator
 
 import MySQLdb
 from MySQLdb.connections import Connection
@@ -13,6 +13,7 @@ from .api_queries import MySQLAPIQueries
 from .bulk_loads import MySQLBulkLoads
 from .queries import MySQLQueries
 from .tables import MySQLTables
+from .tip_filtering import MySQLTipFilterQueries
 from ..db_interface.db import DBInterface, DatabaseType
 from ..db_interface.tip_filter_types import OutputSpendRow
 from ..db_interface.types import (
@@ -33,12 +34,14 @@ T1 = TypeVar("T1")
 class MySQLDatabase(DBInterface):
     def __init__(self, conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
         self.conn = conn  # passed into constructor for easier unit-testing
+        assert self.conn is not None
         self.worker_id = worker_id
         self.db_type = DatabaseType.MySQL
         self.tables = MySQLTables(self.conn)
         self.bulk_loads = MySQLBulkLoads(self.conn, self)
         self.queries = MySQLQueries(self.conn, self.tables, self.bulk_loads, self)
         self.api_queries = MySQLAPIQueries(self.conn, self.tables, self)
+        self.tip_filter_api = MySQLTipFilterQueries(self)
 
         self.start_transaction()
         # self.bulk_loads.set_rocks_db_bulk_load_off()
@@ -56,22 +59,28 @@ class MySQLDatabase(DBInterface):
             SET global rocksdb_wal_recovery_mode=0;
             SET global rocksdb_max_background_jobs=16;
             SET global rocksdb_block_cache_size={1024 ** 3 * 8};"""
+        assert self.conn is not None
         for sql in settings.splitlines(keepends=False):
             self.conn.query(sql)
 
     def close(self) -> None:
+        assert self.conn is not None
         self.conn.close()
 
     def start_transaction(self) -> None:
+        assert self.conn is not None
         self.conn.query("""START TRANSACTION;""")
 
     def commit_transaction(self) -> None:
+        assert self.conn is not None
         self.conn.query("""COMMIT;""")
 
     def rollback_transaction(self) -> None:
+        assert self.conn is not None
         self.conn.query("""ROLLBACK;""")
 
     def ping(self) -> None:
+        assert self.conn is not None
         self.conn.ping()
 
     def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
@@ -214,7 +223,7 @@ class MySQLDatabase(DBInterface):
 
     def get_pushdata_filter_matches(
         self, pushdata_hashXes: list[str]
-    ) -> Generator[RestorationFilterQueryResult, None, None]:
+    ) -> Iterator[RestorationFilterQueryResult]:
         return self.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:

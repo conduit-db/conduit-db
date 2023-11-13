@@ -440,8 +440,8 @@ class Controller(ControllerBase):
 
     async def wait_for_mined_tx_acks_task(self) -> None:
         while True:
-            message = await self.zmq_socket_listeners.socket_mined_tx_ack.recv()
-            new_mined_tx_hashes = cbor2.loads(message)
+            message = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_ack.recv())
+            new_mined_tx_hashes = cast(dict[int, list[bytes]], cbor2.loads(message))
 
             for blk_num, new_hashes in new_mined_tx_hashes.items():
                 if not self.global_tx_hashes_dict.get(blk_num):
@@ -902,8 +902,9 @@ class Controller(ControllerBase):
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch
         is done"""
         while True:
-            msg = await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv()
-            worker_id, work_item_id, block_hash, txs_done_count = cbor2.loads(msg)
+            msg = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv())
+            worker_id, work_item_id, block_hash, txs_done_count = \
+                cast(tuple[int, int, bytes, int], cbor2.loads(msg))
             try:
                 self.sync_state._work_item_progress_counter[work_item_id] += txs_done_count
                 self.sync_state._blocks_progress_counter[block_hash] += txs_done_count

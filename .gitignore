@@ -61,3 +61,7 @@ contrib/bench_and_experiments/cy_txparser/pushdata_hashes
 block593161.hex
 block593161.offsets
 *.csv
+/.coverage*
+/tests/data/
+/conduitdb_data_ssd/
+/conduitdb_data_hdd/

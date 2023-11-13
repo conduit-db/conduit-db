@@ -13,6 +13,8 @@ from typing import Any
 # The loading of environment variables must occur before importing any other
 # conduit_lib modules so the `.env` file environment variables are loaded before `constants.py`.
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+CONDUIT_ROOT_PATH = MODULE_DIR.parent
+sys.path.insert(1, str(CONDUIT_ROOT_PATH))
 from conduit_lib.startup_utils import (
     load_dotenv,
     is_docker,
@@ -25,8 +27,6 @@ if is_docker():
 load_dotenv(dotenv_path)
 resolve_hosts_and_update_env_vars()
 
-CONDUIT_ROOT_PATH = MODULE_DIR.parent
-sys.path.insert(1, str(CONDUIT_ROOT_PATH))
 from conduit_lib.logging_client import (
     set_logging_level,
     setup_tcp_logging,

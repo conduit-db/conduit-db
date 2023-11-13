@@ -3,12 +3,12 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 import bitcoinx
-from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure
-from cassandra.cluster import Cluster, Session
-from typing import TypeVar, Generator, Sequence, Any
+from typing import TypeVar, Sequence, Any, cast, Iterator
 
-from cassandra.concurrent import execute_concurrent_with_args
-from cassandra.query import PreparedStatement
+from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure, ProtocolVersion
+from cassandra.cluster import Cluster, Session, ResultSet  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
+from cassandra.query import PreparedStatement  # pylint:disable=E0611
 
 from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.database.db_interface.db import DatabaseType
@@ -26,6 +26,7 @@ from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
 from conduit_lib.database.scylladb.bulk_loads import ScyllaDBBulkLoads
 from conduit_lib.database.scylladb.queries import ScyllaDBQueries
 from conduit_lib.database.scylladb.tables import ScyllaDBTables
+from conduit_lib.database.scylladb.tip_filtering import ScyllaDBTipFilterQueries
 from conduit_lib.types import (
     RestorationFilterQueryResult,
     BlockHeaderRow,
@@ -38,7 +39,7 @@ T1 = TypeVar("T1")
 
 
 class ScyllaDB(DBInterface):
-    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int) -> None:
+    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int | None) -> None:
         self.cluster: Cluster = cluster
         self.session: Session = session
         self.db_type = DatabaseType.ScyllaDB
@@ -52,6 +53,7 @@ class ScyllaDB(DBInterface):
         self.bulk_loads = ScyllaDBBulkLoads(self)
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
+        self.tip_filter_api = ScyllaDBTipFilterQueries(self)
 
         self.executor = ThreadPoolExecutor(max_workers=20)
 
@@ -61,7 +63,7 @@ class ScyllaDB(DBInterface):
     def close(self) -> None:
         self.cluster.shutdown()
 
-    def commit_transaction(self):
+    def commit_transaction(self) -> None:
         raise ValueError("Not used in the ScyllaDB implementation")
 
     def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
@@ -77,22 +79,24 @@ class ScyllaDB(DBInterface):
     def start_transaction(self) -> None:
         raise ValueError("Not used in the ScyllaDB implementation")
 
-    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[...]]):
+    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]]) -> None:
         self.bulk_loads.load_data_batched(insert_statement, rows)
 
     def execute_with_concurrency(
         self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 50
-    ) -> list:
+    ) -> list[ResultSet]:
         try:
-            return execute_concurrent_with_args(
+            result = execute_concurrent_with_args(
                 self.session,
                 prepared_statement,
                 rows,
                 concurrency=concurrency,
                 raise_on_first_error=True,
             )
+            return cast(list[ResultSet], result)
         except (WriteTimeout, WriteFailure) as e:
             self.logger.error(f"Error occurred during concurrent write operations: {str(e)}")
+            raise
 
     def drop_tables(self) -> None:
         self.tables.drop_tables()
@@ -223,7 +227,7 @@ class ScyllaDB(DBInterface):
 
     def get_pushdata_filter_matches(
         self, pushdata_hashXes: list[str]
-    ) -> Generator[RestorationFilterQueryResult, None, None]:
+    ) -> Iterator[RestorationFilterQueryResult]:
         return self.api_queries.get_pushdata_filter_matches(pushdata_hashXes)
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
@@ -258,7 +262,9 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
     # )
     cluster = Cluster(
         contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
-        port=int(os.getenv('SCYLLA_PORT', 9042)),
+        port=int(os.getenv('SCYLLA_PORT', 19042)),
+        protocol_version=ProtocolVersion.V4,
+        load_balancing_policy=None,
         # auth_provider=auth_provider,
     )
     session = cluster.connect()

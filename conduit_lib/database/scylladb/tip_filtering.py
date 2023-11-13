@@ -5,10 +5,10 @@ https://github.com/electrumsv/simple-indexer/blob/master/simple_indexer/sqlite_d
 """
 
 import asyncio
-import datetime
 import logging
 import os
 import threading
+import typing
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from operator import attrgetter
@@ -21,13 +21,15 @@ from typing import (
     Type,
     Collection,
     Iterable,
+    cast,
+    Iterator,
 )
 from uuid import uuid4
 
 from cassandra import WriteTimeout, ConsistencyLevel
-from cassandra.cluster import Session
-from cassandra.concurrent import execute_concurrent_with_args
-from cassandra.query import BatchStatement
+from cassandra.cluster import Session, ResultSet  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
+from cassandra.query import BatchStatement  # pylint:disable=E0611
 
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.db_interface.tip_filter_types import (
@@ -42,8 +44,10 @@ from conduit_lib.database.db_interface.tip_filter_types import (
     DatabaseStateModifiedError,
 )
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
-from conduit_lib.database.scylladb.db import ScyllaDB
 from conduit_lib.types import TxMetadata
+
+if typing.TYPE_CHECKING:
+    from conduit_lib.database.scylladb.db import ScyllaDB
 
 logger = logging.getLogger("sqlite-database")
 mined_tx_hashes_table_lock = threading.RLock()
@@ -60,7 +64,7 @@ T2 = TypeVar("T2")
 # TODO Add LRU caching for these but clear the caches if there is a reorg because it
 #  could result invalidating some of the cached results, Would greatly improve performance
 #  for 1) Heavy key reuse 2) Multiple pushdata matches in the same transaction
-def get_tx_metadata(tx_hash: bytes, db: ScyllaDB) -> TxMetadata | None:
+def get_tx_metadata(tx_hash: bytes, db: "ScyllaDB") -> TxMetadata | None:
     """Truncates full hash -> hashX length"""
     tx_metadata = db.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
@@ -69,13 +73,13 @@ def get_tx_metadata(tx_hash: bytes, db: ScyllaDB) -> TxMetadata | None:
 
 
 async def get_tx_metadata_async(
-    tx_hash: bytes, db: ScyllaDB, executor: ThreadPoolExecutor
+    tx_hash: bytes, db: "ScyllaDB", executor: ThreadPoolExecutor
 ) -> TxMetadata | None:
     tx_metadata = await asyncio.get_running_loop().run_in_executor(executor, get_tx_metadata, tx_hash, db)
     return tx_metadata
 
 
-def split_into_batches(iterable: Iterable[T2], batch_size: int) -> list[list[T2]]:
+def split_into_batches(iterable: Iterable[T2], batch_size: int) -> Iterator[list[T2]]:
     """Splits an iterable into a list of lists with a maximum length of batch_size."""
     batch = []
     for item in iterable:
@@ -139,7 +143,7 @@ def read_rows_by_ids(
 # TODO(db) just add this as another compositional attribute of the DBInterface
 #  TipFilterQueryAPI requires a DBInterface instance anyway. And it will make it easier to test.
 class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
-    def __init__(self, db: ScyllaDB) -> None:
+    def __init__(self, db: "ScyllaDB") -> None:
         self.logger = logging.getLogger("scylladb-queries")
         self.logger.setLevel(logging.DEBUG)
         self.db = db
@@ -150,17 +154,27 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             self.drop_tables()
         self.create_tables()
 
+    def create_tables(self) -> None:
+        logger.debug("creating database tables")
+        self.create_accounts_table()
+        self.create_tip_filter_registrations_table()
+        self.create_outbound_data_table()
+
+    def drop_tables(self) -> None:
+        logger.debug("dropping database tables")
+        self.drop_accounts_table()
+        self.drop_tip_filter_registrations_table()
+        self.drop_outbound_data_table()
+
     def create_accounts_table(self) -> None:
         self.session.execute(
             """
             CREATE TABLE IF NOT EXISTS accounts (
                 account_id                  UUID PRIMARY KEY,
                 external_account_id         INT,
-            ) WITH CLUSTERING ORDER BY (external_account_id DESC);
+            );
             """
         )
-        # In ScyllaDB, you define the clustering order in the CREATE TABLE statement itself.
-        # There's no separate command to create indexes like MySQL.
 
     def drop_accounts_table(self) -> None:
         self.session.execute("DROP TABLE IF EXISTS accounts")
@@ -173,13 +187,14 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
                 pushdata_hash           BLOB,
                 finalised_flag          BOOLEAN,
                 deleting_flag           BOOLEAN,
-                date_expires            TIMESTAMP,
-                date_created            TIMESTAMP,
+                date_expires            INT,
+                date_created            INT,
                 PRIMARY KEY (account_id, pushdata_hash)
             ) WITH CLUSTERING ORDER BY (pushdata_hash ASC);
             """
         )
-        self.session.execute("CREATE INDEX date_expires_idx ON tip_filter_registrations (date_expires);")
+        self.session.execute("CREATE INDEX IF NOT EXISTS date_expires_idx "
+                             "ON tip_filter_registrations (date_expires);")
         # Deletes tip filter notifications after 30 days
         self.session.execute("ALTER TABLE tip_filter_registrations WITH default_time_to_live = 2592000;")
 
@@ -194,8 +209,8 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
                 outbound_data                       BLOB,
                 tip_filter_notification_flag        BOOLEAN,
                 dispatched_successfully_flag        BOOLEAN,
-                date_created                        TIMESTAMP,
-                date_last_tried                     TIMESTAMP
+                date_created                        INT,
+                date_last_tried                     INT
             );
             """
         )
@@ -212,19 +227,21 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         rows = self.session.execute(prepared_select, [external_account_id])
         row = rows.one()
         if row:
-            return row.account_id
+            return cast(uuid.UUID, row.account_id)
 
         # If the account doesn't exist, create a new account with a new UUID
         new_account_id = uuid4()
         prepared_insert = self.session.prepare(
             "INSERT INTO accounts (account_id, external_account_id) VALUES (?, ?)"
         )
-        self.session.execute(prepared_insert, [new_account_id, external_account_id, int(AccountFlag.NONE)])
+        self.session.execute(
+            prepared_insert, [str(new_account_id), external_account_id, int(AccountFlag.NONE)]
+        )
 
         self.logger.debug("Created account in indexer settings db callback %s", new_account_id)
         return new_account_id
 
-    def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
+    def read_account_metadata(self, account_ids: list[uuid.UUID]) -> list[AccountMetadata]:
         """
         Read account metadata for a list of account_ids.
         """
@@ -241,14 +258,14 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         rows = self.session.execute(prepared_select, [external_account_id])
         row = rows.one()
         if row is not None:
-            return row.account_id
+            return cast(uuid.UUID, row.account_id)
         else:
             raise ValueError("Account not found for external_account_id: {}".format(external_account_id))
 
     def create_tip_filter_registrations_write(
         self,
         external_account_id: int,
-        date_created: datetime.datetime,
+        date_created: int,
         registration_entries: list[TipFilterRegistrationEntry],
     ) -> bool:
         """
@@ -264,9 +281,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
 
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
         for entry in registration_entries:
-            import datetime
-
-            date_expires = date_created + datetime.timedelta(seconds=entry.duration_seconds)
+            date_expires = date_created + entry.duration_seconds
             batch.add(
                 prepared_insert,
                 (
@@ -288,7 +303,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
     def read_tip_filter_registrations(
         self,
         account_id: Optional[uuid.UUID] = None,
-        date_expires: Optional[datetime.datetime] = None,
+        date_expires: Optional[int] = None,
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
         mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
     ) -> list[TipFilterRegistrationEntry]:
@@ -318,14 +333,14 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         return [TipFilterRegistrationEntry(row.pushdata_hash, row.date_expires) for row in rows]
 
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: int | None = None
+        self, pushdata_hashes: list[bytes], account_id: uuid.UUID | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
         present (correctly or falsely) in the common cuckoo filter.
         """
         assert account_id is not None, "the account_id is needed for the ScyllaDB implementation"
-        results = []
+        results: list[FilterNotificationRow] = []
         prepared_select = self.session.prepare(
             "SELECT account_id, pushdata_hash, finalised_flag, deleting_flag "
             "FROM tip_filter_registrations "
@@ -354,6 +369,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         filter_mask: Optional[IndexerPushdataRegistrationFlag] = None,
         require_all: bool = False,
     ) -> None:
+        assert self.db.executor is not None
         # WARNING: ScyllaDB does not allow bitwise operators and it is too complicated to maintain
         # the same API to this function call whilst implementing the same behaviour. So instead,
         # I notice that this function is only called once with one set of flags
@@ -368,7 +384,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         # this workaround does not create unexpected bugs in future.
         #
         assert update_flags == IndexerPushdataRegistrationFlag.DELETING
-        assert update_mask == None
+        assert update_mask is None
         assert filter_flags == IndexerPushdataRegistrationFlag.FINALISED
         assert (
             filter_mask
@@ -377,7 +393,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
 
         account_id = self.create_account_write(external_account_id)
 
-        def _read_and_update(session: Session, pushdata_value: bytes, account_id: int) -> None:
+        def _read_and_update(session: Session, pushdata_value: bytes, account_id: uuid.UUID) -> None:
             update_cql = (
                 "UPDATE tip_filter_registrations SET deleting_flag=1 "
                 "WHERE account_id=? AND pushdata_hash=? "
@@ -424,7 +440,7 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
 
         self.session.execute(batch)
 
-    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
+    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> None:
         # ScyllaDB uses INSERT INTO ... IF NOT EXISTS to prevent overwriting existing rows
         insert_cql = """
         INSERT INTO outbound_data (outbound_data_id, outbound_data, 
@@ -446,11 +462,9 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
             creation_row.date_created,
             creation_row.date_last_tried,
         )
-        result = self.session.execute(insert_cql, params)
-        if not result[0].applied:
+        result: ResultSet = self.session.execute(insert_cql, params)
+        if not result.was_applied:
             raise DatabaseInsertConflict()
-
-        return result[0].outbound_data_id
 
     def read_pending_outbound_datas(
         self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None

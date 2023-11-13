@@ -118,6 +118,7 @@ def _get_tsc_merkle_proof(
         BlockHeaderRow,
         db.get_header_data(tx_metadata.block_hash, raw_header_data=True),
     )
+    assert header_row.block_header is not None
     root_from_header: bytes = bytes.fromhex(header_row.block_header)[36 : 36 + 32]
     if target_type == "merkleroot" and merkle_root != hash_to_hex_str(root_from_header):
         logger.debug(f"merkleroot: {merkle_root}; " f"root_from_header: {hash_to_hex_str(root_from_header)} ")

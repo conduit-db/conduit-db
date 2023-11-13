@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import threading
+import typing
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Any,
@@ -19,8 +21,6 @@ import MySQLdb
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.db_interface.tip_filter_types import (
     AccountMetadata,
-    AccountFlag,
-    OutputSpendRow,
     TipFilterRegistrationEntry,
     IndexerPushdataRegistrationFlag,
     OutboundDataFlag,
@@ -30,11 +30,11 @@ from conduit_lib.database.db_interface.tip_filter_types import (
     DatabaseInsertConflict,
 )
 from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
-from conduit_lib.database.lmdb.lmdb_database import get_full_tx_hash
-from conduit_lib.database.mysql.db import MySQLDatabase
-from conduit_lib.types import TxLocation, TxMetadata, OutpointType
+from conduit_lib.types import TxMetadata
 from conduit_lib.utils import index_exists
-from conduit_lib import LMDB_Database
+
+if typing.TYPE_CHECKING:
+    from conduit_lib.database.mysql.db import MySQLDatabase
 
 logger = logging.getLogger("sqlite-database")
 mined_tx_hashes_table_lock = threading.RLock()
@@ -51,7 +51,7 @@ T2 = TypeVar("T2")
 # TODO Add LRU caching for these but clear the caches if there is a reorg because it
 #  could result invalidating some of the cached results, Would greatly improve performance
 #  for 1) Heavy key reuse 2) Multiple pushdata matches in the same transaction
-def get_tx_metadata(tx_hash: bytes, db: MySQLDatabase) -> TxMetadata | None:
+def get_tx_metadata(tx_hash: bytes, db: "MySQLDatabase") -> TxMetadata | None:
     """Truncates full hash -> hashX length"""
     tx_metadata = db.get_transaction_metadata_hashX(tx_hash[0:HashXLength])
     if not tx_metadata:
@@ -60,14 +60,14 @@ def get_tx_metadata(tx_hash: bytes, db: MySQLDatabase) -> TxMetadata | None:
 
 
 async def get_tx_metadata_async(
-    tx_hash: bytes, db: MySQLDatabase, executor: ThreadPoolExecutor
+    tx_hash: bytes, db: "MySQLDatabase", executor: ThreadPoolExecutor
 ) -> TxMetadata | None:
     tx_metadata = await asyncio.get_running_loop().run_in_executor(executor, get_tx_metadata, tx_hash, db)
     return tx_metadata
 
 
 def read_rows_by_id(
-    mysqldb: MySQLDatabase,
+    mysqldb: "MySQLDatabase",
     return_type: Type[T1],
     sql: str,
     params: Sequence[Any],
@@ -80,6 +80,7 @@ def read_rows_by_id(
     batch_size = MARIADB_MAX_BIND_VARIABLES - len(params)
     remaining_ids = ids
     params = tuple(params)
+    assert mysqldb.conn is not None
     cursor: MySQLdb.cursors.Cursor = mysqldb.conn.cursor()
     try:
         while len(remaining_ids):
@@ -102,7 +103,7 @@ def read_rows_by_id(
 
 
 def read_rows_by_ids(
-    mysqldb: MySQLDatabase,
+    mysqldb: "MySQLDatabase",
     return_type: Type[T1],
     sql: str,
     sql_condition: str,
@@ -115,6 +116,7 @@ def read_rows_by_ids(
     batch_size = MARIADB_MAX_BIND_VARIABLES // 2 - len(sql_values)
     results: list[T1] = []
     remaining_ids = ids
+    assert mysqldb.conn is not None
     cursor: MySQLdb.cursors.Cursor = mysqldb.conn.cursor()
     try:
         while len(remaining_ids):
@@ -134,7 +136,7 @@ def read_rows_by_ids(
 
 
 class MySQLTipFilterQueries(TipFilterQueryAPI):
-    def __init__(self, db: MySQLDatabase) -> None:
+    def __init__(self, db: "MySQLDatabase") -> None:
         self.logger = logging.getLogger("mysql-queries")
         self.logger.setLevel(logging.DEBUG)
         self.conn: MySQLdb.Connection = db.conn
@@ -160,13 +162,13 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
     def create_accounts_table(self) -> None:
         self.conn.query(
             """
-        CREATE TABLE IF NOT EXISTS accounts (
-            account_id                  INT UNSIGNED     NOT NULL  AUTO_INCREMENT PRIMARY KEY,
-            external_account_id         INT UNSIGNED     NOT NULL
+            CREATE TABLE IF NOT EXISTS accounts (
+                account_id                  VARCHAR(36) PRIMARY KEY,
+                external_account_id         INT UNSIGNED     NOT NULL
         )
         """
         )
-        if not index_exists(self.conn, 'accounts_external_id_idx', 'external_account_id'):
+        if not index_exists(self.conn, 'accounts_external_id_idx', 'accounts'):
             self.conn.query(
                 "CREATE UNIQUE INDEX accounts_external_id_idx " "ON accounts (external_account_id)"
             )
@@ -180,7 +182,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         self.conn.query(
             """
         CREATE TABLE IF NOT EXISTS tip_filter_registrations (
-            account_id              INT UNSIGNED     NOT NULL,
+            account_id              VARCHAR(36)      NOT NULL,
             pushdata_hash           BINARY(32)       NOT NULL,
             flags                   INT UNSIGNED     NOT NULL,
             date_expires            INT UNSIGNED     NOT NULL,
@@ -217,7 +219,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         self.conn.query("DROP TABLE IF EXISTS outbound_data")
         self.conn.commit()
 
-    def create_account_write(self, external_account_id: int) -> int:
+    def create_account_write(self, external_account_id: int) -> uuid.UUID:
         """
         This does partial updates depending on what is in `settings`.
         """
@@ -230,13 +232,15 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             )
             row = cursor.fetchone()
             if row is not None:
-                return cast(int, row[0])
+                return cast(uuid.UUID, row[0])
 
             sql = """
-            INSERT INTO accounts (external_account_id)
-            VALUES (%s,)
+            INSERT INTO accounts (account_id, external_account_id) VALUES (%s,%s)
             """
-            sql_values = (external_account_id, int(AccountFlag.NONE))
+            sql_values = (
+                str(uuid.uuid4()),
+                external_account_id,
+            )
             cursor.execute(sql, sql_values)
 
             cursor.execute(
@@ -245,22 +249,22 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             )
             row = cursor.fetchone()
             assert row is not None
-            logger.debug("Created account in indexer settings db callback %d", row[0])
-            return cast(int, row[0])
+            logger.debug("Created account in indexer settings db callback %s", row[0])
+            return cast(uuid.UUID, row[0])
         finally:
             self.conn.commit()
             cursor.close()
 
-    def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
+    def read_account_metadata(self, account_ids: list[uuid.UUID]) -> list[AccountMetadata]:
         sql = """
             SELECT account_id, external_account_id
             FROM accounts
             WHERE account_id IN ({})
         """
-        self.db = cast(MySQLDatabase, self.db)
+        self.db = cast("MySQLDatabase", self.db)
         return read_rows_by_id(self.db, AccountMetadata, sql, [], account_ids)
 
-    def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
+    def read_account_id_for_external_account_id(self, external_account_id: int) -> uuid.UUID:
         cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         cursor = cursor.execute(
             "SELECT account_id FROM accounts WHERE external_account_id=%s",
@@ -268,7 +272,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         )
         row = cursor.fetchone()
         assert row is not None
-        return cast(int, row[0])
+        return cast(uuid.UUID, row[0])
 
     def create_tip_filter_registrations_write(
         self,
@@ -283,7 +287,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         sql = """
         INSERT tip_filter_registrations (account_id, pushdata_hash, flags, date_created, 
             date_expires) VALUES (%s, %s, %s, %s, %s)"""
-        insert_rows: list[tuple[int, bytes, int, int, int]] = []
+        insert_rows: list[tuple[uuid.UUID, bytes, int, int, int]] = []
         for entry in registration_entries:
             insert_rows.append(
                 (
@@ -309,7 +313,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
 
     def read_tip_filter_registrations(
         self,
-        account_id: Optional[int] = None,
+        account_id: Optional[uuid.UUID] = None,
         date_expires: Optional[int] = None,
         # These defaults include all rows no matter the flag value.
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
@@ -336,7 +340,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             cursor.close()
 
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: int | None = None
+        self, pushdata_hashes: list[bytes], account_id: uuid.UUID | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -351,7 +355,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             int(IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING),
             int(IndexerPushdataRegistrationFlag.FINALISED),
         ]
-        self.db = cast(MySQLDatabase, self.db)
+        self.db = cast("MySQLDatabase", self.db)
         return read_rows_by_id(
             self.db,
             FilterNotificationRow,
@@ -381,7 +385,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         SET flags=(flags&%s)|%s
         WHERE account_id=%s AND pushdata_hash=%s AND (flags&%s)=%s
         """
-        update_rows: list[tuple[int, int, int, bytes, int, int]] = []
+        update_rows: list[tuple[int, int, uuid.UUID, bytes, int, int]] = []
         for pushdata_value in pushdata_hashes:
             update_rows.append(
                 (
@@ -441,7 +445,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         DELETE FROM tip_filter_registrations
         WHERE account_id=%s AND pushdata_hash=%s AND flags&%s=%s
         """
-        update_rows: list[tuple[int, bytes, int, int]] = []
+        update_rows: list[tuple[uuid.UUID, bytes, int, int]] = []
         for pushdata_value in pushdata_hashes:
             update_rows.append((account_id, pushdata_value, int(mask), int(expected_flags)))
 
@@ -452,7 +456,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             self.conn.commit()
             cursor.close()
 
-    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
+    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> None:
         sql = (
             "INSERT INTO outbound_data (outbound_data_id, outbound_data, outbound_data_flags, "
             "date_created, date_last_tried) VALUES (%s, %s, %s, %s, %s)"
@@ -465,7 +469,6 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             result_row = cursor.fetchone()
             if result_row is None:
                 raise DatabaseInsertConflict()
-            return cast(int, result_row[0])
         finally:
             self.conn.commit()
             cursor.close()
@@ -473,7 +476,7 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
     def read_pending_outbound_datas(
         self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
     ) -> list[OutboundDataRow]:
-        assert account_id is not None, "Needed for ScyllaDB implementation"
+        # assert account_id is not None, "Needed for ScyllaDB implementation"
         sql = (
             "SELECT outbound_data_id, outbound_data, outbound_data_flags, date_created, "
             "date_last_tried FROM outbound_data WHERE (outbound_data_flags&%s)=%s "

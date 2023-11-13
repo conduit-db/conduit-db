@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from typing import cast
 import typing
 from pathlib import Path
 
@@ -357,10 +358,12 @@ class WorkerStateManager:
     async def listen_for_utxo_spend_notifications_async(self) -> None:
         logger.debug(f"Waiting for all 'TxParser' workers to give 'READY' signal")
         while True:
-            msg = await self.socket_utxo_spend_notifications.recv()
+            msg = cast(bytes, await self.socket_utxo_spend_notifications.recv())
             if not msg:
                 raise ValueError("Workers should never send empty zmq messages")
-            notification: OutpointStateUpdate = OutpointStateUpdate(*cbor2.loads(msg))
+
+            notification: OutpointStateUpdate = OutpointStateUpdate(
+                *cast(OutpointStateUpdate, cbor2.loads(msg)))
             logger.debug(f"Got notification: {notification}")
             if notification.command & OutpointMessageType.READY:
                 assert notification.worker_id is not None
@@ -376,10 +379,11 @@ class WorkerStateManager:
 
     async def listen_for_pushdata_notifications_async(self) -> None:
         while True:
-            msg = await self.socket_pushdata_notifications.recv()
+            msg = cast(bytes, await self.socket_pushdata_notifications.recv())
             if not msg:
                 raise ValueError("Workers should never send empty zmq messages")
-            notification = PushdataFilterStateUpdate(*cbor2.loads(msg))
+            notification = PushdataFilterStateUpdate(
+                *cast(PushdataFilterStateUpdate, cbor2.loads(msg)))
             logger.debug(f"Got notification: {notification}")
             if notification.command & PushdataFilterMessageType.ACK:
                 self._pushdata_inbound_queue.put_nowait(notification)

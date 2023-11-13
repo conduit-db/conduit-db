@@ -20,8 +20,8 @@ steps:
     set -e
     python3 -m pip install wheel
     python3 -m pip install pytest pytest-cov pytest-timeout
-    python3 -m pip install -r conduit_raw/requirements.txt
-    python3 -m pip install -r conduit_index/requirements.txt
+    python3 -m pip install -r contrib/requirements.txt
+    python3 -m pip install -r contrib/requirements-dev.txt
   displayName: 'Install ConduitDB dependencies'
 - script: |
     set -e
@@ -52,7 +52,7 @@ steps:
 
 - script: |
     export DOCKER_GATEWAY_HOST=172.17.0.1
-    docker-compose -f docker-compose.yml build --parallel
+    ./build.sh
     docker-compose -f docker-compose.yml up --detach
     sleep 15
     docker-compose -f docker-compose.yml logs

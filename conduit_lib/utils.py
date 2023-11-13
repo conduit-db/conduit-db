@@ -1,4 +1,5 @@
 import asyncio
+from types import TracebackType
 
 import MySQLdb
 import bitcoinx
@@ -20,7 +21,7 @@ from pathlib import Path
 import socket
 import struct
 import time
-from typing import Any, cast, Callable, Coroutine, TypeVar
+from typing import Any, cast, Callable, Coroutine, TypeVar, Type
 import zmq
 from zmq.asyncio import Socket as AsyncZMQSocket
 
@@ -337,7 +338,12 @@ class Timer:
         self.start = time.time()
         return self
 
-    def __exit__(self) -> None:
+    def __exit__(
+        self,
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.end = time.time()
         self.interval = self.end - self.start
         if self.name:

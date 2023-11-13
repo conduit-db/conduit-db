@@ -2,20 +2,27 @@ import concurrent.futures
 import logging
 import os
 
+from typing import Iterator
 import typing
 from concurrent.futures import Future
 from dataclasses import dataclass
 from functools import partial
 from typing import NamedTuple
 
-from cassandra.cluster import Session, ResultSet
-from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult
+from cassandra.cluster import Session, ResultSet  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 
 from ..db_interface.tip_filter_types import OutputSpendRow
 from ..lmdb.lmdb_database import get_full_tx_hash, LMDB_Database
 from ...constants import MAX_UINT32, HashXLength
-from ...types import RestorationFilterQueryResult, TxLocation, TxMetadata, BlockHeaderRow, \
-    OutpointType, PushdataMatchFlags
+from ...types import (
+    RestorationFilterQueryResult,
+    TxLocation,
+    TxMetadata,
+    BlockHeaderRow,
+    OutpointType,
+    PushdataMatchFlags,
+)
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -89,7 +96,7 @@ class GetSpentOutpointsStatements:
             "SELECT out_tx_hash, out_idx, in_tx_hash, in_idx FROM inputs_table "
             "WHERE out_tx_hash = ? AND out_idx = ?"
         )
-        self.txs_stmt = self.session.prepare(
+        self.txs_stmt = session.prepare(
             "SELECT tx_block_num, tx_position FROM confirmed_transactions " "WHERE tx_hash = ?"
         )
         self.input_headers_stmt = session.prepare(
@@ -139,7 +146,7 @@ class ScyllaDBAPIQueries:
             headers_result = self.session.execute(headers_query, parameters=params)
             header_rows = headers_result.all()
             if len(header_rows) == 0:
-                return
+                return None
             elif len(header_rows) == 1:
                 header_row = header_rows[0]
                 if header_row:
@@ -152,13 +159,12 @@ class ScyllaDBAPIQueries:
                         header_row.block_hash,
                         header_row.block_height,
                     )
-            else:
-                raise AssertionError(
-                    f"More than a single tx_hashX was returned for hashX: {tx_hashX.hex()} "
-                    f"from the ScyllaDB query. This should never happen. "
-                    f"It should always give a materialized view of the longest chain "
-                    f"where the header's is_orphaned field is set to False"
-                )
+            raise AssertionError(
+                f"More than a single tx_hashX was returned for hashX: {tx_hashX.hex()} "
+                f"from the ScyllaDB query. This should never happen. "
+                f"It should always give a materialized view of the longest chain "
+                f"where the header's is_orphaned field is set to False"
+            )
         except Exception as e:
             raise
 
@@ -196,11 +202,15 @@ class ScyllaDBAPIQueries:
             # Handle the exception as needed
             raise
 
-    def get_pushdata_filter_matches(self, pushdata_hashXes: list[str]):
+    def get_pushdata_filter_matches(
+        self, pushdata_hashXes: list[str]
+    ) -> Iterator[RestorationFilterQueryResult]:
         # NOTE: execute_concurrent_with_args returns results out of order. Need to
         # use futures callbacks and hash maps to 'join' the results together manually
+        assert self.db.executor is not None
         if not self.prepared_statements_cached:
             self.get_pushdata_filter_matches_stmts = GetPushdataFilterMatchesStatements(self.session)
+        assert self.get_pushdata_filter_matches_stmts is not None
         pushdata_stmt = self.get_pushdata_filter_matches_stmts.pushdata_stmt
         inputs_stmt = self.get_pushdata_filter_matches_stmts.inputs_stmt
         confirmed_transactions_stmt = self.get_pushdata_filter_matches_stmts.confirmed_transactions_stmt
@@ -208,60 +218,74 @@ class ScyllaDBAPIQueries:
 
         joined_rows: list[JoinedRows] = []
 
-        try:
-            # 1) Pushdata Matches
-            pushdata_results: list[ExecutionResult] = execute_concurrent_with_args(
-                self.session,
-                pushdata_stmt,
-                [(bytes.fromhex(pd_hashX),) for pd_hashX in pushdata_hashXes],
-                raise_on_first_error=True,
-            )
-            for result in pushdata_results:
-                rows = result.result_or_exc.all()
-                for row in rows:
-                    pd_row = PushdataResult(*row)
-                    if pd_row.ref_type == PushdataMatchFlags.OUTPUT:
-                        joined_rows.append(JoinedRows(pushdata_result=pd_row))
-                    else:
-                        self.logger.error(f"Unexpected input match - this feature is turned off")
+        # 1) Pushdata Matches
+        pushdata_results: list[ExecutionResult] = execute_concurrent_with_args(
+            self.session,
+            pushdata_stmt,
+            [(bytes.fromhex(pd_hashX),) for pd_hashX in pushdata_hashXes],
+            raise_on_first_error=True,
+        )
+        for result in pushdata_results:
+            rows = result.result_or_exc.all()
+            for row in rows:
+                pd_row = PushdataResult(*row)
+                if pd_row.ref_type == PushdataMatchFlags.OUTPUT:
+                    joined_rows.append(JoinedRows(pushdata_result=pd_row))
+                else:
+                    self.logger.error(f"Unexpected input match - this feature is turned off")
 
-            # 2) Input Rows & (concurrently together)
-            # 3) Confirmed Transactions (concurrently together)
-            futures = []
+        # 2) Input Rows & (concurrently together)
+        # 3) Confirmed Transactions (concurrently together)
+        futures: list[Future[ResultSet]] = []
+        exceptions = []  # Store exceptions here
 
-            def input_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+        def input_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+            try:
                 result: ResultSet = future.result()
-                joined_row.input_result = InputResult(*result.one())
+                rows = result.all()
+                assert len(rows) in [0, 1]
+                for row in rows:
+                    joined_row.input_result = InputResult(*row)
+            except Exception as e:
+                self.logger.exception("exception in input_callback")
+                exceptions.append(e)
 
-            for joined_row in joined_rows:
-                pd_row = joined_row.pushdata_result
-                future: Future = self.db.executor.submit(
-                    self.session.execute, inputs_stmt, (pd_row.tx_hash, pd_row.idx)
-                )
-                future.add_done_callback(partial(input_callback, joined_row))
-                futures.append(future)
+        future: Future[ResultSet]
+        for joined_row in joined_rows:
+            pd_row = joined_row.pushdata_result
+            future = self.db.executor.submit(self.session.execute, inputs_stmt, (pd_row.tx_hash, pd_row.idx))
+            future.add_done_callback(partial(input_callback, joined_row))
+            futures.append(future)
 
-            def transactions_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+        def transactions_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+            try:
                 result: ResultSet = future.result()
                 joined_row.tx_result = []
                 for row in result.all():
                     joined_row.tx_result.append(ConfirmedTxResult(*row))
+            except Exception as e:
+                self.logger.exception("exception in transactions_callback")
+                exceptions.append(e)
 
-            for joined_row in joined_rows:
-                pd_row = joined_row.pushdata_result
-                future: Future = self.db.executor.submit(
-                    self.session.execute, confirmed_transactions_stmt, (pd_row.tx_hash, )
-                )
-                future.add_done_callback(partial(transactions_callback, joined_row))
-                futures.append(future)
+        for joined_row in joined_rows:
+            pd_row = joined_row.pushdata_result
+            future = self.db.executor.submit(
+                self.session.execute, confirmed_transactions_stmt, (pd_row.tx_hash,)
+            )
+            future.add_done_callback(partial(transactions_callback, joined_row))
+            futures.append(future)
 
-            concurrent.futures.wait(futures)
+        concurrent.futures.wait(futures)
+        if exceptions:
+            raise exceptions[0]
 
-            # 4) Headers
-            def headers_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+        # 4) Headers
+        def headers_callback(joined_row: JoinedRows, future: Future[ResultSet]) -> None:
+            try:
                 result: ResultSet = future.result()
                 header_result: HeaderResult = result.one()
                 if header_result.is_orphaned == 1:
+                    assert joined_row.tx_result is not None
                     assert len(joined_row.tx_result) > 1
                     # Remove the orphaned transaction:
                     idx_for_del: int | None = None
@@ -274,36 +298,41 @@ class ScyllaDBAPIQueries:
                 assert header_result.is_orphaned == 0
 
                 joined_row.header_result = header_result
+            except Exception as e:
+                self.logger.exception("exception in headers_callback")
+                exceptions.append(e)
 
-            futures = []
-            for joined_row in joined_rows:
-                tx_rows = joined_row.tx_result
-                # Reorgs result in more than one row in the transaction table with the same
-                # tx_hash but with different block_num
-                for tx_row in tx_rows:
-                    future: Future = self.db.executor.submit(
-                        self.session.execute, headers_stmt, (tx_row.tx_block_num,)
-                    )
-                    future.add_done_callback(partial(headers_callback, joined_row))
-                    futures.append(future)
+        futures = []
+        exceptions = []
+        for joined_row in joined_rows:
+            assert joined_row.tx_result is not None
+            tx_rows = joined_row.tx_result
+            # Reorgs result in more than one row in the transaction table with the same
+            # tx_hash but with different block_num
+            for tx_row in tx_rows:
+                future = self.db.executor.submit(self.session.execute, headers_stmt, (tx_row.tx_block_num,))
+                future.add_done_callback(partial(headers_callback, joined_row))
+                futures.append(future)
 
-            concurrent.futures.wait(futures)
+        concurrent.futures.wait(futures)
+        if exceptions:
+            raise exceptions[0]
+        assert not exceptions
 
-            # Now combine all data and yield results
-            for joined_row in joined_rows:
-                yield self.combine_rows_to_result(joined_row)
-        finally:
-            self.logger.exception("Unexpected exception in `get_pushdata_filter_matches`")
+        # Now combine all data and yield results
+        for joined_row in joined_rows:
+            yield self.combine_rows_to_result(joined_row)
 
-    def combine_rows_to_result(
-        self,
-        joined_row
-    ):
-        tx_location = TxLocation(joined_row.header_result.block_hash,
-            joined_row.header_result.block_num, joined_row.tx_result[0].tx_position)
+    def combine_rows_to_result(self, joined_row: JoinedRows) -> RestorationFilterQueryResult:
+        assert joined_row.header_result is not None
+        assert joined_row.tx_result is not None
+        tx_location = TxLocation(
+            joined_row.header_result.block_hash,
+            joined_row.header_result.block_num,
+            joined_row.tx_result[0].tx_position,
+        )
 
-        in_tx_hash: bytes = None if joined_row.input_result is None \
-            else joined_row.input_result.in_tx_hash
+        in_tx_hash: bytes | None = None if joined_row.input_result is None else joined_row.input_result.in_tx_hash
         in_idx: int = MAX_UINT32
         if joined_row.input_result is not None:
             in_idx = joined_row.input_result.in_idx
@@ -319,8 +348,10 @@ class ScyllaDBAPIQueries:
         )
 
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
+        assert self.db.executor is not None
         if not self.prepared_statements_cached:
             self.get_spent_outpoints_stmts = GetSpentOutpointsStatements(self.session)
+        assert self.get_spent_outpoints_stmts is not None
         inputs_stmt = self.get_spent_outpoints_stmts.inputs_stmt
         txs_stmt = self.get_spent_outpoints_stmts.txs_stmt
         input_headers_stmt = self.get_spent_outpoints_stmts.input_headers_stmt
@@ -329,32 +360,42 @@ class ScyllaDBAPIQueries:
 
         # Get input rows given the outpoint
         input_results = self.db.execute_with_concurrency(inputs_stmt, entries)
-        input_rows = [InputResult(*result[1]) for result in input_results if result[0]]
+        input_rows = [InputResult(*result.one()) for result in input_results if result.one()]
 
         # Get tx_block_num and tx_position for inputs and outputs
-        input_txs_future = self.db.executor.submit(self.db.execute_with_concurrency, txs_stmt, input_rows)
-        output_txs_future = self.db.executor.submit(self.db.execute_with_concurrency, txs_stmt, input_rows)
+        input_txs_future: Future[list[ResultSet]] = self.db.executor.submit(
+            self.db.execute_with_concurrency, txs_stmt, input_rows
+        )
+        output_txs_future: Future[list[ResultSet]] = self.db.executor.submit(
+            self.db.execute_with_concurrency, txs_stmt, input_rows
+        )
         input_txs_results = input_txs_future.result()
         output_txs_results = output_txs_future.result()
-        input_txs_rows = [TxJoinResult(*result[1]) for result in input_txs_results if result[0]]
-        output_txs_rows = [TxJoinResult(*result[1]) for result in output_txs_results if result[0]]
+        input_txs_rows = [
+            TxJoinResult(*result.one()) for result in input_txs_results if result.one() is not None
+        ]
+        output_txs_rows = [
+            TxJoinResult(*result.one()) for result in output_txs_results if result.one() is not None
+        ]
 
         # Get block_hash given the block_num from the tx table
-        input_headers_future = self.db.executor.submit(
+        input_headers_future: Future[ResultSet] = self.db.executor.submit(
             self.db.execute_with_concurrency, input_headers_stmt, input_rows
         )
-        output_headers_future1 = self.db.executor.submit(
+        output_headers_future1: Future[ResultSet] = self.db.executor.submit(
             self.db.execute_with_concurrency, output_headers_stmt1, input_rows
         )
-        output_headers_future2 = self.db.executor.submit(
+        output_headers_future2: Future[ResultSet] = self.db.executor.submit(
             self.db.execute_with_concurrency, output_headers_stmt2, input_rows
         )
         input_headers_results = input_headers_future.result()
         output_headers_results1 = output_headers_future1.result()
         output_headers_results2 = output_headers_future2.result()
-        input_headers_rows = [HeaderJoinResult(*result[1]) for result in input_headers_results if result[0]]
+        input_headers_rows = [
+            HeaderJoinResult(*result.one()) for result in input_headers_results if result.one()
+        ]
         output_headers_rows1 = [
-            HeaderJoinResult(*result[1]) for result in output_headers_results1 if result[0]
+            HeaderJoinResult(*result.one()) for result in output_headers_results1 if result.one()
         ]
         output_headers_rows2 = [
             HeaderJoinResult(*result[1]) for result in output_headers_results2 if result[0]

@@ -1,12 +1,14 @@
 import abc
 import logging
+import typing
+from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum
 
 import bitcoinx
-from typing import TypeVar, Generator, Any, Sequence
+from typing import TypeVar, Any, Sequence, Iterator
 
 from MySQLdb import Connection
-from cassandra.cluster import Session
+from cassandra.cluster import Session  # pylint: disable=E0401,E0611
 
 from conduit_lib import LMDB_Database
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
@@ -26,6 +28,9 @@ from conduit_lib.types import (
     RestorationFilterQueryResult,
     OutpointType,
 )
+
+if typing.TYPE_CHECKING:
+    from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 
 T1 = TypeVar("T1")
 
@@ -51,8 +56,10 @@ class DBInterface(abc.ABC):
         self.worker_id = worker_id
         self.db_type: DatabaseType | None = None
 
+        self.tip_filter_api: "TipFilterQueryAPI | None" = None
         self.session: Session | None = None  # ScyllaDB
         self.cache: RedisCache | None = None  # ScyllaDB
+        self.executor: ThreadPoolExecutor | None = None  # ScyllaDB
         self.conn: Connection | None = None  # MySQLDB
 
     @classmethod
@@ -250,7 +257,7 @@ class DBInterface(abc.ABC):
     @abc.abstractmethod
     def get_pushdata_filter_matches(
         self, pushdata_hashXes: list[str]
-    ) -> Generator[RestorationFilterQueryResult, None, None]:
+    ) -> Iterator[RestorationFilterQueryResult]:
         pass
 
     @abc.abstractmethod

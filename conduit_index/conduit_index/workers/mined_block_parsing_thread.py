@@ -191,9 +191,10 @@ class MinedBlockParsingThread(threading.Thread):
         self.logger.debug(f"Entering `unspent_output_registrations_thread` main loop")
         while True:
             # Get new registration from external API
-            msg = self.parent.socket_utxo_spend_registrations.recv()
+            msg = cast(bytes, self.parent.socket_utxo_spend_registrations.recv())  # type: ignore[redundant-cast]
             self.logger.debug(f"Got msg from external API: {msg!r}")
-            state_update_from_server = OutpointStateUpdate(*cbor2.loads(msg.lstrip(UTXO_REGISTRATION_TOPIC)))
+            outpoint_msg = cast(OutpointStateUpdate, cbor2.loads(msg.lstrip(UTXO_REGISTRATION_TOPIC)))
+            state_update_from_server = OutpointStateUpdate(*outpoint_msg)
             self.logger.debug(f"Got state update from external API: {state_update_from_server}")
             assert state_update_from_server.outpoint is not None
             outpoint_obj = OutpointType.from_outpoint_struct(state_update_from_server.outpoint)
@@ -229,8 +230,10 @@ class MinedBlockParsingThread(threading.Thread):
         while True:
             # Get new registration from external API
             msg = self.parent.socket_pushdata_registrations.recv()
+            msg_unpacked = cast(PushdataFilterStateUpdate,
+                cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC)))
             state_update_from_server = PushdataFilterStateUpdate(
-                *cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC))
+                *msg_unpacked
             )
             self.logger.debug(
                 f"Got state update from external API of type: " f"{state_update_from_server.command}"

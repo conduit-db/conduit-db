@@ -1,5 +1,5 @@
 import logging
-from typing import Generator
+from typing import Iterator
 
 import MySQLdb
 import typing
@@ -122,7 +122,7 @@ class MySQLAPIQueries:
 
     def get_pushdata_filter_matches(
         self, pushdata_hashXes: list[str]
-    ) -> Generator[RestorationFilterQueryResult, None, None]:
+    ) -> Iterator[RestorationFilterQueryResult]:
         try:
             query_format_pushdata_hashes = [f"X'{pd_hashX}'" for pd_hashX in pushdata_hashXes]
             sql = f"""

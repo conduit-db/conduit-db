@@ -1,8 +1,10 @@
 import os
 import time
+from typing import Iterator
 
 import bitcoinx
 import pytest
+from _pytest.fixtures import FixtureRequest
 from bitcoinx import pack_le_uint32
 
 from conduit_lib import DBInterface
@@ -16,23 +18,33 @@ from conduit_lib.database.db_interface.types import (
     OutputRow,
     PushdataRow,
 )
-from conduit_lib.types import BlockHeaderRow, TxMetadata, RestorationFilterQueryResult, TxLocation, \
-    PushdataMatchFlags
+from conduit_lib.types import (
+    BlockHeaderRow,
+    TxMetadata,
+    RestorationFilterQueryResult,
+    TxLocation,
+    PushdataMatchFlags,
+)
 
 
 class TestDBInterface:
     @pytest.fixture(scope="class", params=[DatabaseType.MySQL, DatabaseType.ScyllaDB])
-    def db(self, request) -> DBInterface:
+    def db(self, request: FixtureRequest) -> Iterator[DBInterface]:
         db = DBInterface.load_db(worker_id=1, db_type=request.param)
         db.drop_tables()
+        assert db.tip_filter_api is not None
+        db.tip_filter_api.drop_tables()
         db.drop_temp_mined_tx_hashes()
         db.drop_temp_orphaned_txs()
         if hasattr(db, 'cache'):
+            assert db.cache is not None
             db.cache.r.flushall()
         db.drop_tables()
         db.create_permanent_tables()
+        db.tip_filter_api.create_tables()
         yield db
         if hasattr(db, 'cache'):
+            assert db.cache is not None
             db.cache.r.flushall()
         db.drop_tables()
         db.close()
@@ -45,16 +57,18 @@ class TestDBInterface:
         # INITIAL STATE
         db.initialise_checkpoint_state()
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT * FROM checkpoint_state WHERE id=0")
-            id = result[0].id
-            best_flushed_block_height = result[0].best_flushed_block_height
-            best_flushed_block_hash = result[0].best_flushed_block_hash
-            first_allocated_block_hash = result[0].first_allocated_block_hash
-            last_allocated_block_hash = result[0].last_allocated_block_hash
-            new_hashes_array = result[0].new_hashes_array
-            old_hashes_array = result[0].old_hashes_array
-            reorg_was_allocated = result[0].reorg_was_allocated
+            id = result.one().id
+            best_flushed_block_height = result.one().best_flushed_block_height
+            best_flushed_block_hash = result.one().best_flushed_block_hash
+            first_allocated_block_hash = result.one().first_allocated_block_hash
+            last_allocated_block_hash = result.one().last_allocated_block_hash
+            new_hashes_array = result.one().new_hashes_array
+            old_hashes_array = result.one().old_hashes_array
+            reorg_was_allocated = result.one().reorg_was_allocated
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM checkpoint_state WHERE id=0")
             result = db.conn.store_result()
             row = result.fetch_row(0)[0]
@@ -123,16 +137,18 @@ class TestDBInterface:
         )
 
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT * FROM checkpoint_state WHERE id=0")
-            id = result[0].id
-            best_flushed_block_height = result[0].best_flushed_block_height
-            best_flushed_block_hash = result[0].best_flushed_block_hash
-            first_allocated_block_hash = result[0].first_allocated_block_hash
-            last_allocated_block_hash = result[0].last_allocated_block_hash
-            old_hashes_array = result[0].old_hashes_array
-            new_hashes_array = result[0].new_hashes_array
-            reorg_was_allocated = result[0].reorg_was_allocated
+            id = result.one().id
+            best_flushed_block_height = result.one().best_flushed_block_height
+            best_flushed_block_hash = result.one().best_flushed_block_hash
+            first_allocated_block_hash = result.one().first_allocated_block_hash
+            last_allocated_block_hash = result.one().last_allocated_block_hash
+            old_hashes_array = result.one().old_hashes_array
+            new_hashes_array = result.one().new_hashes_array
+            reorg_was_allocated = result.one().reorg_was_allocated
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM checkpoint_state WHERE id=0")
             result = db.conn.store_result()
             row = result.fetch_row(0)[0]
@@ -155,26 +171,36 @@ class TestDBInterface:
         assert old_hashes_array == b"".join(old_hashes)
 
     def test_get_tables(self, db: DBInterface) -> None:
+        db.drop_tables()
+        db.create_permanent_tables()
+        assert db.tip_filter_api is not None
+        db.tip_filter_api.drop_tables()
+        db.tip_filter_api.create_tables()
+        tables = db.get_tables()
         if db.db_type == DatabaseType.ScyllaDB:
-            tables = db.get_tables()
             assert tables == [
+                ('accounts',),
                 ('checkpoint_state',),
                 ('confirmed_transactions',),
                 ('headers',),
                 ('inputs_table',),
+                ('outbound_data',),
                 ('pushdata',),
-                ('txo_table',),
+                ('tip_filter_registrations',),
+                ('txo_table',)
             ]
         else:
-            tables = db.get_tables()
             assert tables == (
+                ('accounts',),
                 ('checkpoint_state',),
                 ('confirmed_transactions',),
                 ('headers',),
                 ('inputs_table',),
                 ('mempool_transactions',),
+                ('outbound_data',),
                 ('pushdata',),
-                ('txo_table',),
+                ('tip_filter_registrations',),
+                ('txo_table',)
             )
 
     def test_temp_mined_tx_hashes_table(self, db: DBInterface) -> None:
@@ -186,10 +212,12 @@ class TestDBInterface:
         db.drop_temp_mined_tx_hashes()
         db.load_temp_mined_tx_hashes(inserted_rows)
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers('temp_mined_tx_hashes') == {bytes.fromhex(txid1), bytes.fromhex(txid2)}
             db.drop_temp_mined_tx_hashes()
             assert db.cache.r.smembers('temp_mined_tx_hashes') == set()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_mined_tx_hashes")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -209,11 +237,13 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute(
                 "SELECT tx_hash, tx_block_num, tx_position FROM confirmed_transactions"
             )
             assert len(result.all()) == 0
         else:
+            assert db.conn is not None
             db.conn.query("SELECT tx_hash, tx_block_num, tx_position FROM confirmed_transactions")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -222,12 +252,14 @@ class TestDBInterface:
         # Filled
         db.bulk_load_confirmed_tx_rows(tx_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute(
                 "SELECT tx_hash, tx_block_num, tx_position FROM confirmed_transactions"
             )
             rows = result.all()
             rows.sort()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT tx_hash, tx_block_num, tx_position FROM confirmed_transactions")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -247,10 +279,12 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT out_tx_hash, out_idx, in_tx_hash, out_idx FROM inputs_table")
             rows = result.all()
             assert len(rows) == 0
         else:
+            assert db.conn is not None
             db.conn.query("SELECT out_tx_hash, out_idx, in_tx_hash, out_idx FROM inputs_table")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -259,10 +293,12 @@ class TestDBInterface:
         # Filled
         db.bulk_load_input_rows(in_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT out_tx_hash, out_idx, in_tx_hash, out_idx FROM inputs_table")
             rows = result.all()
             rows.sort()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT out_tx_hash, out_idx, in_tx_hash, out_idx FROM inputs_table")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -284,10 +320,12 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
             rows = result.all()
             assert len(rows) == 0
         else:
+            assert db.conn is not None
             db.conn.query("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -296,10 +334,12 @@ class TestDBInterface:
         # Filled
         db.bulk_load_output_rows(out_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
             rows = result.all()
             rows.sort()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -318,15 +358,21 @@ class TestDBInterface:
         txid2 = 'bb' * HashXLength
         pushdata_hash1 = 'ee' * HashXLength
         pushdata_hash2 = 'ff' * HashXLength
-        row1 = PushdataRow(pushdata_hash=pushdata_hash1, tx_hash=txid1, idx=1, ref_type=int(PushdataMatchFlags.OUTPUT))
-        row2 = PushdataRow(pushdata_hash=pushdata_hash2, tx_hash=txid2, idx=2, ref_type=int(PushdataMatchFlags.OUTPUT))
+        row1 = PushdataRow(
+            pushdata_hash=pushdata_hash1, tx_hash=txid1, idx=1, ref_type=int(PushdataMatchFlags.OUTPUT)
+        )
+        row2 = PushdataRow(
+            pushdata_hash=pushdata_hash2, tx_hash=txid2, idx=2, ref_type=int(PushdataMatchFlags.OUTPUT)
+        )
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT pushdata_hash, tx_hash, idx, ref_type FROM pushdata")
             rows = result.all()
             assert len(rows) == 0
         else:
+            assert db.conn is not None
             db.conn.query("SELECT pushdata_hash, tx_hash, idx, ref_type FROM pushdata")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -335,10 +381,12 @@ class TestDBInterface:
         # Filled
         db.bulk_load_pushdata_rows(pd_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute("SELECT pushdata_hash, tx_hash, idx, ref_type FROM pushdata")
             rows = result.all()
             rows.sort()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT pushdata_hash, tx_hash, idx, ref_type FROM pushdata")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -380,6 +428,7 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute(
                 "SELECT block_num, block_hash, block_height, block_header,"
                 "block_tx_count, block_size, is_orphaned FROM headers"
@@ -387,6 +436,7 @@ class TestDBInterface:
             rows = result.all()
             assert len(rows) == 0
         else:
+            assert db.conn is not None
             db.conn.query(
                 "SELECT block_num, block_hash, block_height, block_header,"
                 "block_tx_count, block_size, is_orphaned FROM headers"
@@ -398,6 +448,7 @@ class TestDBInterface:
         # Filled
         db.bulk_load_headers(block_header_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
             result = db.session.execute(
                 "SELECT block_num, block_hash, block_height, block_header,"
                 "block_tx_count, block_size, is_orphaned FROM headers"
@@ -405,6 +456,7 @@ class TestDBInterface:
             rows = result.all()
             rows.sort()
         else:
+            assert db.conn is not None
             db.conn.query(
                 "SELECT block_num, block_hash, block_height, block_header,"
                 "block_tx_count, block_size, is_orphaned FROM headers"
@@ -437,9 +489,11 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid1)) is None
             assert db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2)) is None
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM mempool_transactions")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -448,9 +502,15 @@ class TestDBInterface:
         # Filled
         db.bulk_load_mempool_tx_rows(tx_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
-            assert int(db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid1)).decode()) == timestamp
-            assert int(db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2)).decode()) == timestamp
+            assert db.cache is not None
+            result1 = db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid1))
+            assert result1 is not None
+            result2 = db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2))
+            assert result2 is not None
+            assert int(result1.decode()) == timestamp
+            assert int(result2.decode()) == timestamp
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM mempool_transactions")
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -462,6 +522,7 @@ class TestDBInterface:
 
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             db.drop_mempool_table()  # does a redis "flushall"
             all_keys = db.cache.scan_in_namespace(b"mempool")
             assert all_keys == []
@@ -480,8 +541,10 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_orphaned_txs") == set()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_orphaned_txs")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -490,8 +553,10 @@ class TestDBInterface:
         # Filled
         db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes={row1, row2})
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_orphaned_txs") == {row1, row2}
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_orphaned_txs")
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -502,6 +567,7 @@ class TestDBInterface:
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
             db.drop_temp_orphaned_txs()
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_orphaned_txs") == set()
         else:
             assert 'temp_orphaned_txs' in [row[0] for row in db.get_tables()]
@@ -518,8 +584,10 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_removals") == set()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_mempool_removals")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -528,8 +596,10 @@ class TestDBInterface:
         # Filled
         db.load_temp_mempool_removals(removals_from_mempool={row1, row2})
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_removals") == {row1, row2}
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_mempool_removals")
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -540,6 +610,7 @@ class TestDBInterface:
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
             db.drop_temp_mempool_removals()
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_removals") == set()
         else:
             assert 'temp_mempool_removals' in [row[0] for row in db.get_tables()]
@@ -556,8 +627,10 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_additions") == set()
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_mempool_additions")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -566,8 +639,10 @@ class TestDBInterface:
         # Filled
         db.load_temp_mempool_additions(additions_to_mempool={row1, row2})
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_additions") == {row1, row2}
         else:
+            assert db.conn is not None
             db.conn.query("SELECT * FROM temp_mempool_additions")
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -578,6 +653,7 @@ class TestDBInterface:
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
             db.drop_temp_mempool_additions()
+            assert db.cache is not None
             assert db.cache.r.smembers("temp_mempool_additions") == set()
         else:
             assert 'temp_mempool_additions' in [row[0] for row in db.get_tables()]
@@ -596,8 +672,10 @@ class TestDBInterface:
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers(inbound_tx_table_name) == set()
         else:
+            assert db.conn is not None
             db.conn.query(f"SELECT * FROM {inbound_tx_table_name}")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
@@ -608,8 +686,10 @@ class TestDBInterface:
             inbound_tx_hashes=[row1, row2], inbound_tx_table_name=inbound_tx_table_name
         )
         if db.db_type == DatabaseType.ScyllaDB:
+            assert db.cache is not None
             assert db.cache.r.smembers(inbound_tx_table_name) == {bytes.fromhex(txid1), bytes.fromhex(txid2)}
         else:
+            assert db.conn is not None
             db.conn.query(f"SELECT * FROM {inbound_tx_table_name}")
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -620,6 +700,7 @@ class TestDBInterface:
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
             db.drop_temp_inbound_tx_hashes(inbound_tx_table_name=inbound_tx_table_name)
+            assert db.cache is not None
             assert db.cache.r.smembers(inbound_tx_table_name) == set()
         else:
             assert inbound_tx_table_name in [row[0] for row in db.get_tables()]
@@ -629,6 +710,8 @@ class TestDBInterface:
     def test_drop_tables(self, db: DBInterface) -> None:
         if db.db_type == DatabaseType.MySQL:
             db.create_permanent_tables()
+            assert db.tip_filter_api is not None
+            db.tip_filter_api.create_tables()
             sql = """
             SELECT 
                 TABLE_NAME, 
@@ -643,6 +726,7 @@ class TestDBInterface:
                 INDEX_NAME;
             """
             # Pre-drop
+            assert db.conn is not None
             db.conn.query(sql)
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -652,6 +736,8 @@ class TestDBInterface:
             assert len(rows) != 0
             # Post-drop
             db.drop_tables()
+            assert db.tip_filter_api is not None
+            db.tip_filter_api.drop_tables()
             db.conn.query(sql)
             result = db.conn.store_result()
             rows = list(result.fetch_row(0))
@@ -662,6 +748,8 @@ class TestDBInterface:
 
     def test_get_header_data(self, db: DBInterface) -> None:
         db.create_permanent_tables()
+        assert db.tip_filter_api is not None
+        db.tip_filter_api.create_tables()
         block_hash = "aa" * 32
         block_hash_not_exists = b"bb"
 
@@ -761,10 +849,15 @@ class TestDBInterface:
         in_tx_hash2 = 'dd' * HashXLength
 
         # Pushdata Rows
-        pd_row1 = PushdataRow(pushdata_hash=pushdata_hash1, tx_hash=out_tx_hash_reorged, idx=1,
-            ref_type=int(PushdataMatchFlags.OUTPUT))
-        pd_row2 = PushdataRow(pushdata_hash=pushdata_hash2, tx_hash=out_tx_hash2, idx=2,
-            ref_type=int(PushdataMatchFlags.OUTPUT))
+        pd_row1 = PushdataRow(
+            pushdata_hash=pushdata_hash1,
+            tx_hash=out_tx_hash_reorged,
+            idx=1,
+            ref_type=int(PushdataMatchFlags.OUTPUT),
+        )
+        pd_row2 = PushdataRow(
+            pushdata_hash=pushdata_hash2, tx_hash=out_tx_hash2, idx=2, ref_type=int(PushdataMatchFlags.OUTPUT)
+        )
         db.bulk_load_pushdata_rows(pd_rows=[pd_row1, pd_row2])
 
         # Input Rows

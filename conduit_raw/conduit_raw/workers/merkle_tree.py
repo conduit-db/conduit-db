@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import sys
 import threading
+from typing import cast
 import time
 import zmq
 
@@ -150,7 +151,7 @@ def process_merkle_tree_batch(worker: MTreeCalculator, batch: list[bytes], lmdb:
             blk_hash,
             tx_offsets_bytes_for_chunk,
             raw_block_chunk,
-        ) = cbor2.loads(packed_msg)
+        ) = cast(tuple[int, int, bytes, list[int], bytes], cbor2.loads(packed_msg))
 
         tx_offsets_for_chunk = array.array("Q", tx_offsets_bytes_for_chunk)
 

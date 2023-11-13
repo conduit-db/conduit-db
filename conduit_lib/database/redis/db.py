@@ -50,16 +50,17 @@ class RedisCache:
                 pipe.execute()
                 pipe.close()
 
-    # TODO(db): test
     def bulk_delete_in_namespace(self, namespace: bytes, pairs: Sequence[tuple[bytes, bytes | int]]) -> None:
         """This only accepts a two-tuple. The first is the key. The second is the value.
         For values with more than one element, a different redis data type will be needed"""
         count = len(pairs)
+        if not count:
+            return
         with Timer(count=count, name='redis-pipeline'):
             for batch_start in range(0, count, self.BATCH_SIZE):
                 pipe = self.r.pipeline()
                 for i in range(batch_start, min(batch_start + self.BATCH_SIZE, count)):
-                    pipe.delete(namespace + pairs[i][0], pairs[i][1])
+                    pipe.delete(namespace + pairs[i][0])
                 pipe.execute()
                 pipe.close()
 

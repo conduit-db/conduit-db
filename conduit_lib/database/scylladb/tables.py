@@ -3,8 +3,8 @@ import os
 from typing import cast, Sequence
 import typing
 
-from cassandra import ConsistencyLevel
-from cassandra.query import SimpleStatement
+from cassandra import ConsistencyLevel  # pylint:disable=E0611
+from cassandra.query import SimpleStatement  # pylint:disable=E0611
 
 from conduit_lib.utils import get_log_level
 from .exceptions import FailedScyllaOperation

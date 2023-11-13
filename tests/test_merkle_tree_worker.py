@@ -1,6 +1,7 @@
 import json
 import shutil
 from modulefinder import Module
+from typing import Callable, Iterator
 
 import bitcoinx
 import pytest
@@ -62,7 +63,7 @@ def teardown_module(module: Module) -> None:
 
 
 @pytest.fixture
-def mock_get_header_data():
+def mock_get_header_data() -> Iterator[MagicMock]:
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -77,9 +78,8 @@ def mock_get_header_data():
         yield mock
 
 
-# Create a fixture for get_block_metadata
 @pytest.fixture
-def mock_get_block_metadata():
+def mock_get_block_metadata() -> Iterator[MagicMock]:
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
     assert tx_count == 1557
@@ -89,7 +89,8 @@ def mock_get_block_metadata():
 
 
 def test_preprocessor_whole_block_as_a_single_chunk(
-    mock_get_header_data: FixtureFunction, mock_get_block_metadata: FixtureFunction
+    mock_get_header_data: Iterator[MagicMock],
+    mock_get_block_metadata: Iterator[MagicMock]
 ) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
@@ -182,7 +183,8 @@ def test_preprocessor_whole_block_as_a_single_chunk(
 
 
 def test_preprocessor_with_block_divided_into_four_chunks(
-    mock_get_header_data: FixtureFunction, mock_get_block_metadata: FixtureFunction
+        mock_get_header_data: MagicMock,
+        mock_get_block_metadata: MagicMock
 ) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)

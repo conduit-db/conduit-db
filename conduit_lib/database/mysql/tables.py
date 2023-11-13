@@ -185,13 +185,14 @@ class MySQLTables:
                 CREATE TABLE IF NOT EXISTS confirmed_transactions (
                     tx_hash BINARY({HashXLength}),
                     tx_block_num INT UNSIGNED,
-                    tx_position BIGINT UNSIGNED
+                    tx_position BIGINT UNSIGNED,
+                    PRIMARY KEY (tx_hash, tx_block_num)
                 ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
                 """
             )
 
-            if not index_exists(self.conn, "tx_idx", "confirmed_transactions"):
-                self.conn.query("""CREATE INDEX tx_idx ON confirmed_transactions (tx_hash);""")
+            # if not index_exists(self.conn, "tx_idx", "confirmed_transactions"):
+            #     self.conn.query("""CREATE INDEX tx_idx ON confirmed_transactions (tx_hash);""")
 
             # block_offset is relative to start of rawtx
             self.conn.query(

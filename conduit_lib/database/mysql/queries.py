@@ -57,11 +57,12 @@ class MySQLQueries:
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
     ) -> None:
         """columns: tx_hashes, blk_height"""
+        self.logger.debug(f"creating memory table: {inbound_tx_table_name}...")
         self.tables.create_temp_inbound_tx_hashes_table(inbound_tx_table_name)
         string_rows = ["%s\n" % (row) for row in inbound_tx_hashes]
         column_names = ["inbound_tx_hash"]
         self.bulk_loads._load_data_infile(
-            f"{inbound_tx_table_name}",
+            inbound_tx_table_name,
             string_rows,
             column_names,
             binary_column_indices=[0],
@@ -460,6 +461,6 @@ class MySQLQueries:
             "SELECT TABLE_ROWS FROM information_schema.tables "
             "WHERE table_schema = DATABASE() and table_name = 'mempool_transactions';"
         )
-        self.db.conn.query(sql)
-        result = self.db.conn.store_result()
+        self.conn.query(sql)
+        result = self.conn.store_result()
         return int(result.fetch_row()[0][0])

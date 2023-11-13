@@ -15,6 +15,7 @@ import pytest
 import requests
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib import DBInterface
 from conduit_lib.utils import create_task
 from conduit_raw.conduit_raw.aiohttp_api.types import (
     TipFilterNotificationMatch,
@@ -194,6 +195,10 @@ class TestAiohttpRESTAPI:
     logger = logging.getLogger("TestAiohttpRESTAPI")
 
     def setup_class(self) -> None:
+        db = DBInterface.load_db()
+        db.create_permanent_tables()
+        db.tip_filter_api.create_tables()
+
         loop = asyncio.get_event_loop()
         indexer_settings: IndexerServerSettings
         api_key: str

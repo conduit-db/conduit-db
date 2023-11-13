@@ -1,4 +1,5 @@
 import struct
+import uuid
 from enum import IntFlag
 from typing import NamedTuple
 
@@ -17,7 +18,7 @@ class DatabaseInsertConflict(DatabaseError):
 
 
 class FilterNotificationRow(NamedTuple):
-    account_id: int
+    account_id: uuid.UUID
     pushdata_hash: bytes
 
 
@@ -32,7 +33,7 @@ class OutboundDataFlag(IntFlag):
 
 
 class AccountMetadata(NamedTuple):
-    account_id: int
+    account_id: uuid.UUID
     external_account_id: int
 
 

@@ -31,6 +31,7 @@ services:
     image: scylladb/scylla
     ports:
       - "9042:9042"
+      - "19042:19042"
     environment:
       SCYLLA_USERNAME: conduitdb
       SCYLLA_PASSWORD: conduitpass
@@ -42,9 +43,9 @@ services:
 
   reference_server:
     container_name: reference_server
-    depends_on:
-      - "conduit-raw"
-      - "conduit-index"
+#    depends_on:
+#      - "conduit-raw"
+#      - "conduit-index"
     build:
       context: .
       dockerfile: ./contrib/reference_server/Dockerfile

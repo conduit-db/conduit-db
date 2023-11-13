@@ -1,4 +1,5 @@
 import abc
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Optional,
@@ -90,18 +91,18 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def create_account_write(self, external_account_id: int) -> int:
+    def create_account_write(self, external_account_id: int) -> int | uuid.UUID:
         """
         This does partial updates depending on what is in `settings`.
         """
         ...
 
     @abc.abstractmethod
-    def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
+    def read_account_metadata(self, account_ids: list[uuid.UUID]) -> list[AccountMetadata]:
         ...
 
     @abc.abstractmethod
-    def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
+    def read_account_id_for_external_account_id(self, external_account_id: int) -> int | uuid.UUID:
         ...
 
     @abc.abstractmethod
@@ -116,7 +117,7 @@ class TipFilterQueryAPI(abc.ABC):
     @abc.abstractmethod
     def read_tip_filter_registrations(
         self,
-        account_id: Optional[int] = None,
+        account_id: Optional[uuid.UUID] = None,
         date_expires: Optional[int] = None,
         # These defaults include all rows no matter the flag value.
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
@@ -130,7 +131,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: int | None = None
+        self, pushdata_hashes: list[bytes], account_id: uuid.UUID | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -176,7 +177,7 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
+    def create_outbound_data_write(self, creation_row: OutboundDataRow) -> None:
         ...
 
     @abc.abstractmethod

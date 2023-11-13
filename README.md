@@ -49,12 +49,12 @@ done once to setup.
 
 Now install packages and run ConduitRaw (in one terminal)
 
-    py -m pip install -r .\conduit_raw\requirements.txt
+    py -m pip install -r .\contrib\requirements.txt
     py .\conduit_raw\run_conduit_raw.py
 
 And ConduitIndex (in another terminal)
 
-    py -m pip install -r .\conduit_index\requirements.txt
+    py -m pip install -r .\contrib\requirements.txt
     py .\conduit_index\run_conduit_index.py
 
 ## Unix - Running ConduitRaw & ConduitIndex
@@ -67,12 +67,12 @@ Bash terminal:
 
 Now install packages and run ConduitRaw (in one terminal)
 
-    python3 -m pip install -r ./conduit_raw/requirements.txt
+    python3 -m pip install -r .\contrib\requirements.txt
     python3 ./conduit_raw/conduit_server.py
 
 And ConduitIndex (in another terminal)
 
-    python3 -m pip install -r ./conduit_index/requirements.txt
+    python3 -m pip install -r .\contrib\requirements.txt
     python3 ./conduit_index/conduit_server.py
 
 ## Configuration

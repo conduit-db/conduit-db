@@ -2,13 +2,12 @@ import logging
 import os
 import time
 import typing
-from typing import Iterator
+from typing import Iterator, cast
 
 import bitcoinx
-from bitcoinx import hash_to_hex_str
-from cassandra import ConsistencyLevel
-from cassandra.cluster import Session
-from cassandra.query import BatchStatement
+from cassandra import ConsistencyLevel  # pylint:disable=E0611
+from cassandra.cluster import Session  # pylint:disable=E0611
+from cassandra.query import BatchStatement  # pylint:disable=E0611
 
 from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, OutputRow
 from ...constants import PROFILING
@@ -80,15 +79,12 @@ class ScyllaDBQueries:
         finally:
             self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
-    def get_temp_mined_tx_hashes(self) -> list[bytes]:
-        mined_tx_hashes_result_set = self.session.execute("SELECT mined_tx_hash FROM temp_mined_tx_hashes")
-        mined_tx_hashes = [row.mined_tx_hash for row in mined_tx_hashes_result_set]
-        self.logger.debug("get_temp_mined_tx_hashes: %s", [hash_to_hex_str(x[0]) for x in mined_tx_hashes])
-        return mined_tx_hashes
+    def _get_temp_mined_tx_hashes(self) -> set[bytes]:
+        return self.db.cache.r.smembers('temp_mined_tx_hashes')
 
     def invalidate_mempool_rows(self) -> None:
         self.logger.debug(f"Deleting mined mempool txs")
-        mined_tx_hashes = self.get_temp_mined_tx_hashes()
+        mined_tx_hashes = self._get_temp_mined_tx_hashes()
         pairs = [(tx_hash, b"") for tx_hash in mined_tx_hashes]
         self.db.cache.bulk_delete_in_namespace(namespace=b"mempool", pairs=pairs)
 
@@ -182,8 +178,6 @@ class ScyllaDBQueries:
             )
         # Return an iterator over the fetched rows
         return (row.tx_hash for row in rows)
-
-    from cassandra.query import BatchStatement, ConsistencyLevel
 
     def delete_transaction_rows(self, tx_hash_hexes: list[str]) -> None:
         t0 = time.time()
@@ -321,5 +315,7 @@ class ScyllaDBQueries:
 
     def get_mempool_size(self) -> int:
         query = "SELECT COUNT(*) FROM mempool_transactions"
-        count = self.session.execute(query).one()
-        return count[0] if count else 0
+        result = self.session.execute(query).one()
+        if result:
+            return cast(int, result[0])
+        return 0

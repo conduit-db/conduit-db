@@ -2,7 +2,7 @@ import logging
 import os
 from pathlib import Path
 import typing
-from typing import Callable
+from typing import Callable, cast
 
 import cbor2
 import lmdb
@@ -110,7 +110,7 @@ class LmdbMerkleTree:
             start_offset_in_dat_file,
             end_offset_in_dat_file,
             base_node_count,
-        ) = cbor2.loads(mtree_location_bytes)
+        ) = cast(tuple[str, int, int, int], cbor2.loads(mtree_location_bytes))
         return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
 
     def get_mtree_node(self, block_hash: bytes, level: int, position: int, cursor: lmdb.Cursor) -> bytes:
@@ -120,7 +120,8 @@ class LmdbMerkleTree:
         else:
             with self.db.env.begin(db=self.mtree_db) as txn:
                 val = bytes(txn.get(block_hash))
-        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*cbor2.loads(val))
+        result = cast(MerkleTreeArrayLocation, cbor2.loads(val))
+        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*result)
         node_counts = get_mtree_node_counts_per_level(mtree_array_location.base_node_count)
 
         slice = self._get_merkle_slice_for_level(mtree_array_location, node_counts, level)
@@ -141,7 +142,8 @@ class LmdbMerkleTree:
             with self.db.env.begin(db=self.mtree_db) as txn:
                 val = bytes(txn.get(block_hash))
 
-        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*cbor2.loads(val))
+        result = cast(MerkleTreeArrayLocation, cbor2.loads(val))
+        mtree_array_location: MerkleTreeArrayLocation = MerkleTreeArrayLocation(*result)
         node_counts = get_mtree_node_counts_per_level(mtree_array_location.base_node_count)
         slice = self._get_merkle_slice_for_level(mtree_array_location, node_counts, level)
         return self._get_merkle_tree_data(block_hash, slice)

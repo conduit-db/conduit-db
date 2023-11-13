@@ -4,10 +4,12 @@ import os
 import sys
 import time
 
+from typing import Any, Sequence
 import typing
 from pathlib import Path
 
-from cassandra.cluster import Session
+from cassandra.cluster import Session  # pylint:disable=E0611
+from cassandra.query import PreparedStatement  # pylint:disable=E0611
 
 from ..db_interface.types import (
     ConfirmedTransactionRow,
@@ -42,7 +44,7 @@ class ScyllaDBBulkLoads:
         self.newline_symbol = r"'\r\n'" if sys.platform == "win32" else r"'\n'"
         self.TEMP_FILES_DIR = Path(os.environ["DATADIR_SSD"]) / "temp_files"
 
-    def load_data_batched(self, insert_statement, rows):
+    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]]) -> None:
         BATCH_SIZE = BULK_LOADING_BATCH_SIZE_ROW_COUNT
         BATCHES_COUNT = math.ceil(len(rows) / BATCH_SIZE)
 
@@ -143,18 +145,20 @@ class ScyllaDBBulkLoads:
             "block_tx_count, block_size, is_orphaned) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)"
         )
-        insert_rows = [
-            (
-                row.block_num,
-                bytes.fromhex(row.block_hash),
-                row.block_height,
-                bytes.fromhex(row.block_header),
-                row.block_tx_count,
-                row.block_size,
-                row.is_orphaned,
+        insert_rows = []
+        for row in block_header_rows:
+            assert row.block_header is not None
+            insert_rows.append(
+                (
+                    row.block_num,
+                    bytes.fromhex(row.block_hash),
+                    row.block_height,
+                    bytes.fromhex(row.block_header),
+                    row.block_tx_count,
+                    row.block_size,
+                    row.is_orphaned,
+                )
             )
-            for row in block_header_rows
-        ]
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(

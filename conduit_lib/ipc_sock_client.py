@@ -5,7 +5,7 @@ import socket
 import time
 from pathlib import Path
 from types import TracebackType
-from typing import Iterator, Type
+from typing import Iterator, Type, cast, Any
 
 import cbor2
 
@@ -85,7 +85,7 @@ class IPCSocketClient:
 
         # Recv
         data = self.receive_data()
-        cbor_obj = cbor2.loads(data)
+        cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
         msg_resp = ipc_sock_msg_types.PingResponse(**cbor_obj)
         # self.logger.debug(f"Received {ipc_sock_commands.PING} response: {msg_resp}")
         return msg_resp
@@ -103,7 +103,7 @@ class IPCSocketClient:
             self.logger.info("Server forcefully cancelled all requests")
             return ipc_sock_msg_types.StopResponse()
 
-        cbor_obj = cbor2.loads(data)
+        cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
         msg_resp = ipc_sock_msg_types.StopResponse(**cbor_obj)
         # self.logger.debug(f"Received {ipc_sock_commands.STOP} response: {msg_resp}")
         return msg_resp
@@ -117,7 +117,7 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.ChainTipResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.CHAIN_TIP} response: {msg_resp}")
             return msg_resp.header, msg_resp.height
@@ -136,7 +136,7 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.BlockNumberBatchedResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_NUMBER_BATCHED} response: {msg_resp}")
             return msg_resp
@@ -185,7 +185,7 @@ class IPCSocketClient:
             send_msg(self.sock, msg_req.to_cbor())
 
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.TransactionOffsetsBatchedResponse(**cbor_obj)
             for tx_offsets_array in msg_resp.tx_offsets_batch:
                 yield array.array("Q", tx_offsets_array)
@@ -202,7 +202,7 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
             return msg_resp
@@ -221,7 +221,7 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
             return msg_resp
@@ -240,7 +240,7 @@ class IPCSocketClient:
 
             # Recv
             data = self.receive_data()
-            cbor_obj = cbor2.loads(data)
+            cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(**cbor_obj)
             self.logger.debug(f"Received {ipc_sock_commands.REORG_DIFFERENTIAL} response: {msg_resp}")
             return msg_resp
