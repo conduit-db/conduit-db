@@ -165,8 +165,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS mempool_transactions (
-                    mp_tx_hash BINARY(32) PRIMARY KEY,
-                    mp_tx_timestamp INTEGER
+                    mp_tx_hash BINARY(32) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;"""
             )
         except Exception:
@@ -335,8 +334,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS temp_mempool_additions (
-                    tx_hash BINARY({HashXLength}) PRIMARY KEY,
-                    tx_timestamp TIMESTAMP
+                    tx_hash BINARY({HashXLength}) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """
             )

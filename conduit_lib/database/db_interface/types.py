@@ -58,7 +58,6 @@ class InputRowParsed(NamedTuple):
 
 class MempoolTransactionRow(NamedTuple):
     mp_tx_hash: str
-    mp_tx_timestamp: int
 
 
 class OutputRow(NamedTuple):

@@ -112,12 +112,12 @@ class ScyllaDBQueries:
 
     def add_to_mempool(self) -> None:
         self.logger.debug("Adding reorg differential to mempool")
-        additions = self.session.execute("SELECT tx_hash, tx_timestamp FROM temp_mempool_additions")
+        additions = self.session.execute("SELECT tx_hash FROM temp_mempool_additions")
         batch = BatchStatement()
         for addition in additions:
             batch.add(
-                "INSERT INTO mempool_transactions (mp_tx_hash, mp_tx_timestamp) VALUES (%s, %s)",
-                (addition.tx_hash, addition.tx_timestamp),
+                "INSERT INTO mempool_transactions (mp_tx_hash) VALUES (%s)",
+                (addition.tx_hash,),
             )
         self.session.execute(batch)
         self.db.tables.drop_temp_mempool_additions()

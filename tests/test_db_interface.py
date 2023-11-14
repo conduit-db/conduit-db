@@ -484,8 +484,8 @@ class TestDBInterface:
         txid1 = 'aa' * 32
         txid2 = 'bb' * 32
         timestamp = int(time.time())
-        row1 = MempoolTransactionRow(mp_tx_hash=txid1, mp_tx_timestamp=timestamp)
-        row2 = MempoolTransactionRow(mp_tx_hash=txid2, mp_tx_timestamp=timestamp)
+        row1 = MempoolTransactionRow(mp_tx_hash=txid1)
+        row2 = MempoolTransactionRow(mp_tx_hash=txid2)
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
@@ -507,8 +507,8 @@ class TestDBInterface:
             assert result1 is not None
             result2 = db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2))
             assert result2 is not None
-            assert int(result1.decode()) == timestamp
-            assert int(result2.decode()) == timestamp
+            assert result1 == b""
+            assert result2 == b""
         else:
             assert db.conn is not None
             db.conn.query("SELECT * FROM mempool_transactions")
@@ -516,9 +516,7 @@ class TestDBInterface:
             rows = list(result.fetch_row(0))
             rows.sort()
             assert rows[0][0].hex() == txid1
-            assert rows[0][1] == timestamp
             assert rows[1][0].hex() == txid2
-            assert rows[1][1] == timestamp
 
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:

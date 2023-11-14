@@ -162,8 +162,8 @@ class MySQLQueries:
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s,%s\n" % (tx_hash.hex(), int(time.time())) for tx_hash in additions_to_mempool]
-            column_names = ["tx_hash", "tx_timestamp"]
+            string_rows = ["%s\n" % tx_hash.hex() for tx_hash in additions_to_mempool]
+            column_names = ["tx_hash"]
             self.bulk_loads._load_data_infile(
                 "temp_mempool_additions",
                 string_rows,

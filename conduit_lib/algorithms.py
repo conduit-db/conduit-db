@@ -388,7 +388,7 @@ def parse_txs(
                 )
             else:
                 # Note mempool uses full length tx_hash
-                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
+                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex()))
         assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
         return (
             tx_rows_confirmed,

@@ -39,7 +39,7 @@ from tests_functional.reference_server_support import (
     register_for_utxo_notifications,
     register_for_pushdata_notifications,
     delete_peer_channel_message_async,
-    GenericPeerChannelMessage,
+    GenericPeerChannelMessage, NotificationJsonData,
 )
 
 BASE_URL = f"http://127.0.0.1:34525"
@@ -58,92 +58,100 @@ async def listen_for_notifications_task_async(
     websocket_connected_event,
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
-    api_key: str,
+    tip_filter_callback_url: str,
+    owner_token: str,
+    api_key: str
+
 ) -> None:
-    access_token = api_key
     websocket_url_template = "http://localhost:47124/" + "api/v1/web-socket?token={access_token}"
-    websocket_url = websocket_url_template.format(access_token=access_token)
+    websocket_url = websocket_url_template.format(access_token=api_key)
     headers = {"Accept": "application/octet-stream"}
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) as server_websocket:
-            logger.info("Connected to server websocket, url=%s", websocket_url_template)
-            websocket_connected_event.set()
-            websocket_message: aiohttp.WSMessage
-            async for websocket_message in server_websocket:
-                if websocket_message.type == aiohttp.WSMsgType.TEXT:
-                    message = json.loads(websocket_message.data)
-                    message_type = message["message_type"]
-                    assert message_type == "bsvapi.headers.tip"
-                    logger.debug(f"Got new headers tip: {message['result']}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) \
+                    as server_websocket:
+                logger.info("Connected to server websocket, url=%s", websocket_url_template)
+                websocket_connected_event.set()
+                websocket_message: aiohttp.WSMessage
+                async for websocket_message in server_websocket:
+                    if websocket_message.type == aiohttp.WSMsgType.TEXT:
+                        message = json.loads(websocket_message.data)
+                        message_type = message["message_type"]
+                        assert message_type == "bsvapi.headers.tip"
+                        logger.debug(f"Got new headers tip: {message['result']}")
 
-                elif websocket_message.type == aiohttp.WSMsgType.BINARY:
-                    # In processing the message `BadServerError` will be raised if this
-                    # server cannot handle the incoming message, or it is malformed.
-                    message_bytes = cast(bytes, websocket_message.data)
-                    (
-                        message_kind,
-                        message,
-                    ) = process_reference_server_message_bytes(message_bytes)
+                    elif websocket_message.type == aiohttp.WSMsgType.BINARY:
+                        # In processing the message `BadServerError` will be raised if this
+                        # server cannot handle the incoming message, or it is malformed.
+                        message_bytes = cast(bytes, websocket_message.data)
+                        (
+                            message_kind,
+                            message,
+                        ) = process_reference_server_message_bytes(message_bytes)
+                        logger.debug(f"Got binary websocket message: message_kind={message_kind}. "
+                                     f"message: {message}")
 
-                    if message_kind == AccountMessageKind.PEER_CHANNEL_MESSAGE:
-                        channel_message = cast(ChannelNotification, message)
-                        logger.debug(
-                            "Queued incoming peer channel message %s",
-                            channel_message,
-                        )
-                        # This is essentially ElectrumSV's
-                        # `process_incoming_peer_channel_messages_async` inlined
-
-                        messages = await list_peer_channel_messages_async(
-                            indexer_settings["tipFilterCallbackUrl"],
-                            indexer_settings["tipFilterCallbackToken"],
-                            unread_only=False,
-                        )
-                        if len(messages) == 0:
-                            # This may happen legitimately if we had several new message notifications backlogged
-                            # for the same channel, but processing a leading notification picks up the messages
-                            # for the trailing notification.
+                        if message_kind == AccountMessageKind.PEER_CHANNEL_MESSAGE:
+                            channel_message = cast(NotificationJsonData, message)
                             logger.debug(
-                                "Asked tip filter channel %s for new messages and received none",
-                                indexer_settings["tipFilterCallbackUrl"],
+                                "Queued incoming peer channel message %s",
+                                channel_message,
                             )
-                            continue
-                        tip_filter_matches_queue.put_nowait(messages)
-                        for message in messages:
-                            await delete_peer_channel_message_async(
-                                channel_message["id"],
-                                indexer_settings["tipFilterCallbackToken"],
-                                message["sequence"],
+                            # This is essentially ElectrumSV's
+                            # `process_incoming_peer_channel_messages_async` inlined
+
+                            messages = await list_peer_channel_messages_async(
+                                tip_filter_callback_url,
+                                owner_token,
+                                unread_only=False,
                             )
-                    elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
-                        spent_output_message = cast(OutputSpend, message)
-                        logger.debug("Queued incoming output spend message")
-                        output_spend_result_queue.put_nowait([spent_output_message])
+                            if len(messages) == 0:
+                                # This may happen legitimately if we had several new message notifications backlogged
+                                # for the same channel, but processing a leading notification picks up the messages
+                                # for the trailing notification.
+                                logger.debug(
+                                    "Asked tip filter channel %s for new messages and received none",
+                                    tip_filter_callback_url,
+                                )
+                                continue
+                            tip_filter_matches_queue.put_nowait(messages)
+                            for message in messages:
+                                await delete_peer_channel_message_async(
+                                    channel_message["channel_id"],
+                                    owner_token,
+                                    message["sequence"],
+                                )
+                        elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
+                            spent_output_message = cast(OutputSpend, message)
+                            logger.debug("Queued incoming output spend message")
+                            output_spend_result_queue.put_nowait([spent_output_message])
+                        else:
+                            logger.error(
+                                "Unhandled binary server websocket message %r",
+                                websocket_message,
+                            )
+                    elif websocket_message.type in (
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.ERROR,
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.CLOSING,
+                    ):
+                        logger.info("Server websocket closed")
+                        break
                     else:
                         logger.error(
-                            "Unhandled binary server websocket message %r",
+                            "Unhandled server websocket message type %r",
                             websocket_message,
                         )
-                elif websocket_message.type in (
-                    aiohttp.WSMsgType.CLOSE,
-                    aiohttp.WSMsgType.ERROR,
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSING,
-                ):
-                    logger.info("Server websocket closed")
-                    break
-                else:
-                    logger.error(
-                        "Unhandled server websocket message type %r",
-                        websocket_message,
-                    )
+    except Exception:
+        logger.exception("unexpected exception in `listen_for_notifications_task_async`")
 
 
 async def spawn_tasks(
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
+    tip_filter_callback_url: str,
+    owner_token: str,
     api_key: str,
     registrations_complete_event: threading.Event,
 ):
@@ -153,8 +161,9 @@ async def spawn_tasks(
             websocket_connected_event,
             output_spend_result_queue,
             tip_filter_matches_queue,
-            indexer_settings,
-            api_key,
+            tip_filter_callback_url,
+            owner_token,
+            api_key
         )
     )
     await websocket_connected_event.wait()
@@ -168,9 +177,10 @@ def listen_for_notifications_thread(
     loop: asyncio.AbstractEventLoop,
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
+    tip_filter_callback_url: str,
+    owner_token: str,
     api_key: str,
-    registrations_complete_event: threading.Event,
+    registrations_complete_event: threading.Event
 ) -> None:
     """Launches the ESV-Reference-Server to run in the background but with a test database"""
     try:
@@ -179,7 +189,8 @@ def listen_for_notifications_thread(
             spawn_tasks(
                 output_spend_result_queue,
                 tip_filter_matches_queue,
-                indexer_settings,
+                tip_filter_callback_url,
+                owner_token,
                 api_key,
                 registrations_complete_event,
             )
@@ -202,7 +213,8 @@ class TestAiohttpRESTAPI:
         loop = asyncio.get_event_loop()
         indexer_settings: IndexerServerSettings
         api_key: str
-        indexer_settings, api_key = loop.run_until_complete(setup_reference_server_tip_filtering())
+        tip_filter_callback_url, owner_token, api_key = \
+            loop.run_until_complete(setup_reference_server_tip_filtering())
 
         self.tip_filter_matches_queue = queue.Queue()
         self.output_spend_result_queue = queue.Queue()
@@ -214,9 +226,10 @@ class TestAiohttpRESTAPI:
                 loop,
                 self.output_spend_result_queue,
                 self.tip_filter_matches_queue,
-                indexer_settings,
+                tip_filter_callback_url,
+                owner_token,
                 api_key,
-                self.registrations_complete_event,
+                self.registrations_complete_event
             ],
             daemon=True,
         )
@@ -275,7 +288,6 @@ class TestAiohttpRESTAPI:
                 for message in messages:
                     payload = base64.b64decode(message["payload"])
                     pushdata_notification = cast(TipFilterPushDataMatchesData, json.loads(payload))
-                    logger.debug(f"Got pushdata_notification: {pushdata_notification}")
                     match: TipFilterNotificationMatch
                     for match in pushdata_notification["matches"]:
                         count += 1
@@ -285,6 +297,7 @@ class TestAiohttpRESTAPI:
                         outpoint = PUSHDATA_TO_OUTPOINT_MAP[pushdata_hash_hex]
                         assert hash_to_hex_str(outpoint.tx_hash) == output_tx_hash
                         assert outpoint.out_idx == output_idx
+                    logger.debug(f"Got pushdata_notification: {pushdata_notification} (total_count={count})")
 
                 if count == expected_count:
                     break

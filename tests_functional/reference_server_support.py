@@ -81,18 +81,6 @@ class OutputSpend(NamedTuple):
             + ")"
         )
 
-
-def _generate_client_key_data() -> VerifiableKeyDataDict:
-    iso_date_text = datetime.utcnow().isoformat()
-    message_bytes = b"http://server/api/account/metadata" + iso_date_text.encode()
-    signature_bytes = CLIENT_IDENTITY_PRIVATE_KEY.sign_message(message_bytes)
-    return {
-        "public_key_hex": CLIENT_IDENTITY_PRIVATE_KEY.public_key.to_hex(),
-        "message_hex": message_bytes.hex(),
-        "signature_hex": signature_bytes.hex(),
-    }
-
-
 def get_posix_timestamp() -> int:
     # In theory we can just return `int(time.time())` but this returns the posix timestamp and
     # try reading the documentation for `time.time` and being sure of that.
@@ -104,12 +92,12 @@ class AccountRegisteredDict(TypedDict):
     api_key: str
 
 
-async def setup_reference_server_account() -> str:
+async def setup_reference_server_account(client_identity_private_key: PrivateKey) -> str:
     obtain_server_key_url = f"{REFERENCE_SERVER_URL}api/v1/account/register"
 
     timestamp_text = datetime.utcnow().isoformat()
     message_text = f"{obtain_server_key_url} {timestamp_text}"
-    identity_private_key = CLIENT_IDENTITY_PRIVATE_KEY
+    identity_private_key = client_identity_private_key
     signature_bytes = identity_private_key.sign_message(message_text.encode())
     key_data: VerifiableKeyDataDict = {
         "public_key_hex": identity_private_key.public_key.to_hex(),
@@ -117,7 +105,6 @@ async def setup_reference_server_account() -> str:
         "message_hex": message_text.encode().hex(),
     }
 
-    api_key: str | None = None
     async with aiohttp.ClientSession() as session:
         async with session.post(obtain_server_key_url, json=key_data) as response:
             if response.status != HTTPStatus.OK:
@@ -138,12 +125,12 @@ async def setup_reference_server_account() -> str:
 
         register_dict = cast(AccountRegisteredDict, response_value)
         assert register_dict["public_key_hex"] == key_data["public_key_hex"]
-
+        api_key = register_dict["api_key"]
         logger.debug(f"api_key={api_key}")
-        return register_dict["api_key"]
+        return api_key
 
 
-async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str]:
+async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str, str]:
     create_peer_channel_uri = "http://localhost:47124/api/v1/channel/manage"
     body = {
         "public_read": True,
@@ -166,7 +153,36 @@ async def create_tip_filter_peer_channel(api_key: str) -> tuple[str, str]:
 
     tipFilterCallbackUrl = f"http://127.0.0.1:47124/api/v1/channel/{result['id']}"
     tipFilterCallbackToken = f"Bearer {owner_token}"
-    return tipFilterCallbackUrl, tipFilterCallbackToken
+    return tipFilterCallbackUrl, tipFilterCallbackToken, result['id']
+
+
+class NewTokenResponse(TypedDict):
+    id: int
+    token: str
+    description: str
+    can_read: bool
+    can_write: bool
+
+
+async def create_new_token_for_channel(api_key: str, channel_id: str) -> NewTokenResponse:
+    create_new_token_uri = f"http://localhost:47124/api/v1/channel/manage/{channel_id}/api-token"
+    body = {
+      "description": "string",
+      "can_read": True,
+      "can_write": True
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(create_new_token_uri, json=body, headers=headers) as response:
+            if response.status != HTTPStatus.OK:
+                raise aiohttp.ClientError(
+                    f"Bad response status code: {response.status}, reason: {response.reason}"
+                )
+            result = cast(NewTokenResponse, await response.json())
+    return result
 
 
 class IndexerServerSettings(TypedDict):
@@ -201,8 +217,8 @@ async def register_for_utxo_notifications(
                         raise aiohttp.ClientError(response.reason)
 
                     return cast(list[tuple[str, int]], await response.json())
-            except aiohttp.ClientError:
-                logger.debug(f"Reference server is not ready yet. Retrying in 5 seconds")
+            except aiohttp.ClientError as e:
+                logger.debug(f"Error: {e}. Reference server is not ready yet. Retrying in 5 seconds")
                 await asyncio.sleep(5)
 
 
@@ -247,15 +263,15 @@ async def register_for_pushdata_notifications(
                     result = cast(list[tuple[str, int]], await response.json())
                     logger.debug(f"Pushdata registration result: {result}")
                     return result
-            except aiohttp.ClientError:
-                logger.debug(f"Reference server is not ready yet. Retrying in 5 seconds")
+            except aiohttp.ClientError as e:
+                logger.debug(f"Error: {e}. Reference server is not ready yet. Retrying in 5 seconds")
                 await asyncio.sleep(5)
 
 
 async def setup_reference_server_tip_filtering():
     while True:
         try:
-            api_key = await setup_reference_server_account()
+            api_key = await setup_reference_server_account(CLIENT_IDENTITY_PRIVATE_KEY)
             break
         except aiohttp.ClientError:
             logger.debug(f"Reference server is not yet ready. Retrying in 5 seconds")
@@ -265,22 +281,32 @@ async def setup_reference_server_tip_filtering():
             await asyncio.sleep(5)
 
     (
-        tipFilterCallbackUrl,
-        tipFilterCallbackToken,
+        tip_filter_callback_url,
+        owner_token,
+        channel_id
     ) = await create_tip_filter_peer_channel(api_key)
+    result = await create_new_token_for_channel(api_key, channel_id)
+    rw_token = result['token']
     indexer_settings = IndexerServerSettings(
-        tipFilterCallbackUrl=tipFilterCallbackUrl,
-        tipFilterCallbackToken=tipFilterCallbackToken,
+        tipFilterCallbackUrl=tip_filter_callback_url,
+        tipFilterCallbackToken=rw_token,
     )
     indexer_settings = await register_tip_filter_settings(api_key, indexer_settings)
 
     logger.debug(indexer_settings)
-    return indexer_settings, api_key
+    return tip_filter_callback_url, owner_token, api_key
+
+
+class NotificationJsonData(TypedDict):
+    sequence: int
+    received: str
+    content_type: str
+    channel_id: str
 
 
 def process_reference_server_message_bytes(
     message_bytes: bytes,
-) -> tuple[AccountMessageKind, ChannelNotification | OutputSpend]:
+) -> tuple[AccountMessageKind, NotificationJsonData | OutputSpend]:
     try:
         message_kind_value: int = struct.unpack_from(">I", message_bytes, 0)[0]
     except (TypeError, struct.error):
@@ -306,16 +332,18 @@ def process_reference_server_message_bytes(
         # Verify that this at least looks like a valid `ChannelNotification` message.
         if (
             not isinstance(message, dict)
-            or len(message) != 2
-            or not isinstance(message.get("id", None), str)
-            or not isinstance(message.get("notification", None), str)
+            or len(message) != 4
+            or not isinstance(message.get("sequence"), int)
+            or not isinstance(message.get("received"), str)
+            or not isinstance(message.get("content_type"), str)
+            or not isinstance(message.get("channel_id"), str)
         ):
             raise BadServerError(
                 "Received an invalid peer channel message from a "
                 "server you are using (unrecognised structure)"
             )
 
-        return message_kind, cast(ChannelNotification, message)
+        return message_kind, cast(NotificationJsonData, message)
     elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
         try:
             spent_output_fields = output_spend_struct.unpack_from(message_bytes, 4)

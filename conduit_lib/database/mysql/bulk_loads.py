@@ -215,8 +215,8 @@ class MySQLBulkLoads:
 
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         t0 = time.time()
-        string_rows = ["%s,%s\n" % (row[0:2]) for row in tx_rows]
-        column_names = ["mp_tx_hash", "mp_tx_timestamp"]
+        string_rows = ["%s\n" % row for row in tx_rows]
+        column_names = ["mp_tx_hash"]
         self._load_data_infile_batched(
             "mempool_transactions",
             string_rows,

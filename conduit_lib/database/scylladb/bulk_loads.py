@@ -91,7 +91,7 @@ class ScyllaDBBulkLoads:
         """This uses redis but it is included here to make it easier to translate from
         MySQL to ScyllaDB"""
         t0 = time.time()
-        pairs = [(bytes.fromhex(row.mp_tx_hash), row.mp_tx_timestamp) for row in tx_rows]
+        pairs = [(bytes.fromhex(row.mp_tx_hash), b"") for row in tx_rows]
         self.db.cache.bulk_load_in_namespace(namespace=b'mempool', pairs=pairs)
         t1 = time.time() - t0
         self.logger.log(
