@@ -52,6 +52,7 @@ steps:
 
 - script: |
     export DOCKER_GATEWAY_HOST=172.17.0.1
+    chmod +x ./build.sh
     ./build.sh
     docker-compose -f docker-compose.yml up --detach
     sleep 15
@@ -59,14 +60,6 @@ steps:
   timeoutInMinutes: 10
   continueOnError: true
   displayName: 'Run dockerized services'
-
-- script: |
-    python3 -m pip install electrumsv_node
-    python3 -m pip install pytest-asyncio
-    pytest tests --verbose
-  timeoutInMinutes: 10
-  continueOnError: false
-  displayName: 'Pytest'
 
 - script: |
     pytest tests_functional --verbose
@@ -81,6 +74,14 @@ steps:
   timeoutInMinutes: 10
   continueOnError: false
   displayName: 'Pytest Functional'
+
+- script: |
+    python3 -m pip install electrumsv_node
+    python3 -m pip install pytest-asyncio
+    pytest tests --verbose
+  timeoutInMinutes: 10
+  continueOnError: false
+  displayName: 'Pytest'
 
 - script: |
     docker-compose -f docker-compose.yml down
