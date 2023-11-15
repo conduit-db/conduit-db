@@ -35,7 +35,7 @@ class RedisCache:
             cursor, keys = self.r.scan(
                 cursor=cursor if cursor else 0, match=namespace + b"*", count=self.BATCH_SIZE
             )
-            all_keys.extend(keys)
+            all_keys.extend([key[len(namespace):] for key in keys])
         return all_keys
 
     def bulk_load_in_namespace(self, namespace: bytes, pairs: Sequence[tuple[bytes, bytes | int]]) -> None:

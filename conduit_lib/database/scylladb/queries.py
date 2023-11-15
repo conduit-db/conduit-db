@@ -55,29 +55,16 @@ class ScyllaDBQueries:
         writing duplicated pushdata, input, output rows for transactions that were already
         processed for an orphan block
         """
-        try:
-            self.db.load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
-            result_set = self.session.execute(f"SELECT inbound_tx_hash FROM {inbound_tx_table_name}")
-            inbound_tx_hashes = [row.inbound_tx_hash for row in result_set]
-            prepared_statement = self.session.prepare(
-                "SELECT mp_tx_hash FROM mempool_transactions WHERE mp_tx_hash = ?"
-            )
-            rows = [(hash_value,) for hash_value in inbound_tx_hashes]
-            results = self.db.execute_with_concurrency(prepared_statement, rows)
-            unprocessed_transactions = {
-                inbound_tx_hashes[i] for i, (success, result) in enumerate(results) if success and not result
-            }
-            if not is_reorg:
-                # Now unprocessed_transactions contains the list of transactions that have not been
-                # processed yet
-                return unprocessed_transactions
-            else:
-                result = self.session.execute(f"""SELECT * FROM temp_orphaned_txs;""")
-                orphaned_txs = set(row.inbound_tx_hash for row in result)
-                final_result = unprocessed_transactions - orphaned_txs
-                return set(final_result)
-        finally:
-            self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+        self.db.load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
+        inbound_tx_set = self.db.cache.r.smembers(inbound_tx_table_name)
+        # TODO(db): Change mempool to a set to avoid a full mempool table scan!
+        mempool_set = set(self.db.cache.scan_in_namespace(b'mempool'))
+        unprocessed_transactions = inbound_tx_set - mempool_set
+        if not is_reorg:
+            return unprocessed_transactions
+        else:
+            orphaned_tx_set = self.db.cache.r.smembers('temp_orphaned_txs')
+            return unprocessed_transactions - orphaned_tx_set
 
     def _get_temp_mined_tx_hashes(self) -> set[bytes]:
         return self.db.cache.r.smembers('temp_mined_tx_hashes')

@@ -106,7 +106,6 @@ class DBInterface(abc.ABC):
     def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
         pass
 
-    # QUERIES
     @abc.abstractmethod
     def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
         pass
@@ -135,7 +134,6 @@ class DBInterface(abc.ABC):
         pass
 
     @abc.abstractmethod
-    # BULK LOADS
     def bulk_load_confirmed_tx_rows(
         self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
     ) -> None:

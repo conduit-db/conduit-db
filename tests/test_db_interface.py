@@ -187,7 +187,7 @@ class TestDBInterface:
                 ('outbound_data',),
                 ('pushdata',),
                 ('tip_filter_registrations',),
-                ('txo_table',)
+                ('txo_table',),
             ]
         else:
             assert tables == (
@@ -200,7 +200,7 @@ class TestDBInterface:
                 ('outbound_data',),
                 ('pushdata',),
                 ('tip_filter_registrations',),
-                ('txo_table',)
+                ('txo_table',),
             )
 
     def test_temp_mined_tx_hashes_table(self, db: DBInterface) -> None:
@@ -941,8 +941,40 @@ class TestDBInterface:
         ]
 
     def test_get_unprocessed_txs(self, db: DBInterface) -> None:
-        # db.get_unprocessed_txs()
-        pass
+        db.drop_tables()
+        db.create_permanent_tables()
+
+        worker_id = 1
+        inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
+        db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+        txid1 = 'aa' * 32
+        txid2 = 'bb' * 32
+        txid3 = 'cc' * 32
+        row1 = (txid1,)
+        row2 = (txid2,)
+        row3 = (txid3,)
+
+        # Mempool is empty so all rows should be returned
+        new_txs = db.get_unprocessed_txs(
+            is_reorg=False, new_tx_hashes=[row1, row2, row3], inbound_tx_table_name=inbound_tx_table_name
+        )
+        assert new_txs == {bytes.fromhex(txid1), bytes.fromhex(txid2), bytes.fromhex(txid3)}
+
+        # Mempool now already includes all of the transactions that have just been mined
+        # (i.e. considered 'inbound') so should return an empty list
+        # (in live scenarios, there would always be at least one coinbase tx returned)
+        db.bulk_load_mempool_tx_rows(tx_rows=[MempoolTransactionRow(txid1), MempoolTransactionRow(txid2)])
+        new_txs = db.get_unprocessed_txs(
+            is_reorg=False, new_tx_hashes=[row1, row2, row3], inbound_tx_table_name=inbound_tx_table_name
+        )
+        assert new_txs == {bytes.fromhex(txid3)}
+
+        # Reorg is True so the orphaned_txs set should also be subtracted from the end result.
+        db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes={bytes.fromhex(txid3)})
+        new_txs = db.get_unprocessed_txs(
+            is_reorg=True, new_tx_hashes=[row1, row2, row3], inbound_tx_table_name=inbound_tx_table_name
+        )
+        assert new_txs == set()
 
     def test_invalidate_mempool_rows(self, db: DBInterface) -> None:
         # db.invalidate_mempool_rows()
