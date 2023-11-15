@@ -81,6 +81,7 @@ class OutputSpend(NamedTuple):
             + ")"
         )
 
+
 def get_posix_timestamp() -> int:
     # In theory we can just return `int(time.time())` but this returns the posix timestamp and
     # try reading the documentation for `time.time` and being sure of that.
@@ -166,11 +167,7 @@ class NewTokenResponse(TypedDict):
 
 async def create_new_token_for_channel(api_key: str, channel_id: str) -> NewTokenResponse:
     create_new_token_uri = f"http://localhost:47124/api/v1/channel/manage/{channel_id}/api-token"
-    body = {
-      "description": "string",
-      "can_read": True,
-      "can_write": True
-    }
+    body = {"description": "string", "can_read": True, "can_write": True}
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -280,13 +277,9 @@ async def setup_reference_server_tip_filtering():
             logger.debug(f"Reference server is not yet ready. Retrying in 5 seconds")
             await asyncio.sleep(5)
 
-    (
-        tip_filter_callback_url,
-        owner_token,
-        channel_id
-    ) = await create_tip_filter_peer_channel(api_key)
+    (tip_filter_callback_url, owner_token, channel_id) = await create_tip_filter_peer_channel(api_key)
     result = await create_new_token_for_channel(api_key, channel_id)
-    rw_token = result['token']
+    rw_token = f"Bearer {result['token']}"
     indexer_settings = IndexerServerSettings(
         tipFilterCallbackUrl=tip_filter_callback_url,
         tipFilterCallbackToken=rw_token,
