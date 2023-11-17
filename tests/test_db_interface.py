@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Iterator
+from typing import Iterator, cast
 
 import bitcoinx
 import pytest
@@ -18,6 +18,8 @@ from conduit_lib.database.db_interface.types import (
     OutputRow,
     PushdataRow,
 )
+from conduit_lib.database.mysql.db import MySQLDatabase
+from conduit_lib.database.scylladb.db import ScyllaDB
 from conduit_lib.types import (
     BlockHeaderRow,
     TxMetadata,
@@ -48,6 +50,16 @@ class TestDBInterface:
             db.cache.r.flushall()
         db.drop_tables()
         db.close()
+
+    def test_init_db_interface(self):
+        assert isinstance(DBInterface.load_db(db_type=DatabaseType.MySQL), MySQLDatabase)
+        assert isinstance(DBInterface.load_db(db_type=DatabaseType.ScyllaDB), ScyllaDB)
+
+        with pytest.raises(ValueError):
+            DBInterface.load_db(db_type=cast(DatabaseType, 100))
+
+
+
 
     def test_connection(self, db: DBInterface) -> None:
         db.ping()
@@ -977,18 +989,135 @@ class TestDBInterface:
         assert new_txs == set()
 
     def test_invalidate_mempool_rows(self, db: DBInterface) -> None:
-        # db.invalidate_mempool_rows()
-        pass
+        db.drop_tables()
+        db.create_permanent_tables()
+        db.drop_temp_mined_tx_hashes()
 
-    # DB REPAIR / UNDO BLOCKS ABOVE CHECKPOINT
-    def test_delete_pushdata_rows(self, db: DBInterface) -> None:
-        pass
+        worker_id = 1
+        inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
+        db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+        txid1 = 'aa' * 32
+        txid2 = 'bb' * 32
+        txid3 = 'cc' * 32
 
-    def test_delete_output_rows(self, db: DBInterface) -> None:
-        pass
+        # Check for correct invalidation
+        db.bulk_load_mempool_tx_rows(
+            tx_rows=[MempoolTransactionRow(txid1), MempoolTransactionRow(txid2),
+                MempoolTransactionRow(txid3)])
+        db.load_temp_mined_tx_hashes(mined_tx_hashes=[MinedTxHashes(txid=txid1, block_number=1)])
+        assert db.get_mempool_size() == 3
+        db.invalidate_mempool_rows()
+        if db.db_type == DatabaseType.ScyllaDB:
+            assert set(db.cache.scan_in_namespace(b'mempool')) == \
+                   {bytes.fromhex(txid2), bytes.fromhex(txid3)}
+        assert db.get_mempool_size() == 2
 
-    def test_delete_input_rows(self, db: DBInterface) -> None:
-        pass
+    def test_delete_transaction_pushdata_input_output_and_header_rows(self, db: DBInterface) -> None:
+        db.drop_tables()
+        db.create_permanent_tables()
 
-    def test_delete_header_row(self, db: DBInterface) -> None:
-        pass
+        pushdata_hash1 = 'ee' * HashXLength
+        pushdata_hash2 = 'ff' * HashXLength
+        out_tx_hash1 = 'aa' * HashXLength
+        out_tx_hash2 = 'bb' * HashXLength
+        in_tx_hash1 = 'cc' * HashXLength
+        in_tx_hash2 = 'dd' * HashXLength
+
+        # Pushdata Rows
+        pd_row1 = PushdataRow(
+            pushdata_hash=pushdata_hash1,
+            tx_hash=out_tx_hash1,
+            idx=1,
+            ref_type=int(PushdataMatchFlags.OUTPUT),
+        )
+        pd_row2 = PushdataRow(
+            pushdata_hash=pushdata_hash2, tx_hash=out_tx_hash2, idx=2, ref_type=int(PushdataMatchFlags.OUTPUT)
+        )
+        db.bulk_load_pushdata_rows(pd_rows=[pd_row1, pd_row2])
+
+        # Input Rows
+        in_row1 = InputRow(
+            out_tx_hash=out_tx_hash1, out_idx=1, in_tx_hash=in_tx_hash1, in_idx=1
+        )
+        in_row2 = InputRow(out_tx_hash=out_tx_hash2, out_idx=2, in_tx_hash=in_tx_hash2, in_idx=2)
+        db.bulk_load_input_rows(in_rows=[in_row1, in_row2])
+
+        # Confirmed Transaction Rows
+        tx_row1 = ConfirmedTransactionRow(tx_hash=out_tx_hash1, tx_block_num=1, tx_position=418)
+        tx_row2 = ConfirmedTransactionRow(tx_hash=out_tx_hash2, tx_block_num=2, tx_position=400)
+        db.bulk_load_confirmed_tx_rows(tx_rows=[tx_row1, tx_row2])
+
+        # Output Rows
+        out_row1 = OutputRow(out_tx_hash=out_tx_hash1, out_idx=1, out_value=1000)
+        out_row2 = OutputRow(out_tx_hash=out_tx_hash2, out_idx=2, out_value=2000)
+
+        # Header Rows
+        block_hash1 = "aa" * 32
+        block_hash2 = "bb" * 32
+        # Orphaned chain
+        block_header_row1 = BlockHeaderRow(
+            block_num=1,
+            block_hash=block_hash1,
+            block_height=1,
+            block_header=os.urandom(80).hex(),
+            block_tx_count=1000,
+            block_size=1000000,
+            is_orphaned=1,
+        )
+        block_header_row2 = BlockHeaderRow(
+            block_num=3,
+            block_hash=block_hash2,
+            block_height=2,
+            block_header=os.urandom(80).hex(),
+            block_tx_count=1000,
+            block_size=1000000,
+            is_orphaned=0,
+        )
+        block_header_rows = [block_header_row1, block_header_row2]
+        db.bulk_load_headers(block_header_rows)
+
+        db.delete_transaction_rows(tx_hash_hexes=[])
+        db.delete_transaction_rows(tx_hash_hexes=[out_tx_hash1, out_tx_hash2])
+        if db.db_type == DatabaseType.ScyllaDB:
+            assert db.session is not None
+            result = db.session.execute(
+                "SELECT * FROM confirmed_transactions"
+            )
+        else:
+            assert db.conn is not None
+            db.conn.query("SELECT * FROM confirmed_transactions")
+            result = db.conn.store_result()
+            rows = result.fetch_row(0)
+            assert len(rows) == 0
+
+        # The following bulk delete operations are not supported on MySQL because bulk deletes
+        # and updates are way too slow
+        if db.db_type == DatabaseType.MySQL:
+            return
+
+        db.delete_pushdata_rows(pushdata_rows=[])
+        db.delete_pushdata_rows(pushdata_rows=[pd_row1, pd_row2])
+        db.delete_output_rows(output_rows=[])
+        db.delete_output_rows(output_rows=[out_row1, out_row2])
+        db.delete_input_rows(input_rows=[])
+        db.delete_input_rows(input_rows=[in_row1, in_row2])
+        db.delete_header_rows(block_hashes=[])
+        db.delete_header_rows(block_hashes=[bytes.fromhex(block_header_row1.block_hash),
+            bytes.fromhex(block_header_row2.block_hash)])
+        assert len(result.all()) == 0
+        result = db.session.execute(
+            "SELECT * FROM pushdata"
+        )
+        assert len(result.all()) == 0
+        result = db.session.execute(
+            "SELECT * FROM txo_table"
+        )
+        assert len(result.all()) == 0
+        result = db.session.execute(
+            "SELECT * FROM inputs_table"
+        )
+        assert len(result.all()) == 0
+        result = db.session.execute(
+            "SELECT * FROM headers"
+        )
+        assert len(result.all()) == 0

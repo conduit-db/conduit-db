@@ -1,110 +1,152 @@
-# import pytest
-#
-# from conduit_lib.database.db_interface.db import DatabaseType, DBInterface
-# from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
-#
-#
-# class TestTipFilterQueryAPI:
-#
-#     @pytest.fixture(scope="class", params=[DatabaseType.MySQL, DatabaseType.ScyllaDB])
-#     def db(self, request) -> TipFilterQueryAPI:
-#         db = DBInterface.load_db(worker_id=1, db_type=request.param)
-#         tfapi = TipFilterQueryAPI.from_db(db)
-#         db.drop_tables()
-#         db.drop_temp_mined_tx_hashes()
-#         db.drop_temp_orphaned_txs()
-#         if hasattr(db, 'cache'):
-#             db.cache.r.flushall()
-#         db.drop_tables()
-#         db.create_permanent_tables()
-#         yield db
-#         if hasattr(db, 'cache'):
-#             db.cache.r.flushall()
-#         db.drop_tables()
-#         db.close()
-#
-#     def create_account_write(self, external_account_id: int) -> int:
-#         pass
-#
-#     def read_account_metadata(self, account_ids: list[int]) -> list[AccountMetadata]:
-#         pass
-#
-#     def read_account_id_for_external_account_id(self, external_account_id: int) -> int:
-#         pass
-#
-#     def create_tip_filter_registrations_write(
-#             self,
-#             external_account_id: int,
-#             date_created: int,
-#             registration_entries: list[TipFilterRegistrationEntry],
-#     ) -> bool:
-#         pass
-#
-#     def read_tip_filter_registrations(
-#             self,
-#             account_id: Optional[int] = None,
-#             date_expires: Optional[int] = None,
-#             # These defaults include all rows no matter the flag value.
-#             expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#             mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#     ) -> list[TipFilterRegistrationEntry]:
-#         """
-#         Load the non-expired tip filter registrations from the database especially to populate the
-#         tip filter.
-#         """
-#         pass
-#
-#     def read_indexer_filtering_registrations_for_notifications(
-#             self, pushdata_hashes: list[bytes], account_id: int | None = None
-#     ) -> list[FilterNotificationRow]:
-#         """
-#         These are the matches that in either a new mempool transaction or a block which were
-#         present (correctly or falsely) in the common cuckoo filter.
-#         """
-#         pass
-#
-#     def update_tip_filter_registrations_flags_write(
-#             self,
-#             external_account_id: int,
-#             pushdata_hashes: list[bytes],
-#             update_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#             update_mask: Optional[IndexerPushdataRegistrationFlag] = None,
-#             filter_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#             filter_mask: Optional[IndexerPushdataRegistrationFlag] = None,
-#             require_all: bool = False,
-#     ) -> None:
-#         """There is a MySQL and a ScyllaDB version of the update_tip_filter_registrations_flags_write
-#         because ScyllaDB cannot handle bitwise operations in queries and updates."""
-#         pass
-#
-#     def expire_tip_filter_registrations(self, date_expires: int) -> list[bytes]:
-#         """
-#         Atomic call to locate expired registrations and to delete them. It will return the keys for
-#         all the rows that were deleted.
-#
-#         Returns `[ (account_id, pushdata_hash), pass ]`
-#         Raises no known exceptions.
-#         """
-#         pass
-#
-#     def delete_tip_filter_registrations_write(
-#             self,
-#             external_account_id: int,
-#             pushdata_hashes: list[bytes],
-#             # These defaults include all rows no matter the existing flag value.
-#             expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#             mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
-#     ) -> None:
-#         pass
-#
-#     def create_outbound_data_write(self, creation_row: OutboundDataRow) -> int:
-#         pass
-#
-#     def read_pending_outbound_datas(
-#             self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
-#     ) -> list[OutboundDataRow]:
-#         pass
-#
-#     def update_outbound_data_last_tried_write(self,
-#             entries: list[tuple[OutboundDataFlag, int, int]]) -> None:
-#         pass
+import time
+import uuid
+
+import pytest
+
+from conduit_lib.database.db_interface.db import DatabaseType, DBInterface
+from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
+from conduit_lib.database.db_interface.tip_filter_types import AccountMetadata, \
+    TipFilterRegistrationEntry, IndexerPushdataRegistrationFlag, FilterNotificationRow, \
+    OutboundDataRow, OutboundDataFlag
+
+
+class TestTipFilterQueryAPI:
+
+    @pytest.fixture(scope="class", params=[DatabaseType.MySQL, DatabaseType.ScyllaDB])
+    def db(self, request) -> TipFilterQueryAPI:
+        db = DBInterface.load_db(worker_id=1, db_type=request.param)
+        db.drop_tables()
+        db.tip_filter_api.drop_tables()
+        if hasattr(db, 'cache'):
+            db.cache.r.flushall()
+        db.drop_tables()
+        db.create_permanent_tables()
+        db.tip_filter_api.create_tables()
+        yield db
+        if hasattr(db, 'cache'):
+            db.cache.r.flushall()
+        db.drop_tables()
+        db.close()
+
+    def test_acounts_table(self, db: DBInterface) -> None:
+        external_account_id = 1
+        account_id = db.tip_filter_api.create_account_write(external_account_id)
+        assert isinstance(account_id, str)
+
+        account_metadata_list: list[AccountMetadata] = db.tip_filter_api.read_account_metadata([account_id])
+        assert AccountMetadata(account_id, external_account_id) == account_metadata_list[0]
+
+        account_id_actual = db.tip_filter_api.read_account_id_for_external_account_id(external_account_id)
+        assert account_id == account_id_actual
+
+    def test_tip_filter_registrations(self, db: DBInterface) -> None:
+        external_account_id = 1
+        account_id = db.tip_filter_api.create_account_write(external_account_id)
+        date_created = int(time.time())
+
+        pd_hash1 = bytes.fromhex("aa"*32)
+        pd_hash2 = bytes.fromhex("bb"*32)
+        pushdata_hash_list = [pd_hash1, pd_hash2]
+
+        entry1 = TipFilterRegistrationEntry(pushdata_hash=pd_hash1, duration_seconds=3600*24*7)
+        entry2 = TipFilterRegistrationEntry(pushdata_hash=pd_hash2, duration_seconds=60)
+        registration_entries = [entry1, entry2]
+        success = db.tip_filter_api.create_tip_filter_registrations_write(
+            external_account_id, date_created, registration_entries)
+        assert success is True
+
+        # Should read all of them with default flags
+        tip_filter_registrations = \
+            db.tip_filter_api.read_tip_filter_registrations(account_id)
+        tip_filter_registrations.sort(key=lambda x: x.pushdata_hash.hex())
+        assert tip_filter_registrations[0].pushdata_hash == entry1.pushdata_hash
+        assert tip_filter_registrations[0].duration_seconds <= entry1.duration_seconds
+        assert tip_filter_registrations[1].pushdata_hash == entry2.pushdata_hash
+        assert tip_filter_registrations[1].duration_seconds <= entry2.duration_seconds
+
+        # Should only show the second entry
+        tip_filter_registrations = \
+            db.tip_filter_api.read_tip_filter_registrations(account_id, date_expires=int(time.time())+3600)
+        assert tip_filter_registrations[0].pushdata_hash == entry2.pushdata_hash
+        assert tip_filter_registrations[0].duration_seconds <= entry2.duration_seconds
+
+        # Should not show any finalised (for deletion) entries yet
+        tip_filter_registrations = \
+            db.tip_filter_api.read_tip_filter_registrations(account_id, date_expires=None,
+                expected_flags=IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING,
+                mask=IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING)
+        assert len(tip_filter_registrations) == 0
+
+        list_registrations = db.tip_filter_api.read_indexer_filtering_registrations_for_notifications(
+            [pd_hash1, pd_hash2], account_id)
+        assert len(list_registrations) == 2
+        list_registrations.sort(key=lambda x: x.pushdata_hash)
+        assert list_registrations[0].pushdata_hash == pd_hash1
+        assert list_registrations[1].pushdata_hash == pd_hash2
+
+        # Should not raise
+        db.tip_filter_api.update_tip_filter_registrations_flags_write(
+            external_account_id,
+            pushdata_hash_list,
+            IndexerPushdataRegistrationFlag.DELETING,
+            None,
+            IndexerPushdataRegistrationFlag.FINALISED,
+            IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING,
+            True
+        )
+
+        # All entries should have both the finalised_flag and deleting_flag set to 1 now.
+        # This is a safety mechanism to ensure that state is being managed correctly by the client
+        # and so that the cuckoo filter does not get corrupted for their account or affect other
+        # user accounts
+        tip_filter_registrations = db.tip_filter_api.read_tip_filter_registrations(account_id, date_expires=None,
+            expected_flags=IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING,
+            mask=IndexerPushdataRegistrationFlag.FINALISED | IndexerPushdataRegistrationFlag.DELETING)
+        assert len(tip_filter_registrations) == 2
+        assert tip_filter_registrations[0].pushdata_hash == entry1.pushdata_hash
+        assert tip_filter_registrations[1].pushdata_hash == entry2.pushdata_hash
+
+        # Delete one of the registration rows but leave the other in the "DELETING" state
+        db.tip_filter_api.delete_tip_filter_registrations_write(external_account_id,
+            pushdata_hashes=[pd_hash1], expected_flags=IndexerPushdataRegistrationFlag.FINALISED,
+            mask=IndexerPushdataRegistrationFlag.FINALISED)
+
+        tip_filter_registrations = \
+            db.tip_filter_api.read_tip_filter_registrations(account_id)
+        assert len(tip_filter_registrations) == 1
+        assert tip_filter_registrations[0].pushdata_hash == entry2.pushdata_hash
+
+        # The DELETING state row should be filtered out
+        list_registrations = db.tip_filter_api.read_indexer_filtering_registrations_for_notifications(
+            [pd_hash1, pd_hash2], account_id)
+        assert len(list_registrations) == 0
+
+    def test_outbound_data_table(self, db: DBInterface) -> None:
+        db.tip_filter_api.drop_tables()
+        db.tip_filter_api.create_tables()
+        date_created = int(time.time())
+        outbound_data_row1 = OutboundDataRow(str(uuid.uuid4()), bytes.fromhex("aa"*32),
+            OutboundDataFlag.TIP_FILTER_NOTIFICATIONS, date_created, date_created)
+        outbound_data_row2 = OutboundDataRow(str(uuid.uuid4()), bytes.fromhex("bb"*32),
+            OutboundDataFlag.TIP_FILTER_NOTIFICATIONS, date_created, date_created)
+
+        db.tip_filter_api.create_outbound_data_write(outbound_data_row1)
+        db.tip_filter_api.create_outbound_data_write(outbound_data_row2)
+
+        rows = db.tip_filter_api.read_pending_outbound_datas(
+            OutboundDataFlag.NONE,
+            OutboundDataFlag.DISPATCHED_SUCCESSFULLY,
+        )
+        assert len(rows) == 2
+
+        updated_flags = outbound_data_row1.outbound_data_flags
+        updated_flags |= OutboundDataFlag.DISPATCHED_SUCCESSFULLY
+        assert outbound_data_row1.outbound_data_id is not None
+        delivery_updates = [(updated_flags, int(time.time()), outbound_data_row1.outbound_data_id)]
+        db.tip_filter_api.update_outbound_data_last_tried_write(entries=delivery_updates)
+
+        rows = db.tip_filter_api.read_pending_outbound_datas(
+            OutboundDataFlag.NONE,
+            OutboundDataFlag.DISPATCHED_SUCCESSFULLY,
+        )
+        assert len(rows) == 1

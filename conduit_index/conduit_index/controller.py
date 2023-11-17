@@ -404,8 +404,7 @@ class Controller(ControllerBase):
         # self.db.delete_pushdata_rows(batched_pd_rows)
         # self.db.delete_output_rows(batched_out_rows)
         # self.db.delete_input_rows(batched_in_rows)
-        # for block_hash in batched_header_hashes:
-        #     self.db.delete_header_row(block_hash)
+        # self.db.delete_header_rows(batched_header_hashes)
 
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects

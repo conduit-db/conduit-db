@@ -11,7 +11,6 @@ from aiohttp import web
 from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib import LMDB_Database, DBInterface
-from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.db_interface.tip_filter_types import (
     TipFilterRegistrationEntry,
     IndexerPushdataRegistrationFlag,
@@ -260,7 +259,7 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
+    db: DBInterface = app_state.db
 
     accept_type = request.headers.get("Accept", "*/*")
     if accept_type == "*/*":
@@ -337,9 +336,10 @@ async def indexer_post_transaction_filter(request: web.Request) -> web.Response:
     logger.debug("Adding tip filter entries to database %s", registration_entries)
     # It is required that the client knows what it is doing and this is enforced by disallowing
     # these registrations if any of the given pushdatas are already registered.
+    assert db.tip_filter_api is not None
     if not await asyncio.get_running_loop().run_in_executor(
         app_state.executor,
-        db.create_tip_filter_registrations_write,
+        db.tip_filter_api.create_tip_filter_registrations_write,
         external_account_id,
         date_created,
         registration_entries,
@@ -376,7 +376,7 @@ async def indexer_post_transaction_filter_delete(
     app_state: ApplicationState = request.app["app_state"]
     if not app_state.worker_state_manager.all_workers_connected_event.is_set():
         raise web.HTTPServiceUnavailable(reason="backend worker processes are offline")
-    db: TipFilterQueryAPI = app_state.db_tip_filter_queries
+    db: DBInterface = app_state.db
 
     content_type = request.headers.get("Content-Type")
     if content_type not in (
@@ -421,9 +421,10 @@ async def indexer_post_transaction_filter_delete(
     # any of the registrations are not in this state, it is assumed that the client application
     # is broken and mismanaging it's own state.
     try:
+        assert db.tip_filter_api is not None
         await asyncio.get_running_loop().run_in_executor(
             app_state.executor,
-            db.update_tip_filter_registrations_flags_write,
+            db.tip_filter_api.update_tip_filter_registrations_flags_write,
             external_account_id,
             pushdata_hash_list,
             IndexerPushdataRegistrationFlag.DELETING,
@@ -438,7 +439,7 @@ async def indexer_post_transaction_filter_delete(
     try:
         await asyncio.get_running_loop().run_in_executor(
             app_state.executor,
-            db.delete_tip_filter_registrations_write,
+            db.tip_filter_api.delete_tip_filter_registrations_write,
             external_account_id,
             pushdata_hash_list,
             IndexerPushdataRegistrationFlag.FINALISED,

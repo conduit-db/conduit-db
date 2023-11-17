@@ -208,16 +208,16 @@ class ScyllaDB(DBInterface):
         self.queries.add_to_mempool()
 
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
-        raise NotImplementedError()
+        return self.queries.delete_pushdata_rows(pushdata_rows)
 
     def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
-        raise NotImplementedError()
+        return self.queries.delete_output_rows(output_rows)
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:
-        raise NotImplementedError()
+        return self.queries.delete_input_rows(input_rows)
 
-    def delete_header_row(self, block_hash: bytes) -> None:
-        raise NotImplementedError()
+    def delete_header_rows(self, block_hashes: list[bytes]) -> None:
+        return self.queries.delete_header_rows(block_hashes)
 
     def get_header_data(self, block_hash: bytes, raw_header_data: bool = True) -> BlockHeaderRow | None:
         return self.api_queries.get_header_data(block_hash, raw_header_data)
@@ -265,6 +265,7 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
         port=int(os.getenv('SCYLLA_PORT', 19042)),
         protocol_version=ProtocolVersion.V4,
         load_balancing_policy=None,
+        executor_threads=4,
         # auth_provider=auth_provider,
     )
     session = cluster.connect()

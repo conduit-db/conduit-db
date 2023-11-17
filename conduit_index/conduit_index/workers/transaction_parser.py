@@ -12,7 +12,6 @@ import refcuckoo
 import zmq
 
 from conduit_lib import DBInterface
-from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.db_interface.tip_filter_types import IndexerPushdataRegistrationFlag
 from conduit_lib.database.db_interface.types import (
     MySQLFlushBatch,
@@ -127,7 +126,6 @@ class TxParser(multiprocessing.Process):
 
     def setup_tip_filtering(self) -> None:
         db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
-        db_tip_filter_queries = TipFilterQueryAPI.from_db(db)
 
         self.unspent_output_registrations: set[OutpointType] = set()
 
@@ -137,7 +135,8 @@ class TxParser(multiprocessing.Process):
         # Note that at the time of writing the bits per item is 12 (compiled into `refcuckoo`).
         self.common_cuckoo = refcuckoo.CuckooFilter(500000)  # pylint: disable=I1101
         self._filter_expiry_next_time = int(time.time()) + 30
-        registration_entries = db_tip_filter_queries.read_tip_filter_registrations(
+        assert db.tip_filter_api is not None
+        registration_entries = db.tip_filter_api.read_tip_filter_registrations(
             mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,
             expected_flags=IndexerPushdataRegistrationFlag.FINALISED,
         )

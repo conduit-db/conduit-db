@@ -37,7 +37,7 @@ class TestRedisCache:
                 assert cache.get(b"namespace" + b"key2") == b"value2"
                 all_keys = cache.scan_in_namespace(namespace=b"namespace")
                 for key in all_keys:
-                    assert key in [b"namespace" + b"key1", b"namespace" + b"key2", b"namespace" + b"key3"]
+                    assert key in [b"key1", b"key2", b"key3"]
 
                 cache.bulk_delete_in_namespace(b"namespace", pairs=[])
                 cache.bulk_delete_in_namespace(b"namespace", pairs=pairs)

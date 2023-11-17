@@ -212,7 +212,7 @@ class MySQLDatabase(DBInterface):
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:
         raise NotImplementedError()
 
-    def delete_header_row(self, block_hash: bytes) -> None:
+    def delete_header_rows(self, block_hashes: list[bytes]) -> None:
         raise NotImplementedError()
 
     def get_header_data(self, block_hash: bytes, raw_header_data: bool = True) -> BlockHeaderRow | None:

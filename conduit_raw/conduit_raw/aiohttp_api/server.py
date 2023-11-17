@@ -1,5 +1,3 @@
-import uuid
-
 import aiohttp
 from aiohttp import web
 import asyncio
@@ -20,7 +18,6 @@ import zmq
 import zmq.asyncio
 
 from conduit_lib import NetworkConfig, DBInterface
-from conduit_lib.database.db_interface.tip_filter import TipFilterQueryAPI
 from conduit_lib.database.db_interface.tip_filter_types import OutboundDataFlag, OutboundDataRow
 from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
@@ -75,8 +72,8 @@ class ApplicationState(object):
         self.net_config = net_config
 
         self.db = DBInterface.load_db()
-        self.db_tip_filter_queries = TipFilterQueryAPI.from_db(self.db)
-        self.db_tip_filter_queries.setup()
+        assert self.db.tip_filter_api is not None
+        self.db.tip_filter_api.setup()
         self.lmdb = lmdb
         self.headers_threadsafe = headers_threadsafe
         self.executor = ThreadPoolExecutor(max_workers=10)
@@ -215,7 +212,8 @@ class ApplicationState(object):
             # No point in trying if there is no reference server connected.
             next_check_delay = MAXIMUM_DELAY
             if len(self.get_ws_clients()) > 0:
-                rows = self.db_tip_filter_queries.read_pending_outbound_datas(
+                assert self.db.tip_filter_api is not None
+                rows = self.db.tip_filter_api.read_pending_outbound_datas(
                     OutboundDataFlag.NONE,
                     OutboundDataFlag.DISPATCHED_SUCCESSFULLY,
                 )
@@ -234,7 +232,7 @@ class ApplicationState(object):
                         len(current_rows),
                         next_check_delay,
                     )
-                delivery_updates = list[tuple[OutboundDataFlag, int, int]]()
+                delivery_updates = list[tuple[OutboundDataFlag, int, str]]()
                 for row in current_rows:
                     assert row.outbound_data_id is not None
                     url = self.reference_server_url + "/api/v1/tip-filter/matches"
@@ -269,7 +267,7 @@ class ApplicationState(object):
                 if len(delivery_updates) > 0:
                     await asyncio.get_running_loop().run_in_executor(
                         self.executor,
-                        self.db_tip_filter_queries.update_outbound_data_last_tried_write,
+                        self.db.tip_filter_api.update_outbound_data_last_tried_write,
                         delivery_updates,
                     )
             else:
@@ -320,7 +318,8 @@ class ApplicationState(object):
                 matches_by_hash[match.pushdata_hash] = [match]
 
         # Get all the accounts and which pushdata they have registered.
-        rows = self.db_tip_filter_queries.read_indexer_filtering_registrations_for_notifications(
+        assert self.db.tip_filter_api is not None
+        rows = self.db.tip_filter_api.read_indexer_filtering_registrations_for_notifications(
             list(matches_by_hash)
         )
         self.logger.debug("Found %d registrations for tip filter notifications", len(rows))
@@ -337,7 +336,7 @@ class ApplicationState(object):
         )
 
         # Gather the true matches for each account so that we can notify them of those matches.
-        matches_by_account_id = dict[uuid.UUID, list[PushdataRowParsed]]()
+        matches_by_account_id = dict[str, list[PushdataRowParsed]]()
         for row in rows:
             matched_rows = matches_by_hash[row.pushdata_hash]
             if row.account_id in matches_by_account_id:
@@ -350,7 +349,7 @@ class ApplicationState(object):
         #     delivered.
         metadata_by_account_id = {
             row.account_id: row
-            for row in self.db_tip_filter_queries.read_account_metadata(list(matches_by_account_id))
+            for row in self.db.tip_filter_api.read_account_metadata(list(matches_by_account_id))
         }
         block_id = hash_to_hex_str(block_hash) if block_hash is not None else None
 
@@ -424,7 +423,7 @@ class ApplicationState(object):
 
         await asyncio.get_running_loop().run_in_executor(
             self.executor,
-            self.db_tip_filter_queries.create_outbound_data_write,
+            self.db.tip_filter_api.create_outbound_data_write,
             creation_row,
         )
 

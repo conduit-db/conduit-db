@@ -1,5 +1,4 @@
 import abc
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from typing import (
     Optional,
@@ -91,18 +90,18 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def create_account_write(self, external_account_id: int) -> int | uuid.UUID:
+    def create_account_write(self, external_account_id: int) -> str:
         """
         This does partial updates depending on what is in `settings`.
         """
         ...
 
     @abc.abstractmethod
-    def read_account_metadata(self, account_ids: list[uuid.UUID]) -> list[AccountMetadata]:
+    def read_account_metadata(self, account_ids: list[str]) -> list[AccountMetadata]:
         ...
 
     @abc.abstractmethod
-    def read_account_id_for_external_account_id(self, external_account_id: int) -> int | uuid.UUID:
+    def read_account_id_for_external_account_id(self, external_account_id: int) -> str:
         ...
 
     @abc.abstractmethod
@@ -117,8 +116,8 @@ class TipFilterQueryAPI(abc.ABC):
     @abc.abstractmethod
     def read_tip_filter_registrations(
         self,
-        account_id: Optional[uuid.UUID] = None,
-        date_expires: Optional[int] = None,
+        account_id: str | None = None,
+        date_expires: int | None = None,
         # These defaults include all rows no matter the flag value.
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
         mask: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
@@ -131,7 +130,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: uuid.UUID | None = None
+        self, pushdata_hashes: list[bytes], account_id: str | None = None
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -155,17 +154,6 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def expire_tip_filter_registrations(self, date_expires: int) -> list[bytes]:
-        """
-        Atomic call to locate expired registrations and to delete them. It will return the keys for
-        all the rows that were deleted.
-
-        Returns `[ (account_id, pushdata_hash), ... ]`
-        Raises no known exceptions.
-        """
-        ...
-
-    @abc.abstractmethod
     def delete_tip_filter_registrations_write(
         self,
         external_account_id: int,
@@ -181,11 +169,9 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def read_pending_outbound_datas(
-        self, flags: OutboundDataFlag, mask: OutboundDataFlag, account_id: int | None = None
-    ) -> list[OutboundDataRow]:
+    def read_pending_outbound_datas(self, flags: OutboundDataFlag, mask: OutboundDataFlag) -> list[OutboundDataRow]:
         ...
 
     @abc.abstractmethod
-    def update_outbound_data_last_tried_write(self, entries: list[tuple[OutboundDataFlag, int, int]]) -> None:
+    def update_outbound_data_last_tried_write(self, entries: list[tuple[OutboundDataFlag, int, str]]) -> None:
         ...

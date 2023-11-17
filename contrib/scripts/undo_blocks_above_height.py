@@ -166,7 +166,7 @@ class DbRepairTool:
             self.db.delete_pushdata_rows(pushdata_rows_for_flushing)
             self.db.delete_output_rows(out_rows)
             self.db.delete_input_rows(input_rows_for_flushing)
-            self.db.delete_header_row(block_hash)
+            self.db.delete_header_rows([block_hash])
 
 
 async def main() -> None:

@@ -53,14 +53,18 @@ class DBInterface(abc.ABC):
         worker_id: int | None = None,
         **kwargs: Any,
     ) -> None:
-        self.worker_id = worker_id
-        self.db_type: DatabaseType | None = None
+        self.worker_id = worker_id  # pragma: no cover
+        self.db_type: DatabaseType | None = None  # pragma: no cover
 
-        self.tip_filter_api: "TipFilterQueryAPI | None" = None
-        self.session: Session | None = None  # ScyllaDB
-        self.cache: RedisCache | None = None  # ScyllaDB
-        self.executor: ThreadPoolExecutor | None = None  # ScyllaDB
-        self.conn: Connection | None = None  # MySQLDB
+        self.tip_filter_api: "TipFilterQueryAPI | None" = None  # pragma: no cover
+
+        # ScyllaDB
+        self.session: Session | None = None  # pragma: no cover
+        self.cache: RedisCache | None = None  # pragma: no cover
+        self.executor: ThreadPoolExecutor | None = None  # pragma: no cover
+
+        # MySQL
+        self.conn: Connection | None = None  # pragma: no cover
 
     @classmethod
     def load_db(
@@ -241,7 +245,7 @@ class DBInterface(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def delete_header_row(self, block_hash: bytes) -> None:
+    def delete_header_rows(self, block_hashes: list[bytes]) -> None:
         pass
 
     @abc.abstractmethod

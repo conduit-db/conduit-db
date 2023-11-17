@@ -97,7 +97,7 @@ class GetSpentOutpointsStatements:
             "WHERE out_tx_hash = ? AND out_idx = ?"
         )
         self.txs_stmt = session.prepare(
-            "SELECT tx_block_num, tx_position FROM confirmed_transactions " "WHERE tx_hash = ?"
+            "SELECT tx_block_num, tx_position FROM confirmed_transactions WHERE tx_hash = ?"
         )
         self.input_headers_stmt = session.prepare(
             "SELECT block_hash FROM headers WHERE block_num = ? AND is_orphaned = 0"

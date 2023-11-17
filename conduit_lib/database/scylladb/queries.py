@@ -2,11 +2,12 @@ import logging
 import os
 import time
 import typing
-from typing import Iterator, cast
+from typing import Iterator
 
 import bitcoinx
 from cassandra import ConsistencyLevel  # pylint:disable=E0611
 from cassandra.cluster import Session  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
 from cassandra.query import BatchStatement  # pylint:disable=E0611
 
 from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, OutputRow
@@ -222,8 +223,8 @@ class ScyllaDBQueries:
             out_tx_hash_bytes = bytes.fromhex(out_tx_hash)
             in_tx_hash_bytes = bytes.fromhex(in_tx_hash)
             batch.add(
-                "DELETE FROM inputs_table WHERE out_tx_hash = %s AND out_idx = %s AND in_tx_hash = %s AND in_idx = %s",
-                (out_tx_hash_bytes, out_idx, in_tx_hash_bytes, in_idx),
+                "DELETE FROM inputs_table WHERE out_tx_hash = %s AND out_idx = %s",
+                (out_tx_hash_bytes, out_idx),
             )
             if (i + 1) % BATCH_SIZE == 0 or i == len(input_rows) - 1:
                 self.session.execute(batch)
@@ -233,10 +234,34 @@ class ScyllaDBQueries:
             PROFILING, f"elapsed time for bulk delete of input rows = {t1} seconds for {len(input_rows)}"
         )
 
-    def delete_header_row(self, block_hash: bytes) -> None:
+    def delete_header_rows(self, block_hashes: list[bytes]) -> None:
         t0 = time.time()
-        query = "DELETE FROM headers WHERE block_hash = %s"
-        self.session.execute(query, (block_hash,))
+
+        # Prepare the SELECT statement
+        select_statement = self.session.prepare(
+            "SELECT block_num FROM headers WHERE block_hash = ? ALLOW FILTERING;")
+
+        # Execute the SELECT queries concurrently
+        results = execute_concurrent_with_args(
+            self.session, select_statement, [(block_hash,) for block_hash in block_hashes]
+        )
+
+        # Extract block_nums from the results
+        block_nums = []
+        for (success, result) in results:
+            if success:
+                block_nums.extend([row.block_num for row in result])
+            else:
+                self.logger.error(f"Query failed: {result}")
+
+        # Prepare and execute batch delete using block_nums
+        batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
+        prepared_statement = self.session.prepare("DELETE FROM headers WHERE block_num = ?;")
+        for block_num in block_nums:
+            bound_statement = prepared_statement.bind([block_num])
+            batch.add(bound_statement)
+        self.session.execute(batch)
+
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for delete of header row = {t1} seconds")
 
@@ -301,8 +326,6 @@ class ScyllaDBQueries:
             )
 
     def get_mempool_size(self) -> int:
-        query = "SELECT COUNT(*) FROM mempool_transactions"
-        result = self.session.execute(query).one()
-        if result:
-            return cast(int, result[0])
-        return 0
+        # TODO(db): This is very inefficient - need to use a SET -> SCARD (cardinality). It is O(1)
+        mempool_tx_hashes = self.db.cache.scan_in_namespace(b'mempool')
+        return len(mempool_tx_hashes)
