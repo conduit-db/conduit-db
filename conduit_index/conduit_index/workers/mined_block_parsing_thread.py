@@ -230,11 +230,10 @@ class MinedBlockParsingThread(threading.Thread):
         while True:
             # Get new registration from external API
             msg = self.parent.socket_pushdata_registrations.recv()
-            msg_unpacked = cast(PushdataFilterStateUpdate,
-                cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC)))
-            state_update_from_server = PushdataFilterStateUpdate(
-                *msg_unpacked
+            msg_unpacked = cast(
+                PushdataFilterStateUpdate, cbor2.loads(msg.lstrip(PUSHDATA_REGISTRATION_TOPIC))
             )
+            state_update_from_server = PushdataFilterStateUpdate(*msg_unpacked)
             self.logger.debug(
                 f"Got state update from external API of type: " f"{state_update_from_server.command}"
             )
@@ -567,7 +566,6 @@ class MinedBlockParsingThread(threading.Thread):
             unprocessed_tx_hashes = db.get_unprocessed_txs(
                 is_reorg, merged_part_tx_hash_rows, self.inbound_tx_table_name
             )
-
             for tx_hash in unprocessed_tx_hashes:
                 tx_offset = merged_offsets_map[tx_hash]  # pop the non-mempool txs out
                 del merged_offsets_map[tx_hash]

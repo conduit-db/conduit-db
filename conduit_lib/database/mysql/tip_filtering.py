@@ -314,7 +314,6 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
 
     def read_tip_filter_registrations(
         self,
-        account_id: str | None = None,
         date_expires: int | None = None,
         # These defaults include all rows no matter the flag value.
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
@@ -326,9 +325,6 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         """
         sql_values: list[Any] = [int(mask), int(expected_flags)]
         sql = "SELECT pushdata_hash, date_expires FROM tip_filter_registrations WHERE flags&%s=%s"
-        if account_id is not None:
-            sql += " AND account_id=%s"
-            sql_values.append(account_id)
         if date_expires is not None:
             sql += " AND date_expires < %s"
             sql_values.append(date_expires)
@@ -336,14 +332,16 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         try:
             cursor.execute(sql, sql_values)
             # duration_seconds is how many seconds are left until expiry
-            return [TipFilterRegistrationEntry(pushdata_hash=row[0],
-                duration_seconds=row[1] - int(time.time())) for row in cursor.fetchall()]
+            return [
+                TipFilterRegistrationEntry(pushdata_hash=row[0], duration_seconds=row[1] - int(time.time()))
+                for row in cursor.fetchall()
+            ]
         finally:
             self.conn.commit()
             cursor.close()
 
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: str | None = None
+        self, pushdata_hashes: list[bytes]
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -445,9 +443,12 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
         cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             # Ensure outbound_data_flags is an int type
-            params = (creation_row.outbound_data_id, creation_row.outbound_data,
-                int(creation_row.outbound_data_flags), creation_row.date_created,
-                creation_row.date_last_tried
+            params = (
+                creation_row.outbound_data_id,
+                creation_row.outbound_data,
+                int(creation_row.outbound_data_flags),
+                creation_row.date_created,
+                creation_row.date_last_tried,
             )
             cursor.execute(sql, params)
             cursor.execute(sql_select, [creation_row.outbound_data_id])
@@ -458,7 +459,9 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             self.conn.commit()
             cursor.close()
 
-    def read_pending_outbound_datas(self, flags: OutboundDataFlag, mask: OutboundDataFlag) -> list[OutboundDataRow]:
+    def read_pending_outbound_datas(
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag
+    ) -> list[OutboundDataRow]:
         # assert account_id is not None, "Needed for ScyllaDB implementation"
         sql = (
             "SELECT outbound_data_id, outbound_data, outbound_data_flags, date_created, "
@@ -475,11 +478,8 @@ class MySQLTipFilterQueries(TipFilterQueryAPI):
             self.conn.commit()
             cursor.close()
 
-    def update_outbound_data_last_tried_write(self,
-            entries: list[tuple[OutboundDataFlag, int, str]]) -> None:
-        sql = (
-            "UPDATE outbound_data SET outbound_data_flags=%s, date_last_tried=%s WHERE outbound_data_id=%s"
-        )
+    def update_outbound_data_last_tried_write(self, entries: list[tuple[OutboundDataFlag, int, str]]) -> None:
+        sql = "UPDATE outbound_data SET outbound_data_flags=%s, date_last_tried=%s WHERE outbound_data_id=%s"
         cursor: MySQLdb.cursors.Cursor = self.conn.cursor()
         try:
             entries_with_flag_as_int: list[tuple[int, int, str]] = [

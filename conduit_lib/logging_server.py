@@ -167,6 +167,6 @@ if __name__ == "__main__":
 
     logging.debug("shutting down...")
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(("127.0.0.1", 54545))
+    s.connect(("127.0.0.1", 46464))
     len_msg = struct.pack(">L", 4)
     s.sendall(len_msg + b"stop")

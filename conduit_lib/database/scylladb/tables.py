@@ -66,29 +66,6 @@ class ScyllaDBTables:
             self.logger.exception("db.drop_tables failed unexpectedly")
             raise FailedScyllaOperation from e
 
-    # def drop_indices(self) -> None:
-    #     try:
-    #         # Query ScyllaDB's system schema to get the names of all indices
-    #         index_query_result = self.session.execute(
-    #             "SELECT index_name FROM system_schema.indexes WHERE keyspace_name = 'your_keyspace_name';"
-    #         )
-    #
-    #         indexes_to_drop = [row.index_name for row in index_query_result if row.index_name is not None]
-    #
-    #         for index_name in indexes_to_drop:
-    #             self.execute_query(f"DROP INDEX IF EXISTS {index_name};")
-    #
-    #     except Exception as e:
-    #         self.logger.exception("drop_indices failed unexpectedly")
-    #         raise FailedScyllaOperation from e
-
-    def create_table(self, table_name: str, schema: str) -> None:
-        try:
-            self.execute_query(f"CREATE TABLE IF NOT EXISTS {table_name} ({schema});")
-        except Exception as e:
-            self.logger.exception("Failed to create table %s", table_name)
-            raise FailedScyllaOperation from e
-
     def drop_temp_mined_tx_hashes(self) -> None:
         self.db.cache.r.delete(b'temp_mined_tx_hashes')
 
@@ -138,9 +115,9 @@ class ScyllaDBTables:
                 f"""
                 CREATE TABLE IF NOT EXISTS inputs_table (
                     out_tx_hash blob,
-                    out_idx int,
+                    out_idx bigint,
                     in_tx_hash blob,
-                    in_idx int,
+                    in_idx bigint,
                     PRIMARY KEY (out_tx_hash, out_idx)
                 );
                 """
@@ -151,7 +128,7 @@ class ScyllaDBTables:
                 CREATE TABLE IF NOT EXISTS pushdata (
                     pushdata_hash blob,
                     tx_hash blob,
-                    idx int,
+                    idx bigint,
                     ref_type smallint,
                     PRIMARY KEY (pushdata_hash, tx_hash, idx, ref_type)
                 );

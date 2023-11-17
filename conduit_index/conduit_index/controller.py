@@ -47,7 +47,7 @@ from conduit_lib.types import (
 )
 from conduit_lib.utils import create_task, headers_to_p2p_struct
 from conduit_lib.wait_for_dependencies import (
-    wait_for_mysql,
+    wait_for_db,
     wait_for_ipc_socket_server,
 )
 
@@ -148,7 +148,7 @@ class Controller(ControllerBase):
         self.general_executor = ThreadPoolExecutor(max_workers=4)
 
         wait_for_ipc_socket_server()
-        wait_for_mysql()
+        wait_for_db()
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)
         self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)

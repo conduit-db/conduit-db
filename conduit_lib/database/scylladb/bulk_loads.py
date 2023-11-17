@@ -156,7 +156,7 @@ class ScyllaDBBulkLoads:
                     bytes.fromhex(row.block_header),
                     row.block_tx_count,
                     row.block_size,
-                    row.is_orphaned,
+                    bool(row.is_orphaned),
                 )
             )
         self.load_data_batched(insert_statement, insert_rows)

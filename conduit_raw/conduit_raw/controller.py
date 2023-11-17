@@ -31,7 +31,7 @@ from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.types import HeaderSpan
 from conduit_lib.utils import create_task, get_conduit_raw_host_and_port
-from conduit_lib.wait_for_dependencies import wait_for_mysql
+from conduit_lib.wait_for_dependencies import wait_for_db
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .aiohttp_api import server_main
@@ -168,7 +168,7 @@ class Controller(ControllerBase):
         self.running = True
         await self._get_aiohttp_client_session()
         await self.setup()
-        wait_for_mysql()
+        wait_for_db()
         self.tasks.append(create_task(self.start_jobs()))
         await self.connect_session()
         assert self.bitcoin_p2p_client is not None

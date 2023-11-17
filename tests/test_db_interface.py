@@ -1,15 +1,17 @@
 import os
 import time
 from typing import Iterator, cast
+from unittest.mock import patch, MagicMock, Mock
 
 import bitcoinx
 import pytest
 from _pytest.fixtures import FixtureRequest
 from bitcoinx import pack_le_uint32
 
-from conduit_lib import DBInterface
+from conduit_lib import DBInterface, LMDB_Database
 from conduit_lib.constants import HashXLength, MAX_UINT32
 from conduit_lib.database.db_interface.db import DatabaseType
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
     MempoolTransactionRow,
@@ -18,6 +20,7 @@ from conduit_lib.database.db_interface.types import (
     OutputRow,
     PushdataRow,
 )
+from conduit_lib.database.lmdb.lmdb_database import get_full_tx_hash
 from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.database.scylladb.db import ScyllaDB
 from conduit_lib.types import (
@@ -25,7 +28,7 @@ from conduit_lib.types import (
     TxMetadata,
     RestorationFilterQueryResult,
     TxLocation,
-    PushdataMatchFlags,
+    PushdataMatchFlags, OutpointType,
 )
 
 
@@ -57,9 +60,6 @@ class TestDBInterface:
 
         with pytest.raises(ValueError):
             DBInterface.load_db(db_type=cast(DatabaseType, 100))
-
-
-
 
     def test_connection(self, db: DBInterface) -> None:
         db.ping()
@@ -286,8 +286,10 @@ class TestDBInterface:
         db.bulk_load_input_rows(in_rows=[])
         txid1 = 'aa' * HashXLength
         txid2 = 'bb' * HashXLength
-        row1 = InputRow(out_tx_hash=txid1, out_idx=1, in_tx_hash=txid1, in_idx=1)
-        row2 = InputRow(out_tx_hash=txid2, out_idx=2, in_tx_hash=txid2, in_idx=2)
+        full_tx_hash1 = bytes.fromhex('aa'*32)
+        full_tx_hash2 = bytes.fromhex('bb'*32)
+        row1 = InputRow(out_tx_hash=txid1, out_idx=1, in_tx_hash='cc'*HashXLength, in_idx=1)
+        row2 = InputRow(out_tx_hash=txid2, out_idx=2, in_tx_hash='dd'*HashXLength, in_idx=2)
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
@@ -316,11 +318,11 @@ class TestDBInterface:
             rows = result.fetch_row(0)
         assert rows[0][0].hex() == txid1
         assert rows[0][1] == 1
-        assert rows[0][2].hex() == txid1
+        assert rows[0][2].hex() == 'cc'*HashXLength
         assert rows[0][3] == 1
         assert rows[1][0].hex() == txid2
         assert rows[1][1] == 2
-        assert rows[1][2].hex() == txid2
+        assert rows[1][2].hex() == 'dd'*HashXLength
         assert rows[1][3] == 2
 
     def test_txo_table(self, db: DBInterface) -> None:
@@ -495,7 +497,6 @@ class TestDBInterface:
         db.bulk_load_mempool_tx_rows(tx_rows=[])
         txid1 = 'aa' * 32
         txid2 = 'bb' * 32
-        timestamp = int(time.time())
         row1 = MempoolTransactionRow(mp_tx_hash=txid1)
         row2 = MempoolTransactionRow(mp_tx_hash=txid2)
 
@@ -760,25 +761,47 @@ class TestDBInterface:
         db.create_permanent_tables()
         assert db.tip_filter_api is not None
         db.tip_filter_api.create_tables()
-        block_hash = "aa" * 32
-        block_hash_not_exists = b"bb"
 
-        block_header = os.urandom(80).hex()
+        block_hash1 = 'aa' * 32
+        block_hash2 = 'bb' * 32
+        block_header1 = 'aa' * 80
+        block_header2 = 'bb' * 80
+
         row1 = BlockHeaderRow(
             block_num=1,
-            block_hash=block_hash,
+            block_hash=block_hash1,
             block_height=1,
-            block_header=block_header,
-            block_tx_count=1000,
-            block_size=1000000,
+            block_header=block_header1,
+            block_tx_count=1,
+            block_size=1,
+            is_orphaned=1,
+        )
+        row2 = BlockHeaderRow(
+            block_num=2,
+            block_hash=block_hash2,
+            block_height=2,
+            block_header=block_header2,
+            block_tx_count=2,
+            block_size=2,
             is_orphaned=0,
         )
-        db.bulk_load_headers([row1])
-        assert db.get_header_data(bytes.fromhex(block_hash), raw_header_data=True) == row1
-        assert db.get_header_data(bytes.fromhex(block_hash), raw_header_data=False) == row1._replace(
-            block_header=None
-        )
-        assert db.get_header_data(block_hash_not_exists) is None
+        db.bulk_load_headers(block_header_rows=[row1, row2])
+
+        # Non-existent block hash
+        header_data = db.get_header_data(bytes.fromhex("ff"*HashXLength))
+        assert header_data is None
+
+        # This one is orphaned so should be filtered out of the result
+        header_data = db.get_header_data(bytes.fromhex(block_hash1))
+        assert header_data is None
+
+        # This one is on the longest chain so should be returned
+        header_data = db.get_header_data(bytes.fromhex(block_hash2))
+        assert header_data == row2
+
+        header_data_without_raw_header = db.get_header_data(bytes.fromhex(block_hash2),
+            raw_header_data=False)
+        assert header_data_without_raw_header == row2._replace(block_header=None)
 
     def test_get_transaction_metadata_hashX(self, db: DBInterface) -> None:
         db.drop_tables()
@@ -855,8 +878,10 @@ class TestDBInterface:
         pushdata_hash2 = 'ff' * HashXLength
         out_tx_hash_reorged = 'aa' * HashXLength
         out_tx_hash2 = 'bb' * HashXLength
+
+        # I know this doesn't make sense but I don't want to create a whole
+        # new transaction just to spend
         in_tx_hash_reorged = 'cc' * HashXLength
-        in_tx_hash2 = 'dd' * HashXLength
 
         # Pushdata Rows
         pd_row1 = PushdataRow(
@@ -879,10 +904,15 @@ class TestDBInterface:
         db.bulk_load_input_rows(in_rows=[in_row1])
 
         # Confirmed Transaction Rows
+        tx_row_spent_input = ConfirmedTransactionRow(tx_hash=in_tx_hash_reorged,
+            tx_block_num=1, tx_position=1)
+        tx_row_spent_input_reorg = ConfirmedTransactionRow(tx_hash=in_tx_hash_reorged,
+            tx_block_num=3, tx_position=1)
         tx_row1 = ConfirmedTransactionRow(tx_hash=out_tx_hash_reorged, tx_block_num=1, tx_position=418)
         tx_row2 = ConfirmedTransactionRow(tx_hash=out_tx_hash_reorged, tx_block_num=3, tx_position=369)
         tx_row3 = ConfirmedTransactionRow(tx_hash=out_tx_hash2, tx_block_num=3, tx_position=400)
-        db.bulk_load_confirmed_tx_rows(tx_rows=[tx_row1, tx_row2, tx_row3])
+        db.bulk_load_confirmed_tx_rows(tx_rows=[tx_row1, tx_row2, tx_row3,
+            tx_row_spent_input, tx_row_spent_input_reorg])
 
         # Header Rows
         block_hash1 = "aa" * 32
@@ -951,6 +981,47 @@ class TestDBInterface:
                 ),
             ),
         ]
+
+        outpoint1 = OutpointType(tx_hash=bytes.fromhex(out_tx_hash_reorged), out_idx=1)  # spent
+        outpoint2 = OutpointType(tx_hash=bytes.fromhex(out_tx_hash2), out_idx=2)  # utxo
+        block_hash: bytes
+        block_num: int
+        tx_position: int  # 0-based index in block
+        loc_tx_spent_input = TxLocation(block_hash=bytes.fromhex(block_hash1), block_num=1, tx_position=1)
+        loc_tx_spent_input_reorged = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=1)
+        loc_tx1 = TxLocation(block_hash=bytes.fromhex(block_hash1), block_num=1, tx_position=418)
+        loc_tx2 = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=369)
+        loc_tx3 = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=400)
+
+        def mock_get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
+            if tx_location == loc_tx_spent_input_reorged:
+                return bytes.fromhex('cc'*32)
+            elif tx_location == loc_tx_spent_input:
+                return bytes.fromhex('cc'*32)
+            elif tx_location == loc_tx1:
+                return bytes.fromhex('aa'*32)
+            elif tx_location == loc_tx2:
+                return bytes.fromhex('aa'*32)
+            elif tx_location == loc_tx3:
+                return bytes.fromhex('bb'*32)
+            else:
+                raise ValueError(f"Not expecting this tx_location: {tx_location}")
+
+        module_name = 'mysql'
+        if db.db_type == DatabaseType.ScyllaDB:
+            module_name = 'scylladb'
+        with patch(f'conduit_lib.database.{module_name}.api_queries.get_full_tx_hash',
+                side_effect=mock_get_full_tx_hash):
+            lmdb = Mock(spec=LMDB_Database)
+            # Should return a match for outpoint1 but outpoint2 is a utxo
+            spent_outpoints = db.get_spent_outpoints(entries=[outpoint1, outpoint2], lmdb=lmdb)
+            assert len(spent_outpoints) == 1
+            assert spent_outpoints[0] == OutputSpendRow(
+                out_tx_hash=b'\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa',
+                out_idx=1,
+                in_tx_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+                in_idx=1,
+                block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc')
 
     def test_get_unprocessed_txs(self, db: DBInterface) -> None:
         db.drop_tables()

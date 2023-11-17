@@ -87,6 +87,7 @@ services:
     depends_on:
       - node
       - mysql
+      - scylladb
     environment:
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
       - BITCOIN_HOST=node

@@ -61,6 +61,7 @@ class ScyllaDBQueries:
         # TODO(db): Change mempool to a set to avoid a full mempool table scan!
         mempool_set = set(self.db.cache.scan_in_namespace(b'mempool'))
         unprocessed_transactions = inbound_tx_set - mempool_set
+        self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
         if not is_reorg:
             return unprocessed_transactions
         else:
@@ -236,25 +237,19 @@ class ScyllaDBQueries:
 
     def delete_header_rows(self, block_hashes: list[bytes]) -> None:
         t0 = time.time()
-
-        # Prepare the SELECT statement
         select_statement = self.session.prepare(
-            "SELECT block_num FROM headers WHERE block_hash = ? ALLOW FILTERING;")
-
-        # Execute the SELECT queries concurrently
+            "SELECT block_num FROM headers WHERE block_hash = ? ALLOW FILTERING;"
+        )
         results = execute_concurrent_with_args(
             self.session, select_statement, [(block_hash,) for block_hash in block_hashes]
         )
-
-        # Extract block_nums from the results
         block_nums = []
-        for (success, result) in results:
+        for success, result in results:
             if success:
                 block_nums.extend([row.block_num for row in result])
             else:
                 self.logger.error(f"Query failed: {result}")
 
-        # Prepare and execute batch delete using block_nums
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
         prepared_statement = self.session.prepare("DELETE FROM headers WHERE block_num = ?;")
         for block_num in block_nums:
@@ -266,10 +261,23 @@ class ScyllaDBQueries:
         self.logger.log(PROFILING, f"elapsed time for delete of header row = {t1} seconds")
 
     def update_orphaned_headers(self, block_hashes: list[bytes]) -> None:
+        select_statement = self.session.prepare(
+            "SELECT block_num FROM headers WHERE block_hash = ? ALLOW FILTERING;"
+        )
+        results = execute_concurrent_with_args(
+            self.session, select_statement, [(block_hash,) for block_hash in block_hashes]
+        )
+        block_nums = []
+        for success, result in results:
+            if success:
+                block_nums.extend([row.block_num for row in result])
+            else:
+                self.logger.error(f"Query failed: {result}")
+
         batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
-        for block_hash in block_hashes:
-            query = "UPDATE headers SET is_orphaned = %s WHERE block_hash = %s"
-            batch.add(query, (True, block_hash))
+        for block_num in block_nums:
+            query = "UPDATE headers SET is_orphaned = %s WHERE block_num = %s"
+            batch.add(query, (1, block_num))
         self.session.execute(batch)
 
     def update_allocated_state(

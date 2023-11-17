@@ -63,5 +63,5 @@ block593161.offsets
 *.csv
 /.coverage*
 /tests/data/
-/conduitdb_data_ssd/
-/conduitdb_data_hdd/
+*/conduitdb_data_ssd/*
+*/conduitdb_data_hdd/*

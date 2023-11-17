@@ -39,7 +39,8 @@ from tests_functional.reference_server_support import (
     register_for_utxo_notifications,
     register_for_pushdata_notifications,
     delete_peer_channel_message_async,
-    GenericPeerChannelMessage, NotificationJsonData,
+    GenericPeerChannelMessage,
+    NotificationJsonData,
 )
 
 BASE_URL = f"http://127.0.0.1:34525"
@@ -60,16 +61,14 @@ async def listen_for_notifications_task_async(
     tip_filter_matches_queue: queue.Queue,
     tip_filter_callback_url: str,
     owner_token: str,
-    api_key: str
-
+    api_key: str,
 ) -> None:
     websocket_url_template = "http://localhost:47124/" + "api/v1/web-socket?token={access_token}"
     websocket_url = websocket_url_template.format(access_token=api_key)
     headers = {"Accept": "application/octet-stream"}
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) \
-                    as server_websocket:
+            async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) as server_websocket:
                 logger.info("Connected to server websocket, url=%s", websocket_url_template)
                 websocket_connected_event.set()
                 websocket_message: aiohttp.WSMessage
@@ -88,8 +87,10 @@ async def listen_for_notifications_task_async(
                             message_kind,
                             message,
                         ) = process_reference_server_message_bytes(message_bytes)
-                        logger.debug(f"Got binary websocket message: message_kind={message_kind}. "
-                                     f"message: {message}")
+                        logger.debug(
+                            f"Got binary websocket message: message_kind={message_kind}. "
+                            f"message: {message}"
+                        )
 
                         if message_kind == AccountMessageKind.PEER_CHANNEL_MESSAGE:
                             channel_message = cast(NotificationJsonData, message)
@@ -163,7 +164,7 @@ async def spawn_tasks(
             tip_filter_matches_queue,
             tip_filter_callback_url,
             owner_token,
-            api_key
+            api_key,
         )
     )
     await websocket_connected_event.wait()
@@ -180,7 +181,7 @@ def listen_for_notifications_thread(
     tip_filter_callback_url: str,
     owner_token: str,
     api_key: str,
-    registrations_complete_event: threading.Event
+    registrations_complete_event: threading.Event,
 ) -> None:
     """Launches the ESV-Reference-Server to run in the background but with a test database"""
     try:
@@ -206,6 +207,12 @@ class TestAiohttpRESTAPI:
     logger = logging.getLogger("TestAiohttpRESTAPI")
 
     def setup_class(self) -> None:
+        # Need to set the environment variable DEFAULT_DB_TYPE=MYSQL or DEFAULT_DB_TYPE=SCYLLADB
+        # prior to running all of these tests. This goes for the running services too
+
+        # TODO remove this
+        os.environ['DEFAULT_DB_TYPE'] = 'SCYLLADB'
+
         db = DBInterface.load_db()
         db.create_permanent_tables()
         db.tip_filter_api.create_tables()
@@ -213,8 +220,9 @@ class TestAiohttpRESTAPI:
         loop = asyncio.get_event_loop()
         indexer_settings: IndexerServerSettings
         api_key: str
-        tip_filter_callback_url, owner_token, api_key = \
-            loop.run_until_complete(setup_reference_server_tip_filtering())
+        tip_filter_callback_url, owner_token, api_key = loop.run_until_complete(
+            setup_reference_server_tip_filtering()
+        )
 
         self.tip_filter_matches_queue = queue.Queue()
         self.output_spend_result_queue = queue.Queue()
@@ -229,7 +237,7 @@ class TestAiohttpRESTAPI:
                 tip_filter_callback_url,
                 owner_token,
                 api_key,
-                self.registrations_complete_event
+                self.registrations_complete_event,
             ],
             daemon=True,
         )

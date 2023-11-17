@@ -1,13 +1,15 @@
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import bitcoinx
 from typing import TypeVar, Sequence, Any, cast, Iterator
 
 from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure, ProtocolVersion
-from cassandra.cluster import Cluster, Session, ResultSet  # pylint:disable=E0611
-from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
+from cassandra.cluster import Cluster, Session, ResultSet, \
+    DCAwareRoundRobinPolicy, TokenAwarePolicy  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 from cassandra.query import PreparedStatement  # pylint:disable=E0611
 
 from conduit_lib import LMDB_Database, DBInterface
@@ -64,10 +66,10 @@ class ScyllaDB(DBInterface):
         self.cluster.shutdown()
 
     def commit_transaction(self) -> None:
-        raise ValueError("Not used in the ScyllaDB implementation")
+        pass  # Not used in the ScyllaDB implementation
 
     def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
-        raise ValueError("Not used in the ScyllaDB implementation")
+        return self, int(time.time())
 
     def ping(self) -> None:
         # The below query is lightweight and often used to test connectivity
@@ -77,7 +79,7 @@ class ScyllaDB(DBInterface):
             print("Date and time from ScyllaDB:", row[0])
 
     def start_transaction(self) -> None:
-        raise ValueError("Not used in the ScyllaDB implementation")
+        pass  # Not used in the ScyllaDB implementation
 
     def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]]) -> None:
         self.bulk_loads.load_data_batched(insert_statement, rows)
@@ -86,14 +88,17 @@ class ScyllaDB(DBInterface):
         self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 50
     ) -> list[ResultSet]:
         try:
-            result = execute_concurrent_with_args(
+            execution_results: list[ExecutionResult] = execute_concurrent_with_args(
                 self.session,
                 prepared_statement,
                 rows,
                 concurrency=concurrency,
                 raise_on_first_error=True,
             )
-            return cast(list[ResultSet], result)
+            result_sets: list[ResultSet] = []
+            for execution_result in execution_results:
+                result_sets.append(cast(ResultSet, execution_result.result_or_exc))
+            return result_sets
         except (WriteTimeout, WriteFailure) as e:
             self.logger.error(f"Error occurred during concurrent write operations: {str(e)}")
             raise
@@ -260,11 +265,12 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
     #     username=os.environ['SCYLLA_USERNAME'],
     #     password=os.environ['SCYLLA_PASSWORD'],
     # )
+    logging.getLogger('cassandra').setLevel(logging.WARNING)
     cluster = Cluster(
         contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
         port=int(os.getenv('SCYLLA_PORT', 19042)),
         protocol_version=ProtocolVersion.V4,
-        load_balancing_policy=None,
+        load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         executor_threads=4,
         # auth_provider=auth_provider,
     )

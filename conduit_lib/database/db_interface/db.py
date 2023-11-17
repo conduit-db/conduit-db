@@ -1,5 +1,6 @@
 import abc
 import logging
+import os
 import typing
 from concurrent.futures import ThreadPoolExecutor
 from enum import IntEnum
@@ -68,8 +69,17 @@ class DBInterface(abc.ABC):
 
     @classmethod
     def load_db(
-        cls, worker_id: int | None = None, db_type: DatabaseType = DatabaseType.MySQL
+        cls, worker_id: int | None = None, db_type: DatabaseType | None = None
     ) -> "DBInterface":
+        if db_type is None:
+            db_type_default: str = os.environ['DEFAULT_DB_TYPE']
+            if db_type_default == 'MYSQL':
+                db_type = DatabaseType.MySQL
+            elif db_type_default == 'SCYLLADB':
+                db_type = DatabaseType.ScyllaDB
+            else:
+                raise ValueError(f"Unsupported default db_type: {db_type}")
+
         if db_type == DatabaseType.MySQL:
             from conduit_lib.database.mysql.db import load_mysql_database
 

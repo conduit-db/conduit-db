@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
 import os
+import threading
 
 from typing import Iterator
 import typing
@@ -61,16 +62,23 @@ class TxJoinResult(NamedTuple):
     tx_position: int
 
 
-class HeaderJoinResult(NamedTuple):
-    block_hash: bytes
-
-
 @dataclass
 class JoinedRows:
     pushdata_result: PushdataResult
     input_result: InputResult | None = None
     tx_result: list[ConfirmedTxResult] | None = None  # Reorgs mean we need to have a list...
     header_result: HeaderResult | None = None
+    lock = threading.Lock()
+
+
+@dataclass
+class JoinedRowsSpentOutpoints:
+    input_result: InputResult | None = None
+    input_tx_result: list[TxJoinResult] | None = None
+    out_tx_result: list[TxJoinResult] | None = None
+    input_header_result: HeaderResult | None = None
+    output_header_result: HeaderResult | None = None
+    lock = threading.Lock()
 
 
 class GetPushdataFilterMatchesStatements:
@@ -99,16 +107,9 @@ class GetSpentOutpointsStatements:
         self.txs_stmt = session.prepare(
             "SELECT tx_block_num, tx_position FROM confirmed_transactions WHERE tx_hash = ?"
         )
-        self.input_headers_stmt = session.prepare(
-            "SELECT block_hash FROM headers WHERE block_num = ? AND is_orphaned = 0"
-        )
-        # CQL doesn't allow (is_orphaned = 0 OR is_orphaned is NULL) so we need to combine
-        # the results of two queries.
-        self.output_headers_stmt1 = session.prepare(
-            "SELECT block_hash FROM headers WHERE block_num = ? AND is_orphaned = 0"
-        )
-        self.output_headers_stmt2 = session.prepare(
-            "SELECT block_hash FROM headers WHERE block_num = ? AND is_orphaned is NULL"
+        self.headers_stmt = session.prepare(
+            "SELECT block_hash, block_num, is_orphaned FROM headers "
+            "WHERE block_num = ?"  #  AND is_orphaned = 0  commented out to filter in callback
         )
 
 
@@ -284,20 +285,21 @@ class ScyllaDBAPIQueries:
             try:
                 result: ResultSet = future.result()
                 header_result: HeaderResult = result.one()
-                if header_result.is_orphaned == 1:
-                    assert joined_row.tx_result is not None
-                    assert len(joined_row.tx_result) > 1
-                    # Remove the orphaned transaction:
-                    idx_for_del: int | None = None
-                    for i in range(len(joined_row.tx_result)):
-                        if joined_row.tx_result[i].tx_block_num == header_result.block_num:
-                            idx_for_del = i
-                    assert idx_for_del is not None
-                    del joined_row.tx_result[idx_for_del]
-                    return  # do NOT overwrite the `joined_row.header_result`
-                assert header_result.is_orphaned == 0
+                with joined_row.lock:
+                    if header_result.is_orphaned == 1:
+                        assert joined_row.tx_result is not None
+                        assert len(joined_row.tx_result) > 1
+                        # Remove the orphaned transaction:
+                        idx_for_del: int | None = None
+                        for i in range(len(joined_row.tx_result)):
+                            if joined_row.tx_result[i].tx_block_num == header_result.block_num:
+                                idx_for_del = i
+                        assert idx_for_del is not None
+                        del joined_row.tx_result[idx_for_del]
+                        return  # do NOT overwrite the `joined_row.header_result`
+                    assert header_result.is_orphaned == 0
 
-                joined_row.header_result = header_result
+                    joined_row.header_result = header_result
             except Exception as e:
                 self.logger.exception("exception in headers_callback")
                 exceptions.append(e)
@@ -319,33 +321,35 @@ class ScyllaDBAPIQueries:
             raise exceptions[0]
         assert not exceptions
 
+        def combine_rows_to_result(joined_row: JoinedRows) -> RestorationFilterQueryResult:
+            assert joined_row.header_result is not None
+            assert joined_row.tx_result is not None
+            tx_location = TxLocation(
+                joined_row.header_result.block_hash,
+                joined_row.header_result.block_num,
+                joined_row.tx_result[0].tx_position,
+            )
+
+            in_tx_hash: bytes | None = (
+                None if joined_row.input_result is None else joined_row.input_result.in_tx_hash
+            )
+            in_idx: int = MAX_UINT32
+            if joined_row.input_result is not None:
+                in_idx = joined_row.input_result.in_idx
+
+            return RestorationFilterQueryResult(
+                ref_type=joined_row.pushdata_result.ref_type,
+                pushdata_hashX=joined_row.pushdata_result.pushdata_hash,
+                transaction_hash=joined_row.tx_result[0].tx_hash,
+                spend_transaction_hash=in_tx_hash,
+                transaction_output_index=joined_row.pushdata_result.idx,
+                spend_input_index=in_idx,
+                tx_location=tx_location,
+            )
+
         # Now combine all data and yield results
         for joined_row in joined_rows:
-            yield self.combine_rows_to_result(joined_row)
-
-    def combine_rows_to_result(self, joined_row: JoinedRows) -> RestorationFilterQueryResult:
-        assert joined_row.header_result is not None
-        assert joined_row.tx_result is not None
-        tx_location = TxLocation(
-            joined_row.header_result.block_hash,
-            joined_row.header_result.block_num,
-            joined_row.tx_result[0].tx_position,
-        )
-
-        in_tx_hash: bytes | None = None if joined_row.input_result is None else joined_row.input_result.in_tx_hash
-        in_idx: int = MAX_UINT32
-        if joined_row.input_result is not None:
-            in_idx = joined_row.input_result.in_idx
-
-        return RestorationFilterQueryResult(
-            ref_type=joined_row.pushdata_result.ref_type,
-            pushdata_hashX=joined_row.pushdata_result.pushdata_hash,
-            transaction_hash=joined_row.tx_result[0].tx_hash,
-            spend_transaction_hash=in_tx_hash,
-            transaction_output_index=joined_row.pushdata_result.idx,
-            spend_input_index=in_idx,
-            tx_location=tx_location,
-        )
+            yield combine_rows_to_result(joined_row)
 
     def get_spent_outpoints(self, entries: list[OutpointType], lmdb: LMDB_Database) -> list[OutputSpendRow]:
         assert self.db.executor is not None
@@ -354,91 +358,176 @@ class ScyllaDBAPIQueries:
         assert self.get_spent_outpoints_stmts is not None
         inputs_stmt = self.get_spent_outpoints_stmts.inputs_stmt
         txs_stmt = self.get_spent_outpoints_stmts.txs_stmt
-        input_headers_stmt = self.get_spent_outpoints_stmts.input_headers_stmt
-        output_headers_stmt1 = self.get_spent_outpoints_stmts.output_headers_stmt1
-        output_headers_stmt2 = self.get_spent_outpoints_stmts.output_headers_stmt2
+        input_headers_stmt = self.get_spent_outpoints_stmts.headers_stmt
+        output_headers_stmt = self.get_spent_outpoints_stmts.headers_stmt
 
-        # Get input rows given the outpoint
-        input_results = self.db.execute_with_concurrency(inputs_stmt, entries)
-        input_rows = [InputResult(*result.one()) for result in input_results if result.one()]
+        joined_rows: list[JoinedRowsSpentOutpoints] = []
 
-        # Get tx_block_num and tx_position for inputs and outputs
-        input_txs_future: Future[list[ResultSet]] = self.db.executor.submit(
-            self.db.execute_with_concurrency, txs_stmt, input_rows
-        )
-        output_txs_future: Future[list[ResultSet]] = self.db.executor.submit(
-            self.db.execute_with_concurrency, txs_stmt, input_rows
-        )
-        input_txs_results = input_txs_future.result()
-        output_txs_results = output_txs_future.result()
-        input_txs_rows = [
-            TxJoinResult(*result.one()) for result in input_txs_results if result.one() is not None
-        ]
-        output_txs_rows = [
-            TxJoinResult(*result.one()) for result in output_txs_results if result.one() is not None
-        ]
+        # 1) Get input rows given the outpoints
+        # There will only be a single input row that matches each outpoint
+        # So each `JoinedRowsSpentOutpoints` instance will correspond to a single outpoint
+        result_sets = self.db.execute_with_concurrency(inputs_stmt, entries)
+        for result_set in result_sets:
+            for input_result in result_set.all():
+                joined_rows.append(JoinedRowsSpentOutpoints(input_result=input_result))
 
-        # Get block_hash given the block_num from the tx table
-        input_headers_future: Future[ResultSet] = self.db.executor.submit(
-            self.db.execute_with_concurrency, input_headers_stmt, input_rows
-        )
-        output_headers_future1: Future[ResultSet] = self.db.executor.submit(
-            self.db.execute_with_concurrency, output_headers_stmt1, input_rows
-        )
-        output_headers_future2: Future[ResultSet] = self.db.executor.submit(
-            self.db.execute_with_concurrency, output_headers_stmt2, input_rows
-        )
-        input_headers_results = input_headers_future.result()
-        output_headers_results1 = output_headers_future1.result()
-        output_headers_results2 = output_headers_future2.result()
-        input_headers_rows = [
-            HeaderJoinResult(*result.one()) for result in input_headers_results if result.one()
-        ]
-        output_headers_rows1 = [
-            HeaderJoinResult(*result.one()) for result in output_headers_results1 if result.one()
-        ]
-        output_headers_rows2 = [
-            HeaderJoinResult(*result[1]) for result in output_headers_results2 if result[0]
-        ]
-        output_headers_rows = output_headers_rows1
-        output_headers_rows.extend(output_headers_rows2)
+        # 2) Get tx_block_num and tx_position for inputs and outputs (concurrently together)
+        futures: list[Future[ResultSet]] = []
+        exceptions = []  # Store exceptions here
 
-        assert (
-            len(input_rows)
-            == len(output_txs_rows)
-            == len(input_txs_rows)
-            == len(output_headers_rows)
-            == len(input_headers_rows)
-        )
+        def input_tx_callback(joined_row: JoinedRowsSpentOutpoints, future: Future[ResultSet]) -> None:
+            # If there has been a reorg, there can be more than one tx for a given outpoint
+            # we are tasked with filtering out the orphaned transaction using the headers table
+            try:
+                result: ResultSet = future.result()
+                rows = result.all()
+                joined_row.input_tx_result = []
+                for row in rows:
+                    joined_row.input_tx_result.append(TxJoinResult(*row))
+            except Exception as e:
+                self.logger.exception("exception in input_callback")
+                exceptions.append(e)
 
-        # Merge all results together
-        output_spend_rows = []
-        for i in range(len(input_rows)):
-            input_result = input_rows[i]
-            input_tx_result = input_txs_rows[i]
-            output_tx_result = output_txs_rows[i]
-            input_header_result = input_headers_rows[i]
-            output_header_result = output_headers_rows[i]
+        future: Future[ResultSet]
+        for joined_row in joined_rows:
+            assert joined_row.input_result is not None
+            input_row = joined_row.input_result
+            future = self.db.executor.submit(self.session.execute, txs_stmt, (input_row.in_tx_hash,))
+            future.add_done_callback(partial(input_tx_callback, joined_row))
+            futures.append(future)
+
+        def out_tx_callback(joined_row: JoinedRowsSpentOutpoints, future: Future[ResultSet]) -> None:
+            # If there has been a reorg, there can be more than one tx for a given outpoint
+            # we are tasked with filtering out the orphaned transaction using the headers table
+            try:
+                result: ResultSet = future.result()
+                rows = result.all()
+                joined_row.out_tx_result = []
+                for row in rows:
+                    joined_row.out_tx_result.append(TxJoinResult(*row))
+            except Exception as e:
+                self.logger.exception("exception in transactions_callback")
+                exceptions.append(e)
+
+        for joined_row in joined_rows:
+            assert joined_row.input_result is not None
+            input_row = joined_row.input_result
+            future = self.db.executor.submit(
+                self.session.execute, txs_stmt, (input_row.out_tx_hash,)
+            )
+            future.add_done_callback(partial(out_tx_callback, joined_row))
+            futures.append(future)
+
+        concurrent.futures.wait(futures)
+        if exceptions:
+            raise exceptions[0]
+
+        # 3) Get block_hash given the block_num from the tx table
+        # (input and output txs concurrently)
+        def input_headers_callback(joined_row: JoinedRowsSpentOutpoints, future: Future[ResultSet]) -> None:
+            try:
+                result: ResultSet = future.result()
+                header_result: HeaderResult = result.one()
+                with joined_row.lock:
+                    if header_result.is_orphaned == 1:
+                        assert joined_row.input_tx_result is not None
+                        assert len(joined_row.input_tx_result) > 1
+                        # Remove the orphaned transaction:
+                        idx_for_del: int | None = None
+                        for i in range(len(joined_row.input_tx_result)):
+                            if joined_row.input_tx_result[i].tx_block_num == header_result.block_num:
+                                idx_for_del = i
+                        assert idx_for_del is not None
+                        del joined_row.input_tx_result[idx_for_del]
+                        return  # do NOT overwrite the `joined_row.input_header_result`
+
+                    assert header_result.is_orphaned == 0
+                    joined_row.input_header_result = header_result
+            except Exception as e:
+                self.logger.exception("exception in transactions_callback")
+                exceptions.append(e)
+
+        futures = []
+        exceptions = []
+        for joined_row in joined_rows:
+            assert joined_row.input_tx_result is not None
+            for input_tx_row in joined_row.input_tx_result:
+                future = self.db.executor.submit(
+                    self.session.execute, input_headers_stmt, (input_tx_row.tx_block_num,)
+                )
+                future.add_done_callback(partial(input_headers_callback, joined_row))
+                futures.append(future)
+
+        def output_headers_callback(joined_row: JoinedRowsSpentOutpoints, future: Future[ResultSet]) -> None:
+            try:
+                result: ResultSet = future.result()
+                header_result: HeaderResult = result.one()
+                with joined_row.lock:
+                    if header_result.is_orphaned == 1:
+                        assert joined_row.out_tx_result is not None
+                        assert len(joined_row.out_tx_result) > 1
+                        # Remove the orphaned transaction:
+                        idx_for_del: int | None = None
+                        for i in range(len(joined_row.out_tx_result)):
+                            if joined_row.out_tx_result[i].tx_block_num == header_result.block_num:
+                                idx_for_del = i
+                        assert idx_for_del is not None
+                        del joined_row.out_tx_result[idx_for_del]
+                        return  # do NOT overwrite the `joined_row.output_header_result`
+
+                    assert header_result.is_orphaned == 0
+                    joined_row.output_header_result = header_result
+            except Exception as e:
+                self.logger.exception("exception in transactions_callback")
+                exceptions.append(e)
+
+        for joined_row in joined_rows:
+            assert joined_row.out_tx_result is not None
+            for output_tx_row in joined_row.out_tx_result:
+                future = self.db.executor.submit(
+                    self.session.execute, output_headers_stmt, (output_tx_row.tx_block_num,)
+                )
+                future.add_done_callback(partial(output_headers_callback, joined_row))
+                futures.append(future)
+
+        concurrent.futures.wait(futures)
+        if exceptions:
+            raise exceptions[0]
+        assert not exceptions
+
+        def combine_rows_to_result(joined_row: JoinedRowsSpentOutpoints) -> OutputSpendRow:
+            assert joined_row.input_result is not None
+            assert joined_row.input_tx_result is not None
+            assert len(joined_row.input_tx_result) == 1, "Are there still orphaned txs in this set?"
+            assert joined_row.out_tx_result is not None
+            assert len(joined_row.out_tx_result) == 1, "Are there still orphaned txs in this set?"
+            assert joined_row.input_header_result is not None
+            assert joined_row.output_header_result is not None
 
             # Get full length tx hash for input tx
             input_tx_location = TxLocation(
-                input_header_result.block_hash, input_tx_result.tx_block_num, input_tx_result.tx_position
+                joined_row.input_header_result.block_hash,
+                joined_row.input_tx_result[0].tx_block_num,
+                joined_row.input_tx_result[0].tx_position,
             )
             in_tx_hash = get_full_tx_hash(input_tx_location, lmdb)
             assert in_tx_hash is not None
 
             # Get full length tx hash for output tx
             output_tx_location = TxLocation(
-                output_header_result.block_hash, output_tx_result.tx_block_num, output_tx_result.tx_position
+                joined_row.output_header_result.block_hash, joined_row.out_tx_result[0].tx_block_num,
+                joined_row.out_tx_result[0].tx_position
             )
             out_tx_hash = get_full_tx_hash(output_tx_location, lmdb)
             assert out_tx_hash is not None
-            output_spend_row = OutputSpendRow(
+            return OutputSpendRow(
                 out_tx_hash,
-                input_result.out_idx,
+                joined_row.input_result.out_idx,
                 in_tx_hash,
-                input_result.in_idx,
-                input_header_result.block_hash,
+                joined_row.input_result.in_idx,
+                joined_row.input_header_result.block_hash,
             )
-            output_spend_rows.append(output_spend_row)
+        output_spend_rows = []
+        for joined_row in joined_rows:
+            output_spend_rows.append(combine_rows_to_result(joined_row))
         return output_spend_rows

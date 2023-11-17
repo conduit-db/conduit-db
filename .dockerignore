@@ -76,6 +76,7 @@ LICENSE
 Conduit.sln.DotSettings.user
 
 data
-/tests/data/
-/conduitdb_data_ssd/
-/conduitdb_data_hdd/
+/tests/
+/tests_functional
+*/conduitdb_data_ssd/*
+*/conduitdb_data_hdd/*

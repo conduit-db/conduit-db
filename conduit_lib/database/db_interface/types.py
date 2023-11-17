@@ -21,16 +21,6 @@ class ConfirmedTransactionRow(NamedTuple):
     tx_position: int
 
 
-class HeadersRow(NamedTuple):
-    block_num: int
-    block_hash: str
-    block_height: int
-    block_header: str
-    block_tx_count: int
-    block_size: int
-    is_orphaned: bool
-
-
 class CheckpointStateRow(NamedTuple):
     id: int
     best_flushed_block_height: int

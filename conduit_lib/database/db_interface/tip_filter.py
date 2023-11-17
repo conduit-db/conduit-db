@@ -116,7 +116,6 @@ class TipFilterQueryAPI(abc.ABC):
     @abc.abstractmethod
     def read_tip_filter_registrations(
         self,
-        account_id: str | None = None,
         date_expires: int | None = None,
         # These defaults include all rows no matter the flag value.
         expected_flags: IndexerPushdataRegistrationFlag = IndexerPushdataRegistrationFlag.NONE,
@@ -130,7 +129,7 @@ class TipFilterQueryAPI(abc.ABC):
 
     @abc.abstractmethod
     def read_indexer_filtering_registrations_for_notifications(
-        self, pushdata_hashes: list[bytes], account_id: str | None = None
+        self, pushdata_hashes: list[bytes]
     ) -> list[FilterNotificationRow]:
         """
         These are the matches that in either a new mempool transaction or a block which were
@@ -169,7 +168,9 @@ class TipFilterQueryAPI(abc.ABC):
         ...
 
     @abc.abstractmethod
-    def read_pending_outbound_datas(self, flags: OutboundDataFlag, mask: OutboundDataFlag) -> list[OutboundDataRow]:
+    def read_pending_outbound_datas(
+        self, flags: OutboundDataFlag, mask: OutboundDataFlag
+    ) -> list[OutboundDataRow]:
         ...
 
     @abc.abstractmethod

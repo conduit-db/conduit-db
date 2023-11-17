@@ -17,6 +17,7 @@ from pytest_asyncio.plugin import FixtureFunction
 from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.bitcoin_p2p_types import BlockChunkData
 from conduit_lib.database.mysql.db import MySQLDatabase
+from conduit_lib.database.scylladb.db import ScyllaDB
 from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
 from conduit_lib.utils import remove_readonly
@@ -37,6 +38,9 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
 DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
 DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
+
+# TODO: Pull this from a testing .env file
+os.environ['DEFAULT_DB_TYPE'] = 'SCYLLADB'
 
 # BITCOINX
 full_block_bx = TEST_RAW_BLOCK_413567
@@ -73,10 +77,16 @@ def mock_get_header_data() -> Iterator[MagicMock]:
     assert block_hash_hex == "0000000000000000025aff8be8a55df8f89c77296db6198f272d6577325d4069"
     block_header_row = BlockHeaderRow(0, block_hash, 413567, raw_header.hex(), tx_count, len(full_block), 0)
     # Note: We must patch the concrete implementation `MySQLDatabase` not the interface DBInterface
-    with patch.object(MySQLDatabase, 'get_header_data') as mock:
-        mock.return_value = block_header_row
-        yield mock
-
+    if os.environ['DEFAULT_DB_TYPE'] == 'MYSQL':
+        with patch.object(MySQLDatabase, 'get_header_data') as mock:
+            mock.return_value = block_header_row
+            yield mock
+    elif os.environ['DEFAULT_DB_TYPE'] == 'SCYLLADB':
+        with patch.object(ScyllaDB, 'get_header_data') as mock:
+            mock.return_value = block_header_row
+            yield mock
+    else:
+        raise ValueError(f"Unsupported DB type: {os.environ['DEFAULT_DB_TYPE']}")
 
 @pytest.fixture
 def mock_get_block_metadata() -> Iterator[MagicMock]:
@@ -88,13 +98,20 @@ def mock_get_block_metadata() -> Iterator[MagicMock]:
         yield mock
 
 
+@pytest.fixture
+def lmdb() -> LMDB_Database:
+    lmdb = LMDB_Database(lock=True)
+    yield lmdb
+    lmdb.close()
+
+
 def test_preprocessor_whole_block_as_a_single_chunk(
     mock_get_header_data: Iterator[MagicMock],
-    mock_get_block_metadata: Iterator[MagicMock]
+    mock_get_block_metadata: Iterator[MagicMock],
+    lmdb: LMDB_Database
 ) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
-    lmdb = LMDB_Database(lock=True)
     db: DBInterface = DBInterface.load_db(worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
@@ -177,18 +194,17 @@ def test_preprocessor_whole_block_as_a_single_chunk(
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof
 
-    lmdb.close()
     worker.close()
     del worker
 
 
 def test_preprocessor_with_block_divided_into_four_chunks(
         mock_get_header_data: MagicMock,
-        mock_get_block_metadata: MagicMock
+        mock_get_block_metadata: MagicMock,
+        lmdb: LMDB_Database
 ) -> None:
     worker_ack_queue_mtree: multiprocessing.Queue[bytes] = multiprocessing.Queue()
     worker = MTreeCalculator(worker_id=1, worker_ack_queue_mtree=worker_ack_queue_mtree)
-    lmdb = LMDB_Database(lock=True)
     db: DBInterface = DBInterface.load_db(worker_id=1)
     full_block = bytearray(TEST_RAW_BLOCK_413567)
     tx_count, offset = unpack_varint(full_block[80:89], 0)
@@ -292,6 +308,5 @@ def test_preprocessor_with_block_divided_into_four_chunks(
         tsc_merkle_proof = CORRECT_MERKLE_PROOF_MAP[txid]
         assert result == tsc_merkle_proof
 
-    lmdb.close()
     worker.close()
     del worker
