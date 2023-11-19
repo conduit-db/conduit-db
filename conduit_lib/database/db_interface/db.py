@@ -41,6 +41,9 @@ class DatabaseType(IntEnum):
     ScyllaDB = 2
 
 
+logger = logging.getLogger("db-interface")
+
+
 class DBInterface(abc.ABC):
     """Abstraction to allow for seamlessly switching from MySQL to ScyllaDB
 
@@ -72,7 +75,7 @@ class DBInterface(abc.ABC):
         cls, worker_id: int | None = None, db_type: DatabaseType | None = None
     ) -> "DBInterface":
         if db_type is None:
-            db_type_default: str = os.environ['DEFAULT_DB_TYPE']
+            db_type_default: str = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
             if db_type_default == 'MYSQL':
                 db_type = DatabaseType.MySQL
             elif db_type_default == 'SCYLLADB':
@@ -82,11 +85,11 @@ class DBInterface(abc.ABC):
 
         if db_type == DatabaseType.MySQL:
             from conduit_lib.database.mysql.db import load_mysql_database
-
+            logger.info(f"Using MySQL implementation")
             return load_mysql_database(worker_id)
         elif db_type == DatabaseType.ScyllaDB:
             from conduit_lib.database.scylladb.db import load_scylla_database
-
+            logger.info(f"Using ScyllaDB implementation")
             return load_scylla_database(worker_id)
         raise ValueError(f"Unsupported db_type: {db_type}")
 

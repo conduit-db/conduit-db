@@ -1,0 +1,47 @@
+parameters:
+  - name: DEFAULT_DB_TYPE
+    type: string
+    default: 'SCYLLADB'
+
+steps:
+- script: |
+    export DOCKER_GATEWAY_HOST=172.17.0.1
+    chmod +x ./build.sh
+    ./build.sh
+    docker-compose -f docker-compose.yml up -d node mysql scylladb redis reference_server
+    python3 ./contrib/wait_for_scylladb.py
+    docker-compose -f docker-compose.yml up -d conduit-raw conduit-index
+    sleep 10
+    docker-compose -f docker-compose.yml logs
+  timeoutInMinutes: 10
+  continueOnError: true
+  displayName: 'Run dockerized services'
+
+- script: |
+    export DEFAULT_DB_TYPE=${{ parameters.DEFAULT_DB_TYPE }}
+    pytest tests_functional --verbose
+    if [ $? -gt 0 ]
+    then
+      docker-compose logs conduit-raw
+      docker-compose logs conduit-index
+      docker-compose logs reference_server
+      docker-compose logs node
+      exit 1
+    fi
+  timeoutInMinutes: 10
+  continueOnError: false
+  displayName: 'Pytest Functional'
+
+- script: |
+    python3 -m pip install electrumsv_node
+    python3 -m pip install pytest-asyncio
+    pytest tests --verbose
+  timeoutInMinutes: 10
+  continueOnError: false
+  displayName: 'Pytest'
+
+- script: |
+    docker-compose -f docker-compose.yml down
+  timeoutInMinutes: 10
+  continueOnError: true
+  displayName: 'Docker Down'

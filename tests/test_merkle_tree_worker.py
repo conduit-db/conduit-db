@@ -39,8 +39,7 @@ os.environ["GENESIS_ACTIVATION_HEIGHT"] = "0"
 DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
 DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
-# TODO: Pull this from a testing .env file
-os.environ['DEFAULT_DB_TYPE'] = 'SCYLLADB'
+os.environ['DEFAULT_DB_TYPE'] = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
 
 # BITCOINX
 full_block_bx = TEST_RAW_BLOCK_413567

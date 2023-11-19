@@ -33,7 +33,6 @@ from tests_functional.reference_server_support import (
     OutputSpend,
     IndexerServerSettings,
     AccountMessageKind,
-    ChannelNotification,
     list_peer_channel_messages_async,
     setup_reference_server_tip_filtering,
     register_for_utxo_notifications,
@@ -210,8 +209,7 @@ class TestAiohttpRESTAPI:
         # Need to set the environment variable DEFAULT_DB_TYPE=MYSQL or DEFAULT_DB_TYPE=SCYLLADB
         # prior to running all of these tests. This goes for the running services too
 
-        # TODO remove this
-        os.environ['DEFAULT_DB_TYPE'] = 'SCYLLADB'
+        os.environ['DEFAULT_DB_TYPE'] = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
 
         db = DBInterface.load_db()
         db.create_permanent_tables()
