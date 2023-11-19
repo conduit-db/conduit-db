@@ -57,7 +57,7 @@ class ScyllaDB(DBInterface):
         self.api_queries = ScyllaDBAPIQueries(self)
         self.tip_filter_api = ScyllaDBTipFilterQueries(self)
 
-        self.executor = ThreadPoolExecutor(max_workers=20)
+        self.executor = ThreadPoolExecutor(max_workers=100)
 
         self.logger = logging.getLogger("scylla-database")
         self.logger.setLevel(logging.INFO)
@@ -157,7 +157,7 @@ class ScyllaDB(DBInterface):
         return self.tables.get_tables()
 
     def drop_mempool_table(self) -> None:
-        self.cache.r.flushall()  # On startup, wipe the redis cache clean entirely
+        self.cache.r.delete(b"mempool")
 
     def create_mempool_table(self) -> None:
         pass  # The ScyllaDB implementation uses Redis in place of MySQL temp tables

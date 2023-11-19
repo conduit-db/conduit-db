@@ -90,12 +90,25 @@ class ScyllaDBBulkLoads:
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         """This uses redis but it is included here to make it easier to translate from
         MySQL to ScyllaDB"""
+        def load_batch(batch):
+            self.db.cache.r.sadd(b"mempool", *batch)
+
         t0 = time.time()
-        pairs = [(bytes.fromhex(row.mp_tx_hash), b"") for row in tx_rows]
-        self.db.cache.bulk_load_in_namespace(namespace=b'mempool', pairs=pairs)
+        batch_size = 10000
+
+        futures = []
+        for i in range(0, len(tx_rows), batch_size):
+            batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i:i+batch_size]]
+            future = self.db.executor.submit(load_batch, batch)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING, f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
+            PROFILING,
+            f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
     def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:

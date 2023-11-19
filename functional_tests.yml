@@ -41,6 +41,7 @@ steps:
   displayName: 'Pytest'
 
 - script: |
+    docker-compose -f docker-compose.yml kill
     docker-compose -f docker-compose.yml down
   timeoutInMinutes: 10
   continueOnError: true

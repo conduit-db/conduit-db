@@ -62,6 +62,7 @@ class ScyllaDBTables:
             ]
             for table_name in tables_to_drop:
                 self.execute_query(f"DROP TABLE IF EXISTS {table_name};")
+            self.db.cache.r.flushall()
         except Exception as e:
             self.logger.exception("db.drop_tables failed unexpectedly")
             raise FailedScyllaOperation from e

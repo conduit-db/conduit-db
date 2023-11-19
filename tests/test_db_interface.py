@@ -503,8 +503,7 @@ class TestDBInterface:
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.cache is not None
-            assert db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid1)) is None
-            assert db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2)) is None
+            assert db.cache.r.smembers(b"mempool") == set()
         else:
             assert db.conn is not None
             db.conn.query("SELECT * FROM mempool_transactions")
@@ -516,12 +515,7 @@ class TestDBInterface:
         db.bulk_load_mempool_tx_rows(tx_rows=[row1, row2])
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.cache is not None
-            result1 = db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid1))
-            assert result1 is not None
-            result2 = db.cache.get_in_namespace(b"mempool", bytes.fromhex(txid2))
-            assert result2 is not None
-            assert result1 == b""
-            assert result2 == b""
+            assert db.cache.r.smembers(b"mempool") == {bytes.fromhex(txid1), bytes.fromhex(txid2)}
         else:
             assert db.conn is not None
             db.conn.query("SELECT * FROM mempool_transactions")
@@ -534,9 +528,8 @@ class TestDBInterface:
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.cache is not None
-            db.drop_mempool_table()  # does a redis "flushall"
-            all_keys = db.cache.scan_in_namespace(b"mempool")
-            assert all_keys == []
+            db.drop_mempool_table()  # deletes the mempool key (redis SET type)
+            assert db.cache.r.smembers(b"mempool") == set()
         else:
             assert 'mempool_transactions' in [row[0] for row in db.get_tables()]
             db.drop_mempool_table()
@@ -1079,7 +1072,7 @@ class TestDBInterface:
         assert db.get_mempool_size() == 3
         db.invalidate_mempool_rows()
         if db.db_type == DatabaseType.ScyllaDB:
-            assert set(db.cache.scan_in_namespace(b'mempool')) == \
+            assert set(db.cache.r.smembers(b"mempool")) == \
                    {bytes.fromhex(txid2), bytes.fromhex(txid3)}
         assert db.get_mempool_size() == 2
 

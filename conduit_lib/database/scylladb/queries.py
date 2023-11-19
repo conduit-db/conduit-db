@@ -49,7 +49,6 @@ class ScyllaDBQueries:
         new_tx_hashes: list[tuple[str]],
         inbound_tx_table_name: str,
     ) -> set[bytes]:
-        # TODO: Use the redis SET datatypes for this
         """
         Usually if all mempool txs have been processed, this function will only return
         the coinbase tx. If a reorg has occurred it will use the temp_orphaned_txs to avoid
@@ -57,25 +56,39 @@ class ScyllaDBQueries:
         processed for an orphan block
         """
         self.db.load_temp_inbound_tx_hashes(new_tx_hashes, inbound_tx_table_name)
-        inbound_tx_set = self.db.cache.r.smembers(inbound_tx_table_name)
-        # TODO(db): Change mempool to a set to avoid a full mempool table scan!
-        mempool_set = set(self.db.cache.scan_in_namespace(b'mempool'))
-        unprocessed_transactions = inbound_tx_set - mempool_set
-        self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
-        if not is_reorg:
-            return unprocessed_transactions
-        else:
-            orphaned_tx_set = self.db.cache.r.smembers('temp_orphaned_txs')
-            return unprocessed_transactions - orphaned_tx_set
+        try:
+            if not is_reorg:
+                unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool")
+                return unprocessed_transactions
+            else:
+                unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool", b'temp_orphaned_txs')
+                return unprocessed_transactions
+        finally:
+            self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
     def _get_temp_mined_tx_hashes(self) -> set[bytes]:
         return self.db.cache.r.smembers('temp_mined_tx_hashes')
 
     def invalidate_mempool_rows(self) -> None:
-        self.logger.debug(f"Deleting mined mempool txs")
-        mined_tx_hashes = self._get_temp_mined_tx_hashes()
-        pairs = [(tx_hash, b"") for tx_hash in mined_tx_hashes]
-        self.db.cache.bulk_delete_in_namespace(namespace=b"mempool", pairs=pairs)
+        self.logger.debug("Deleting mined mempool txs")
+        mined_tx_hashes: set[bytes] = self._get_temp_mined_tx_hashes()
+
+        def remove_batch(batch: list[bytes]) -> None:
+            self.db.cache.r.srem(b"mempool", *batch)
+
+        batch_size = 10000
+        mined_tx_hashes_list = list(mined_tx_hashes)
+
+        futures = []
+        for i in range(0, len(mined_tx_hashes_list), batch_size):
+            batch = mined_tx_hashes_list[i:i+batch_size]
+            future = self.db.executor.submit(remove_batch, batch)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
+        self.logger.debug("Mined mempool txs deletion complete")
 
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         """i.e. newly mined transactions in a reorg context"""
@@ -334,6 +347,4 @@ class ScyllaDBQueries:
             )
 
     def get_mempool_size(self) -> int:
-        # TODO(db): This is very inefficient - need to use a SET -> SCARD (cardinality). It is O(1)
-        mempool_tx_hashes = self.db.cache.scan_in_namespace(b'mempool')
-        return len(mempool_tx_hashes)
+        return self.db.cache.r.scard(b"mempool")
