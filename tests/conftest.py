@@ -1,8 +1,6 @@
 import os
-import stat
 from pathlib import Path
 
-from typing import Callable, Optional
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 

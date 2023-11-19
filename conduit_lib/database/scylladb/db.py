@@ -85,7 +85,7 @@ class ScyllaDB(DBInterface):
         self.bulk_loads.load_data_batched(insert_statement, rows)
 
     def execute_with_concurrency(
-        self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 50
+        self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 100
     ) -> list[ResultSet]:
         try:
             execution_results: list[ExecutionResult] = execute_concurrent_with_args(

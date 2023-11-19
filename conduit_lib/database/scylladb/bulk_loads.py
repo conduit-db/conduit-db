@@ -1,15 +1,13 @@
 import logging
-import math
 import os
-import sys
 import time
 
 from typing import Any, Sequence
 import typing
-from pathlib import Path
 
 from cassandra.cluster import Session  # pylint:disable=E0611
-from cassandra.query import PreparedStatement  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent  # pylint:disable=E0611
+from cassandra.query import PreparedStatement, BatchStatement  # pylint:disable=E0611
 
 from ..db_interface.types import (
     ConfirmedTransactionRow,
@@ -18,7 +16,7 @@ from ..db_interface.types import (
     InputRow,
     PushdataRow,
 )
-from ...constants import PROFILING, BULK_LOADING_BATCH_SIZE_ROW_COUNT
+from ...constants import PROFILING
 from ...types import BlockHeaderRow
 from ...utils import get_log_level
 
@@ -41,19 +39,24 @@ class ScyllaDBBulkLoads:
         self.total_db_time = 0.0
         self.total_rows_flushed_since_startup = 0  # for current controller
 
-        self.newline_symbol = r"'\r\n'" if sys.platform == "win32" else r"'\n'"
-        self.TEMP_FILES_DIR = Path(os.environ["DATADIR_SSD"]) / "temp_files"
+    def load_data_batched(self, insert_statement: PreparedStatement,
+            rows: Sequence[tuple[Any, ...]]) -> None:
+        BATCH_SIZE = 1000
+        num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)
+        batches = [BatchStatement() for _ in range(num_batches)]
 
-    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]]) -> None:
-        BATCH_SIZE = BULK_LOADING_BATCH_SIZE_ROW_COUNT
-        BATCHES_COUNT = math.ceil(len(rows) / BATCH_SIZE)
+        for i, row in enumerate(rows):
+            batch_index = i // BATCH_SIZE
+            batches[batch_index].add(insert_statement, row)
 
-        for i in range(BATCHES_COUNT):
-            if i == BATCHES_COUNT - 1:
-                rows_batch = rows[i * BATCH_SIZE :]
-            else:
-                rows_batch = rows[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
-            self.db.execute_with_concurrency(insert_statement, rows_batch)
+        execute_concurrent(
+            self.db.session,
+            [(batch, ()) for batch in batches],
+            concurrency=200,
+            raise_on_first_error=True,
+            results_generator=False,
+        )
+
         self.total_rows_flushed_since_startup += len(rows)
         self.logger.log(
             PROFILING,
@@ -104,7 +107,7 @@ class ScyllaDBBulkLoads:
         """This uses redis but it is included here to make it easier to translate from
         MySQL to ScyllaDB"""
         def load_batch(batch: list[bytes]) -> None:
-            self.db.cache.r.sadd(b"mempool", *batch)
+            self.db.cache.r.sadd("mempool", *batch)
 
         t0 = time.time()
         batch_size = 10000

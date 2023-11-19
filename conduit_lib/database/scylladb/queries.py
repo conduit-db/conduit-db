@@ -107,12 +107,10 @@ class ScyllaDBQueries:
 
     def remove_from_mempool(self) -> None:
         self.logger.debug("Removing reorg differential from mempool")
-        tx_hashes_to_remove = self.session.execute("SELECT tx_hash FROM temp_mempool_removals")
-        batch = BatchStatement()
-        for tx_hash_row in tx_hashes_to_remove:
-            batch.add("DELETE FROM mempool_transactions WHERE mp_tx_hash = %s", (tx_hash_row.tx_hash,))
-        self.session.execute(batch)
-        self.db.tables.drop_temp_mempool_removals()
+        tx_hashes_to_remove = self.db.cache.r.smembers("temp_mempool_removals")
+        if tx_hashes_to_remove:
+            self.db.cache.r.srem("mempool", *tx_hashes_to_remove)
+            self.db.tables.drop_temp_mempool_removals()
 
     def add_to_mempool(self) -> None:
         self.logger.debug("Adding reorg differential to mempool")

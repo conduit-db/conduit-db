@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 import typing
-from typing import List
+
 
 import MySQLdb
 

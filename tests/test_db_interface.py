@@ -1,7 +1,7 @@
 import os
 import time
 from typing import Iterator, cast
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import patch, Mock
 
 import bitcoinx
 import pytest
@@ -20,7 +20,6 @@ from conduit_lib.database.db_interface.types import (
     OutputRow,
     PushdataRow,
 )
-from conduit_lib.database.lmdb.lmdb_database import get_full_tx_hash
 from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.database.scylladb.db import ScyllaDB
 from conduit_lib.types import (
