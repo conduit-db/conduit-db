@@ -2,7 +2,7 @@ import logging
 import os
 import time
 import typing
-from typing import Iterator
+from typing import cast, Iterator
 
 import bitcoinx
 from cassandra import ConsistencyLevel  # pylint:disable=E0611
@@ -59,10 +59,11 @@ class ScyllaDBQueries:
         try:
             if not is_reorg:
                 unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool")
-                return unprocessed_transactions
+                return cast(set[bytes], unprocessed_transactions)
             else:
-                unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool", b'temp_orphaned_txs')
-                return unprocessed_transactions
+                unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool",
+                    b'temp_orphaned_txs')
+                return cast(set[bytes], unprocessed_transactions)
         finally:
             self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
 
@@ -80,6 +81,7 @@ class ScyllaDBQueries:
         mined_tx_hashes_list = list(mined_tx_hashes)
 
         futures = []
+        assert self.db.executor is not None
         for i in range(0, len(mined_tx_hashes_list), batch_size):
             batch = mined_tx_hashes_list[i:i+batch_size]
             future = self.db.executor.submit(remove_batch, batch)

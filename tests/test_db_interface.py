@@ -241,11 +241,21 @@ class TestDBInterface:
             assert 'temp_mined_tx_hashes' not in [row[0] for row in db.get_tables()]
 
     def test_confirmed_transactions_table(self, db: DBInterface) -> None:
+        db.drop_tables()
+        db.create_permanent_tables()
         db.bulk_load_confirmed_tx_rows(tx_rows=[])
         txid1 = 'aa' * HashXLength
         txid2 = 'bb' * HashXLength
+        # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
+        # There are only two cases of duplicate tx_hashes:
+        # d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599
+        # e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468
+        txid_special_case = bytes(
+            reversed(bytes.fromhex("d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599"))
+        )[0:HashXLength].hex()
         row1 = ConfirmedTransactionRow(tx_hash=txid1, tx_block_num=1, tx_position=1)
         row2 = ConfirmedTransactionRow(tx_hash=txid2, tx_block_num=2, tx_position=2)
+        row_special_case = ConfirmedTransactionRow(tx_hash=txid_special_case, tx_block_num=3, tx_position=3)
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
@@ -262,7 +272,8 @@ class TestDBInterface:
             assert len(rows) == 0
 
         # Filled
-        db.bulk_load_confirmed_tx_rows(tx_rows=[row1, row2])
+        db.bulk_load_confirmed_tx_rows(tx_rows=[row1, row2, row_special_case],
+            check_duplicates=True)
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.session is not None
             result = db.session.execute(
@@ -275,12 +286,13 @@ class TestDBInterface:
             db.conn.query("SELECT tx_hash, tx_block_num, tx_position FROM confirmed_transactions")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
-        assert rows[0][0].hex() == txid1
-        assert rows[0][1] == 1
-        assert rows[0][2] == 1
-        assert rows[1][0].hex() == txid2
-        assert rows[1][1] == 2
-        assert rows[1][2] == 2
+            assert rows[0][0].hex() == txid1
+            assert rows[0][1] == 1
+            assert rows[0][2] == 1
+            assert rows[1][0].hex() == txid2
+            assert rows[1][1] == 2
+            assert rows[1][2] == 2
+            assert len(rows) == 2
 
     def test_inputs_table(self, db: DBInterface) -> None:
         db.bulk_load_input_rows(in_rows=[])

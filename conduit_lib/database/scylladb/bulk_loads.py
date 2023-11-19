@@ -61,12 +61,25 @@ class ScyllaDBBulkLoads:
             f"{self.total_rows_flushed_since_startup}",
         )
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) \
+            -> list[ConfirmedTransactionRow]:
+        # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
         # d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599
         # e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468
-        raise NotImplementedError()  # Can just always drop these from tx_rows if detected
+        # Iterate over the list in reverse order because we are mutating it
+        dup1 = bytes(
+            reversed(bytes.fromhex("d5d27987d2a3dfc724e359870c6644b40e497bdc0589a033220fe15429d88599"))
+        ).hex()
+        dup2 = bytes(
+            reversed(bytes.fromhex("e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468"))
+        ).hex()
+        for i in range(len(tx_rows) - 1, -1, -1):
+            if tx_rows[i].tx_hash in dup1 or tx_rows[i].tx_hash in dup2:
+                self.logger.debug(f"removing a special case txid from insert batch: {tx_rows[i].tx_hash}")
+                del tx_rows[i]
+        return tx_rows
 
     def bulk_load_confirmed_tx_rows(
         self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
@@ -75,7 +88,7 @@ class ScyllaDBBulkLoads:
             assert isinstance(tx_rows[0].tx_hash, str)
         t0 = time.time()
         if check_duplicates:  # should only be True for blocks: 91812, 91842, 91722, 91880
-            self.handle_coinbase_dup_tx_hash(tx_rows)
+            tx_rows = self.handle_coinbase_dup_tx_hash(tx_rows)
         insert_statement = self.session.prepare(
             "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) " "VALUES (?, ?, ?)"
         )
@@ -90,13 +103,14 @@ class ScyllaDBBulkLoads:
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         """This uses redis but it is included here to make it easier to translate from
         MySQL to ScyllaDB"""
-        def load_batch(batch):
+        def load_batch(batch: list[bytes]) -> None:
             self.db.cache.r.sadd(b"mempool", *batch)
 
         t0 = time.time()
         batch_size = 10000
 
         futures = []
+        assert self.db.executor is not None
         for i in range(0, len(tx_rows), batch_size):
             batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i:i+batch_size]]
             future = self.db.executor.submit(load_batch, batch)

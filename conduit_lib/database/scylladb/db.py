@@ -139,7 +139,7 @@ class ScyllaDB(DBInterface):
     def bulk_load_confirmed_tx_rows(
         self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
     ) -> None:
-        self.bulk_loads.bulk_load_confirmed_tx_rows(tx_rows)
+        self.bulk_loads.bulk_load_confirmed_tx_rows(tx_rows, check_duplicates)
 
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.bulk_load_mempool_tx_rows(tx_rows)

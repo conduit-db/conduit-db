@@ -69,7 +69,18 @@ def flush_rows_confirmed(
         acks,
     ) = flush_batch_with_acks
     try:
-        db.bulk_load_confirmed_tx_rows(tx_rows)
+        check_duplicates = False
+        special_block_hashes = {
+            bytes.fromhex('00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f'),
+            bytes.fromhex('00000000000a4d0a398161ffc163c503763b1f4360639393e0e4c8e300e0caec'),
+            bytes.fromhex('00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e'),
+            bytes.fromhex('00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721'),
+        }
+        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
+            if blk_hash in special_block_hashes:
+                check_duplicates = True
+
+        db.bulk_load_confirmed_tx_rows(tx_rows, check_duplicates)
         flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, db)
 
         # Ack for all flushed blocks

@@ -6,6 +6,7 @@ import time
 import uuid
 from pathlib import Path
 import typing
+from typing import List
 
 import MySQLdb
 
@@ -162,7 +163,8 @@ class MySQLBulkLoads:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) -> None:
+    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) -> list[
+        ConfirmedTransactionRow]:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
@@ -176,18 +178,13 @@ class MySQLBulkLoads:
         dup2 = bytes(
             reversed(bytes.fromhex("e3bf3d07d4b0375638d5f1db5255fe07ba2c4cb067cd81b84ee974b6585fb468"))
         ).hex()
-        self.logger.debug(f"found duplicate tx_hashes in batch - see BIP_0034 for details")
-        self.logger.debug(f"len(tx_rows)={len(tx_rows)} before de-duplication")
         new_tx_rows = []
         for row in tx_rows:
-            if row[0] in {dup1, dup2}:
-                self.logger.debug(f"found 1 duplicate: " f"{bytes(reversed(bytes.fromhex(row[0]))).hex()}")
-                pass
+            if row[0] in dup1 or row[0] in dup2:
+                self.logger.debug(f"removing a special case txid from insert batch: {row[0]}")
             else:
                 new_tx_rows.append(row)
-        self.logger.debug(f"len(new_tx_rows)={len(new_tx_rows)} after de-duplication")
-        self.logger.debug(f"bulk loading new tx rows")
-        self.bulk_load_confirmed_tx_rows(new_tx_rows)  # retry without problematic coinbase tx
+        return new_tx_rows
 
     def bulk_load_confirmed_tx_rows(
         self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
@@ -196,6 +193,9 @@ class MySQLBulkLoads:
         try:
             if tx_rows:
                 assert isinstance(tx_rows[0].tx_hash, str)
+
+            if check_duplicates:
+                tx_rows = self.handle_coinbase_dup_tx_hash(tx_rows)
             string_rows = ["%s,%s,%s\n" % (row) for row in tx_rows]
             column_names = ["tx_hash", "tx_block_num", "tx_position"]
             self._load_data_infile_batched(
@@ -206,7 +206,6 @@ class MySQLBulkLoads:
             )
         except MySQLdb.IntegrityError as e:
             self.logger.error(f"{e}")
-            self.handle_coinbase_dup_tx_hash(tx_rows)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING,
