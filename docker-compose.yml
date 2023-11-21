@@ -1,4 +1,4 @@
-version: "3.8"
+version: "2.4"
 
 # This docker-compose is not for production use. It is solely for development and testing.
 
@@ -33,14 +33,58 @@ services:
     ports:
       - "9042:9042"
       - "19042:19042"
-    environment:
-      SCYLLA_USERNAME: conduitdb
-      SCYLLA_PASSWORD: conduitpass
+    env_file: .env.docker.development
+    cpus: 2
+    cpuset: 0-1
+    mem_limit: 2G
 
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
+
+  conduit-raw:
+    build:
+      context: .
+      dockerfile: ./conduit_raw/Dockerfile
+    ports:
+      - "50000:50000"
+      - "34525:34525"
+      - "51495:51495"
+      - "60000:60000"
+      - "60001:60001"
+      - "60002:60002"
+      - "60003:60003"
+    depends_on:
+      - node
+      - mysql
+      - scylladb
+    env_file: .env.docker.development
+    environment:
+      - MODE=DEVELOPMENT
+      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
+      - LMDB_DATABASE_PATH=/opt/lmdb_data
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+    working_dir: /opt
+    command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
+
+  conduit-index:
+    build:
+      context: .
+      dockerfile: ./conduit_index/Dockerfile
+    depends_on:
+      - node
+      - mysql
+      - scylladb
+      - conduit-raw
+    env_file: .env.docker.development
+    environment:
+      - MODE=DEVELOPMENT
+      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+    working_dir: /opt
+    command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 
   reference_server:
     container_name: reference_server
@@ -71,49 +115,6 @@ services:
       ENABLE_OUTBOUND_DATA_DELIVERY: 1
     command:
       sh -c 'python3 /reference_server/server.py'
-
-  conduit-raw:
-    build:
-      context: .
-      dockerfile: ./conduit_raw/Dockerfile
-    ports:
-      - "50000:50000"
-      - "34525:34525"
-      - "51495:51495"
-      - "60000:60000"
-      - "60001:60001"
-      - "60002:60002"
-      - "60003:60003"
-    depends_on:
-      - node
-      - mysql
-      - scylladb
-    environment:
-      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
-      - BITCOIN_HOST=node
-      - BITCOIN_RPC_PORT=18332
-      - LMDB_READONLY=0
-      - LMDB_DATABASE_PATH=/opt/lmdb_data
-      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
-      - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
-    working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
-
-  conduit-index:
-    build:
-      context: .
-      dockerfile: ./conduit_index/Dockerfile
-    depends_on:
-      - node
-      - mysql
-      - scylladb
-      - conduit-raw
-    environment:
-      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
-      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
-    working_dir: /opt
-    command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
-#    command: sh -c 'gdb -ex r --args python3 /opt/conduit_index/run_conduit_index.py'
 
 #  # MerchantAPI & postgres dependency are purely for ease of testing ElectrumSV against the stack
 #  postgres:

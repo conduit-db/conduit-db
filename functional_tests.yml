@@ -8,10 +8,7 @@ steps:
     export DOCKER_GATEWAY_HOST=172.17.0.1
     chmod +x ./build.sh
     ./build.sh
-    docker-compose -f docker-compose.yml up -d node mysql scylladb redis reference_server
-    python3 ./contrib/wait_for_scylladb.py
-    docker-compose -f docker-compose.yml up -d conduit-raw conduit-index
-    sleep 10
+    docker-compose -f docker-compose.yml up -d
     docker-compose -f docker-compose.yml logs
   timeoutInMinutes: 10
   continueOnError: true

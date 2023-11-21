@@ -11,9 +11,9 @@ from conduit_lib import cast_to_valid_ipv4
 if typing.TYPE_CHECKING:
     from conduit_raw.conduit_raw.controller import Controller
 
-BITCOIN_HOST = cast_to_valid_ipv4(os.getenv("BITCOIN_HOST", "127.0.0.1"))
+NODE_HOST = cast_to_valid_ipv4(os.getenv("NODE_HOST", "127.0.0.1"))
 BITCOIN_RPC_PORT = os.getenv("BITCOIN_RPC_PORT", "18332")
-REGTEST_BITCOIN_RPC_URL = f"http://rpcuser:rpcpassword@{BITCOIN_HOST}:{BITCOIN_RPC_PORT}"
+REGTEST_BITCOIN_RPC_URL = f"http://rpcuser:rpcpassword@{NODE_HOST}:{BITCOIN_RPC_PORT}"
 
 
 class NodeRPCResult(TypedDict):

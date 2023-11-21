@@ -23,7 +23,8 @@ from conduit_lib.startup_utils import (
 
 dotenv_path = MODULE_DIR.parent / ".env"
 if is_docker():
-    dotenv_path = MODULE_DIR.parent / ".env.docker"
+    mode = os.getenv('MODE', 'DEVELOPMENT')
+    dotenv_path = MODULE_DIR.parent / f".env.docker.{mode.lower()}"
 load_dotenv(dotenv_path)
 resolve_hosts_and_update_env_vars()
 

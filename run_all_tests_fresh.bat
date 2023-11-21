@@ -5,30 +5,8 @@ docker-compose -f .\docker-compose.yml down
 docker volume prune --force
 
 docker-compose -f docker-compose.yml build conduit-raw conduit-index
+docker-compose -f .\docker-compose.yml up -d
 
-docker-compose -f .\docker-compose.yml up node mysql scylladb redis --detach
-
-py -3.10 ./contrib/wait_for_scylladb.py
-
-docker-compose -f .\docker-compose.yml up conduit-raw --detach
-timeout /t 3
-docker-compose -f .\docker-compose.yml up conduit-index --detach
-timeout /t 3
-docker-compose -f .\docker-compose.yml up reference_server --detach
-
-REM start /MAX cmd /k "set PYTHONPATH=. && coverage run --parallel-mode ./conduit_raw/run_conduit_raw.py"
-REM start /MAX cmd /k "set PYTHONPATH=. && coverage run --parallel-mode ./conduit_index/run_conduit_index.py"
-
-REM Wait for the servers to initialize
-timeout /t 25
-
-
-set DEFAULT_DB_TYPE=SCYLLADB
+set DEFAULT_DB_TYPE=MYSQL
 py -m pytest tests_functional --verbose
-REM py -m pytest tests --verbose
-
-
-REM coverage run --parallel-mode -m pytest tests --verbose
-REM coverage run --parallel-mode -m pytest tests_functional --verbose
-REM coverage combine
-REM coverage report
+py -m pytest tests --verbose

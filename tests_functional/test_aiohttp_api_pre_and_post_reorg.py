@@ -241,7 +241,7 @@ class TestAiohttpRESTAPI:
         )
         thread.start()
         self.registrations_complete_event.wait()
-        logger.debug(f"Registrations done!")
+        logger.info(f"Registrations done!")
 
         blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
         import_blocks(str(blockchain_dir))

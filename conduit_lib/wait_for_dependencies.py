@@ -5,9 +5,6 @@ import os
 import socket
 import time
 
-import MySQLdb
-from cassandra.cluster import NoHostAvailable  # pylint:disable=E0611
-
 from . import DBInterface
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
 from conduit_lib.deserializer import Deserializer
@@ -59,35 +56,9 @@ async def wait_for_node(
 
 
 def wait_for_db() -> None:
-    logger = logging.getLogger("wait-for-dependencies")
-
-    # Node
-    while True:
-        is_available = False
-        db = None
-        try:
-            # Attempt to connect
-            db = DBInterface.load_db()
-            _result = db.get_tables()
-            is_available = True
-            break
-        except ConnectionRefusedError:
-            # logger.exception("unexpected exception")
-            pass
-        except NoHostAvailable:
-            # logger.exception("No ScyllaDB host available")
-            pass
-        except MySQLdb.OperationalError:
-            # logger.exception("unexpected exception")
-            pass
-        finally:
-            if is_available:
-                logger.debug(f"Database server is available")
-            else:
-                logger.debug(f"Database server currently unavailable - waiting...")
-                time.sleep(5)
-            if db is not None:
-                db.close()
+    db = DBInterface.load_db()
+    if db is not None:
+        db.close()
 
 
 def wait_for_ipc_socket_server() -> None:

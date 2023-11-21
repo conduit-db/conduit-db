@@ -296,6 +296,10 @@ async def get_transaction(request: web.Request) -> web.Response:
     txid = request.match_info["txid"]
     if not txid:
         raise web.HTTPBadRequest(reason="no txid submitted")
+
+    # TODO: The only reason to pull from the node has been because mempool state
+    #  was not storing full rawtxs. This will be done by Redis with a hard memory usage limit
+    #  and an eviction policy to simply drop the oldest entries first (FIFO)
     rawtx = await getrawtransaction_from_node_rpc(
         app_state,
         txid,

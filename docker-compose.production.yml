@@ -1,0 +1,104 @@
+version: '2.4'
+
+# Note, there is no bitcoin node here. ConduitDB connects to the node over the p2p network so either
+# run your own node (most ideal for best performance and lower latencies)
+# or connect to a remote node on the p2p network (less reliable & higher latencies).
+
+# You should ideally be whitelisted by said node because occasionally mempool txs are not relayed reliably
+# unless whitelisted. Hopefully this is not required in the future.
+
+services:
+
+  scylladb:
+    image: scylladb/scylla
+    ports:
+      - "9042:9042"
+      - "19042:19042"
+    env_file: .env.docker.production
+    volumes:
+      - ./conduitdb_data_ssd/scylla/data:/var/lib/scylla/data
+    cpus: 30
+    cpuset: 2-31
+    mem_limit: 64G
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    env_file: .env.docker.production
+    mem_limit: 12G
+
+  conduit-raw:
+    build:
+      context: .
+      dockerfile: ./conduit_raw/Dockerfile
+    ports:
+      - "50000:50000"
+      - "34525:34525"
+      - "51495:51495"
+      - "60000:60000"
+      - "60001:60001"
+      - "60002:60002"
+      - "60003:60003"
+    depends_on:
+      - scylladb
+    env_file: .env.docker.production
+    environment:
+      - MODE=PRODUCTION
+      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
+      - LMDB_DATABASE_PATH=/opt/lmdb_data
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+    working_dir: /opt
+    volumes:
+      - ./conduitdb_data_hdd:/opt/conduit_data_hdd
+      - ./conduitdb_data_ssd:/opt/conduit_data_ssd
+      - ./conduitdb_data_ssd/lmdb_data:/opt/lmdb_data
+    command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
+
+  conduit-index:
+    build:
+      context: .
+      dockerfile: ./conduit_index/Dockerfile
+    depends_on:
+      - scylladb
+      - conduit-raw
+    environment:
+      - MODE=PRODUCTION
+      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
+      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+    working_dir: /opt
+    volumes:
+      - ./conduitdb_data_hdd:/opt/conduit_data_hdd
+      - ./conduitdb_data_ssd:/opt/conduit_data_ssd
+    command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
+
+  reference_server:
+    container_name: reference_server
+    depends_on:
+      - "conduit-raw"
+      - "conduit-index"
+    build:
+      context: .
+      dockerfile: ./contrib/reference_server/Dockerfile
+    ports:
+      - "47124:47124"
+      - "47126:47126"
+    environment:
+      SKIP_DOTENV_FILE: 1  # Allows us to overrride all of the defaults in the .env file
+      EXTERNAL_HOST: "0.0.0.0"
+      EXTERNAL_PORT: 47124
+      INTERNAL_HOST: "0.0.0.0"
+      INTERNAL_PORT: 47126
+      EXPOSE_HEADER_SV_APIS: 1
+      HEADER_SV_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
+      EXPOSE_PAYMAIL_APIS: 1
+      EXPOSE_INDEXER_APIS: 1
+      INDEXER_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
+      NOTIFICATION_TEXT_NEW_MESSAGE: New message arrived
+      MAX_MESSAGE_CONTENT_LENGTH: 65536
+      CHUNKED_BUFFER_SIZE: 1024
+      NETWORK: regtest
+      ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    command:
+      sh -c 'python3 /reference_server/server.py'

@@ -12,7 +12,7 @@ from cassandra.cluster import (  # pylint:disable=E0611
     Session,
     ResultSet,
     DCAwareRoundRobinPolicy,
-    TokenAwarePolicy,
+    TokenAwarePolicy, NoHostAvailable,
 )
 from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 from cassandra.query import PreparedStatement  # pylint:disable=E0611
@@ -258,24 +258,48 @@ class ScyllaDB(DBInterface):
         self.tables.drop_temp_mempool_additions()
 
 
+def wait_for_db_ready() -> ScyllaDB | None:
+    while True:
+        try:
+            scylladb = load_scylla_database()
+            print('ScyllaDB is now available')
+            return scylladb
+        except (NoHostAvailable, ConnectionRefusedError):
+            print("ScyllaDB is not yet available")
+        except Exception as e:
+            print(f"Unexpected exception type: {e}. Exiting loop")
+            return None
+
+
 def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
     # auth_provider = PlainTextAuthProvider(
     #     username=os.environ['SCYLLA_USERNAME'],
     #     password=os.environ['SCYLLA_PASSWORD'],
     # )
-    logging.getLogger('cassandra').setLevel(logging.WARNING)
-    cluster = Cluster(
-        contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
-        port=int(os.getenv('SCYLLA_PORT', 19042)),
-        protocol_version=ProtocolVersion.V4,
-        load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
-        executor_threads=4,
-        connect_timeout=30,
-        # auth_provider=auth_provider,
-    )
-    session = cluster.connect()
-    session.default_timeout = 120
-    session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
+    logger = logging.getLogger("load_scylla_database")
+    logging.getLogger('cassandra').setLevel(logging.CRITICAL)
+    while True:
+        try:
+            cluster = Cluster(
+                contact_points=[os.getenv('SCYLLA_HOST', '127.0.0.1')],
+                port=int(os.getenv('SCYLLA_PORT', 19042)),
+                protocol_version=ProtocolVersion.V4,
+                load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
+                executor_threads=4,
+                connect_timeout=30,
+                # auth_provider=auth_provider,
+            )
+            session = cluster.connect()
+            session.default_timeout = 120
+            session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
+            logging.getLogger('cassandra').setLevel(logging.WARNING)
+            logger.info("ScyllaDB is now available")
 
-    cache = RedisCache()
-    return ScyllaDB(cluster, session, cache, worker_id=worker_id)
+            cache = RedisCache()
+            return ScyllaDB(cluster, session, cache, worker_id=worker_id)
+        except (NoHostAvailable, ConnectionRefusedError):
+            logger.info("ScyllaDB is not yet available")
+            time.sleep(2)
+        except Exception as e:
+            logger.exception(f"Unexpected exception type: {e}. Exiting loop")
+            exit(1)

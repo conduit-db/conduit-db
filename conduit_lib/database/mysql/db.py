@@ -260,5 +260,13 @@ def get_connection() -> Connection:
 
 
 def load_mysql_database(worker_id: int | None = None) -> DBInterface:
-    conn = get_connection()
-    return MySQLDatabase(conn, worker_id=worker_id)
+    logger = logging.getLogger('load_mysql_database')
+    while True:
+        try:
+            conn = get_connection()
+            logger.info("MySQL is now available")
+            return MySQLDatabase(conn, worker_id=worker_id)
+        except MySQLdb.OperationalError:
+            logger.warning("MySQL is not available yet")
+            time.sleep(2)
+            pass

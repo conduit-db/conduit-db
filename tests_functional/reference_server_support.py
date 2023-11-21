@@ -210,7 +210,10 @@ async def register_for_utxo_notifications(
             try:
                 async with session.post(uri, json=UTXO_REGISTRATIONS, headers=headers) as response:
                     if response.status != HTTPStatus.OK:
-                        logger.error(response.reason)
+                        if response.status == HTTPStatus.SERVICE_UNAVAILABLE:
+                            logger.warning(response.reason)
+                        else:
+                            logger.error(response.reason)
                         raise aiohttp.ClientError(response.reason)
 
                     return cast(list[tuple[str, int]], await response.json())
@@ -258,10 +261,10 @@ async def register_for_pushdata_notifications(
                         raise aiohttp.ClientError(response.reason)
 
                     result = cast(list[tuple[str, int]], await response.json())
-                    logger.debug(f"Pushdata registration result: {result}")
+                    logger.info(f"Pushdata registration result: {result}")
                     return result
             except aiohttp.ClientError as e:
-                logger.debug(f"Error: {e}. Reference server is not ready yet. Retrying in 5 seconds")
+                logger.warning(f"Error: {e}. Reference server is not ready yet. Retrying in 5 seconds")
                 await asyncio.sleep(5)
 
 
