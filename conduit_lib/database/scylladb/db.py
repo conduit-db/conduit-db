@@ -272,6 +272,7 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
         protocol_version=ProtocolVersion.V4,
         load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
         executor_threads=4,
+        connect_timeout=30,
         # auth_provider=auth_provider,
     )
     session = cluster.connect()

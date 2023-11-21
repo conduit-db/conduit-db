@@ -64,6 +64,7 @@ def wait_for_db() -> None:
     # Node
     while True:
         is_available = False
+        db = None
         try:
             # Attempt to connect
             db = DBInterface.load_db()
@@ -85,6 +86,8 @@ def wait_for_db() -> None:
             else:
                 logger.debug(f"Database server currently unavailable - waiting...")
                 time.sleep(5)
+            if db is not None:
+                db.close()
 
 
 def wait_for_ipc_socket_server() -> None:

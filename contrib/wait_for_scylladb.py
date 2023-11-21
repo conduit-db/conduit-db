@@ -1,7 +1,7 @@
 import os
 import sys
 
-from cassandra import ProtocolVersion
+from cassandra import ProtocolVersion, ConsistencyLevel
 from cassandra.cluster import Cluster, TokenAwarePolicy, DCAwareRoundRobinPolicy, NoHostAvailable
 
 
@@ -16,9 +16,12 @@ def main():
                 protocol_version=ProtocolVersion.V4,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 executor_threads=4,
+                connect_timeout=30,
+                # auth_provider=auth_provider,
             )
             session = cluster.connect()
             session.default_timeout = 120
+            session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
             print('ScyllaDB is now available')
             return True
         except (NoHostAvailable, ConnectionRefusedError):
