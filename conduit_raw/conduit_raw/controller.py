@@ -379,7 +379,7 @@ class Controller(ControllerBase):
                     continue
 
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-                self.logger.debug(
+                self.logger.info(
                     "New headers tip height: %s",
                     self.sync_state.local_tip_height,
                 )
@@ -564,7 +564,7 @@ class Controller(ControllerBase):
             )
 
             # ------------------------- Batch complete ------------------------- #
-            self.logger.debug(
+            self.logger.info(
                 f"Controller Batch {batch_id} Complete."
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )

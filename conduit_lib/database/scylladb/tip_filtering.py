@@ -23,7 +23,7 @@ from typing import (
 )
 from uuid import uuid4
 
-from cassandra import WriteTimeout, ConsistencyLevel
+from cassandra import WriteTimeout, ConsistencyLevel  # pylint:disable=E0611
 from cassandra.cluster import Session, ResultSet  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 from cassandra.query import BatchStatement  # pylint:disable=E0611

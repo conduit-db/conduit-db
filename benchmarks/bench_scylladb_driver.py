@@ -8,6 +8,8 @@ from cassandra.cluster import BatchStatement
 from cassandra.concurrent import execute_concurrent_with_args, execute_concurrent
 import time
 
+from cassandra.query import BatchType
+
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.db_interface.db import DatabaseType, DBInterface
 from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, MempoolTransactionRow, \
@@ -25,7 +27,7 @@ def benchmark(query_function, *args):
 
 def concurrency_with_batch(db: DBInterface, tx_rows: list[ConfirmedTransactionRow],
         batch_size: int=1000, concurrency: int=100) -> None:
-    batches = [BatchStatement() for _ in range(len(tx_rows) // batch_size)]
+    batches = [BatchStatement(batch_type=BatchType.UNLOGGED) for _ in range(len(tx_rows) // batch_size)]
     insert_statement = db.session.prepare(
         "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) VALUES (?, ?, ?)"
     )
@@ -143,7 +145,7 @@ def mined_tx_hashes(db: DBInterface):
 # With 8 worker processes this will exceed 960K rows/second which will saturate ScyllaDB
 # These numbers are on a laptop with ScyllaDB running in docker for windows behind a NAT which
 # disables the shard-awareness which will give poorer performance.
-@pytest.mark.parametrize("batch_size", [500, 1000])
+@pytest.mark.parametrize("batch_size", [1000])
 @pytest.mark.parametrize("concurrency", [100, 200])
 def test_concurrency_with_batch(db: DBInterface, tx_rows: list[ConfirmedTransactionRow],
         batch_size, concurrency) -> None:

@@ -794,7 +794,7 @@ class Controller(ControllerBase):
             f"Allocated {allocated_count} headers in main batch from height: "
             f"{start_header.height} to height: {stop_header.height}"
         )
-        self.logger.debug(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
+        self.logger.info(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
         main_batch = await self.loop.run_in_executor(
@@ -892,7 +892,7 @@ class Controller(ControllerBase):
             best_flushed_tip_height = await self.index_blocks(
                 is_reorg, start_header, stop_header, old_hashes, new_hashes
             )
-            self.logger.debug(
+            self.logger.info(
                 f"Controller Batch {batch_id} Complete. " f"New tip height: {best_flushed_tip_height}"
             )
             batch_id += 1

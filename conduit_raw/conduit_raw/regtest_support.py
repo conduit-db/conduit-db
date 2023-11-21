@@ -187,7 +187,7 @@ class RegtestSupport:
                     self.controller.sync_state.local_tip_height = (
                         self.controller.sync_state.update_local_tip_height()
                     )
-                    self.logger.debug(
+                    self.logger.info(
                         "New headers tip height: %s",
                         self.controller.sync_state.local_tip_height,
                     )
