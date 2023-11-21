@@ -9,7 +9,6 @@ from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
-    OutputRow,
     PushdataRow,
     PushdataRowParsed,
     InputRowParsed,
@@ -31,26 +30,22 @@ def extend_batched_rows(
     txs: list[ConfirmedTransactionRow],
     txs_mempool: list[MempoolTransactionRow],
     ins: list[InputRow],
-    outs: list[OutputRow],
     pds: list[PushdataRow],
 ) -> MySQLFlushBatch:
     """The updates are grouped as a safety precaution to not accidentally forget one of them"""
-    tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = blk_rows
+    tx_rows, tx_rows_mempool, in_rows, set_pd_rows = blk_rows
     txs.extend(tx_rows)
     txs_mempool.extend(tx_rows_mempool)
     ins.extend(in_rows)
-    outs.extend(out_rows)
     pds.extend(set_pd_rows)
-    return MySQLFlushBatch(txs, txs_mempool, ins, outs, pds)
+    return MySQLFlushBatch(txs, txs_mempool, ins, pds)
 
 
 def flush_ins_outs_and_pushdata_rows(
     in_rows: list[InputRow],
-    out_rows: list[OutputRow],
     pd_rows: list[PushdataRow],
     db: DBInterface,
 ) -> None:
-    db.bulk_load_output_rows(out_rows)
     db.bulk_load_input_rows(in_rows)
     db.bulk_load_pushdata_rows(pd_rows)
 
@@ -64,7 +59,6 @@ def flush_rows_confirmed(
         tx_rows,
         tx_rows_mempool,
         in_rows,
-        out_rows,
         pd_rows,
         acks,
     ) = flush_batch_with_acks
@@ -81,7 +75,7 @@ def flush_rows_confirmed(
                 check_duplicates = True
 
         db.bulk_load_confirmed_tx_rows(tx_rows, check_duplicates)
-        flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, db)
+        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
 
         # Ack for all flushed blocks
         assert worker.socket_mined_tx_ack is not None
@@ -116,13 +110,12 @@ def flush_rows_mempool(
         tx_rows,
         tx_rows_mempool,
         in_rows,
-        out_rows,
         pd_rows,
         acks,
     ) = flush_batch_with_acks
     try:
         db.bulk_load_mempool_tx_rows(tx_rows_mempool)
-        flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, db)
+        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
     except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise
@@ -133,7 +126,6 @@ def reset_rows() -> (
         list[ConfirmedTransactionRow],
         list[MempoolTransactionRow],
         list[InputRow],
-        list[OutputRow],
         list[PushdataRow],
         ProcessedBlockAcks,
     ]
@@ -141,10 +133,9 @@ def reset_rows() -> (
     txs: list[ConfirmedTransactionRow] = []
     txs_mempool: list[MempoolTransactionRow] = []
     ins: list[InputRow] = []
-    outs: list[OutputRow] = []
     pds: list[PushdataRow] = []
     acks: ProcessedBlockAcks = []
-    return txs, txs_mempool, ins, outs, pds, acks
+    return txs, txs_mempool, ins, pds, acks
 
 
 def reset_rows_mempool() -> (
@@ -152,7 +143,6 @@ def reset_rows_mempool() -> (
         list[ConfirmedTransactionRow],
         list[MempoolTransactionRow],
         list[InputRow],
-        list[OutputRow],
         list[PushdataRow],
         MempoolTxAck,
     ]
@@ -160,10 +150,9 @@ def reset_rows_mempool() -> (
     txs: list[ConfirmedTransactionRow] = []
     txs_mempool: list[MempoolTransactionRow] = []
     ins: list[InputRow] = []
-    outs: list[OutputRow] = []
     pds: list[PushdataRow] = []
     acks: MempoolTxAck = 0
-    return txs, txs_mempool, ins, outs, pds, acks
+    return txs, txs_mempool, ins, pds, acks
 
 
 def maybe_refresh_connection(

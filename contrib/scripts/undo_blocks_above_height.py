@@ -146,7 +146,6 @@ class DbRepairTool:
                 tx_rows,
                 _tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -164,7 +163,6 @@ class DbRepairTool:
             tx_hashes = [row[0] for row in tx_rows]
             self.db.delete_transaction_rows(tx_hashes)
             self.db.delete_pushdata_rows(pushdata_rows_for_flushing)
-            self.db.delete_output_rows(out_rows)
             self.db.delete_input_rows(input_rows_for_flushing)
             self.db.delete_header_rows([block_hash])
 

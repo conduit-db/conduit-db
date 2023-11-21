@@ -53,7 +53,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.mempool_tx_flush_queue is not None
-        txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
+        txs, txs_mempool, ins, pds, acks = reset_rows_mempool()
         utxo_spends: list[InputRowParsed] = []
         pushdata_matches_tip_filter: list[PushdataRowParsed] = []
         db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
@@ -69,8 +69,8 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     if not mempool_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(
-                        mempool_rows, txs, txs_mempool, ins, outs, pds
+                    txs, txs_mempool, ins, pds = extend_batched_rows(
+                        mempool_rows, txs, txs_mempool, ins, pds
                     )
                     acks += new_acks
                     utxo_spends += new_utxo_spends
@@ -85,7 +85,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
 
                         flush_rows_mempool(
                             self,
-                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, pds, acks),
                             db=db,
                         )
 
@@ -95,7 +95,6 @@ class FlushMempoolTransactionsThread(threading.Thread):
                             txs,
                             txs_mempool,
                             ins,
-                            outs,
                             pds,
                             acks,
                         ) = reset_rows_mempool()
@@ -111,7 +110,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_mempool(
                             self,
-                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, pds, acks),
                             db=db,
                         )
                         self.parent.send_utxo_spend_notifications(utxo_spends, None)
@@ -120,7 +119,6 @@ class FlushMempoolTransactionsThread(threading.Thread):
                             txs,
                             txs_mempool,
                             ins,
-                            outs,
                             pds,
                             acks,
                         ) = reset_rows_mempool()

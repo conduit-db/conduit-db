@@ -17,7 +17,6 @@ from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRowParsed,
-    OutputRow,
     PushdataRowParsed,
     ProcessedBlockAcks,
     TipFilterNotifications,
@@ -472,7 +471,6 @@ class MinedBlockParsingThread(threading.Thread):
             tx_rows: list[ConfirmedTransactionRow]
             tx_rows_mempool: list[MempoolTransactionRow]
             in_rows_parsed: list[InputRowParsed]
-            out_rows: list[OutputRow]
             pd_rows_parsed: list[PushdataRowParsed]
             # TODO(black): don't initialize multiple things on a single line because Black formatter
             #  does this to it...
@@ -480,11 +478,9 @@ class MinedBlockParsingThread(threading.Thread):
                 tx_rows,
                 tx_rows_mempool,
                 in_rows_parsed,
-                out_rows,
                 pd_rows_parsed,
                 _,
             ) = (
-                [],
                 [],
                 [],
                 [],
@@ -503,7 +499,6 @@ class MinedBlockParsingThread(threading.Thread):
                 tx_rows,
                 tx_rows_mempool,
                 in_rows_parsed,
-                out_rows,
                 pd_rows_parsed,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -524,7 +519,6 @@ class MinedBlockParsingThread(threading.Thread):
                         tx_rows,
                         tx_rows_mempool,
                         input_rows_for_flushing,
-                        out_rows,
                         pushdata_rows_for_flushing,
                     ),
                     acks[work_item],

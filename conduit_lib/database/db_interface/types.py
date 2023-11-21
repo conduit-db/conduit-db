@@ -65,7 +65,6 @@ class MySQLFlushBatch(NamedTuple):
     tx_rows: list[ConfirmedTransactionRow]
     tx_rows_mempool: list[MempoolTransactionRow]
     in_rows: list[InputRow]
-    out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
 
 
@@ -83,7 +82,6 @@ class DBFlushBatchWithAcks(NamedTuple):
     tx_rows: list[ConfirmedTransactionRow]
     tx_rows_mempool: list[MempoolTransactionRow]
     in_rows: list[InputRow]
-    out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
     acks: ProcessedBlockAcks
 
@@ -95,7 +93,6 @@ class DBFlushBatchWithAcksMempool(NamedTuple):
     tx_rows: list[ConfirmedTransactionRow]
     tx_rows_mempool: list[MempoolTransactionRow]
     in_rows: list[InputRow]
-    out_rows: list[OutputRow]
     pd_rows: list[PushdataRow]
     acks: MempoolTxAck
 

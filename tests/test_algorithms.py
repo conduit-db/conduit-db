@@ -6,9 +6,9 @@ from pathlib import Path
 
 import bitcoinx
 import pytest
-from bitcoinx import hex_str_to_hash, hash_to_hex_str
+from bitcoinx import hash_to_hex_str
 
-from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, InputRowParsed, OutputRow
+from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, InputRowParsed
 from .conftest import TEST_RAW_BLOCK_413567
 from .data.block413567_offsets import TX_OFFSETS
 
@@ -195,7 +195,6 @@ def test_parse_txs() -> None:
     """
     tx_rows: list[ConfirmedTransactionRow] = []
     in_rows: list[InputRowParsed] = []
-    out_rows: list[OutputRow] = []
 
     # Check unpack_varint
     for i in range(1, 1_000):
@@ -216,7 +215,6 @@ def test_parse_txs() -> None:
             tx_rows,
             tx_rows_mempool,
             in_rows,
-            out_rows,
             pd_rows,
             utxo_spends,
             pushdata_matches_tip_filter,
@@ -287,24 +285,6 @@ def test_parse_txs() -> None:
                 pass
         return False
 
-    def scan_outputs_for_hash_and_idx_match(
-        tx_hash: bytes, idx: int, value: int, out_rows: list[OutputRow]
-    ) -> bool:
-        """Must reverse the hex rows endianness to match bitcoinx"""
-        for row in out_rows:
-            out_tx_hash, out_idx, out_value = row
-            if (
-                tx_hash[0:HashXLength] == hex_str_to_hash(out_tx_hash)[::-1]
-                and idx == out_idx
-                and value == out_value
-            ):
-                # print(f"Match found for {hash_to_hex_str(prev_out_hash)} == {out_tx_hash}")
-                return True
-            else:
-                # print(f"{hash_to_hex_str(prev_out_hash)} != {hash_to_hex_str(hex_str_to_hash(out_tx_hash)[::-1])}")
-                pass
-        return False
-
     match_found = None
     assert len(in_rows) == len(inputs), f"{len(in_rows)} != {len(inputs)}"
     print(f"Check for total inputs count: PASSED ({len(in_rows)} inputs matches expected of: {len(inputs)})")
@@ -317,19 +297,6 @@ def test_parse_txs() -> None:
         )
         assert match_found
     print(f"Check for all inputs matching bitcoinx parsing: PASSED")
-
-    assert output_total_count == len(out_rows), f"{output_total_count} != {len(out_rows)}"
-    print(
-        f"Check for total output count: PASSED ({output_total_count} outputs matches expected of: {len(out_rows)})"
-    )
-    for tx in txs:
-        trusted_bitcoinx_outputs = tx.outputs
-        for idx, output in enumerate(trusted_bitcoinx_outputs):
-            match_found = scan_outputs_for_hash_and_idx_match(
-                tx.hash()[0:HashXLength], idx, output.value, out_rows
-            )
-        assert match_found
-    print(f"Check for all outputs matching bitcoinx parsing: PASSED")
 
 
 def test_calc_depth() -> None:

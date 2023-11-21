@@ -39,7 +39,6 @@ class MySQLTables:
                 "inputs_table",
                 "mempool_transactions",
                 "pushdata",
-                "txo_table",
                 "temp_mempool_additions",
                 "temp_mempool_removals",
                 "temp_mined_tx_hashes",
@@ -66,8 +65,6 @@ class MySQLTables:
             if "headers" in tables:
                 self.conn.query("DROP INDEX headers_idx ON headers;")
                 self.conn.query("DROP INDEX headers_idx_height ON headers;")
-            if "txo_table" in tables:
-                self.conn.query("DROP INDEX txo_idx ON txo_table;")
             if "inputs_table" in tables:
                 self.conn.query("DROP INDEX input_idx ON inputs_table;")
             if "pushdata" in tables:
@@ -192,24 +189,6 @@ class MySQLTables:
 
             # if not index_exists(self.conn, "tx_idx", "confirmed_transactions"):
             #     self.conn.query("""CREATE INDEX tx_idx ON confirmed_transactions (tx_hash);""")
-
-            # block_offset is relative to start of rawtx
-            self.conn.query(
-                f"""
-                CREATE TABLE IF NOT EXISTS txo_table (
-                    out_tx_hash BINARY({HashXLength}),
-                    out_idx INT UNSIGNED,
-                    out_value BIGINT UNSIGNED
-                ) ENGINE=RocksDB DEFAULT COLLATE=latin1_bin;
-                """
-            )
-
-            if not index_exists(self.conn, "txo_idx", "txo_table"):
-                self.conn.query(
-                    """
-                    CREATE INDEX txo_idx ON txo_table (out_tx_hash, out_idx);
-                    """
-                )
 
             # block_offset is relative to start of rawtx
             # this table may look wasteful (due to repetition of the out_tx_hash but the

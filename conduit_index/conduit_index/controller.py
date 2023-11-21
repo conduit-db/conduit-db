@@ -360,7 +360,6 @@ class Controller(ControllerBase):
         ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
         batched_tx_rows = []
         batched_in_rows = []
-        batched_out_rows = []
         batched_pd_rows = []
         batched_header_hashes = []
         for block_hash, height in blocks_to_undo:
@@ -375,7 +374,6 @@ class Controller(ControllerBase):
                 tx_rows,
                 _tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -391,7 +389,6 @@ class Controller(ControllerBase):
 
             batched_tx_rows.extend(tx_rows)
             batched_in_rows.extend(input_rows_for_flushing)
-            batched_out_rows.extend(out_rows)
             batched_pd_rows.extend(pushdata_rows_for_flushing)
             batched_header_hashes.append(block_hash)
 
@@ -399,10 +396,9 @@ class Controller(ControllerBase):
         tx_hashes = [row[0] for row in batched_tx_rows]
         self.db.delete_transaction_rows(tx_hashes)
 
-        # Commented out because way too slow... Need to rely on overwriting these records instead
+        # Commented out because way too slow in MySQL...
         # ScyllaDB will be a different story because of merge operator under the hood
         # self.db.delete_pushdata_rows(batched_pd_rows)
-        # self.db.delete_output_rows(batched_out_rows)
         # self.db.delete_input_rows(batched_in_rows)
         # self.db.delete_header_rows(batched_header_hashes)
 
@@ -902,8 +898,9 @@ class Controller(ControllerBase):
         is done"""
         while True:
             msg = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv())
-            worker_id, work_item_id, block_hash, txs_done_count = \
-                cast(tuple[int, int, bytes, int], cbor2.loads(msg))
+            worker_id, work_item_id, block_hash, txs_done_count = cast(
+                tuple[int, int, bytes, int], cbor2.loads(msg)
+            )
             try:
                 self.sync_state._work_item_progress_counter[work_item_id] += txs_done_count
                 self.sync_state._blocks_progress_counter[block_hash] += txs_done_count

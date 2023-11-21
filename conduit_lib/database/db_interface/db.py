@@ -17,7 +17,6 @@ from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
-    OutputRow,
     InputRow,
     PushdataRow,
 )
@@ -71,9 +70,7 @@ class DBInterface(abc.ABC):
         self.conn: Connection | None = None  # pragma: no cover
 
     @classmethod
-    def load_db(
-        cls, worker_id: int | None = None, db_type: DatabaseType | None = None
-    ) -> "DBInterface":
+    def load_db(cls, worker_id: int | None = None, db_type: DatabaseType | None = None) -> "DBInterface":
         if db_type is None:
             db_type_default: str = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
             if db_type_default == 'MYSQL':
@@ -85,10 +82,12 @@ class DBInterface(abc.ABC):
 
         if db_type == DatabaseType.MySQL:
             from conduit_lib.database.mysql.db import load_mysql_database
+
             logger.info(f"Using MySQL implementation")
             return load_mysql_database(worker_id)
         elif db_type == DatabaseType.ScyllaDB:
             from conduit_lib.database.scylladb.db import load_scylla_database
+
             logger.info(f"Using ScyllaDB implementation")
             return load_scylla_database(worker_id)
         raise ValueError(f"Unsupported db_type: {db_type}")
@@ -158,10 +157,6 @@ class DBInterface(abc.ABC):
 
     @abc.abstractmethod
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
-        pass
-
-    @abc.abstractmethod
-    def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
         pass
 
     @abc.abstractmethod
@@ -247,10 +242,6 @@ class DBInterface(abc.ABC):
 
     @abc.abstractmethod
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
-        pass
-
-    @abc.abstractmethod
-    def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
         pass
 
     @abc.abstractmethod

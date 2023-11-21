@@ -20,7 +20,6 @@ from ..db_interface.types import (
     MinedTxHashes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
-    OutputRow,
     InputRow,
     PushdataRow,
 )
@@ -138,9 +137,6 @@ class MySQLDatabase(DBInterface):
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.bulk_load_mempool_tx_rows(tx_rows)
 
-    def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
-        self.bulk_loads.bulk_load_output_rows(out_rows)
-
     def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
         self.bulk_loads.bulk_load_input_rows(in_rows)
 
@@ -204,9 +200,6 @@ class MySQLDatabase(DBInterface):
         self.queries.add_to_mempool()
 
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
-        raise NotImplementedError()
-
-    def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
         raise NotImplementedError()
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:

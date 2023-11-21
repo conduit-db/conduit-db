@@ -58,7 +58,6 @@ class ScyllaDBTables:
                 "inputs_table",
                 "mempool_transactions",
                 "pushdata",
-                "txo_table",
             ]
             for table_name in tables_to_drop:
                 self.execute_query(f"DROP TABLE IF EXISTS {table_name};")
@@ -97,17 +96,6 @@ class ScyllaDBTables:
                     tx_block_num int,
                     tx_position bigint,
                     PRIMARY KEY (tx_hash, tx_block_num)
-                );
-                """
-            )
-
-            self.session.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS txo_table (
-                    out_tx_hash blob,
-                    out_idx int,
-                    out_value bigint,
-                    PRIMARY KEY (out_tx_hash, out_idx)
                 );
                 """
             )

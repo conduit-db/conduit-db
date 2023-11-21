@@ -6,9 +6,14 @@ from concurrent.futures import ThreadPoolExecutor
 import bitcoinx
 from typing import TypeVar, Sequence, Any, cast, Iterator
 
-from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure, ProtocolVersion
-from cassandra.cluster import Cluster, Session, ResultSet, \
-    DCAwareRoundRobinPolicy, TokenAwarePolicy  # pylint:disable=E0611
+from cassandra import ConsistencyLevel, WriteTimeout, WriteFailure, ProtocolVersion  # pylint:disable=E0611
+from cassandra.cluster import (  # pylint:disable=E0611
+    Cluster,
+    Session,
+    ResultSet,
+    DCAwareRoundRobinPolicy,
+    TokenAwarePolicy,
+)
 from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 from cassandra.query import PreparedStatement  # pylint:disable=E0611
 
@@ -19,7 +24,6 @@ from conduit_lib.database.db_interface.types import (
     MinedTxHashes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
-    OutputRow,
     InputRow,
     PushdataRow,
 )
@@ -144,9 +148,6 @@ class ScyllaDB(DBInterface):
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.bulk_load_mempool_tx_rows(tx_rows)
 
-    def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
-        self.bulk_loads.bulk_load_output_rows(out_rows)
-
     def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
         self.bulk_loads.bulk_load_input_rows(in_rows)
 
@@ -214,9 +215,6 @@ class ScyllaDB(DBInterface):
 
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
         return self.queries.delete_pushdata_rows(pushdata_rows)
-
-    def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
-        return self.queries.delete_output_rows(output_rows)
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:
         return self.queries.delete_input_rows(input_rows)

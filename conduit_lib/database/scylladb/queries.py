@@ -10,7 +10,7 @@ from cassandra.cluster import Session  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
 from cassandra.query import BatchStatement  # pylint:disable=E0611
 
-from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, OutputRow
+from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -212,22 +212,6 @@ class ScyllaDBQueries:
         self.logger.log(
             PROFILING,
             f"elapsed time for bulk delete of pushdata rows = {t1} seconds for {len(pushdata_rows)}",
-        )
-
-    def delete_output_rows(self, output_rows: list[OutputRow]) -> None:
-        t0 = time.time()
-        batch = BatchStatement(consistency_level=ConsistencyLevel.QUORUM)
-        for i, (out_tx_hash, out_idx, out_value) in enumerate(output_rows):
-            out_tx_hash_bytes = bytes.fromhex(out_tx_hash)
-            batch.add(
-                "DELETE FROM txo_table WHERE out_tx_hash = %s AND out_idx = %s", (out_tx_hash_bytes, out_idx)
-            )
-            if (i + 1) % BATCH_SIZE == 0 or i == len(output_rows) - 1:
-                self.session.execute(batch)
-                batch.clear()
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING, f"elapsed time for bulk delete of output rows = {t1} seconds for {len(output_rows)}"
         )
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:

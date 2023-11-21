@@ -72,7 +72,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             zmq.SocketType.PUSH,
             [(zmq.SocketOption.SNDHWM, 10000)],
         )
-        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+        txs, txs_mempool, ins, pds, acks = reset_rows()
         all_tip_filter_notifications: list[TipFilterNotifications] = []
         try:
             while True:
@@ -86,8 +86,8 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     if not confirmed_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(
-                        confirmed_rows, txs, txs_mempool, ins, outs, pds
+                    txs, txs_mempool, ins, pds = extend_batched_rows(
+                        confirmed_rows, txs, txs_mempool, ins, pds
                     )
                     acks.extend(new_acks)
                     all_tip_filter_notifications.append(tip_filter_notifications)
@@ -99,7 +99,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_confirmed(
                             self,
-                            DBFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcks(txs, txs_mempool, ins, pds, acks),
                             db=db,
                         )
                         for tfn in all_tip_filter_notifications:
@@ -107,7 +107,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                             self.parent.send_pushdata_match_notifications(
                                 tfn.pushdata_matches, tfn.block_hash
                             )
-                        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+                        txs, txs_mempool, ins, pds, acks = reset_rows()
                         all_tip_filter_notifications = []
 
                 # Post-IBD
@@ -119,10 +119,10 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         ) = maybe_refresh_connection(db, self.last_activity, self.logger)
                         flush_rows_confirmed(
                             self,
-                            DBFlushBatchWithAcks(txs, txs_mempool, ins, outs, pds, acks),
+                            DBFlushBatchWithAcks(txs, txs_mempool, ins, pds, acks),
                             db=db,
                         )
-                        txs, txs_mempool, ins, outs, pds, acks = reset_rows()
+                        txs, txs_mempool, ins, pds, acks = reset_rows()
                     for tfn in all_tip_filter_notifications:
                         self.parent.send_utxo_spend_notifications(tfn.utxo_spends, tfn.block_hash)
                         self.parent.send_pushdata_match_notifications(tfn.pushdata_matches, tfn.block_hash)

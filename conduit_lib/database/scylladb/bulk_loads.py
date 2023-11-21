@@ -10,10 +10,10 @@ from cassandra.cluster import Session  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent  # pylint:disable=E0611
 from cassandra.query import PreparedStatement, BatchStatement, BatchType  # pylint:disable=E0611
 
+from .exceptions import FailedScyllaOperation
 from ..db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
-    OutputRow,
     InputRow,
     PushdataRow,
 )
@@ -40,8 +40,9 @@ class ScyllaDBBulkLoads:
         self.total_db_time = 0.0
         self.total_rows_flushed_since_startup = 0
 
-    def load_data_batched(self, insert_statement: PreparedStatement,
-            rows: Sequence[tuple[Any, ...]], max_retries: int=3) -> None:
+    def load_data_batched(
+        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], max_retries: int = 3
+    ) -> None:
         """This function requires that the `insert_statement` is idempotent so that failed
         UNLOGGED batches (which are not atomic and may be partially applied) can be retries and
         overwrite the rows that were already written as part of the partial batch.
@@ -60,8 +61,7 @@ class ScyllaDBBulkLoads:
             batches[batch_index].add(insert_statement, row)
 
         # Function to execute batches and return those that failed
-        def execute_and_find_failures(batches_to_execute: list[BatchStatement]) \
-                -> list[BatchStatement]:
+        def execute_and_find_failures(batches_to_execute: list[BatchStatement]) -> list[BatchStatement]:
             results = execute_concurrent(
                 self.db.session,
                 [(batch, ()) for batch in batches_to_execute],
@@ -86,14 +86,17 @@ class ScyllaDBBulkLoads:
 
             retry_delay = INITIAL_RETRY_DELAY * (2 ** (attempt - 2))
             time.sleep(retry_delay)
-            self.logger.warning(f"Retrying {len(failed_batches)} failed batches, attempt {attempt} "
-                f"of {max_retries} after {retry_delay} seconds")
+            self.logger.warning(
+                f"Retrying {len(failed_batches)} failed batches, attempt {attempt} "
+                f"of {max_retries} after {retry_delay} seconds"
+            )
             failed_batches = execute_and_find_failures(failed_batches)
 
         # Logging the result
         if failed_batches:
-            self.logger.error(f"Failed to write some rows after {max_retries} attempts")
-            raise  # crash the server
+            self.logger.error(f"Failed to write rows after {max_retries} attempts")
+            # crash out
+            raise FailedScyllaOperation(f"Failed to write rows after {max_retries} attempts")
         else:
             self.total_rows_flushed_since_startup += len(rows)
             self.logger.log(
@@ -102,8 +105,9 @@ class ScyllaDBBulkLoads:
                 f"{self.total_rows_flushed_since_startup}",
             )
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) \
-            -> list[ConfirmedTransactionRow]:
+    def handle_coinbase_dup_tx_hash(
+        self, tx_rows: list[ConfirmedTransactionRow]
+    ) -> list[ConfirmedTransactionRow]:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
@@ -144,6 +148,7 @@ class ScyllaDBBulkLoads:
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         """This uses redis but it is included here to make it easier to translate from
         MySQL to ScyllaDB"""
+
         def load_batch(batch: list[bytes]) -> None:
             self.db.cache.r.sadd("mempool", *batch)
 
@@ -153,7 +158,7 @@ class ScyllaDBBulkLoads:
         futures = []
         assert self.db.executor is not None
         for i in range(0, len(tx_rows), batch_size):
-            batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i:i+batch_size]]
+            batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i : i + batch_size]]
             future = self.db.executor.submit(load_batch, batch)
             futures.append(future)
 
@@ -162,20 +167,7 @@ class ScyllaDBBulkLoads:
 
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
-        )
-
-    def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
-        t0 = time.time()
-        insert_statement = self.session.prepare(
-            "INSERT INTO txo_table (out_tx_hash, out_idx, out_value) VALUES (?, ?, ?)"
-        )
-        insert_rows = [(bytes.fromhex(row.out_tx_hash), row.out_idx, row.out_value) for row in out_rows]
-        self.load_data_batched(insert_statement, insert_rows)
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING, f"elapsed time for bulk_load_output_rows = {t1} seconds for {len(out_rows)}"
+            PROFILING, f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
     def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:

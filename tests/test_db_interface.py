@@ -17,7 +17,6 @@ from conduit_lib.database.db_interface.types import (
     MempoolTransactionRow,
     ConfirmedTransactionRow,
     InputRow,
-    OutputRow,
     PushdataRow,
 )
 from conduit_lib.database.mysql.db import MySQLDatabase
@@ -27,7 +26,8 @@ from conduit_lib.types import (
     TxMetadata,
     RestorationFilterQueryResult,
     TxLocation,
-    PushdataMatchFlags, OutpointType,
+    PushdataMatchFlags,
+    OutpointType,
 )
 
 
@@ -198,7 +198,6 @@ class TestDBInterface:
                 ('outbound_data',),
                 ('pushdata',),
                 ('tip_filter_registrations',),
-                ('txo_table',),
             ]
         else:
             assert tables == (
@@ -211,7 +210,6 @@ class TestDBInterface:
                 ('outbound_data',),
                 ('pushdata',),
                 ('tip_filter_registrations',),
-                ('txo_table',),
             )
 
     def test_temp_mined_tx_hashes_table(self, db: DBInterface) -> None:
@@ -271,8 +269,7 @@ class TestDBInterface:
             assert len(rows) == 0
 
         # Filled
-        db.bulk_load_confirmed_tx_rows(tx_rows=[row1, row2, row_special_case],
-            check_duplicates=True)
+        db.bulk_load_confirmed_tx_rows(tx_rows=[row1, row2, row_special_case], check_duplicates=True)
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.session is not None
             result = db.session.execute(
@@ -297,10 +294,10 @@ class TestDBInterface:
         db.bulk_load_input_rows(in_rows=[])
         txid1 = 'aa' * HashXLength
         txid2 = 'bb' * HashXLength
-        full_tx_hash1 = bytes.fromhex('aa'*32)
-        full_tx_hash2 = bytes.fromhex('bb'*32)
-        row1 = InputRow(out_tx_hash=txid1, out_idx=1, in_tx_hash='cc'*HashXLength, in_idx=1)
-        row2 = InputRow(out_tx_hash=txid2, out_idx=2, in_tx_hash='dd'*HashXLength, in_idx=2)
+        full_tx_hash1 = bytes.fromhex('aa' * 32)
+        full_tx_hash2 = bytes.fromhex('bb' * 32)
+        row1 = InputRow(out_tx_hash=txid1, out_idx=1, in_tx_hash='cc' * HashXLength, in_idx=1)
+        row2 = InputRow(out_tx_hash=txid2, out_idx=2, in_tx_hash='dd' * HashXLength, in_idx=2)
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
@@ -329,51 +326,12 @@ class TestDBInterface:
             rows = result.fetch_row(0)
         assert rows[0][0].hex() == txid1
         assert rows[0][1] == 1
-        assert rows[0][2].hex() == 'cc'*HashXLength
+        assert rows[0][2].hex() == 'cc' * HashXLength
         assert rows[0][3] == 1
         assert rows[1][0].hex() == txid2
         assert rows[1][1] == 2
-        assert rows[1][2].hex() == 'dd'*HashXLength
+        assert rows[1][2].hex() == 'dd' * HashXLength
         assert rows[1][3] == 2
-
-    def test_txo_table(self, db: DBInterface) -> None:
-        db.bulk_load_output_rows(out_rows=[])
-        txid1 = 'aa' * HashXLength
-        txid2 = 'bb' * HashXLength
-        row1 = OutputRow(out_tx_hash=txid1, out_idx=1, out_value=1)
-        row2 = OutputRow(out_tx_hash=txid2, out_idx=2, out_value=2)
-
-        # Empty
-        if db.db_type == DatabaseType.ScyllaDB:
-            assert db.session is not None
-            result = db.session.execute("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
-            rows = result.all()
-            assert len(rows) == 0
-        else:
-            assert db.conn is not None
-            db.conn.query("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
-            result = db.conn.store_result()
-            rows = result.fetch_row(0)
-            assert len(rows) == 0
-
-        # Filled
-        db.bulk_load_output_rows(out_rows=[row1, row2])
-        if db.db_type == DatabaseType.ScyllaDB:
-            assert db.session is not None
-            result = db.session.execute("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
-            rows = result.all()
-            rows.sort()
-        else:
-            assert db.conn is not None
-            db.conn.query("SELECT out_tx_hash, out_idx, out_value FROM txo_table")
-            result = db.conn.store_result()
-            rows = result.fetch_row(0)
-        assert rows[0][0].hex() == txid1
-        assert rows[0][1] == 1
-        assert rows[0][2] == 1
-        assert rows[1][0].hex() == txid2
-        assert rows[1][1] == 2
-        assert rows[1][2] == 2
 
     def test_pushdata_table(self, db: DBInterface) -> None:
         db.drop_tables()
@@ -792,7 +750,7 @@ class TestDBInterface:
         db.bulk_load_headers(block_header_rows=[row1, row2])
 
         # Non-existent block hash
-        header_data = db.get_header_data(bytes.fromhex("ff"*HashXLength))
+        header_data = db.get_header_data(bytes.fromhex("ff" * HashXLength))
         assert header_data is None
 
         # This one is orphaned so should be filtered out of the result
@@ -803,8 +761,7 @@ class TestDBInterface:
         header_data = db.get_header_data(bytes.fromhex(block_hash2))
         assert header_data == row2
 
-        header_data_without_raw_header = db.get_header_data(bytes.fromhex(block_hash2),
-            raw_header_data=False)
+        header_data_without_raw_header = db.get_header_data(bytes.fromhex(block_hash2), raw_header_data=False)
         assert header_data_without_raw_header == row2._replace(block_header=None)
 
     def test_get_transaction_metadata_hashX(self, db: DBInterface) -> None:
@@ -908,15 +865,18 @@ class TestDBInterface:
         db.bulk_load_input_rows(in_rows=[in_row1])
 
         # Confirmed Transaction Rows
-        tx_row_spent_input = ConfirmedTransactionRow(tx_hash=in_tx_hash_reorged,
-            tx_block_num=1, tx_position=1)
-        tx_row_spent_input_reorg = ConfirmedTransactionRow(tx_hash=in_tx_hash_reorged,
-            tx_block_num=3, tx_position=1)
+        tx_row_spent_input = ConfirmedTransactionRow(
+            tx_hash=in_tx_hash_reorged, tx_block_num=1, tx_position=1
+        )
+        tx_row_spent_input_reorg = ConfirmedTransactionRow(
+            tx_hash=in_tx_hash_reorged, tx_block_num=3, tx_position=1
+        )
         tx_row1 = ConfirmedTransactionRow(tx_hash=out_tx_hash_reorged, tx_block_num=1, tx_position=418)
         tx_row2 = ConfirmedTransactionRow(tx_hash=out_tx_hash_reorged, tx_block_num=3, tx_position=369)
         tx_row3 = ConfirmedTransactionRow(tx_hash=out_tx_hash2, tx_block_num=3, tx_position=400)
-        db.bulk_load_confirmed_tx_rows(tx_rows=[tx_row1, tx_row2, tx_row3,
-            tx_row_spent_input, tx_row_spent_input_reorg])
+        db.bulk_load_confirmed_tx_rows(
+            tx_rows=[tx_row1, tx_row2, tx_row3, tx_row_spent_input, tx_row_spent_input_reorg]
+        )
 
         # Header Rows
         block_hash1 = "aa" * 32
@@ -992,30 +952,34 @@ class TestDBInterface:
         block_num: int
         tx_position: int  # 0-based index in block
         loc_tx_spent_input = TxLocation(block_hash=bytes.fromhex(block_hash1), block_num=1, tx_position=1)
-        loc_tx_spent_input_reorged = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=1)
+        loc_tx_spent_input_reorged = TxLocation(
+            block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=1
+        )
         loc_tx1 = TxLocation(block_hash=bytes.fromhex(block_hash1), block_num=1, tx_position=418)
         loc_tx2 = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=369)
         loc_tx3 = TxLocation(block_hash=bytes.fromhex(block_hash3), block_num=3, tx_position=400)
 
         def mock_get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
             if tx_location == loc_tx_spent_input_reorged:
-                return bytes.fromhex('cc'*32)
+                return bytes.fromhex('cc' * 32)
             elif tx_location == loc_tx_spent_input:
-                return bytes.fromhex('cc'*32)
+                return bytes.fromhex('cc' * 32)
             elif tx_location == loc_tx1:
-                return bytes.fromhex('aa'*32)
+                return bytes.fromhex('aa' * 32)
             elif tx_location == loc_tx2:
-                return bytes.fromhex('aa'*32)
+                return bytes.fromhex('aa' * 32)
             elif tx_location == loc_tx3:
-                return bytes.fromhex('bb'*32)
+                return bytes.fromhex('bb' * 32)
             else:
                 raise ValueError(f"Not expecting this tx_location: {tx_location}")
 
         module_name = 'mysql'
         if db.db_type == DatabaseType.ScyllaDB:
             module_name = 'scylladb'
-        with patch(f'conduit_lib.database.{module_name}.api_queries.get_full_tx_hash',
-                side_effect=mock_get_full_tx_hash):
+        with patch(
+            f'conduit_lib.database.{module_name}.api_queries.get_full_tx_hash',
+            side_effect=mock_get_full_tx_hash,
+        ):
             lmdb = Mock(spec=LMDB_Database)
             # Should return a match for outpoint1 but outpoint2 is a utxo
             spent_outpoints = db.get_spent_outpoints(entries=[outpoint1, outpoint2], lmdb=lmdb)
@@ -1025,7 +989,8 @@ class TestDBInterface:
                 out_idx=1,
                 in_tx_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
                 in_idx=1,
-                block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc')
+                block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+            )
 
     def test_get_unprocessed_txs(self, db: DBInterface) -> None:
         db.drop_tables()
@@ -1077,14 +1042,13 @@ class TestDBInterface:
 
         # Check for correct invalidation
         db.bulk_load_mempool_tx_rows(
-            tx_rows=[MempoolTransactionRow(txid1), MempoolTransactionRow(txid2),
-                MempoolTransactionRow(txid3)])
+            tx_rows=[MempoolTransactionRow(txid1), MempoolTransactionRow(txid2), MempoolTransactionRow(txid3)]
+        )
         db.load_temp_mined_tx_hashes(mined_tx_hashes=[MinedTxHashes(txid=txid1, block_number=1)])
         assert db.get_mempool_size() == 3
         db.invalidate_mempool_rows()
         if db.db_type == DatabaseType.ScyllaDB:
-            assert set(db.cache.r.smembers(b"mempool")) == \
-                   {bytes.fromhex(txid2), bytes.fromhex(txid3)}
+            assert set(db.cache.r.smembers(b"mempool")) == {bytes.fromhex(txid2), bytes.fromhex(txid3)}
         assert db.get_mempool_size() == 2
 
     def test_delete_transaction_pushdata_input_output_and_header_rows(self, db: DBInterface) -> None:
@@ -1111,9 +1075,7 @@ class TestDBInterface:
         db.bulk_load_pushdata_rows(pd_rows=[pd_row1, pd_row2])
 
         # Input Rows
-        in_row1 = InputRow(
-            out_tx_hash=out_tx_hash1, out_idx=1, in_tx_hash=in_tx_hash1, in_idx=1
-        )
+        in_row1 = InputRow(out_tx_hash=out_tx_hash1, out_idx=1, in_tx_hash=in_tx_hash1, in_idx=1)
         in_row2 = InputRow(out_tx_hash=out_tx_hash2, out_idx=2, in_tx_hash=in_tx_hash2, in_idx=2)
         db.bulk_load_input_rows(in_rows=[in_row1, in_row2])
 
@@ -1121,10 +1083,6 @@ class TestDBInterface:
         tx_row1 = ConfirmedTransactionRow(tx_hash=out_tx_hash1, tx_block_num=1, tx_position=418)
         tx_row2 = ConfirmedTransactionRow(tx_hash=out_tx_hash2, tx_block_num=2, tx_position=400)
         db.bulk_load_confirmed_tx_rows(tx_rows=[tx_row1, tx_row2])
-
-        # Output Rows
-        out_row1 = OutputRow(out_tx_hash=out_tx_hash1, out_idx=1, out_value=1000)
-        out_row2 = OutputRow(out_tx_hash=out_tx_hash2, out_idx=2, out_value=2000)
 
         # Header Rows
         block_hash1 = "aa" * 32
@@ -1155,9 +1113,7 @@ class TestDBInterface:
         db.delete_transaction_rows(tx_hash_hexes=[out_tx_hash1, out_tx_hash2])
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.session is not None
-            result = db.session.execute(
-                "SELECT * FROM confirmed_transactions"
-            )
+            result = db.session.execute("SELECT * FROM confirmed_transactions")
         else:
             assert db.conn is not None
             db.conn.query("SELECT * FROM confirmed_transactions")
@@ -1172,27 +1128,19 @@ class TestDBInterface:
 
         db.delete_pushdata_rows(pushdata_rows=[])
         db.delete_pushdata_rows(pushdata_rows=[pd_row1, pd_row2])
-        db.delete_output_rows(output_rows=[])
-        db.delete_output_rows(output_rows=[out_row1, out_row2])
         db.delete_input_rows(input_rows=[])
         db.delete_input_rows(input_rows=[in_row1, in_row2])
         db.delete_header_rows(block_hashes=[])
-        db.delete_header_rows(block_hashes=[bytes.fromhex(block_header_row1.block_hash),
-            bytes.fromhex(block_header_row2.block_hash)])
-        assert len(result.all()) == 0
-        result = db.session.execute(
-            "SELECT * FROM pushdata"
+        db.delete_header_rows(
+            block_hashes=[
+                bytes.fromhex(block_header_row1.block_hash),
+                bytes.fromhex(block_header_row2.block_hash),
+            ]
         )
         assert len(result.all()) == 0
-        result = db.session.execute(
-            "SELECT * FROM txo_table"
-        )
+        result = db.session.execute("SELECT * FROM pushdata")
         assert len(result.all()) == 0
-        result = db.session.execute(
-            "SELECT * FROM inputs_table"
-        )
+        result = db.session.execute("SELECT * FROM inputs_table")
         assert len(result.all()) == 0
-        result = db.session.execute(
-            "SELECT * FROM headers"
-        )
+        result = db.session.execute("SELECT * FROM headers")
         assert len(result.all()) == 0

@@ -13,7 +13,6 @@ import MySQLdb
 from ..db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
-    OutputRow,
     InputRow,
     PushdataRow,
 )
@@ -226,17 +225,6 @@ class MySQLBulkLoads:
         self.logger.log(
             PROFILING,
             f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}",
-        )
-
-    def bulk_load_output_rows(self, out_rows: list[OutputRow]) -> None:
-        t0 = time.time()
-        string_rows = ["%s,%s,%s\n" % (row) for row in out_rows]
-        column_names = ["out_tx_hash", "out_idx", "out_value"]
-        self._load_data_infile_batched("txo_table", string_rows, column_names, binary_column_indices=[0])
-        t1 = time.time() - t0
-        self.logger.log(
-            PROFILING,
-            f"elapsed time for bulk_load_output_rows = {t1} seconds for {len(out_rows)}",
         )
 
     def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:

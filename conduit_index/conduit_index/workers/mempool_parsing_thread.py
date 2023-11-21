@@ -101,10 +101,8 @@ class MempoolParsingThread(threading.Thread):
         (
             tx_rows_batched,
             in_rows_batched,
-            out_rows_batched,
             set_pd_rows_batched,
         ) = (
-            [],
             [],
             [],
             [],
@@ -119,7 +117,6 @@ class MempoolParsingThread(threading.Thread):
                 tx_rows,
                 tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -128,7 +125,6 @@ class MempoolParsingThread(threading.Thread):
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
             tx_rows_batched.extend(tx_rows_mempool)
             in_rows_batched.extend(input_rows_for_flushing)
-            out_rows_batched.extend(out_rows)
             set_pd_rows_batched.extend(pushdata_rows_for_flushing)
 
         num_mempool_txs_processed = len(tx_rows_batched)
@@ -139,7 +135,6 @@ class MempoolParsingThread(threading.Thread):
                     [],
                     tx_rows_batched,
                     in_rows_batched,
-                    out_rows_batched,
                     set_pd_rows_batched,
                 ),
                 num_mempool_txs_processed,
