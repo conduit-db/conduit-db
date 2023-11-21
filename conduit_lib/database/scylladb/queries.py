@@ -20,7 +20,7 @@ if typing.TYPE_CHECKING:
     from .db import ScyllaDB
 
 
-BATCH_SIZE = 10000
+BATCH_SIZE = 1000
 
 
 class ScyllaDBQueries:

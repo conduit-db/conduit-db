@@ -200,13 +200,13 @@ class MySQLDatabase(DBInterface):
         self.queries.add_to_mempool()
 
     def delete_pushdata_rows(self, pushdata_rows: list[PushdataRow]) -> None:
-        raise NotImplementedError()
+        pass
 
     def delete_input_rows(self, input_rows: list[InputRow]) -> None:
-        raise NotImplementedError()
+        pass
 
     def delete_header_rows(self, block_hashes: list[bytes]) -> None:
-        raise NotImplementedError()
+        pass
 
     def get_header_data(self, block_hash: bytes, raw_header_data: bool = True) -> BlockHeaderRow | None:
         return self.api_queries.get_header_data(block_hash, raw_header_data)

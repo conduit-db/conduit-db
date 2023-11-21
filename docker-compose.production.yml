@@ -11,27 +11,32 @@ services:
 
   scylladb:
     image: scylladb/scylla
+    network_mode: host
     ports:
       - "9042:9042"
       - "19042:19042"
     env_file: .env.docker.production
     volumes:
-      - ./conduitdb_data_ssd/scylla/data:/var/lib/scylla/data
+      - ${SCYLLA_CONF_DIR}/scylla.yml:/etc/scylla/scylla.yml
+      - ${SCYLLA_DATA_DIR}:/var/lib/scylla/data
     cpus: 30
     cpuset: 2-31
     mem_limit: 64G
 
   redis:
     image: redis:latest
+    network_mode: host
     ports:
       - "6379:6379"
     env_file: .env.docker.production
-    mem_limit: 12G
+    volumes:
+      - ${REDIS_CONF_DIR}/redis.conf:/usr/local/etc/redis/redis.conf
 
   conduit-raw:
     build:
       context: .
       dockerfile: ./conduit_raw/Dockerfile
+    network_mode: host
     ports:
       - "50000:50000"
       - "34525:34525"
@@ -42,35 +47,42 @@ services:
       - "60003:60003"
     depends_on:
       - scylladb
+    stdin_open: true
+    tty: true
     env_file: .env.docker.production
     environment:
       - MODE=PRODUCTION
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
       - LMDB_DATABASE_PATH=/opt/lmdb_data
-      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
-      - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      - ZMQ_CONNECT_HOST=127.0.0.1
+      - REFERENCE_SERVER_HOST=127.0.0.1
     working_dir: /opt
     volumes:
-      - ./conduitdb_data_hdd:/opt/conduit_data_hdd
-      - ./conduitdb_data_ssd:/opt/conduit_data_ssd
-      - ./conduitdb_data_ssd/lmdb_data:/opt/lmdb_data
+      - ${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
+      - ${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
+      - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 
   conduit-index:
     build:
       context: .
       dockerfile: ./conduit_index/Dockerfile
+    network_mode: host
     depends_on:
       - scylladb
       - conduit-raw
+    stdin_open: true
+    tty: true
+    env_file: .env.docker.production
     environment:
       - MODE=PRODUCTION
-      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
-      - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      - IPC_SOCKET_SERVER_HOST=127.0.0.1:50000
+      - ZMQ_CONNECT_HOST=127.0.0.1
     working_dir: /opt
     volumes:
-      - ./conduitdb_data_hdd:/opt/conduit_data_hdd
-      - ./conduitdb_data_ssd:/opt/conduit_data_ssd
+      - ${CONDUIT_INDEX_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 
   reference_server:
@@ -81,6 +93,7 @@ services:
     build:
       context: .
       dockerfile: ./contrib/reference_server/Dockerfile
+    network_mode: host
     ports:
       - "47124:47124"
       - "47126:47126"
@@ -91,14 +104,17 @@ services:
       INTERNAL_HOST: "0.0.0.0"
       INTERNAL_PORT: 47126
       EXPOSE_HEADER_SV_APIS: 1
-      HEADER_SV_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
+      HEADER_SV_URL: 'http://127.0.0.1:34525'
       EXPOSE_PAYMAIL_APIS: 1
       EXPOSE_INDEXER_APIS: 1
-      INDEXER_URL: 'http://${DOCKER_GATEWAY_HOST:-host.docker.internal}:34525'
+      INDEXER_URL: 'http://127.0.0.1:34525'
       NOTIFICATION_TEXT_NEW_MESSAGE: New message arrived
       MAX_MESSAGE_CONTENT_LENGTH: 65536
       CHUNKED_BUFFER_SIZE: 1024
       NETWORK: regtest
       ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    working_dir: /reference_server
+    volumes:
+      - ${REFERENCE_SERVER_DIR}:/reference_server/localdata
     command:
       sh -c 'python3 /reference_server/server.py'

@@ -15,9 +15,6 @@ if typing.TYPE_CHECKING:
     from .db import ScyllaDB
 
 
-KEYSPACE = 'conduitdb'
-
-
 class ScyllaDBTables:
     def __init__(self, db: "ScyllaDB") -> None:
         self.db = db
@@ -82,12 +79,6 @@ class ScyllaDBTables:
         self.db.cache.r.delete(b"temp_orphaned_txs")
 
     def create_permanent_tables(self) -> None:
-        self.session.execute(
-            f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
-            "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }"
-        )
-        self.session.set_keyspace(KEYSPACE)
-
         try:
             self.session.execute(
                 f"""

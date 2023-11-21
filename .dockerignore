@@ -80,3 +80,8 @@ data
 /tests_functional
 */conduitdb_data_ssd/*
 */conduitdb_data_hdd/*
+conduit_index_data_ssd/
+conduit_index_data_hdd/
+conduit_raw_data_ssd/
+conduit_raw_data_hdd/
+scylla_data/

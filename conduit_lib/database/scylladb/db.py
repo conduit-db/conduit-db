@@ -43,6 +43,8 @@ from conduit_lib.types import (
 
 T1 = TypeVar("T1")
 
+KEYSPACE = 'conduitdb'
+
 
 class ScyllaDB(DBInterface):
     def __init__(self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int | None) -> None:
@@ -55,7 +57,6 @@ class ScyllaDB(DBInterface):
         self.worker_id = worker_id
 
         self.tables = ScyllaDBTables(self)
-        self.create_permanent_tables()
         self.bulk_loads = ScyllaDBBulkLoads(self)
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
@@ -287,6 +288,7 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 executor_threads=4,
                 connect_timeout=30,
+                idle_heartbeat_interval=15
                 # auth_provider=auth_provider,
             )
             session = cluster.connect()
@@ -294,6 +296,11 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
             session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
             logging.getLogger('cassandra').setLevel(logging.WARNING)
             logger.info("ScyllaDB is now available")
+            session.execute(
+                f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
+                "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }"
+            )
+            session.set_keyspace(KEYSPACE)
 
             cache = RedisCache()
             return ScyllaDB(cluster, session, cache, worker_id=worker_id)

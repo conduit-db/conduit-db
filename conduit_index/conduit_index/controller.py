@@ -392,15 +392,12 @@ class Controller(ControllerBase):
             batched_pd_rows.extend(pushdata_rows_for_flushing)
             batched_header_hashes.append(block_hash)
 
-        # Delete All
+        # Delete all partially flushed rows and then start over fresh from the last good tip
         tx_hashes = [row[0] for row in batched_tx_rows]
         self.db.delete_transaction_rows(tx_hashes)
-
-        # Commented out because way too slow in MySQL...
-        # ScyllaDB will be a different story because of merge operator under the hood
-        # self.db.delete_pushdata_rows(batched_pd_rows)
-        # self.db.delete_input_rows(batched_in_rows)
-        # self.db.delete_header_rows(batched_header_hashes)
+        self.db.delete_pushdata_rows(batched_pd_rows)
+        self.db.delete_input_rows(batched_in_rows)
+        self.db.delete_header_rows(batched_header_hashes)
 
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects

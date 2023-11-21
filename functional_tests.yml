@@ -6,8 +6,8 @@ parameters:
 steps:
 - script: |
     export DOCKER_GATEWAY_HOST=172.17.0.1
-    chmod +x ./build.sh
-    ./build.sh
+    docker build -f ./contrib/python_base/Dockerfile . -t python_base
+    docker-compose -f docker-compose.yml build --parallel
     docker-compose -f docker-compose.yml up -d
     docker-compose -f docker-compose.yml logs
   timeoutInMinutes: 10

@@ -513,6 +513,8 @@ class Controller(ControllerBase):
         current block store tip"""
         is_reorg = any([x.is_reorg for x in batch])
         start_header_height = min([x.start_header.height for x in batch])
+        if start_header_height <= 0:
+            start_header_height = 1
         stop_header_height = max([x.stop_header.height for x in batch])
 
         # We only care about the longest chain headers at this point so
