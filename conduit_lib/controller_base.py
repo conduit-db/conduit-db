@@ -31,7 +31,9 @@ class ControllerBase:
             (target_bytes / (1024**2)) / self.estimated_moving_av_block_size_mb
         )
         if service_type == 'conduit_index':
-            MAX_BLOCK_COUNT = 50
+            MAX_BLOCK_COUNT = 1000
+            if self.headers_threadsafe.tip().height > 200000:
+                MAX_BLOCK_COUNT = 250
         else:
             MAX_BLOCK_COUNT = 250
         estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
