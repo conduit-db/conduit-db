@@ -76,7 +76,7 @@ class ScyllaDBTables:
         self.db.cache.r.delete(b"temp_mempool_removals")
 
     def drop_temp_mempool_additions(self) -> None:
-        self.db.cache.bulk_delete_all_in_namespace(b"temp_mempool_additions")
+        self.db.cache.r.delete(b"temp_mempool_additions")
 
     def drop_temp_orphaned_txs(self) -> None:
         self.db.cache.r.delete(b"temp_orphaned_txs")

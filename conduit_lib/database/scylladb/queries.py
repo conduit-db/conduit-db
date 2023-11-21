@@ -114,15 +114,10 @@ class ScyllaDBQueries:
 
     def add_to_mempool(self) -> None:
         self.logger.debug("Adding reorg differential to mempool")
-        additions = self.session.execute("SELECT tx_hash FROM temp_mempool_additions")
-        batch = BatchStatement()
-        for addition in additions:
-            batch.add(
-                "INSERT INTO mempool_transactions (mp_tx_hash) VALUES (%s)",
-                (addition.tx_hash,),
-            )
-        self.session.execute(batch)
-        self.db.tables.drop_temp_mempool_additions()
+        tx_hashes_to_add = self.db.cache.r.smembers("temp_mempool_additions")
+        if tx_hashes_to_add:
+            self.db.cache.r.sadd("mempool", *tx_hashes_to_add)
+            self.db.tables.drop_temp_mempool_additions()
 
     def update_checkpoint_tip(self, checkpoint_tip: bitcoinx.Header) -> None:
         assert isinstance(checkpoint_tip, bitcoinx.Header)
