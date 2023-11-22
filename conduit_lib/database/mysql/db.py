@@ -96,6 +96,12 @@ class MySQLDatabase(DBInterface):
     def drop_tables(self) -> None:
         self.tables.drop_tables()
 
+    def create_keyspace(self) -> None:
+        pass  # purely for compatibility with DBInterface
+
+    def drop_keyspace(self) -> None:
+        pass  # purely for compatibility with DBInterface
+
     def create_permanent_tables(self) -> None:
         self.tables.create_permanent_tables()
 

@@ -89,7 +89,7 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
             pass
 
 
-def remove_contents(dir_path):
+def remove_contents(dir_path: Path) -> None:
     for item in dir_path.iterdir():
         if item.is_dir():
             shutil.rmtree(item, onerror=remove_readonly)
@@ -101,8 +101,17 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
         database = DBInterface.load_db()
         try:
-            # database.drop_indices()
             database.drop_tables()
+            if int(os.environ.get("RESET_EXTERNAL_API_DATABASE_TABLES", 0)) == 1:
+                database.tip_filter_api.drop_tables()
+                # drop keyspace is necessary for scylladb
+                # Still need to delete the snapshot:
+                # -- nodetool listsnapshots
+                # -- nodetool clearsnapshot <options>
+                database.drop_keyspace()
+                database.create_keyspace()
+                database.tip_filter_api.create_tables()
+                database.create_permanent_tables()
         finally:
             database.close()
 

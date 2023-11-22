@@ -293,3 +293,11 @@ class DBInterface(abc.ABC):
     @abc.abstractmethod
     def drop_temp_mempool_additions(self) -> None:
         pass
+
+    @abc.abstractmethod
+    def create_keyspace(self) -> None:
+        pass
+
+    @abc.abstractmethod
+    def drop_keyspace(self) -> None:
+        pass

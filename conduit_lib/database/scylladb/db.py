@@ -31,7 +31,7 @@ from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
 from conduit_lib.database.scylladb.bulk_loads import ScyllaDBBulkLoads
 from conduit_lib.database.scylladb.queries import ScyllaDBQueries
-from conduit_lib.database.scylladb.tables import ScyllaDBTables
+from conduit_lib.database.scylladb.tables import ScyllaDBTables, KEYSPACE
 from conduit_lib.database.scylladb.tip_filtering import ScyllaDBTipFilterQueries
 from conduit_lib.types import (
     RestorationFilterQueryResult,
@@ -42,8 +42,6 @@ from conduit_lib.types import (
 )
 
 T1 = TypeVar("T1")
-
-KEYSPACE = 'conduitdb'
 
 
 class ScyllaDB(DBInterface):
@@ -57,6 +55,9 @@ class ScyllaDB(DBInterface):
         self.worker_id = worker_id
 
         self.tables = ScyllaDBTables(self)
+        self.create_keyspace()
+        session.set_keyspace(KEYSPACE)
+
         self.bulk_loads = ScyllaDBBulkLoads(self)
         self.queries = ScyllaDBQueries(self)
         self.api_queries = ScyllaDBAPIQueries(self)
@@ -72,6 +73,12 @@ class ScyllaDB(DBInterface):
 
     def commit_transaction(self) -> None:
         pass  # Not used in the ScyllaDB implementation
+
+    def create_keyspace(self) -> None:
+        self.tables.create_keyspace()
+
+    def drop_keyspace(self) -> None:
+        self.tables.drop_keyspace()
 
     def maybe_refresh_connection(self, last_activity: int, logger: logging.Logger) -> tuple[DBInterface, int]:
         return self, int(time.time())
@@ -296,12 +303,6 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
             session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
             logging.getLogger('cassandra').setLevel(logging.WARNING)
             logger.info("ScyllaDB is now available")
-            session.execute(
-                f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
-                "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }"
-            )
-            session.set_keyspace(KEYSPACE)
-
             cache = RedisCache()
             return ScyllaDB(cluster, session, cache, worker_id=worker_id)
         except (NoHostAvailable, ConnectionRefusedError):

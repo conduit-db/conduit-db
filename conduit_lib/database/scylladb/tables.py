@@ -15,6 +15,9 @@ if typing.TYPE_CHECKING:
     from .db import ScyllaDB
 
 
+KEYSPACE = 'conduitdb'
+
+
 class ScyllaDBTables:
     def __init__(self, db: "ScyllaDB") -> None:
         self.db = db
@@ -181,3 +184,12 @@ class ScyllaDBTables:
                 )
         except Exception:
             self.logger.exception("initialise_checkpoint_state failed unexpectedly")
+
+    def create_keyspace(self) -> None:
+        self.db.session.execute(
+            f"CREATE KEYSPACE IF NOT EXISTS {KEYSPACE} "
+            "WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': '1' }"
+        )
+
+    def drop_keyspace(self) -> None:
+        self.execute_query(f"DROP KEYSPACE IF EXISTS {KEYSPACE}")
