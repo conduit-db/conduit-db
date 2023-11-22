@@ -57,6 +57,10 @@ services:
       - ZMQ_CONNECT_HOST=127.0.0.1
       - REFERENCE_SERVER_HOST=127.0.0.1
     working_dir: /opt
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
     volumes:
       - ${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
       - ${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
@@ -79,6 +83,10 @@ services:
       - MODE=PRODUCTION
       - IPC_SOCKET_SERVER_HOST=127.0.0.1:50000
       - ZMQ_CONNECT_HOST=127.0.0.1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
     working_dir: /opt
     volumes:
       - ${CONDUIT_INDEX_DATA_SSD}:/opt/conduitdb_data_ssd
@@ -113,6 +121,10 @@ services:
       CHUNKED_BUFFER_SIZE: 1024
       NETWORK: regtest
       ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
     working_dir: /reference_server
     volumes:
       - ${REFERENCE_SERVER_DIR}:/reference_server/localdata
