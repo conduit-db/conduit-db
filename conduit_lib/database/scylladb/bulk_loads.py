@@ -50,7 +50,7 @@ class ScyllaDBBulkLoads:
         When ScyllaDB is saturated with compactions etc. the RETRY_DELAY gives it some breathing
         room
         """
-        BATCH_SIZE = 1000
+        BATCH_SIZE = 500
         INITIAL_RETRY_DELAY = 5  # Initial delay in seconds before retrying
 
         num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)

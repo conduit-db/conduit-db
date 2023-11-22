@@ -20,7 +20,7 @@ if typing.TYPE_CHECKING:
     from .db import ScyllaDB
 
 
-BATCH_SIZE = 1000
+BATCH_SIZE = 500
 
 
 class ScyllaDBQueries:
@@ -77,7 +77,7 @@ class ScyllaDBQueries:
         def remove_batch(batch: list[bytes]) -> None:
             self.db.cache.r.srem(b"mempool", *batch)
 
-        batch_size = 10000
+        batch_size = 500
         mined_tx_hashes_list = list(mined_tx_hashes)
 
         futures = []
