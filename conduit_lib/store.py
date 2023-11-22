@@ -89,6 +89,14 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
             pass
 
 
+def remove_contents(dir_path):
+    for item in dir_path.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item, onerror=remove_readonly)
+        else:
+            item.unlink()
+
+
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
         database = DBInterface.load_db()
@@ -102,10 +110,10 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
     if os.environ["SERVER_TYPE"] == "ConduitRaw" and int(os.environ.get("RESET_CONDUIT_RAW", 0)) == 1:
         if DATADIR_SSD.exists():
-            shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
+            remove_contents(DATADIR_SSD)
 
         if DATADIR_HDD.exists():
-            shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
+            remove_contents(DATADIR_HDD)
 
     os.makedirs(DATADIR_SSD, exist_ok=True)
     os.makedirs(DATADIR_HDD, exist_ok=True)
