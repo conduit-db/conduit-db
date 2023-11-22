@@ -65,3 +65,4 @@ block593161.offsets
 /tests/data/
 */conduitdb_data_ssd/*
 */conduitdb_data_hdd/*
+.env.docker.production
