@@ -112,7 +112,7 @@ class ScyllaDBTables:
                     pushdata_hash blob,
                     tx_hash blob,
                     idx bigint,
-                    ref_type smallint,
+                    ref_type tinyint,
                     PRIMARY KEY (pushdata_hash, tx_hash, idx, ref_type)
                 );
                 """

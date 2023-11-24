@@ -105,14 +105,8 @@ def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
             if int(os.environ.get("RESET_EXTERNAL_API_DATABASE_TABLES", 0)) == 1:
                 assert database.tip_filter_api is not None
                 database.tip_filter_api.drop_tables()
-                # drop keyspace is necessary for scylladb
-                # Still need to delete the snapshot:
-                # -- nodetool listsnapshots
-                # -- nodetool clearsnapshot <options>
-                database.drop_keyspace()
-                database.create_keyspace()
                 database.tip_filter_api.create_tables()
-                database.create_permanent_tables()
+            database.create_permanent_tables()
         finally:
             database.close()
 
