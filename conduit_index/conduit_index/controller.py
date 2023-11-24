@@ -629,6 +629,9 @@ class Controller(ControllerBase):
                 else:
                     self.logger.debug(f"Potential reorg detected")
                     # This should mean there has been a reorg. The tip should always connect
+                    # otherwise.We requested the batch of headers by *height* so it will be
+                    # missing at least one of the first headers from the reorg chain.
+                    # So we need to scan back a few blocks to include this missing header
                     from_height = max(start_height - OVERKILL_REORG_DEPTH, 1)
                     count = MAIN_BATCH_HEADERS_COUNT_LIMIT + OVERKILL_REORG_DEPTH
                     result = await self.loop.run_in_executor(

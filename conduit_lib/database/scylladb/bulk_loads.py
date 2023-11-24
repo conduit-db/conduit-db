@@ -50,7 +50,7 @@ class ScyllaDBBulkLoads:
         When ScyllaDB is saturated with compactions etc. the RETRY_DELAY gives it some breathing
         room
         """
-        BATCH_SIZE = 500
+        BATCH_SIZE = 350  # warn threshold is 128KiB
         INITIAL_RETRY_DELAY = 5  # Initial delay in seconds before retrying
 
         num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)
@@ -153,7 +153,7 @@ class ScyllaDBBulkLoads:
             self.db.cache.r.sadd("mempool", *batch)
 
         t0 = time.time()
-        batch_size = 1000
+        batch_size = 350  # warn threshold is 128KiB
 
         futures = []
         assert self.db.executor is not None
