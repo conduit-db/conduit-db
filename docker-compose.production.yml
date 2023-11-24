@@ -21,7 +21,7 @@ services:
       - ${SCYLLA_DATA_DIR}:/var/lib/scylla/data
     cpus: 30
     cpuset: 2-31
-    mem_limit: 64G
+    mem_limit: 32G
 
   redis:
     image: redis:latest
@@ -31,6 +31,7 @@ services:
     env_file: .env.docker.production
     volumes:
       - ${REDIS_CONF_DIR}/redis.conf:/usr/local/etc/redis/redis.conf
+    mem_limit: 2G
 
   conduit-raw:
     build:
@@ -67,6 +68,7 @@ services:
       - ${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
       - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
+    mem_limit: 16G
 
   conduit-index:
     build:
@@ -92,6 +94,8 @@ services:
       - ${CONDUIT_INDEX_DATA_SSD}:/opt/conduitdb_data_ssd
       - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
+    mem_limit: 16G
+
 
   reference_server:
     container_name: reference_server
@@ -130,3 +134,4 @@ services:
       - ${REFERENCE_SERVER_DIR}:/reference_server/localdata
     command:
       sh -c 'python3 /reference_server/server.py'
+    mem_limit: 2G
