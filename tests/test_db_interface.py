@@ -821,12 +821,11 @@ class TestDBInterface:
 
         tx_row = db.get_transaction_metadata_hashX(bytes.fromhex(txid_reorged_tx))
         assert tx_row == TxMetadata(
-            tx_hashX=b'\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa',
+            tx_hashX=bytes.fromhex(txid_reorged_tx),
             tx_block_num=3,
             tx_position=369,
             block_num=3,
-            block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc'
-            b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+            block_hash=bytes.fromhex(block_hash3),
             block_height=2,
         )
 
@@ -920,26 +919,26 @@ class TestDBInterface:
         assert result == [
             RestorationFilterQueryResult(
                 ref_type=int(PushdataMatchFlags.OUTPUT),
-                pushdata_hashX=b'\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee\xee',
-                transaction_hash=b'\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa',
+                pushdata_hashX=bytes.fromhex(pushdata_hash1),
+                transaction_hash=bytes.fromhex(out_tx_hash_reorged),
                 spend_transaction_hash=bytes.fromhex(in_tx_hash_reorged),
                 transaction_output_index=1,
                 spend_input_index=1,
                 tx_location=TxLocation(
-                    block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+                    block_hash=bytes.fromhex(block_hash3),
                     block_num=3,
                     tx_position=369,
                 ),
             ),
             RestorationFilterQueryResult(
                 ref_type=int(PushdataMatchFlags.OUTPUT),
-                pushdata_hashX=b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff',
-                transaction_hash=b'\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb\xbb',
+                pushdata_hashX=bytes.fromhex(pushdata_hash2),
+                transaction_hash=bytes.fromhex(out_tx_hash2),
                 spend_transaction_hash=None,
                 transaction_output_index=2,
                 spend_input_index=MAX_UINT32,
                 tx_location=TxLocation(
-                    block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+                    block_hash=bytes.fromhex(block_hash3),
                     block_num=3,
                     tx_position=400,
                 ),
@@ -985,11 +984,11 @@ class TestDBInterface:
             spent_outpoints = db.get_spent_outpoints(entries=[outpoint1, outpoint2], lmdb=lmdb)
             assert len(spent_outpoints) == 1
             assert spent_outpoints[0] == OutputSpendRow(
-                out_tx_hash=b'\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa\xaa',
+                out_tx_hash=bytes.fromhex(out_tx_hash_reorged[0:2] * 32),
                 out_idx=1,
-                in_tx_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+                in_tx_hash=bytes.fromhex(in_tx_hash_reorged[0:2] * 32),
                 in_idx=1,
-                block_hash=b'\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc\xcc',
+                block_hash=bytes.fromhex(block_hash3),
             )
 
     def test_get_unprocessed_txs(self, db: DBInterface) -> None:
