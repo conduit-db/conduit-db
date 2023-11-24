@@ -2,7 +2,7 @@
 
 # Load environment variables
 set -a
-source .env.docker.production
+export $(grep -v '^#' .env.docker.production | xargs)
 set +a
 docker build -f ./contrib/python_base/Dockerfile . -t python_base
 docker compose -f docker-compose.production.yml stop
