@@ -2,12 +2,13 @@ import logging
 import os
 import time
 
-from typing import Any, Sequence
+from typing import Any, Sequence, Iterator
 import typing
 
 from cassandra import WriteTimeout  # pylint:disable=E0611
-from cassandra.cluster import Session  # pylint:disable=E0611
-from cassandra.concurrent import execute_concurrent  # pylint:disable=E0611
+from cassandra.cluster import Session, ResultSet  # pylint:disable=E0611
+from cassandra.concurrent import execute_concurrent, ExecutionResult  # pylint:disable=E0611
+from cassandra.pool import Host  # pylint:disable=E0611
 from cassandra.query import PreparedStatement, BatchStatement, BatchType  # pylint:disable=E0611
 
 from .exceptions import FailedScyllaOperation
@@ -41,7 +42,8 @@ class ScyllaDBBulkLoads:
         self.total_rows_flushed_since_startup = 0
 
     def load_data_batched(
-        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], max_retries: int = 3
+        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]],
+            max_retries: int = 5
     ) -> None:
         """This function requires that the `insert_statement` is idempotent so that failed
         UNLOGGED batches (which are not atomic and may be partially applied) can be retries and
@@ -50,11 +52,15 @@ class ScyllaDBBulkLoads:
         When ScyllaDB is saturated with compactions etc. the RETRY_DELAY gives it some breathing
         room
         """
-        BATCH_SIZE = 350  # warn threshold is 128KiB
+        # Favour stability over perfectly optimizing the batch size to the limit
+        # larger batch sizes risk timeouts and overloading the coordinator
+        MAX_BATCH_COUNT = 200
+        BATCH_SIZE = 250  # warn threshold is 128KiB
         INITIAL_RETRY_DELAY = 5  # Initial delay in seconds before retrying
 
         num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)
         batches = [BatchStatement(batch_type=BatchType.UNLOGGED) for _ in range(num_batches)]
+        self.logger.debug(f"Total count of batches for submission in `load_data_batched`")
 
         for i, row in enumerate(rows):
             batch_index = i // BATCH_SIZE
@@ -62,48 +68,92 @@ class ScyllaDBBulkLoads:
 
         # Function to execute batches and return those that failed
         def execute_and_find_failures(batches_to_execute: list[BatchStatement]) -> list[BatchStatement]:
-            results = execute_concurrent(
+            results: Iterator[ExecutionResult] = execute_concurrent(
                 self.db.session,
                 [(batch, ()) for batch in batches_to_execute],
-                concurrency=200,
+                concurrency=100,
                 raise_on_first_error=False,
                 results_generator=False,
             )
             failed_batches = []
-            for i, (success, result) in enumerate(results):
-                if not success and isinstance(result, WriteTimeout):
+            check_connection = False
+            success: bool
+            result_or_exception: ResultSet | Exception
+            for i, (success, result_or_exception) in enumerate(results):
+                if success:
+                    continue
+                # Retry these
+                if isinstance(result_or_exception, WriteTimeout):
                     failed_batches.append(batches_to_execute[i])
+
+                # Catching TypeError will seem weird. This is returned if the exception recursion
+                # limit is reached when results_generator is False. This is a hard-coded setting
+                # within the python driver.
+                # https://github.com/datastax/python-driver/pull/605/files
+                elif isinstance(result_or_exception, TypeError):
+                    # The assumption being made here is that the reason they all errored out
+                    # was due to an excessive number of WriteTimeout errors.
+                    # Or due to heavy load the ScyllaDB node has been marked as "down"
+                    # and we need to now reconnect again.
+                    failed_batches.append(batches_to_execute[i])
+                    check_connection = True
+                else:
+                    check_connection = True
+                    self.logger.exception(f"Unexpected exception for the item number {i} in "
+                            f"the batch")
+
+            if check_connection:
+                hosts: list[Host] = list(self.db.session.get_pool_state().keys())
+                while len(hosts) == 0:
+                    self.logger.error(f"There are no ScyllaDB hosts available. "
+                        f"Waiting for reconnection")
+                    time.sleep(10)
+                    hosts = list(self.db.session.get_pool_state().keys())
+                host = hosts[0]
+                while host.is_currently_reconnecting():
+                    self.logger.debug(f"Host: {host} is reconnecting...")
+                    time.sleep(10)
+                while not host.is_up():
+                    self.logger.debug(f"Host: {host} is still not up yet...")
+                    time.sleep(10)
+
+                compulsory_recovery_time = 10
+                self.logger.info(f"ScyllaDB connection check complete, host: {host} is up."
+                                 f"Will resume bulk loading after a {compulsory_recovery_time} "
+                                 f"second recovery time")
+                time.sleep(compulsory_recovery_time)
 
             return failed_batches
 
-        failed_batches = execute_and_find_failures(batches)
+        while len(batches) > 0:
+            failed_batches = execute_and_find_failures(batches[0:MAX_BATCH_COUNT])
+            # Retry logic for failed batches with exponential backoff
+            # Starting from 2 as the first attempt is already made
+            for attempt in range(2, max_retries + 1):
+                if not failed_batches:
+                    break
 
-        # Retry logic for failed batches with exponential backoff
-        # Starting from 2 as the first attempt is already made
-        for attempt in range(2, max_retries + 1):
-            if not failed_batches:
-                break
+                retry_delay = INITIAL_RETRY_DELAY * (2 ** (attempt - 2))
+                time.sleep(retry_delay)
+                self.logger.warning(
+                    f"Retrying {len(failed_batches)} failed batches, attempt {attempt} "
+                    f"of {max_retries} after {retry_delay} seconds"
+                )
+                failed_batches = execute_and_find_failures(failed_batches)
 
-            retry_delay = INITIAL_RETRY_DELAY * (2 ** (attempt - 2))
-            time.sleep(retry_delay)
-            self.logger.warning(
-                f"Retrying {len(failed_batches)} failed batches, attempt {attempt} "
-                f"of {max_retries} after {retry_delay} seconds"
-            )
-            failed_batches = execute_and_find_failures(failed_batches)
-
-        # Logging the result
-        if failed_batches:
-            self.logger.error(f"Failed to write rows after {max_retries} attempts")
-            # crash out
-            raise FailedScyllaOperation(f"Failed to write rows after {max_retries} attempts")
-        else:
-            self.total_rows_flushed_since_startup += len(rows)
-            self.logger.log(
-                PROFILING,
-                f"total rows flushed since startup (worker_id={self.worker_id if self.worker_id else 'None'})="
-                f"{self.total_rows_flushed_since_startup}",
-            )
+            # Logging the result
+            if failed_batches:
+                self.logger.error(f"Failed to write rows after {max_retries} attempts")
+                # crash out
+                raise FailedScyllaOperation(f"Failed to write rows after {max_retries} attempts")
+            else:
+                self.total_rows_flushed_since_startup += len(rows)
+                self.logger.log(
+                    PROFILING,
+                    f"total rows flushed since startup (worker_id={self.worker_id if self.worker_id else 'None'})="
+                    f"{self.total_rows_flushed_since_startup}",
+                )
+            batches = batches[MAX_BATCH_COUNT:]
 
     def handle_coinbase_dup_tx_hash(
         self, tx_rows: list[ConfirmedTransactionRow]

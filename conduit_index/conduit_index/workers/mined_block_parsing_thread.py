@@ -386,11 +386,12 @@ class MinedBlockParsingThread(threading.Thread):
             is_reorg,
         ) = self.unpack_batched_msgs(work_items)
 
-        raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets, ipc_socket_client)
-
-        # self.logger.debug(f"len(raw_block_slice_array)={len(raw_block_slice_array)}")
-        # self.logger.debug(f"len(block_slice_offsets)={len(block_slice_offsets)}")
-        # self.logger.debug(f"block_hashes={[hash_to_hex_str(x) for x in block_hashes]}")
+        # NOTE: Need to watch out for this until I upgrade this to an iterator to conserve
+        # memory. I believe this has been the root cause of OOM'ing
+        raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
+            ipc_socket_client)
+        self.logger.debug(f"Size of requested raw_block_slice_array for worker{self.worker_id}: "
+            f"{len(raw_block_slice_array)//1024**2}MB")
 
         offset = 0
         contains_reorg_tx = False

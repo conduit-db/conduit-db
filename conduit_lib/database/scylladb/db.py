@@ -12,7 +12,8 @@ from cassandra.cluster import (  # pylint:disable=E0611
     Session,
     ResultSet,
     DCAwareRoundRobinPolicy,
-    TokenAwarePolicy, NoHostAvailable,
+    TokenAwarePolicy,
+    NoHostAvailable,
 )
 from cassandra.concurrent import execute_concurrent_with_args, ExecutionResult  # pylint:disable=E0611
 from cassandra.query import PreparedStatement  # pylint:disable=E0611
@@ -302,11 +303,11 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
             session.default_timeout = 120
             session.default_consistency_level = ConsistencyLevel.LOCAL_QUORUM
             logging.getLogger('cassandra').setLevel(logging.WARNING)
-            logger.info("ScyllaDB is now available")
+            logger.info(f"ScyllaDB is now available (worker_id={worker_id})")
             cache = RedisCache()
             return ScyllaDB(cluster, session, cache, worker_id=worker_id)
         except (NoHostAvailable, ConnectionRefusedError):
-            logger.info("ScyllaDB is not yet available")
+            logger.info(f"ScyllaDB is not yet available (worker_id={worker_id})")
             time.sleep(2)
         except Exception as e:
             logger.exception(f"Unexpected exception type: {e}. Exiting loop")

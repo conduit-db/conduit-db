@@ -77,8 +77,8 @@ class TxParser(multiprocessing.Process):
             zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b"stop_signal")],
         )
-        self.confirmed_tx_flush_queue = queue.Queue()
-        self.mempool_tx_flush_queue = queue.Queue()
+        self.confirmed_tx_flush_queue = queue.Queue(maxsize=100_000)
+        self.mempool_tx_flush_queue = queue.Queue(maxsize=100_000)
 
         self.setup_tip_filtering()
         try:

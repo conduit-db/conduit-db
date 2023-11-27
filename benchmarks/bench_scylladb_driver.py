@@ -15,7 +15,7 @@ from conduit_lib.database.db_interface.db import DatabaseType, DBInterface
 from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, MempoolTransactionRow, \
     MinedTxHashes
 
-N = 200_000
+N = 100_000
 
 
 def benchmark(query_function, *args):
@@ -26,7 +26,7 @@ def benchmark(query_function, *args):
 
 
 def concurrency_with_batch(db: DBInterface, tx_rows: list[ConfirmedTransactionRow],
-        batch_size: int=1000, concurrency: int=100) -> None:
+        batch_size: int=1000, concurrency: int=100, batch_count_max: int=100) -> None:
     batches = [BatchStatement(batch_type=BatchType.UNLOGGED) for _ in range(len(tx_rows) // batch_size)]
     insert_statement = db.session.prepare(
         "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) VALUES (?, ?, ?)"
@@ -36,16 +36,18 @@ def concurrency_with_batch(db: DBInterface, tx_rows: list[ConfirmedTransactionRo
         batches[i // batch_size].add(insert_statement,
             (bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position))
 
-    results = execute_concurrent(
-        db.session,
-        [(batch, ()) for batch in batches],
-        concurrency=concurrency,
-        raise_on_first_error=True,
-        results_generator=False,
-    )
+    while len(batches) > 0:
+        results = execute_concurrent(
+            db.session,
+            [(batch, ()) for batch in batches[0:batch_count_max]],
+            concurrency=concurrency,
+            raise_on_first_error=True,
+            results_generator=False,
+        )
+        batches = batches[batch_count_max:]
 
-
-def pure_concurrency(db: DBInterface, tx_rows: list[ConfirmedTransactionRow]) -> None:
+def pure_concurrency(db: DBInterface, tx_rows: list[ConfirmedTransactionRow],
+        concurrency: int=200) -> None:
     insert_statement = db.session.prepare(
         "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) VALUES (?, ?, ?)"
     )
@@ -55,7 +57,7 @@ def pure_concurrency(db: DBInterface, tx_rows: list[ConfirmedTransactionRow]) ->
         db.session,
         insert_statement,
         insert_rows,
-        concurrency=100,
+        concurrency=concurrency,
         raise_on_first_error=True,
     )
 
@@ -111,9 +113,11 @@ def mined_tx_hashes(db: DBInterface):
         tx_rows.append(MinedTxHashes(txid=txid, block_number=i))
     return tx_rows
 
+
 # This is very slow 3600 rows/sec
-# def test_pure_concurrency(db: DBInterface, tx_rows: list[ConfirmedTransactionRow]) -> None:
-#     time_interval = benchmark(pure_concurrency, db, tx_rows)
+# @pytest.mark.parametrize("concurrency", [500])
+# def test_pure_concurrency(db: DBInterface, tx_rows: list[ConfirmedTransactionRow], concurrency) -> None:
+#     time_interval = benchmark(pure_concurrency, db, tx_rows, concurrency)
 #     print(f"Pure Concurrency: {time_interval} seconds")
 #     print(f"Pure Concurrency: {N/time_interval} rows/second")
 #     if db.db_type == DatabaseType.ScyllaDB:
@@ -145,13 +149,14 @@ def mined_tx_hashes(db: DBInterface):
 # With 8 worker processes this will exceed 960K rows/second which will saturate ScyllaDB
 # These numbers are on a laptop with ScyllaDB running in docker for windows behind a NAT which
 # disables the shard-awareness which will give poorer performance.
-@pytest.mark.parametrize("batch_size", [1000])
+@pytest.mark.parametrize("batch_size", [100])
 @pytest.mark.parametrize("concurrency", [100, 200])
+@pytest.mark.parametrize("batch_count_max", [100])
 def test_concurrency_with_batch(db: DBInterface, tx_rows: list[ConfirmedTransactionRow],
-        batch_size, concurrency) -> None:
+        batch_size, concurrency, batch_count_max) -> None:
     db.drop_tables()
     db.create_permanent_tables()
-    time_interval = benchmark(concurrency_with_batch, db, tx_rows, concurrency)
+    time_interval = benchmark(concurrency_with_batch, db, tx_rows, batch_size, concurrency, batch_count_max)
     print(f"Concurrency with Batching: {time_interval} seconds")
     print(f"Concurrency with Batching: {N/time_interval} rows/second")
     if db.db_type == DatabaseType.ScyllaDB:

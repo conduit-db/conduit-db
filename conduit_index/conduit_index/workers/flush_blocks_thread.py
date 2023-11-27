@@ -24,7 +24,7 @@ from ..workers.common import (
 if typing.TYPE_CHECKING:
     from .transaction_parser import TxParser
 
-BLOCKS_MAX_TX_BATCH_LIMIT = 200_000
+BLOCKS_MAX_TX_BATCH_LIMIT = 100_000
 BLOCK_BATCHING_RATE = 0.3
 
 
