@@ -296,7 +296,7 @@ def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 executor_threads=4,
                 connect_timeout=30,
-                idle_heartbeat_interval=15
+                idle_heartbeat_interval=60
                 # auth_provider=auth_provider,
             )
             session = cluster.connect()

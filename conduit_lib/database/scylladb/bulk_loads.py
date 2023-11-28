@@ -60,7 +60,7 @@ class ScyllaDBBulkLoads:
 
         num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)
         batches = [BatchStatement(batch_type=BatchType.UNLOGGED) for _ in range(num_batches)]
-        self.logger.debug(f"Total count of batches for submission in `load_data_batched`")
+        self.logger.debug(f"Submitting {len(batches)} write batches")
 
         for i, row in enumerate(rows):
             batch_index = i // BATCH_SIZE

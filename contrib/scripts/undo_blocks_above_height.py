@@ -114,7 +114,7 @@ class DbRepairTool:
         #     old_hashes,
         #     new_hashes,
         # )
-        # self.logger.debug(f"Database repair complete. " f"New chain tip: {best_flushed_tip_height}")
+        # self.logger.debug(f"Database repair complete. " f"New tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
         unsafe_blocks = []

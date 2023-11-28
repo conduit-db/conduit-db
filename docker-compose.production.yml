@@ -94,7 +94,8 @@ services:
       - ${CONDUIT_INDEX_DATA_SSD}:/opt/conduitdb_data_ssd
       - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
-    mem_limit: 16G
+    mem_limit: 48G
+    memswap_limit: 48G
 
 
   reference_server:

@@ -335,7 +335,7 @@ class Controller(ControllerBase):
             old_hashes,
             new_hashes,
         )
-        self.logger.debug(f"Database repair complete. " f"New chain tip: {best_flushed_tip_height}")
+        self.logger.debug(f"Database repair complete. " f"New tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
         tip_header = self.sync_state.get_local_block_tip()
