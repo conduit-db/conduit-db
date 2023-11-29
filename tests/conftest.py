@@ -7,6 +7,7 @@ MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 os.environ["NETWORK"] = "regtest"
 os.environ["DATADIR_HDD"] = "./datadir"
 os.environ["DATADIR_SSD"] = "./datadir"
+os.environ['SCYLLA_KEYSPACE'] = os.getenv('SCYLLA_KEYSPACE', 'condiutdbtest')
 
 with open(MODULE_DIR / "data/block400000.raw", "rb") as f:
     TEST_RAW_BLOCK_400000 = f.read()

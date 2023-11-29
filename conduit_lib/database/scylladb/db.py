@@ -32,7 +32,7 @@ from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
 from conduit_lib.database.scylladb.bulk_loads import ScyllaDBBulkLoads
 from conduit_lib.database.scylladb.queries import ScyllaDBQueries
-from conduit_lib.database.scylladb.tables import ScyllaDBTables, KEYSPACE
+from conduit_lib.database.scylladb.tables import ScyllaDBTables
 from conduit_lib.database.scylladb.tip_filtering import ScyllaDBTipFilterQueries
 from conduit_lib.types import (
     RestorationFilterQueryResult,
@@ -59,6 +59,7 @@ class ScyllaDB(DBInterface):
 
         self.tables = ScyllaDBTables(self)
         self.create_keyspace()
+        KEYSPACE = os.environ['SCYLLA_KEYSPACE']
         session.set_keyspace(KEYSPACE)
 
         self.bulk_loads = ScyllaDBBulkLoads(self)

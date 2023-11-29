@@ -209,6 +209,7 @@ class TestAiohttpRESTAPI:
         # Need to set the environment variable DEFAULT_DB_TYPE=MYSQL or DEFAULT_DB_TYPE=SCYLLADB
         # prior to running all of these tests. This goes for the running services too
 
+        os.environ['SCYLLA_KEYSPACE'] = os.getenv('SCYLLA_KEYSPACE', 'condiutdbtest')
         os.environ['DEFAULT_DB_TYPE'] = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
 
         db = DBInterface.load_db(worker_id="test")
