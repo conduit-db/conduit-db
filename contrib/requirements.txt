@@ -13,3 +13,4 @@ lz4
 python-snappy
 scales
 redis
+psutil

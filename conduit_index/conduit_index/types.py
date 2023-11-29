@@ -14,4 +14,3 @@ TxHashRows = list[tuple[str]]
 TxHashes = list[bytes]
 TxHashToWorkIdMap = dict[bytes, int]
 TxHashToOffsetMap = dict[bytes, int]
-BlockSliceOffsets = tuple[int, int]  # i.e. start and end byte offset for the slice

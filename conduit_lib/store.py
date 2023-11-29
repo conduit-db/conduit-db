@@ -99,7 +99,7 @@ def remove_contents(dir_path: Path) -> None:
 
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
-        database = DBInterface.load_db()
+        database = DBInterface.load_db(worker_id="controller")
         try:
             database.drop_tables()
             if int(os.environ.get("RESET_EXTERNAL_API_DATABASE_TABLES", 0)) == 1:
@@ -141,7 +141,7 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     block_headers = setup_headers_store(net_config, block_headers_path)
 
     if os.environ["SERVER_TYPE"] == "ConduitIndex":
-        database = DBInterface.load_db()
+        database = DBInterface.load_db(worker_id="controller")
     else:
         database = None
 

@@ -1,10 +1,10 @@
 import array
+import queue
 from functools import partial
 import logging
 import struct
 import threading
 import time
-from queue import Queue
 import typing
 import zmq
 
@@ -32,14 +32,6 @@ class MempoolParsingThread(threading.Thread):
         self,
         parent: "TxParser",
         worker_id: int,
-        mempool_tx_flush_queue: Queue[
-            tuple[
-                MySQLFlushBatch,
-                MempoolTxAck,
-                list[InputRowParsed],
-                list[PushdataRowParsed],
-            ]
-        ],
         daemon: bool = True,
     ) -> None:
         self.logger = logging.getLogger(f"mempool-parsing-thread-{worker_id}")
@@ -48,7 +40,13 @@ class MempoolParsingThread(threading.Thread):
 
         self.parent = parent
         self.worker_id = worker_id
-        self.mempool_tx_flush_queue = mempool_tx_flush_queue
+        self.mempool_tx_flush_queue: queue.Queue[
+            tuple[
+                MySQLFlushBatch,MempoolTxAck,
+                list[InputRowParsed],
+                list[PushdataRowParsed]
+            ]
+        ] = queue.Queue(maxsize=100_000)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
         self.socket_mempool_tx = connect_non_async_zmq_socket(

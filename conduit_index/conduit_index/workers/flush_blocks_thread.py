@@ -77,12 +77,10 @@ class FlushConfirmedTransactionsThread(threading.Thread):
         try:
             while True:
                 try:
-                    # Pre-IBD do large batched flushes
-                    (
-                        confirmed_rows,
-                        new_acks,
-                        tip_filter_notifications,
-                    ) = self.confirmed_tx_flush_queue.get(timeout=BLOCK_BATCHING_RATE)
+                    confirmed_rows, new_acks, tip_filter_notifications = self.confirmed_tx_flush_queue.get(
+                        timeout=BLOCK_BATCHING_RATE
+                    )
+                    self.confirmed_tx_flush_queue.task_done()
                     if not confirmed_rows:  # poison pill
                         break
 

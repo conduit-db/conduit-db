@@ -13,7 +13,7 @@ from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
 from conduit_lib.store import Storage
 from .load_balance_algo import distribute_load
-from .types import WorkUnit, MainBatch
+from .types import WorkUnit, MainBatch, WorkPart
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -142,7 +142,8 @@ class SyncState:
             work_item_id = 0
             for i, work in enumerate(all_work):
                 block_size, tx_offsets, block_header, block_num = work
-                needs_breaking_up = block_size > SMALL_BLOCK_SIZE or block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
+                needs_breaking_up = block_size > SMALL_BLOCK_SIZE or \
+                                    block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
 
                 first_tx_pos_batch = 0
                 if needs_breaking_up:
@@ -155,6 +156,7 @@ class SyncState:
                         tx_offsets,
                     )
 
+                    work_part: WorkPart
                     for work_part in divided_work:
                         (
                             size_of_part,

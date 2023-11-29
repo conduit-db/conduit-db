@@ -53,7 +53,7 @@ class DBInterface(abc.ABC):
     def __init__(
         self,
         *args: Any,
-        worker_id: int | None = None,
+        worker_id: int | str | None = None,
         **kwargs: Any,
     ) -> None:
         self.worker_id = worker_id  # pragma: no cover
@@ -70,7 +70,9 @@ class DBInterface(abc.ABC):
         self.conn: Connection | None = None  # pragma: no cover
 
     @classmethod
-    def load_db(cls, worker_id: int | None = None, db_type: DatabaseType | None = None) -> "DBInterface":
+    def load_db(
+        cls, worker_id: int | str | None = None, db_type: DatabaseType | None = None
+    ) -> "DBInterface":
         if db_type is None:
             db_type_default: str = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
             if db_type_default == 'MYSQL':

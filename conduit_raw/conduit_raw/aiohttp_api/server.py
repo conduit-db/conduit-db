@@ -71,7 +71,7 @@ class ApplicationState(object):
         self.BITCOINX_COIN = network_str_to_bitcoinx_network(net_config.NET)
         self.net_config = net_config
 
-        self.db = DBInterface.load_db()
+        self.db = DBInterface.load_db(worker_id="external-api")
         assert self.db.tip_filter_api is not None
         self.db.tip_filter_api.setup()
         self.lmdb = lmdb

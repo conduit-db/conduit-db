@@ -18,7 +18,7 @@ from ..db_interface.types import (
     InputRow,
     PushdataRow,
 )
-from ...constants import PROFILING
+from ...constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME
 from ...types import BlockHeaderRow
 from ...utils import get_log_level
 
@@ -37,7 +37,7 @@ class ScyllaDBBulkLoads:
         else:
             self.logger = logging.getLogger(f"scylla-tables")
         self.session: Session = self.db.session
-        self.logger.setLevel(get_log_level("conduit_index"))
+        self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
         self.total_db_time = 0.0
         self.total_rows_flushed_since_startup = 0
 
@@ -245,7 +245,8 @@ class ScyllaDBBulkLoads:
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for {len(pd_rows)}"
+            PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for "
+                f"{len(pd_rows)} rows"
         )
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:

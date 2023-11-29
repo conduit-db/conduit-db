@@ -211,7 +211,7 @@ class TestAiohttpRESTAPI:
 
         os.environ['DEFAULT_DB_TYPE'] = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
 
-        db = DBInterface.load_db()
+        db = DBInterface.load_db(worker_id="test")
         db.create_permanent_tables()
         db.tip_filter_api.create_tables()
 

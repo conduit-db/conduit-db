@@ -8,6 +8,7 @@ from cassandra.query import SimpleStatement  # pylint:disable=E0611
 
 from conduit_lib.utils import get_log_level
 from .exceptions import FailedScyllaOperation
+from ...constants import CONDUIT_INDEX_SERVICE_NAME
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -27,7 +28,7 @@ class ScyllaDBTables:
         else:
             self.logger = logging.getLogger(f"scylla-tables")
         self.session = db.session
-        self.logger.setLevel(get_log_level("conduit_index"))
+        self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
 
     def execute_query(self, query: str) -> None:
         """Helper method to execute a query with error handling."""

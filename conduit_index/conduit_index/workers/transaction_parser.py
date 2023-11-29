@@ -4,7 +4,6 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-import queue
 import sys
 import threading
 import time
@@ -12,17 +11,12 @@ import refcuckoo
 import zmq
 
 from conduit_lib import DBInterface
+from conduit_lib.constants import CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.database.db_interface.tip_filter_types import IndexerPushdataRegistrationFlag
-from conduit_lib.database.db_interface.types import (
-    MySQLFlushBatch,
-    InputRowParsed,
-    PushdataRowParsed,
-    ProcessedBlockAcks,
-    TipFilterNotifications,
-    MempoolTxAck,
-)
+from conduit_lib.database.db_interface.types import InputRowParsed, PushdataRowParsed
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.types import OutpointType, output_spend_struct
+from conduit_lib.utils import get_log_level
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 from conduit_raw.conduit_raw.aiohttp_api.types import (
     CuckooResult,
@@ -47,18 +41,6 @@ class TxParser(multiprocessing.Process):
 
     def __init__(self, worker_id: int) -> None:
         super(TxParser, self).__init__()
-        self.confirmed_tx_flush_queue: queue.Queue[
-            tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ] | None = None
-        self.mempool_tx_flush_queue: queue.Queue[
-            tuple[
-                MySQLFlushBatch,
-                MempoolTxAck,
-                list[InputRowParsed],
-                list[PushdataRowParsed],
-            ]
-        ] | None = None
-
         self.last_activity: float = time.time()
         self.worker_id = worker_id
 
@@ -66,7 +48,7 @@ class TxParser(multiprocessing.Process):
         if sys.platform == "win32":
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
         self.logger.info(f"Started {self.__class__.__name__}")
 
         # ZMQ Setup
@@ -77,27 +59,19 @@ class TxParser(multiprocessing.Process):
             zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b"stop_signal")],
         )
-        self.confirmed_tx_flush_queue = queue.Queue(maxsize=100_000)
-        self.mempool_tx_flush_queue = queue.Queue(maxsize=100_000)
-
         self.setup_tip_filtering()
         try:
             main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
-
-            assert self.confirmed_tx_flush_queue is not None
-            assert self.mempool_tx_flush_queue is not None
             threads = [
                 MinedBlockParsingThread(
                     self,
                     self.worker_id,
-                    self.confirmed_tx_flush_queue,
                     daemon=True,
                 ),
                 MempoolParsingThread(
                     self,
                     self.worker_id,
-                    self.mempool_tx_flush_queue,
                     daemon=True,
                 ),
             ]

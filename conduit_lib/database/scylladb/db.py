@@ -46,7 +46,9 @@ T1 = TypeVar("T1")
 
 
 class ScyllaDB(DBInterface):
-    def __init__(self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int | None) -> None:
+    def __init__(
+        self, cluster: Cluster, session: Session, cache: RedisCache, worker_id: int | str | None
+    ) -> None:
         self.cluster: Cluster = cluster
         self.session: Session = session
         self.db_type = DatabaseType.ScyllaDB
@@ -280,7 +282,7 @@ def wait_for_db_ready() -> ScyllaDB | None:
             return None
 
 
-def load_scylla_database(worker_id: int | None = None) -> ScyllaDB:
+def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
     # auth_provider = PlainTextAuthProvider(
     #     username=os.environ['SCYLLA_USERNAME'],
     #     password=os.environ['SCYLLA_PASSWORD'],

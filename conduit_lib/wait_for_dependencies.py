@@ -56,7 +56,7 @@ async def wait_for_node(
 
 
 def wait_for_db() -> None:
-    db = DBInterface.load_db()
+    db = DBInterface.load_db(worker_id="controller")
     if db is not None:
         db.close()
 

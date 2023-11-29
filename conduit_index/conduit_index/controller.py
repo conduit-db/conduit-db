@@ -20,6 +20,7 @@ from zmq.asyncio import Context as AsyncZMQContext
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
+from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.types import MinedTxHashes
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
@@ -185,7 +186,7 @@ class Controller(ControllerBase):
         )
 
     def setup(self) -> None:
-        self.db = DBInterface.load_db()
+        self.db = DBInterface.load_db(worker_id="controller")
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.db.drop_mempool_table()
@@ -307,21 +308,26 @@ class Controller(ControllerBase):
         self.db.drop_mempool_table()
         self.db.create_mempool_table()
 
-        # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
+        new_hashes: list[bytes] | None = []
+        old_hashes: list[bytes] | None = []
         if reorg_was_allocated:
-            old_hashes: list[bytes] | None = [
-                old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)
-            ]
-            new_hashes: list[bytes] | None = [
-                new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)
-            ]
-            assert new_hashes is not None
-            await self.undo_specific_block_hashes(new_hashes)
-        else:
-            old_hashes = None
-            new_hashes = None
-            best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
-            await self.undo_blocks_above_height(best_header.height)
+            old_hashes = [old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)]
+            new_hashes = [new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)]
+
+        # ScyllaDB can just overwrite the entries
+        # The architecture of ConduitDB is to use a multi-version concurrency control system which
+        # will "hide" the rows from the partially written blocks from the external API
+        assert self.db.db_type is not None
+        if self.db.db_type != DatabaseType.ScyllaDB:
+            # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
+            if reorg_was_allocated:
+                assert new_hashes is not None
+                await self.undo_specific_block_hashes(new_hashes)
+            else:
+                old_hashes = None
+                new_hashes = None
+                best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
+                await self.undo_blocks_above_height(best_header.height)
 
         # Re-attempt indexing of allocated work (that did not complete last time)
         self.logger.debug(f"Re-attempting previously allocated work")

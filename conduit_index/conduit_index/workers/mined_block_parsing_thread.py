@@ -1,6 +1,5 @@
 import array
 import typing
-
 import cbor2
 from functools import partial
 import logging
@@ -9,8 +8,11 @@ import struct
 import threading
 import time
 from typing import Callable, cast
+
+import psutil
 import zmq
 
+from conduit_lib.constants import PROFILING, CONDUIT_INDEX_SERVICE_NAME
 from conduit_lib.database.db_interface.tip_filter_types import TipFilterRegistrationEntry
 from conduit_lib.database.db_interface.types import (
     MySQLFlushBatch,
@@ -20,10 +22,7 @@ from conduit_lib.database.db_interface.types import (
     PushdataRowParsed,
     ProcessedBlockAcks,
     TipFilterNotifications,
-    WorkItemId,
     ProcessedBlockAck,
-    NewNotSeenBeforeTxOffsets,
-    AlreadySeenMempoolTxOffsets,
 )
 from conduit_raw.conduit_raw.aiohttp_api.constants import (
     UTXO_REGISTRATION_TOPIC,
@@ -38,24 +37,18 @@ from conduit_raw.conduit_raw.aiohttp_api.types import (
 )
 from .flush_blocks_thread import FlushConfirmedTransactionsThread
 from ..types import (
-    BlockSliceOffsets,
     TxHashes,
-    WorkPart,
-    TxHashToOffsetMap,
-    TxHashToWorkIdMap,
     TxHashRows,
-    BatchedRawBlockSlices,
 )
 from ..workers.common import (
-    maybe_refresh_connection,
     convert_pushdata_rows_for_flush,
     convert_input_rows_for_flush,
 )
 
 from conduit_lib import IPCSocketClient, DBInterface
 from conduit_lib.algorithms import calc_mtree_base_level, parse_txs
-from conduit_lib.types import BlockSliceRequestType, OutpointType
-from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
+from conduit_lib.types import BlockSliceRequestType, OutpointType, Slice
+from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block, get_log_level
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 
 if typing.TYPE_CHECKING:
@@ -67,18 +60,17 @@ class MinedBlockParsingThread(threading.Thread):
         self,
         parent: "TxParser",
         worker_id: int,
-        confirmed_tx_flush_queue: queue.Queue[
-            tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ],
         daemon: bool = True,
     ) -> None:
         self.logger = logging.getLogger(f"mined-block-parsing-thread-{worker_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
         threading.Thread.__init__(self, daemon=daemon)
 
         self.parent = parent
         self.worker_id = worker_id
-        self.confirmed_tx_flush_queue = confirmed_tx_flush_queue
+        self.confirmed_tx_flush_queue: queue.Queue[
+            tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
+        ] = queue.Queue(maxsize=100)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
 
@@ -261,85 +253,6 @@ class MinedBlockParsingThread(threading.Thread):
             )
             self.parent.socket_pushdata_notifications.send(cbor2.dumps(state_update_to_server))
 
-    def get_block_slices(
-        self,
-        block_hashes: list[bytes],
-        block_slice_offsets: list[tuple[int, int]],
-        ipc_sock_client: IPCSocketClient,
-    ) -> bytes:
-        t0 = time.time()
-        try:
-            response = ipc_sock_client.block_number_batched(block_hashes)
-
-            # Ordering of both of these arrays must be guaranteed
-            block_requests = cast(
-                list[BlockSliceRequestType],
-                list(zip(response.block_numbers, block_slice_offsets)),
-            )
-
-            raw_blocks_array = ipc_sock_client.block_batched(block_requests)
-            # len_bytearray = struct.unpack_from("<Q", response)
-            # self.logger.debug(f"len_bytearray={len_bytearray}")
-            # self.logger.debug(f"received batched raw blocks payload "
-            #                   f"with total size: {len(raw_blocks_array)}")
-
-            return cast(bytes, raw_blocks_array)
-        finally:
-            tdiff = time.time() - t0
-            self.ipc_sock_time += tdiff
-            if self.ipc_sock_time - self.last_ipc_sock_time > 0.5:  # show every 1 cumulative sec
-                self.last_ipc_sock_time = self.ipc_sock_time
-                self.logger.debug(f"total time for ipc socket calls={self.ipc_sock_time}")
-
-    def unpack_batched_msgs(
-        self, work_items: list[bytes]
-    ) -> tuple[TxHashes, list[BlockSliceOffsets], list[WorkPart], bool]:
-        """Batched messages from zmq PULL socket"""
-        block_slice_offsets: list[BlockSliceOffsets] = []  # start_offset, end_offset
-        block_hashes: TxHashes = []
-        unpacked_work_items: list[WorkPart] = []
-
-        reorg = False
-        for packed_msg in work_items:
-            msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
-            (
-                msg_type,
-                len_arr,
-                work_item_id,
-                is_reorg,
-                blk_hash,
-                block_num,
-                first_tx_pos_batch,
-                part_end_offset,
-                packed_array,
-            ) = struct.unpack(f"<IIII32sIIQ{len_arr}s", packed_msg)
-            tx_offsets_part = array.array("Q", packed_array)
-
-            if bool(is_reorg) is True:
-                reorg = True
-
-            work_unit: WorkPart = cast(
-                WorkPart,
-                (
-                    work_item_id,
-                    blk_hash,
-                    block_num,
-                    first_tx_pos_batch,
-                    part_end_offset,
-                    tx_offsets_part,
-                ),
-            )
-            unpacked_work_items.append(work_unit)
-
-            # The first partition should include the 80 byte block header + tx_count varint field
-            slice_start_offset = 0 if first_tx_pos_batch == 0 else tx_offsets_part[0]
-            slice_end_offset = part_end_offset
-            block_slice_offsets.append((slice_start_offset, slice_end_offset))
-            block_hashes.append(blk_hash)
-
-        return block_hashes, block_slice_offsets, unpacked_work_items, reorg
-
-    # typing(AustEcon) - array.ArrayType doesn't let me specify int or bytes
     def get_block_part_tx_hashes(
         self, raw_block_slice: bytes, tx_offsets: "array.ArrayType[int]"
     ) -> tuple[TxHashes, TxHashRows]:
@@ -357,145 +270,98 @@ class MinedBlockParsingThread(threading.Thread):
             tx_hash_rows.append((tx_hashX.hex(),))
         return partition_tx_hashes, tx_hash_rows
 
-    def build_merged_data_structures(
-        self, work_items: list[bytes], ipc_socket_client: IPCSocketClient
-    ) -> tuple[
-        TxHashToOffsetMap,
-        TxHashToWorkIdMap,
-        TxHashRows,
-        BatchedRawBlockSlices,
-        dict[WorkItemId, ProcessedBlockAcks],
-        bool,
-    ]:
-        """NOTE: For a very large block the work_items can arrive out of sequential order
-        (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10) so
-        we must avoid cross-talk for tx_offsets for the same block hash / block number by relating
-        them always to the work_item_id to deal with each work item separately from one another
-        """
-        # Merge into big data structures for batch-wise processing
-        merged_offsets_map: TxHashToOffsetMap = {}  # tx_hash: byte offset in block
-        merged_tx_to_work_item_id_map: TxHashToWorkIdMap = {}  # tx_hash: work_item_id
-        merged_part_tx_hash_rows: TxHashRows = []
-        batched_raw_block_slices: BatchedRawBlockSlices = []
-        acks: dict[WorkItemId, ProcessedBlockAcks] = {}
-
-        (
-            block_hashes,
-            block_slice_offsets,
-            unpacked_batch_msgs,
-            is_reorg,
-        ) = self.unpack_batched_msgs(work_items)
-
-        # NOTE: Need to watch out for this until I upgrade this to an iterator to conserve
-        # memory. I believe this has been the root cause of OOM'ing
-        raw_block_slice_array = self.get_block_slices(block_hashes, block_slice_offsets,
-            ipc_socket_client)
-        self.logger.debug(f"Size of requested raw_block_slice_array for worker{self.worker_id}: "
-            f"{len(raw_block_slice_array)//1024**2}MB")
-
-        offset = 0
-        contains_reorg_tx = False
-        # todo - block_num may not be needed, only block_hash
-        for (
-            work_item_id,
-            blk_hash,
-            block_num,
-            first_tx_pos_batch,
-            part_end_offset,
-            tx_offsets_part,
-        ) in unpacked_batch_msgs:
+    def process_work_items(
+        self,
+        work_items: list[bytes],
+        ipc_socket_client: IPCSocketClient,
+        db: DBInterface,
+    ) -> None:
+        process = psutil.Process()
+        self.logger.log(
+            PROFILING,
+            f"Memory usage check before processing work items: " f"{process.memory_info().rss//1024**2}MB",
+        )
+        blk_hash: bytes
+        block_num: int
+        is_reorg: bool
+        work_item_id: int
+        first_tx_pos_batch: int
+        part_end_offset: int
+        packed_array: bytes
+        for packed_msg in work_items:
+            msg_type, len_arr = struct.unpack_from("<II", packed_msg)  # get size_array
+            (
+                msg_type,
+                len_arr,
+                work_item_id,
+                is_reorg,
+                blk_hash,
+                block_num,
+                first_tx_pos_batch,
+                part_end_offset,
+                packed_array,
+            ) = struct.unpack(f"<IIII32sIIQ{len_arr}s", packed_msg)
+            tx_offsets_part = array.array("Q", packed_array)
             is_reorg = bool(is_reorg)
-            if is_reorg is True:
-                contains_reorg_tx = True
-            # Todo - Maybe could make an iterator and call next() to read the next block slice
-            #   from a cached memory view? Then the same mem allocation could be reused by
-            #   parse_txs...
-            blk_num, len_slice = struct.unpack_from(f"<IQ", raw_block_slice_array, offset)
-            blk_num, len_slice, raw_block_slice = struct.unpack_from(
-                f"<IQ{len_slice}s", raw_block_slice_array, offset
-            )
-            offset += 4 + 8 + len_slice  # move to next raw_block_slice in bytearray
 
+            # The first partition should include the 80 byte block header + tx_count varint field
+            slice_start_offset = 0 if first_tx_pos_batch == 0 else tx_offsets_part[0]
+            slice_end_offset = part_end_offset
+
+            # This can bottleneck when blocks are big and ConduitRaw is on a magnetic HDD
+            raw_block_slice_array = ipc_socket_client.block_batched(
+                [BlockSliceRequestType(block_num, Slice(slice_start_offset, slice_end_offset))]
+            )
+            self.logger.debug(
+                f"Size of received raw_block {blk_hash.hex()[0:8]} (worker-{self.worker_id}): "
+                f"{(len(raw_block_slice_array) / 1024 ** 2):.2f}MB"
+            )
+
+            is_reorg = bool(is_reorg)
+            blk_num, len_slice = struct.unpack_from(f"<IQ", raw_block_slice_array, offset=0)
+            blk_num, len_slice, raw_block_slice = struct.unpack_from(
+                f"<IQ{len_slice}s", raw_block_slice_array, offset=0
+            )
+            del raw_block_slice_array  # free memory eagerly
             part_tx_hashes, part_tx_hash_rows = self.get_block_part_tx_hashes(
                 raw_block_slice, tx_offsets_part
             )
+            # It is wasted disc IO for input and pushdata rows to be inserted again if this has
+            # already occurred for the mempool transaction or on a reorg hence we calculate which
+            # category each tx belongs in before parsing the transactions.
+            # This was a design decision to allow for most of the "heavy lifting" to be done on
+            # the mempool txs so that when the confirmation comes, the additional work the db has
+            # to do is fairly minimal - this should lead to a more responsive end user experience.
 
-            # Merge into big data structures
-            merged_part_tx_hash_rows.extend(part_tx_hash_rows)
-            merged_offsets_map.update(dict(zip(part_tx_hashes, tx_offsets_part)))
-            for tx_hash in part_tx_hashes:
-                merged_tx_to_work_item_id_map[tx_hash] = work_item_id
-
-            batched_raw_block_slices.append(
-                (
-                    raw_block_slice,
-                    work_item_id,
-                    is_reorg,
-                    blk_num,
-                    blk_hash,
-                    first_tx_pos_batch,
-                )
+            # new_tx_offsets  # Must not be in an orphaned block or the mempool
+            not_new_tx_offsets: set[int] = set(tx_offsets_part)
+            map_tx_hashes_to_offsets = dict(zip(part_tx_hashes, tx_offsets_part))
+            unprocessed_tx_hashes = db.get_unprocessed_txs(
+                is_reorg, part_tx_hash_rows, self.inbound_tx_table_name
             )
+            for tx_hash in unprocessed_tx_hashes:
+                tx_offset = map_tx_hashes_to_offsets[tx_hash]
+                not_new_tx_offsets.remove(tx_offset)
+            assert len(tx_offsets_part) - len(unprocessed_tx_hashes) - len(not_new_tx_offsets) == 0
 
-            # Needs full tx hashes for invalidating rows from mempool table
-            if acks.get(work_item_id) is None:
-                acks[work_item_id] = []
-            acks[work_item_id].append(ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes))
-
-        return (
-            merged_offsets_map,
-            merged_tx_to_work_item_id_map,
-            merged_part_tx_hash_rows,
-            batched_raw_block_slices,
-            acks,
-            contains_reorg_tx,
-        )
-
-    def parse_txs_and_push_to_queue(
-        self,
-        new_tx_offsets: NewNotSeenBeforeTxOffsets,
-        not_new_tx_offsets: AlreadySeenMempoolTxOffsets,
-        batched_raw_block_slices: BatchedRawBlockSlices,
-        acks: dict[int, list[ProcessedBlockAck]],
-    ) -> None:
-        assert self.confirmed_tx_flush_queue is not None
-
-        # TODO(black): unpack inside the loop
-        for (
-            raw_block_slice,
-            work_item,
-            _is_reorg,
-            blk_num,
-            blk_hash,
-            first_tx_pos_batch,
-        ) in batched_raw_block_slices:
+            # Parse and flush
             tx_rows: list[ConfirmedTransactionRow]
             tx_rows_mempool: list[MempoolTransactionRow]
             in_rows_parsed: list[InputRowParsed]
             pd_rows_parsed: list[PushdataRowParsed]
-            # TODO(black): don't initialize multiple things on a single line because Black formatter
-            #  does this to it...
-            (
-                tx_rows,
-                tx_rows_mempool,
-                in_rows_parsed,
-                pd_rows_parsed,
-                _,
-            ) = (
-                [],
-                [],
-                [],
-                [],
-                [],
-            )
 
             # Mempool and Reorg txs already have entries for inputs, pushdata and output tables,
             # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
-            all_tx_offsets: set[int] = new_tx_offsets.get(work_item, set()) | not_new_tx_offsets.get(
-                work_item, set()
+            all_tx_offsets_sorted = array.array("Q", sorted(tx_offsets_part))
+            result = parse_txs(
+                raw_block_slice,
+                all_tx_offsets_sorted,
+                blk_num,
+                True,
+                first_tx_pos_batch,
+                already_seen_offsets=not_new_tx_offsets,
             )
-            all_tx_offsets_sorted = array.array("Q", sorted(all_tx_offsets))
-
+            del raw_block_slice  # free memory eagerly
             (
                 tx_rows,
                 tx_rows_mempool,
@@ -503,17 +369,11 @@ class MinedBlockParsingThread(threading.Thread):
                 pd_rows_parsed,
                 utxo_spends,
                 pushdata_matches_tip_filter,
-            ) = parse_txs(
-                raw_block_slice,
-                all_tx_offsets_sorted,
-                blk_num,
-                True,
-                first_tx_pos_batch,
-                already_seen_offsets=not_new_tx_offsets.get(work_item, set()),
-            )
+            ) = result
 
             pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
+            acks = [ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes)]
             self.confirmed_tx_flush_queue.put(
                 (
                     MySQLFlushBatch(
@@ -522,112 +382,15 @@ class MinedBlockParsingThread(threading.Thread):
                         input_rows_for_flushing,
                         pushdata_rows_for_flushing,
                     ),
-                    acks[work_item],
+                    acks,
                     TipFilterNotifications(utxo_spends, pushdata_matches_tip_filter, blk_hash),
                 )
             )
-
-    def get_processed_vs_unprocessed_tx_offsets(
-        self,
-        is_reorg: bool,
-        merged_offsets_map: dict[bytes, int],
-        merged_tx_to_work_item_id_map: dict[bytes, int],
-        merged_part_tx_hash_rows: TxHashRows,
-        db: DBInterface,
-    ) -> tuple[NewNotSeenBeforeTxOffsets, AlreadySeenMempoolTxOffsets]:
-        """
-        input rows, output rows and pushdata rows must not be inserted again if this has
-        already occurred for the mempool transaction hence we calculate which category each tx
-        belongs in before parsing the transactions (This was a design decision to allow for
-        most of the "heavy lifting" to be done on the mempool txs so that when the confirmation
-        comes, the additional work the db has to do is fairly minimal - this should lead to a
-        more responsive end user experience).
-
-        It's a 'merged' offsets map because it has tx_hashes from potentially many blocks. Batching
-        is critically important with this particular MySQL query (for performance reasons)
-
-        Returns a map of {blk_num: offsets} for:
-            a) new_tx_offsets  # Must not be in an orphaned block
-            b) not_new_tx_offsets  # Either in mempool or an orphaned block
-        """
-        t0 = time.time()
-        t1 = 0.0
-
-        new_tx_offsets: NewNotSeenBeforeTxOffsets = {}
-        not_new_tx_offsets: AlreadySeenMempoolTxOffsets = {}
-
-        try:
-            # unprocessed_tx_hashes is the list of tx hashes in this batch **NOT** in the mempool
-            unprocessed_tx_hashes = db.get_unprocessed_txs(
-                is_reorg, merged_part_tx_hash_rows, self.inbound_tx_table_name
-            )
-            for tx_hash in unprocessed_tx_hashes:
-                tx_offset = merged_offsets_map[tx_hash]  # pop the non-mempool txs out
-                del merged_offsets_map[tx_hash]
-                work_item_id = merged_tx_to_work_item_id_map[tx_hash]
-
-                has_block_num = new_tx_offsets.get(work_item_id)
-                if not has_block_num:  # init empty array of offsets
-                    new_tx_offsets[work_item_id] = set()
-                new_tx_offsets[work_item_id].add(tx_offset)
-
-            # left-overs are not new txs
-            for tx_hash, tx_offset in merged_offsets_map.items():
-                work_item_id = merged_tx_to_work_item_id_map[tx_hash]
-                has_block_num = not_new_tx_offsets.get(work_item_id)
-                if not has_block_num:  # init empty array of offsets
-                    not_new_tx_offsets[work_item_id] = set()
-                not_new_tx_offsets[work_item_id].add(tx_offset)
-
-            t1 = time.time() - t0
-            return new_tx_offsets, not_new_tx_offsets
-        except KeyError as e:
-            self.logger.exception("KeyError in get_processed_vs_unprocessed_tx_offsets")
-            raise
-        except Exception:
-            self.logger.exception("unexpected exception in get_processed_vs_unprocessed_tx_offsets")
-            raise
-        finally:
-            self.total_unprocessed_tx_sorting_time += t1
-            if self.total_unprocessed_tx_sorting_time - self.last_time > 1:  # show every 1 cumulative sec
-                self.last_time = self.total_unprocessed_tx_sorting_time
-                self.logger.debug(
-                    f"total unprocessed tx sorting time: " f"{self.total_unprocessed_tx_sorting_time} seconds"
-                )
-
-    def process_work_items(
-        self,
-        work_items: list[bytes],
-        ipc_socket_client: IPCSocketClient,
-        db: DBInterface,
-    ) -> None:
-        """Every step is done in a batchwise fashion mainly to mitigate network and disc / MySQL
-        latency effects. CPU-bound tasks such as parsing the txs in a block slice are done
-        iteratively.
-
-        NOTE: For a very large block the work_items can arrive out of sequential order
-        (e.g. if the block is broken down into 10 parts you might receive part 3 + part 10)
-        """
-        db, self.last_activity = maybe_refresh_connection(db, self.last_activity, self.logger)
-
-        (
-            merged_offsets_map,
-            merged_tx_to_work_item_id_map,
-            merged_part_tx_hash_rows,
-            batched_raw_block_slices,
-            acks,
-            is_reorg,
-        ) = self.build_merged_data_structures(work_items, ipc_socket_client)
-
-        (
-            new_tx_offsets,
-            not_new_tx_offsets,
-        ) = self.get_processed_vs_unprocessed_tx_offsets(
-            is_reorg,
-            merged_offsets_map,
-            merged_tx_to_work_item_id_map,
-            merged_part_tx_hash_rows,
-            db,
+        self.logger.log(
+            PROFILING, f"Memory usage check before join on queue: " f"{process.memory_info().rss//1024**2}MB"
         )
-        self.last_activity = int(time.time())
-        self.parse_txs_and_push_to_queue(new_tx_offsets, not_new_tx_offsets, batched_raw_block_slices, acks)
+        self.confirmed_tx_flush_queue.join()
+        self.logger.log(
+            PROFILING,
+            f"Memory usage check after processing work items: " f"{process.memory_info().rss//1024**2}MB",
+        )

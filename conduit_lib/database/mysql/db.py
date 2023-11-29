@@ -31,7 +31,7 @@ T1 = TypeVar("T1")
 
 
 class MySQLDatabase(DBInterface):
-    def __init__(self, conn: MySQLdb.Connection, worker_id: int | None = None) -> None:
+    def __init__(self, conn: MySQLdb.Connection, worker_id: int | str | None = None) -> None:
         self.conn = conn  # passed into constructor for easier unit-testing
         assert self.conn is not None
         self.worker_id = worker_id
@@ -265,7 +265,7 @@ def get_connection() -> Connection:
     return conn
 
 
-def load_mysql_database(worker_id: int | None = None) -> DBInterface:
+def load_mysql_database(worker_id: int | str | None = None) -> DBInterface:
     logger = logging.getLogger('load_mysql_database')
     while True:
         try:
