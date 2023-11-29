@@ -313,7 +313,7 @@ class MinedBlockParsingThread(threading.Thread):
                 [BlockSliceRequestType(block_num, Slice(slice_start_offset, slice_end_offset))]
             )
             self.logger.debug(
-                f"Size of received raw_block {blk_hash.hex()[0:8]} (worker-{self.worker_id}): "
+                f"Size of received raw_block slice {blk_hash.hex()[0:8]} (worker-{self.worker_id}): "
                 f"{(len(raw_block_slice_array) / 1024 ** 2):.2f}MB"
             )
 
