@@ -9,11 +9,7 @@ import threading
 from pathlib import Path
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.mysql_database import (
-    MySQLDatabase,
-    load_mysql_database,
-    mysql_connect,
-)
+from .database.db_interface.db import DBInterface
 from .constants import REGTEST
 from .networks import HeadersRegTestMod, NetworkConfig
 from .utils import remove_readonly
@@ -31,10 +27,10 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        mysql_database: MySQLDatabase | None,
+        database: DBInterface | None,
         lmdb: LMDB_Database | None,
     ) -> None:
-        self.mysql_database = mysql_database
+        self.database = database
         self.headers = headers
         self.headers_lock = threading.RLock()
         self.block_headers = block_headers
@@ -42,8 +38,8 @@ class Storage:
         self.lmdb = lmdb
 
     async def close(self) -> None:
-        if self.mysql_database:
-            self.mysql_database.close()
+        if self.database:
+            self.database.close()
 
     # External API
 
@@ -93,23 +89,35 @@ def reset_headers(headers_path: Path, block_headers_path: Path) -> None:
             pass
 
 
+def remove_contents(dir_path: Path) -> None:
+    for item in dir_path.iterdir():
+        if item.is_dir():
+            shutil.rmtree(item, onerror=remove_readonly)
+        else:
+            item.unlink()
+
+
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
-        mysql_database = mysql_connect()
+        database = DBInterface.load_db(worker_id="controller")
         try:
-            mysql_database.tables.mysql_drop_indices()
-            mysql_database.mysql_drop_tables()
+            database.drop_tables()
+            if int(os.environ.get("RESET_EXTERNAL_API_DATABASE_TABLES", 0)) == 1:
+                assert database.tip_filter_api is not None
+                database.tip_filter_api.drop_tables()
+                database.tip_filter_api.create_tables()
+            database.create_permanent_tables()
         finally:
-            mysql_database.close()
+            database.close()
 
     DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
     DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
     if os.environ["SERVER_TYPE"] == "ConduitRaw" and int(os.environ.get("RESET_CONDUIT_RAW", 0)) == 1:
         if DATADIR_SSD.exists():
-            shutil.rmtree(DATADIR_SSD, onerror=remove_readonly)
+            remove_contents(DATADIR_SSD)
 
         if DATADIR_HDD.exists():
-            shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
+            remove_contents(DATADIR_HDD)
 
     os.makedirs(DATADIR_SSD, exist_ok=True)
     os.makedirs(DATADIR_HDD, exist_ok=True)
@@ -123,21 +131,24 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     headers_path = headers_dir.joinpath("headers.mmap")
     block_headers_path = headers_dir.joinpath("block_headers.mmap")
 
-    if int(os.environ.get("RESET_CONDUIT_RAW", 0)) == 1 or int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
+    if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
+        reset_datastore(headers_path, block_headers_path)
+
+    if os.environ["SERVER_TYPE"] == "ConduitRaw" and int(os.environ.get("RESET_CONDUIT_RAW", 0)) == 1:
         reset_datastore(headers_path, block_headers_path)
 
     headers = setup_headers_store(net_config, headers_path)
     block_headers = setup_headers_store(net_config, block_headers_path)
 
     if os.environ["SERVER_TYPE"] == "ConduitIndex":
-        mysql_database = load_mysql_database()
+        database = DBInterface.load_db(worker_id="controller")
     else:
-        mysql_database = None
+        database = None
 
     if os.environ["SERVER_TYPE"] == "ConduitRaw":
         lmdb_db = LMDB_Database(lock=True)
     else:
         lmdb_db = None
 
-    storage = Storage(headers, block_headers, mysql_database, lmdb_db)
+    storage = Storage(headers, block_headers, database, lmdb_db)
     return storage

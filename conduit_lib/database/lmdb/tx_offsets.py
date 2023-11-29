@@ -1,6 +1,7 @@
 import logging
 import os
 from pathlib import Path
+from typing import cast
 import typing
 
 import bitcoinx
@@ -47,7 +48,7 @@ class LmdbTxOffsets:
                 read_path,
                 start_offset_in_dat_file,
                 end_offset_in_dat_file,
-            ) = cbor2.loads(val)
+            ) = cast(tuple[str, int, int], cbor2.loads(val))
 
         # Starting offset of tx
         start_offset = start_offset_in_dat_file + (tx_loc.tx_position * SIZE_UINT64_T)
@@ -83,7 +84,7 @@ class LmdbTxOffsets:
             if not val:
                 self.logger.error(f"Tx offsets for block_hash: {hash_to_hex_str(block_hash)} " f"not found")
                 return None
-        read_path, start_offset, end_offset = cbor2.loads(val)
+        read_path, start_offset, end_offset = cast(tuple[str, int, int], cbor2.loads(val))
         return DataLocation(read_path, start_offset, end_offset)
 
     def get_tx_offsets(self, block_hash: bytes) -> bytes | None:

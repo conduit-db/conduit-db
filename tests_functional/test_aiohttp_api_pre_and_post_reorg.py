@@ -15,6 +15,7 @@ import pytest
 import requests
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib import DBInterface
 from conduit_lib.utils import create_task
 from conduit_raw.conduit_raw.aiohttp_api.types import (
     TipFilterNotificationMatch,
@@ -32,13 +33,13 @@ from tests_functional.reference_server_support import (
     OutputSpend,
     IndexerServerSettings,
     AccountMessageKind,
-    ChannelNotification,
     list_peer_channel_messages_async,
     setup_reference_server_tip_filtering,
     register_for_utxo_notifications,
     register_for_pushdata_notifications,
     delete_peer_channel_message_async,
     GenericPeerChannelMessage,
+    NotificationJsonData,
 )
 
 BASE_URL = f"http://127.0.0.1:34525"
@@ -57,92 +58,100 @@ async def listen_for_notifications_task_async(
     websocket_connected_event,
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
+    tip_filter_callback_url: str,
+    owner_token: str,
     api_key: str,
 ) -> None:
-    access_token = api_key
     websocket_url_template = "http://localhost:47124/" + "api/v1/web-socket?token={access_token}"
-    websocket_url = websocket_url_template.format(access_token=access_token)
+    websocket_url = websocket_url_template.format(access_token=api_key)
     headers = {"Accept": "application/octet-stream"}
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) as server_websocket:
-            logger.info("Connected to server websocket, url=%s", websocket_url_template)
-            websocket_connected_event.set()
-            websocket_message: aiohttp.WSMessage
-            async for websocket_message in server_websocket:
-                if websocket_message.type == aiohttp.WSMsgType.TEXT:
-                    message = json.loads(websocket_message.data)
-                    message_type = message["message_type"]
-                    assert message_type == "bsvapi.headers.tip"
-                    logger.debug(f"Got new headers tip: {message['result']}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(websocket_url, headers=headers, timeout=5.0) as server_websocket:
+                logger.info("Connected to server websocket, url=%s", websocket_url_template)
+                websocket_connected_event.set()
+                websocket_message: aiohttp.WSMessage
+                async for websocket_message in server_websocket:
+                    if websocket_message.type == aiohttp.WSMsgType.TEXT:
+                        message = json.loads(websocket_message.data)
+                        message_type = message["message_type"]
+                        assert message_type == "bsvapi.headers.tip"
+                        logger.debug(f"Got new headers tip: {message['result']}")
 
-                elif websocket_message.type == aiohttp.WSMsgType.BINARY:
-                    # In processing the message `BadServerError` will be raised if this
-                    # server cannot handle the incoming message, or it is malformed.
-                    message_bytes = cast(bytes, websocket_message.data)
-                    (
-                        message_kind,
-                        message,
-                    ) = process_reference_server_message_bytes(message_bytes)
-
-                    if message_kind == AccountMessageKind.PEER_CHANNEL_MESSAGE:
-                        channel_message = cast(ChannelNotification, message)
+                    elif websocket_message.type == aiohttp.WSMsgType.BINARY:
+                        # In processing the message `BadServerError` will be raised if this
+                        # server cannot handle the incoming message, or it is malformed.
+                        message_bytes = cast(bytes, websocket_message.data)
+                        (
+                            message_kind,
+                            message,
+                        ) = process_reference_server_message_bytes(message_bytes)
                         logger.debug(
-                            "Queued incoming peer channel message %s",
-                            channel_message,
+                            f"Got binary websocket message: message_kind={message_kind}. "
+                            f"message: {message}"
                         )
-                        # This is essentially ElectrumSV's
-                        # `process_incoming_peer_channel_messages_async` inlined
 
-                        messages = await list_peer_channel_messages_async(
-                            indexer_settings["tipFilterCallbackUrl"],
-                            indexer_settings["tipFilterCallbackToken"],
-                            unread_only=False,
-                        )
-                        if len(messages) == 0:
-                            # This may happen legitimately if we had several new message notifications backlogged
-                            # for the same channel, but processing a leading notification picks up the messages
-                            # for the trailing notification.
+                        if message_kind == AccountMessageKind.PEER_CHANNEL_MESSAGE:
+                            channel_message = cast(NotificationJsonData, message)
                             logger.debug(
-                                "Asked tip filter channel %s for new messages and received none",
-                                indexer_settings["tipFilterCallbackUrl"],
+                                "Queued incoming peer channel message %s",
+                                channel_message,
                             )
-                            continue
-                        tip_filter_matches_queue.put_nowait(messages)
-                        for message in messages:
-                            await delete_peer_channel_message_async(
-                                channel_message["id"],
-                                indexer_settings["tipFilterCallbackToken"],
-                                message["sequence"],
+                            # This is essentially ElectrumSV's
+                            # `process_incoming_peer_channel_messages_async` inlined
+
+                            messages = await list_peer_channel_messages_async(
+                                tip_filter_callback_url,
+                                owner_token,
+                                unread_only=False,
                             )
-                    elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
-                        spent_output_message = cast(OutputSpend, message)
-                        logger.debug("Queued incoming output spend message")
-                        output_spend_result_queue.put_nowait([spent_output_message])
+                            if len(messages) == 0:
+                                # This may happen legitimately if we had several new message notifications backlogged
+                                # for the same channel, but processing a leading notification picks up the messages
+                                # for the trailing notification.
+                                logger.debug(
+                                    "Asked tip filter channel %s for new messages and received none",
+                                    tip_filter_callback_url,
+                                )
+                                continue
+                            tip_filter_matches_queue.put_nowait(messages)
+                            for message in messages:
+                                await delete_peer_channel_message_async(
+                                    channel_message["channel_id"],
+                                    owner_token,
+                                    message["sequence"],
+                                )
+                        elif message_kind == AccountMessageKind.SPENT_OUTPUT_EVENT:
+                            spent_output_message = cast(OutputSpend, message)
+                            logger.debug("Queued incoming output spend message")
+                            output_spend_result_queue.put_nowait([spent_output_message])
+                        else:
+                            logger.error(
+                                "Unhandled binary server websocket message %r",
+                                websocket_message,
+                            )
+                    elif websocket_message.type in (
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.ERROR,
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.CLOSING,
+                    ):
+                        logger.info("Server websocket closed")
+                        break
                     else:
                         logger.error(
-                            "Unhandled binary server websocket message %r",
+                            "Unhandled server websocket message type %r",
                             websocket_message,
                         )
-                elif websocket_message.type in (
-                    aiohttp.WSMsgType.CLOSE,
-                    aiohttp.WSMsgType.ERROR,
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.CLOSING,
-                ):
-                    logger.info("Server websocket closed")
-                    break
-                else:
-                    logger.error(
-                        "Unhandled server websocket message type %r",
-                        websocket_message,
-                    )
+    except Exception:
+        logger.exception("unexpected exception in `listen_for_notifications_task_async`")
 
 
 async def spawn_tasks(
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
+    tip_filter_callback_url: str,
+    owner_token: str,
     api_key: str,
     registrations_complete_event: threading.Event,
 ):
@@ -152,7 +161,8 @@ async def spawn_tasks(
             websocket_connected_event,
             output_spend_result_queue,
             tip_filter_matches_queue,
-            indexer_settings,
+            tip_filter_callback_url,
+            owner_token,
             api_key,
         )
     )
@@ -167,7 +177,8 @@ def listen_for_notifications_thread(
     loop: asyncio.AbstractEventLoop,
     output_spend_result_queue: queue.Queue,
     tip_filter_matches_queue: queue.Queue,
-    indexer_settings: IndexerServerSettings,
+    tip_filter_callback_url: str,
+    owner_token: str,
     api_key: str,
     registrations_complete_event: threading.Event,
 ) -> None:
@@ -178,7 +189,8 @@ def listen_for_notifications_thread(
             spawn_tasks(
                 output_spend_result_queue,
                 tip_filter_matches_queue,
-                indexer_settings,
+                tip_filter_callback_url,
+                owner_token,
                 api_key,
                 registrations_complete_event,
             )
@@ -194,10 +206,22 @@ class TestAiohttpRESTAPI:
     logger = logging.getLogger("TestAiohttpRESTAPI")
 
     def setup_class(self) -> None:
+        # Need to set the environment variable DEFAULT_DB_TYPE=MYSQL or DEFAULT_DB_TYPE=SCYLLADB
+        # prior to running all of these tests. This goes for the running services too
+
+        os.environ['SCYLLA_KEYSPACE'] = os.getenv('SCYLLA_KEYSPACE', 'condiutdbtest')
+        os.environ['DEFAULT_DB_TYPE'] = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
+
+        db = DBInterface.load_db(worker_id="test")
+        db.create_permanent_tables()
+        db.tip_filter_api.create_tables()
+
         loop = asyncio.get_event_loop()
         indexer_settings: IndexerServerSettings
         api_key: str
-        indexer_settings, api_key = loop.run_until_complete(setup_reference_server_tip_filtering())
+        tip_filter_callback_url, owner_token, api_key = loop.run_until_complete(
+            setup_reference_server_tip_filtering()
+        )
 
         self.tip_filter_matches_queue = queue.Queue()
         self.output_spend_result_queue = queue.Queue()
@@ -209,7 +233,8 @@ class TestAiohttpRESTAPI:
                 loop,
                 self.output_spend_result_queue,
                 self.tip_filter_matches_queue,
-                indexer_settings,
+                tip_filter_callback_url,
+                owner_token,
                 api_key,
                 self.registrations_complete_event,
             ],
@@ -217,7 +242,7 @@ class TestAiohttpRESTAPI:
         )
         thread.start()
         self.registrations_complete_event.wait()
-        logger.debug(f"Registrations done!")
+        logger.info(f"Registrations done!")
 
         blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
         import_blocks(str(blockchain_dir))
@@ -233,18 +258,18 @@ class TestAiohttpRESTAPI:
     def teardown_class(klass) -> None:
         pass
 
-    def test_ping(klass):
+    def test_ping(klass) -> None:
         result = requests.get(PING_URL)
         assert result.json() is True
 
-    def test_error(klass):
+    def test_error(klass) -> None:
         result = requests.get(ERROR_URL)
         assert result.status_code == 400, result.reason
         assert result.reason is not None
         assert isinstance(result.reason, str)
 
     @pytest.mark.timeout(20)
-    def test_utxo_notifications(self):
+    def test_utxo_notifications(self) -> None:
         expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
         len_expected_utxo_spends = len(expected_utxo_spends)
         for _ in range(len_expected_utxo_spends):
@@ -260,7 +285,7 @@ class TestAiohttpRESTAPI:
         assert len(expected_utxo_spends) == 0
 
     @pytest.mark.timeout(20)
-    def test_pushdata_notifications(self):
+    def test_pushdata_notifications(self) -> None:
         expected_count = 5
         count = 0
         while True:
@@ -270,7 +295,6 @@ class TestAiohttpRESTAPI:
                 for message in messages:
                     payload = base64.b64decode(message["payload"])
                     pushdata_notification = cast(TipFilterPushDataMatchesData, json.loads(payload))
-                    logger.debug(f"Got pushdata_notification: {pushdata_notification}")
                     match: TipFilterNotificationMatch
                     for match in pushdata_notification["matches"]:
                         count += 1
@@ -280,6 +304,7 @@ class TestAiohttpRESTAPI:
                         outpoint = PUSHDATA_TO_OUTPOINT_MAP[pushdata_hash_hex]
                         assert hash_to_hex_str(outpoint.tx_hash) == output_tx_hash
                         assert outpoint.out_idx == output_idx
+                    logger.debug(f"Got pushdata_notification: {pushdata_notification} (total_count={count})")
 
                 if count == expected_count:
                     break
@@ -287,55 +312,55 @@ class TestAiohttpRESTAPI:
                 logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
                 time.sleep(1)
 
-    def test_get_transaction_json(self):
+    def test_get_transaction_json(self) -> None:
         headers = {"Accept": "application/json"}
         for txid, rawtx_hex in pre_reorg_test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200, f"reason={result.reason}, txid={txid}"
             assert result.json() == rawtx_hex
 
-    def test_get_transaction_binary(self):
+    def test_get_transaction_binary(self) -> None:
         headers = {"Accept": "application/octet-stream"}
         for txid, rawtx_hex in pre_reorg_test_data.TRANSACTIONS.items():
             result = requests.get(GET_TRANSACTION_URL.format(txid=txid), headers=headers)
             assert result.status_code == 200, result.reason
             assert result.content == bytes.fromhex(rawtx_hex)
 
-    def test_get_tsc_merkle_proof_json(self):
+    def test_get_tsc_merkle_proof_json(self) -> None:
         utils._get_tsc_merkle_proof_target_hash_json()
         utils._get_tsc_merkle_proof_target_merkleroot_json()
         utils._get_tsc_merkle_proof_target_header_json()
         utils._get_tsc_merkle_proof_include_rawtx_json()
 
-    def test_pushdata_no_match_json(self):
+    def test_pushdata_no_match_json(self) -> None:
         utils._pushdata_no_match_json()
 
-    def test_mining_txs_json(self):
+    def test_mining_txs_json(self) -> None:
         utils._mining_txs_json_post_reorg()
 
-    def test_p2pk_json(self):
+    def test_p2pk_json(self) -> None:
         utils._p2pk_json(post_reorg=False)
 
-    def test_p2pkh_json(self):
+    def test_p2pkh_json(self) -> None:
         utils._p2pkh_json(post_reorg=False)
 
-    def test_p2sh_json(self):
+    def test_p2sh_json(self) -> None:
         utils._p2sh_json(post_reorg=False)
 
-    def test_p2ms_json(self):
+    def test_p2ms_json(self) -> None:
         utils._p2ms_json(post_reorg=False)
 
-    def test_p2ms2_json(self):
+    def test_p2ms2_json(self) -> None:
         utils._p2ms2_json(post_reorg=False)
 
-    def test_submit_reorg_blocks(self):
+    def test_submit_reorg_blocks(self) -> None:
         blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_118_0ebc17"
         import_blocks(str(blockchain_dir))
         time.sleep(10)
         assert True
 
     @pytest.mark.timeout(10)
-    def test_utxo_notifications_post_reorg(self):
+    def test_utxo_notifications_post_reorg(self) -> None:
         # TODO test re-registration and initial status fetch
         expected_utxo_spends = set([tuple(utxo) for utxo in UTXO_REGISTRATIONS])
         len_expected_utxo_spends = len(expected_utxo_spends)
@@ -352,7 +377,7 @@ class TestAiohttpRESTAPI:
         assert len(expected_utxo_spends) == 0
 
     @pytest.mark.timeout(20)
-    def test_pushdata_notifications_post_reorg(self):
+    def test_pushdata_notifications_post_reorg(self) -> None:
         expected_count = 5
         count = 0
         while True:
@@ -379,29 +404,29 @@ class TestAiohttpRESTAPI:
                 logger.debug(f"tip_filter_matches_queue queue empty, waiting for more")
                 time.sleep(1)
 
-    def test_get_tsc_merkle_proof_json_post_reorg(self):
+    def test_get_tsc_merkle_proof_json_post_reorg(self) -> None:
         utils._get_tsc_merkle_proof_target_hash_json(post_reorg=True)
         utils._get_tsc_merkle_proof_target_merkleroot_json(post_reorg=True)
         utils._get_tsc_merkle_proof_target_header_json(post_reorg=True)
         utils._get_tsc_merkle_proof_include_rawtx_json(post_reorg=True)
 
-    def test_pushdata_no_match_json_post_reorg(self):
+    def test_pushdata_no_match_json_post_reorg(self) -> None:
         utils._pushdata_no_match_json()
 
-    def test_mining_txs_json_post_reorg(self):
+    def test_mining_txs_json_post_reorg(self) -> None:
         utils._mining_txs_json_post_reorg()
 
-    def test_p2pk_json_post_reorg(self):
+    def test_p2pk_json_post_reorg(self) -> None:
         utils._p2pk_json(post_reorg=True)
 
-    def test_p2pkh_json_post_reorg(self):
+    def test_p2pkh_json_post_reorg(self) -> None:
         utils._p2pkh_json(post_reorg=True)
 
-    def test_p2sh_json_post_reorg(self):
+    def test_p2sh_json_post_reorg(self) -> None:
         utils._p2sh_json(post_reorg=True)
 
-    def test_p2ms_json_post_reorg(self):
+    def test_p2ms_json_post_reorg(self) -> None:
         utils._p2ms_json(post_reorg=True)
 
-    def test_p2ms2_json_post_reorg(self):
+    def test_p2ms2_json_post_reorg(self) -> None:
         utils._p2ms2_json(post_reorg=True)

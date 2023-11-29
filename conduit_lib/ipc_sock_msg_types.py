@@ -34,7 +34,7 @@ class PingRequest(BaseMsg):
     command = ipc_sock_commands.PING
 
     def to_cbor(self) -> bytes:
-        return cast(bytes, cbor2.dumps({"command": self.command}))
+        return cast(bytes, cbor2.dumps({"command": self.command}))  # type: ignore[redundant-cast]
 
     def to_json(self) -> str:
         return json.dumps({"command": self.command})
@@ -44,7 +44,7 @@ class PingResponse(BaseMsg):
     command = ipc_sock_commands.PING
 
     def to_cbor(self) -> bytes:
-        return cast(bytes, cbor2.dumps({"command": self.command}))
+        return cast(bytes, cbor2.dumps({"command": self.command}))  # type: ignore[redundant-cast]
 
     def to_json(self) -> str:
         return json.dumps({"command": self.command})
@@ -54,7 +54,7 @@ class StopRequest(BaseMsg):
     command = ipc_sock_commands.STOP
 
     def to_cbor(self) -> bytes:
-        return cast(bytes, cbor2.dumps({"command": self.command}))
+        return cast(bytes, cbor2.dumps({"command": self.command}))  # type: ignore[redundant-cast]
 
     def to_json(self) -> str:
         return json.dumps({"command": self.command})
@@ -64,7 +64,7 @@ class StopResponse(BaseMsg):
     command = ipc_sock_commands.STOP
 
     def to_cbor(self) -> bytes:
-        return cast(bytes, cbor2.dumps({}))
+        return cast(bytes, cbor2.dumps({}))  # type: ignore[redundant-cast]
 
     def to_json(self) -> str:
         return json.dumps({"command": self.command})
@@ -74,7 +74,7 @@ class ChainTipRequest(BaseMsg):
     command = ipc_sock_commands.CHAIN_TIP
 
     def to_cbor(self) -> bytes:
-        return cast(bytes, cbor2.dumps({"command": self.command}))
+        return cast(bytes, cbor2.dumps({"command": self.command}))  # type: ignore[redundant-cast]
 
     def to_json(self) -> str:
         return json.dumps({"command": ipc_sock_commands.CHAIN_TIP})
@@ -89,7 +89,7 @@ class ChainTipResponse(BaseMsg):
         self.height = height
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -118,7 +118,7 @@ class BlockNumberBatchedRequest(BaseMsg):
         self.block_hashes = block_hashes
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "block_hashes": self.block_hashes}),
         )
@@ -140,7 +140,7 @@ class BlockNumberBatchedResponse(BaseMsg):
         self.block_numbers = block_numbers
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "block_numbers": self.block_numbers}),
         )
@@ -161,7 +161,7 @@ class BlockBatchedRequest(BaseMsg):
         self.block_requests = block_requests
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -189,7 +189,7 @@ class MerkleTreeRowRequest(BaseMsg):
         self.level = level
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -219,7 +219,7 @@ class MerkleTreeRowResponse(BaseMsg):
 
     # Cbor serialization is not used for efficiency
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "mtree_row": self.mtree_row}),
         )
@@ -236,7 +236,7 @@ class TransactionOffsetsBatchedRequest(BaseMsg):
         self.block_hashes = block_hashes
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "block_hashes": self.block_hashes}),
         )
@@ -258,7 +258,7 @@ class TransactionOffsetsBatchedResponse(BaseMsg):
         self.tx_offsets_batch = tx_offsets_batch
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -285,7 +285,7 @@ class BlockMetadataBatchedRequest(BaseMsg):
         self.block_hashes = block_hashes
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "block_hashes": self.block_hashes}),
         )
@@ -314,7 +314,7 @@ class BlockMetadataBatchedResponse(BaseMsg):
         ]
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -342,7 +342,7 @@ class HeadersBatchedRequest(BaseMsg):
         self.batch_size = batch_size
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -371,11 +371,10 @@ class HeadersBatchedResponse(BaseMsg):
         self.headers_batch = headers_batch
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps({"command": self.command, "headers_batch": self.headers_batch}),
         )
-
     def to_json(self) -> str:
         return json.dumps(
             {
@@ -399,7 +398,7 @@ class ReorgDifferentialRequest(BaseMsg):
         self.new_hashes = new_hashes
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -409,7 +408,6 @@ class ReorgDifferentialRequest(BaseMsg):
                 }
             ),
         )
-
     def to_json(self) -> str:
         return json.dumps(
             {
@@ -436,7 +434,7 @@ class ReorgDifferentialResponse(BaseMsg):
         self.orphaned_tx_hashes = orphaned_tx_hashes
 
     def to_cbor(self) -> bytes:
-        return cast(
+        return cast(  # type: ignore[redundant-cast]
             bytes,
             cbor2.dumps(
                 {
@@ -447,7 +445,6 @@ class ReorgDifferentialResponse(BaseMsg):
                 }
             ),
         )
-
     def to_json(self) -> str:
         return json.dumps(
             {

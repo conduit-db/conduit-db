@@ -5,21 +5,20 @@ import threading
 import time
 import typing
 
-from ..types import MySQLFlushBatchWithAcksMempool, MempoolTxAck
+from conduit_lib import DBInterface
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    InputRowParsed,
+    PushdataRowParsed,
+    DBFlushBatchWithAcksMempool,
+    MempoolTxAck,
+)
 from ..workers.common import (
-    maybe_refresh_mysql_connection,
-    mysql_flush_rows_mempool,
+    maybe_refresh_connection,
+    flush_rows_mempool,
     extend_batched_rows,
     reset_rows_mempool,
 )
-
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.mysql_database import mysql_connect
 
 if typing.TYPE_CHECKING:
     from .transaction_parser import TxParser
@@ -48,16 +47,16 @@ class FlushMempoolTransactionsThread(threading.Thread):
         self.logger.setLevel(logging.DEBUG)
         threading.Thread.__init__(self, daemon=daemon)
 
-        self.last_mysql_activity = int(time.time())
+        self.last_activity = int(time.time())
         self.worker_id = worker_id
         self.mempool_tx_flush_queue = mempool_tx_flush_queue
 
     def run(self) -> None:
         assert self.mempool_tx_flush_queue is not None
-        txs, txs_mempool, ins, outs, pds, acks = reset_rows_mempool()
+        txs, txs_mempool, ins, pds, acks = reset_rows_mempool()
         utxo_spends: list[InputRowParsed] = []
         pushdata_matches_tip_filter: list[PushdataRowParsed] = []
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
         try:
             while True:
                 try:
@@ -70,8 +69,8 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     if not mempool_rows:  # poison pill
                         break
 
-                    txs, txs_mempool, ins, outs, pds = extend_batched_rows(
-                        mempool_rows, txs, txs_mempool, ins, outs, pds
+                    txs, txs_mempool, ins, pds = extend_batched_rows(
+                        mempool_rows, txs, txs_mempool, ins, pds
                     )
                     acks += new_acks
                     utxo_spends += new_utxo_spends
@@ -80,14 +79,14 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     if len(txs_mempool) > MEMPOOL_MAX_TX_BATCH_LIMIT - 1:
                         self.logger.debug(f"hit max mempool batch size ({len(txs_mempool)})")
                         (
-                            mysql_db,
-                            self.last_mysql_activity,
-                        ) = maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity, self.logger)
+                            db,
+                            self.last_activity,
+                        ) = maybe_refresh_connection(db, self.last_activity, self.logger)
 
-                        mysql_flush_rows_mempool(
+                        flush_rows_mempool(
                             self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
-                            mysql_db=mysql_db,
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, pds, acks),
+                            db=db,
                         )
 
                         self.parent.send_utxo_spend_notifications(utxo_spends, None)
@@ -96,7 +95,6 @@ class FlushMempoolTransactionsThread(threading.Thread):
                             txs,
                             txs_mempool,
                             ins,
-                            outs,
                             pds,
                             acks,
                         ) = reset_rows_mempool()
@@ -107,13 +105,13 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     # self.logger.debug("mempool batch timer triggered")
                     if len(txs_mempool) != 0:
                         (
-                            mysql_db,
-                            self.last_mysql_activity,
-                        ) = maybe_refresh_mysql_connection(mysql_db, self.last_mysql_activity, self.logger)
-                        mysql_flush_rows_mempool(
+                            db,
+                            self.last_activity,
+                        ) = maybe_refresh_connection(db, self.last_activity, self.logger)
+                        flush_rows_mempool(
                             self,
-                            MySQLFlushBatchWithAcksMempool(txs, txs_mempool, ins, outs, pds, acks),
-                            mysql_db=mysql_db,
+                            DBFlushBatchWithAcksMempool(txs, txs_mempool, ins, pds, acks),
+                            db=db,
                         )
                         self.parent.send_utxo_spend_notifications(utxo_spends, None)
                         self.parent.send_pushdata_match_notifications(pushdata_matches_tip_filter, None)
@@ -121,13 +119,12 @@ class FlushMempoolTransactionsThread(threading.Thread):
                             txs,
                             txs_mempool,
                             ins,
-                            outs,
                             pds,
                             acks,
                         ) = reset_rows_mempool()
                         utxo_spends = []
                         pushdata_matches_tip_filter = []
-                        self.last_mysql_activity = int(time.time())
+                        self.last_activity = int(time.time())
                     continue
         except KeyboardInterrupt:
             return
@@ -135,4 +132,4 @@ class FlushMempoolTransactionsThread(threading.Thread):
             self.logger.exception("Caught exception")
             raise e
         finally:
-            mysql_db.close()
+            db.close()

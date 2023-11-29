@@ -10,12 +10,11 @@ from typing import NamedTuple
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.database.mysql.types import (
+from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
-    OutputRow,
     MempoolTransactionRow,
-    PushdataRowParsed,
     InputRowParsed,
+    PushdataRowParsed,
 )
 from conduit_lib.types import PushdataMatchFlags
 
@@ -244,7 +243,6 @@ def parse_txs(
     list[ConfirmedTransactionRow],
     list[MempoolTransactionRow],
     list[InputRowParsed],
-    list[OutputRow],
     list[PushdataRowParsed],
     list[InputRowParsed],
     list[PushdataRowParsed],
@@ -265,7 +263,6 @@ def parse_txs(
     tx_rows_confirmed = []
     tx_rows_mempool = []
     in_rows = []
-    out_rows = []
     set_pd_rows = []
     utxo_spends = []
     pushdata_matches_tip_filter = []
@@ -343,7 +340,7 @@ def parse_txs(
             # outputs
             count_tx_out, offset = unpack_varint(buffer, offset)
             for out_idx in range(count_tx_out):
-                out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
+                # out_value = struct_le_Q.unpack_from(buffer[offset : offset + 8])[0]
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
@@ -375,8 +372,8 @@ def parse_txs(
 
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
-                if not previously_processed:
-                    out_rows.append(OutputRow(tx_hashX.hex(), out_idx, out_value))
+                # if not previously_processed:
+                #     out_rows.append(OutputRow(tx_hashX.hex(), out_idx, out_value))
 
             # nlocktime
             offset += 4
@@ -388,13 +385,12 @@ def parse_txs(
                 )
             else:
                 # Note mempool uses full length tx_hash
-                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex(), block_num_or_timestamp))
+                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex()))
         assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
         return (
             tx_rows_confirmed,
             tx_rows_mempool,
             in_rows,
-            out_rows,
             set_pd_rows,
             utxo_spends,
             pushdata_matches_tip_filter,

@@ -1,4 +1,5 @@
 import asyncio
+from types import TracebackType
 
 import MySQLdb
 import bitcoinx
@@ -20,7 +21,7 @@ from pathlib import Path
 import socket
 import struct
 import time
-from typing import Any, cast, Callable, Coroutine, TypeVar
+from typing import Any, cast, Callable, Coroutine, TypeVar, Type
 import zmq
 from zmq.asyncio import Socket as AsyncZMQSocket
 
@@ -299,8 +300,8 @@ def remove_readonly(func: Callable[..., Any], path: str, excinfo: Any) -> None:
     func(path)
 
 
-def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: str) -> bool:
-    cursor = mysql_conn.cursor()
+def index_exists(conn: MySQLdb.Connection, index_name: str, table_name: str) -> bool:
+    cursor = conn.cursor()
     cursor.execute(
         """
         SELECT COUNT(*)
@@ -312,7 +313,7 @@ def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: st
         (table_name, index_name),
     )
     rows = cursor.fetchone()
-    row_count = rows[0]
+    row_count: int = rows[0]
     exists = row_count > 0
     if not exists:
         logger.debug(
@@ -326,3 +327,33 @@ def index_exists(mysql_conn: MySQLdb.Connection, index_name: str, table_name: st
         )
     cursor.close()
     return exists
+
+
+class Timer:
+    def __init__(self, count: int | None = None, name: str | None = None):
+        self.count = count
+        self.name = name
+
+    def __enter__(self) -> "Timer":
+        self.start = time.time()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.end = time.time()
+        self.interval = self.end - self.start
+        if self.name:
+            logger.debug(f"Timer{'['+ self.name+ ']'}: interval of {self.interval:.4f} seconds")
+        else:
+            if self.name:
+                logger.debug(f"Timer: interval of {self.interval:.4f} seconds")
+        if self.count and self.name:
+            logger.debug(
+                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{int(self.count/self.interval)} per second"
+            )
+        elif self.count:
+            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval)} per second")

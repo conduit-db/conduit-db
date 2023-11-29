@@ -20,15 +20,12 @@ from zmq.asyncio import Context as AsyncZMQContext
 from conduit_lib.algorithms import parse_txs
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
-from conduit_lib.database.mysql.types import MinedTxHashes
+from conduit_lib.database.db_interface.db import DatabaseType
+from conduit_lib.database.db_interface.types import MinedTxHashes
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
-from conduit_lib.database.mysql.mysql_database import (
-    MySQLDatabase,
-    load_mysql_database,
-)
 from conduit_lib.deserializer import Deserializer
-from conduit_lib import Peer
+from conduit_lib import Peer, DBInterface
 from conduit_lib.handlers import Handlers
 from conduit_lib.ipc_sock_msg_types import (
     HeadersBatchedResponse,
@@ -51,7 +48,7 @@ from conduit_lib.types import (
 )
 from conduit_lib.utils import create_task, headers_to_p2p_struct
 from conduit_lib.wait_for_dependencies import (
-    wait_for_mysql,
+    wait_for_db,
     wait_for_ipc_socket_server,
 )
 
@@ -152,7 +149,7 @@ class Controller(ControllerBase):
         self.general_executor = ThreadPoolExecutor(max_workers=4)
 
         wait_for_ipc_socket_server()
-        wait_for_mysql()
+        wait_for_db()
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)
         self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
@@ -181,7 +178,7 @@ class Controller(ControllerBase):
         self.mempool_tx_count: int = 0
 
         # Database Interfaces
-        self.mysql_db: MySQLDatabase | None = None
+        self.db: DBInterface | None = None
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.0
         self.estimated_moving_av_block_size_mb = (
@@ -189,11 +186,11 @@ class Controller(ControllerBase):
         )
 
     def setup(self) -> None:
-        self.mysql_db = load_mysql_database()
+        self.db = DBInterface.load_db(worker_id="controller")
 
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
-        self.mysql_db.tables.mysql_drop_mempool_table()
-        self.mysql_db.tables.mysql_create_permanent_tables()
+        self.db.drop_mempool_table()
+        self.db.create_permanent_tables()
 
     async def run(self) -> None:
         self.running = True
@@ -284,10 +281,10 @@ class Controller(ControllerBase):
         """If there were blocks that were only partially flushed that go beyond the check-pointed
         block hash, we need to purge those rows from the tables before we resume synchronization.
         """
-        assert self.mysql_db is not None
-        result = self.mysql_db.queries.mysql_get_checkpoint_state()
+        assert self.db is not None
+        result = self.db.get_checkpoint_state()
         if not result:
-            self.mysql_db.tables.initialise_checkpoint_state()
+            self.db.initialise_checkpoint_state()
             return None
 
         (
@@ -308,24 +305,29 @@ class Controller(ControllerBase):
         )
 
         # Drop and re-create mempool table
-        self.mysql_db.tables.mysql_drop_mempool_table()
-        self.mysql_db.tables.mysql_create_mempool_table()
+        self.db.drop_mempool_table()
+        self.db.create_mempool_table()
 
-        # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
+        new_hashes: list[bytes] | None = []
+        old_hashes: list[bytes] | None = []
         if reorg_was_allocated:
-            old_hashes: list[bytes] | None = [
-                old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)
-            ]
-            new_hashes: list[bytes] | None = [
-                new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)
-            ]
-            assert new_hashes is not None
-            await self.undo_specific_block_hashes(new_hashes)
-        else:
-            old_hashes = None
-            new_hashes = None
-            best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
-            await self.undo_blocks_above_height(best_header.height)
+            old_hashes = [old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)]
+            new_hashes = [new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)]
+
+        # ScyllaDB can just overwrite the entries
+        # The architecture of ConduitDB is to use a multi-version concurrency control system which
+        # will "hide" the rows from the partially written blocks from the external API
+        assert self.db.db_type is not None
+        if self.db.db_type != DatabaseType.ScyllaDB:
+            # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
+            if reorg_was_allocated:
+                assert new_hashes is not None
+                await self.undo_specific_block_hashes(new_hashes)
+            else:
+                old_hashes = None
+                new_hashes = None
+                best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
+                await self.undo_blocks_above_height(best_header.height)
 
         # Re-attempt indexing of allocated work (that did not complete last time)
         self.logger.debug(f"Re-attempting previously allocated work")
@@ -339,7 +341,7 @@ class Controller(ControllerBase):
             old_hashes,
             new_hashes,
         )
-        self.logger.debug(f"Database repair complete. " f"New chain tip: {best_flushed_tip_height}")
+        self.logger.debug(f"Database repair complete. " f"New tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
         tip_header = self.sync_state.get_local_block_tip()
@@ -360,11 +362,10 @@ class Controller(ControllerBase):
         await self._undo_blocks(unsafe_blocks)
 
     async def _undo_blocks(self, blocks_to_undo: list[tuple[bytes, int]]) -> None:
-        assert self.mysql_db is not None
+        assert self.db is not None
         ipc_sock_client = await self.loop.run_in_executor(self.general_executor, IPCSocketClient)
         batched_tx_rows = []
         batched_in_rows = []
-        batched_out_rows = []
         batched_pd_rows = []
         batched_header_hashes = []
         for block_hash, height in blocks_to_undo:
@@ -379,7 +380,6 @@ class Controller(ControllerBase):
                 tx_rows,
                 _tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -395,21 +395,15 @@ class Controller(ControllerBase):
 
             batched_tx_rows.extend(tx_rows)
             batched_in_rows.extend(input_rows_for_flushing)
-            batched_out_rows.extend(out_rows)
             batched_pd_rows.extend(pushdata_rows_for_flushing)
             batched_header_hashes.append(block_hash)
 
-        # Delete All
+        # Delete all partially flushed rows and then start over fresh from the last good tip
         tx_hashes = [row[0] for row in batched_tx_rows]
-        self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-
-        # Commented out because way too slow... Need to rely on overwriting these records instead
-        # ScyllaDB will be a different story because of merge operator under the hood
-        # self.mysql_db.queries.mysql_delete_pushdata_rows(batched_pd_rows)
-        # self.mysql_db.queries.mysql_delete_output_rows(batched_out_rows)
-        # self.mysql_db.queries.mysql_delete_input_rows(batched_in_rows)
-        # for block_hash in batched_header_hashes:
-        #     self.mysql_db.queries.mysql_delete_header_row(block_hash)
+        self.db.delete_transaction_rows(tx_hashes)
+        self.db.delete_pushdata_rows(batched_pd_rows)
+        self.db.delete_input_rows(batched_in_rows)
+        self.db.delete_header_rows(batched_header_hashes)
 
     async def request_mempool(self) -> None:
         # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
@@ -418,7 +412,7 @@ class Controller(ControllerBase):
         await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
     async def start_jobs(self) -> None:
-        self.mysql_db = self.storage.mysql_database
+        self.db = self.storage.database
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
@@ -444,8 +438,8 @@ class Controller(ControllerBase):
 
     async def wait_for_mined_tx_acks_task(self) -> None:
         while True:
-            message = await self.zmq_socket_listeners.socket_mined_tx_ack.recv()
-            new_mined_tx_hashes = cbor2.loads(message)
+            message = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_ack.recv())
+            new_mined_tx_hashes = cast(dict[int, list[bytes]], cbor2.loads(message))
 
             for blk_num, new_hashes in new_mined_tx_hashes.items():
                 if not self.global_tx_hashes_dict.get(blk_num):
@@ -461,7 +455,7 @@ class Controller(ControllerBase):
             1) invalidate mempool rows (that have been mined)
             2) update api chain tip
         """
-        assert self.mysql_db is not None
+        assert self.db is not None
 
         # 1) Check if we have received all ACKs for mined tx hashes
         while True:
@@ -478,9 +472,9 @@ class Controller(ControllerBase):
             for tx_hash in new_mined_tx_hashes:
                 mined_tx_hashes.append(MinedTxHashes(tx_hash.hex(), blk_num))
 
-        self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
+        self.db.drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
         self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
-        self.mysql_db.mysql_load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
+        self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
         self.global_tx_hashes_dict = {}
 
         # 3) Atomically invalidate all mempool rows that have been mined & update best flushed tip
@@ -492,7 +486,7 @@ class Controller(ControllerBase):
             self._invalidate_mempool_rows(best_flushed_block_tip)
 
     async def sanity_checks_and_update_best_flushed_tip(self, is_reorg: bool) -> int:
-        assert self.mysql_db is not None
+        assert self.db is not None
         t0 = time.time()
         checkpoint_tip: bitcoinx.Header = self.sync_state.get_local_block_tip()
         best_flushed_block_height: int = checkpoint_tip.height
@@ -504,13 +498,13 @@ class Controller(ControllerBase):
 
         else:
             # No txs in mempool until is_post_ibd == True
-            self.mysql_db.mysql_update_checkpoint_tip(checkpoint_tip)
+            self.db.update_checkpoint_tip(checkpoint_tip)
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return best_flushed_block_height
 
     async def connect_done_block_headers(self, blocks_batch_set: set[bytes]) -> None:
-        assert self.mysql_db is not None
+        assert self.db is not None
         ipc_socket_client = IPCSocketClient()
         t0 = time.perf_counter()
         unsorted_headers = [self.storage.get_header_for_hash(h) for h in blocks_batch_set]
@@ -555,7 +549,7 @@ class Controller(ControllerBase):
                 is_orphaned=0,
             )
             header_rows.append(row)
-        self.mysql_db.bulk_loads.mysql_bulk_load_headers(header_rows)
+        self.db.bulk_load_headers(header_rows)
 
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header height {tip.height}, " f"hash {hash_to_hex_str(tip.hash)}")
@@ -641,6 +635,9 @@ class Controller(ControllerBase):
                 else:
                     self.logger.debug(f"Potential reorg detected")
                     # This should mean there has been a reorg. The tip should always connect
+                    # otherwise.We requested the batch of headers by *height* so it will be
+                    # missing at least one of the first headers from the reorg chain.
+                    # So we need to scan back a few blocks to include this missing header
                     from_height = max(start_height - OVERKILL_REORG_DEPTH, 1)
                     count = MAIN_BATCH_HEADERS_COUNT_LIMIT + OVERKILL_REORG_DEPTH
                     result = await self.loop.run_in_executor(
@@ -765,17 +762,17 @@ class Controller(ControllerBase):
     async def load_temp_tables_for_reorg_handling(
         self, old_hashes: ChainHashes, new_hashes: ChainHashes
     ) -> None:
-        assert self.mysql_db is not None
-        self.mysql_db.queries.mysql_update_orphaned_headers(old_hashes)
+        assert self.db is not None
+        self.db.update_orphaned_headers(old_hashes)
         (
             removals_from_mempool,
             additions_to_mempool,
             orphaned_tx_hashes,
         ) = await self._get_differential_post_reorg(old_hashes, new_hashes)
 
-        self.mysql_db.queries.mysql_load_temp_mempool_additions(additions_to_mempool)
-        self.mysql_db.queries.mysql_load_temp_mempool_removals(removals_from_mempool)
-        self.mysql_db.queries.mysql_load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+        self.db.load_temp_mempool_additions(additions_to_mempool)
+        self.db.load_temp_mempool_removals(removals_from_mempool)
+        self.db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
 
     async def index_blocks(
         self,
@@ -785,7 +782,7 @@ class Controller(ControllerBase):
         old_hashes: ChainHashes | None,
         new_hashes: ChainHashes | None,
     ) -> int:
-        assert self.mysql_db is not None
+        assert self.db is not None
 
         if is_reorg:
             assert old_hashes is not None
@@ -799,7 +796,7 @@ class Controller(ControllerBase):
             f"Allocated {allocated_count} headers in main batch from height: "
             f"{start_header.height} to height: {stop_header.height}"
         )
-        self.logger.debug(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
+        self.logger.info(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
         main_batch = await self.loop.run_in_executor(
@@ -815,7 +812,7 @@ class Controller(ControllerBase):
         self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
         # Mark the block hashes we have allocated work for so we can auto-db-repair if needed
-        self.mysql_db.queries.update_allocated_state(
+        self.db.update_allocated_state(
             reorg_was_allocated=is_reorg,
             first_allocated=start_header,
             last_allocated=stop_header,
@@ -847,7 +844,7 @@ class Controller(ControllerBase):
             )
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
-            self.mysql_db.tables.mysql_drop_temp_orphaned_txs()
+            self.db.drop_temp_orphaned_txs()
 
         else:
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
@@ -867,9 +864,9 @@ class Controller(ControllerBase):
         return best_flushed_tip_height
 
     async def log_current_mempool_size_task_async(self) -> None:
-        assert self.mysql_db is not None
+        assert self.db is not None
         while True:
-            self.logger.debug(f"Mempool size: {self.mysql_db.queries.get_mempool_size()} " f"transactions")
+            self.logger.debug(f"Mempool size: {self.db.get_mempool_size()} " f"transactions")
             await asyncio.sleep(60)
 
     async def sync_all_blocks_job(self) -> None:
@@ -897,7 +894,7 @@ class Controller(ControllerBase):
             best_flushed_tip_height = await self.index_blocks(
                 is_reorg, start_header, stop_header, old_hashes, new_hashes
             )
-            self.logger.debug(
+            self.logger.info(
                 f"Controller Batch {batch_id} Complete. " f"New tip height: {best_flushed_tip_height}"
             )
             batch_id += 1
@@ -906,8 +903,10 @@ class Controller(ControllerBase):
         """Sets chip_away_batch_event as well as done_blocks_tx_parser_event when the main batch
         is done"""
         while True:
-            msg = await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv()
-            worker_id, work_item_id, block_hash, txs_done_count = cbor2.loads(msg)
+            msg = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_parsed_ack.recv())
+            worker_id, work_item_id, block_hash, txs_done_count = cast(
+                tuple[int, int, bytes, int], cbor2.loads(msg)
+            )
             try:
                 self.sync_state._work_item_progress_counter[work_item_id] += txs_done_count
                 self.sync_state._blocks_progress_counter[block_hash] += txs_done_count
@@ -956,26 +955,26 @@ class Controller(ControllerBase):
 
     def _invalidate_mempool_rows(self, best_flushed_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction
-        assert self.mysql_db is not None
-        self.mysql_db.start_transaction()
+        assert self.db is not None
+        self.db.start_transaction()
         try:
-            self.mysql_db.mysql_invalidate_mempool_rows()
-            self.mysql_db.mysql_update_checkpoint_tip(best_flushed_tip)
+            self.db.invalidate_mempool_rows()
+            self.db.update_checkpoint_tip(best_flushed_tip)
         finally:
-            self.mysql_db.commit_transaction()
-            self.mysql_db.mysql_drop_temp_mined_tx_hashes()
+            self.db.commit_transaction()
+            self.db.drop_temp_mined_tx_hashes()
 
     def _apply_reorg_diff_to_mempool(self, best_flushed_block_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction
-        assert self.mysql_db is not None
-        self.mysql_db.mysql_drop_temp_mined_tx_hashes()  # not required so discard it
-        self.mysql_db.start_transaction()
+        assert self.db is not None
+        self.db.drop_temp_mined_tx_hashes()  # not required so discard it
+        self.db.start_transaction()
         try:
-            self.mysql_db.queries.mysql_remove_from_mempool()
-            self.mysql_db.queries.mysql_add_to_mempool()
-            self.mysql_db.mysql_update_checkpoint_tip(best_flushed_block_tip)
+            self.db.remove_from_mempool()
+            self.db.add_to_mempool()
+            self.db.update_checkpoint_tip(best_flushed_block_tip)
         finally:
-            self.mysql_db.commit_transaction()
+            self.db.commit_transaction()
 
     async def lagging_batch_monitor(self) -> None:
         """Spawned for each batch of blocks. If it takes more than 10 seconds to complete the

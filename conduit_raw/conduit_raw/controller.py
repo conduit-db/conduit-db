@@ -31,7 +31,7 @@ from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.types import HeaderSpan
 from conduit_lib.utils import create_task, get_conduit_raw_host_and_port
-from conduit_lib.wait_for_dependencies import wait_for_mysql
+from conduit_lib.wait_for_dependencies import wait_for_db
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .aiohttp_api import server_main
@@ -103,7 +103,9 @@ class Controller(ControllerBase):
         ] = queue.Queue()  # no ack needed
         self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
-        self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = multiprocessing.Queue()  # pylint: disable=E1136
+        self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = (
+            multiprocessing.Queue()
+        )  # pylint: disable=E1136
         self.blocks_batch_set_queue_raw = queue.Queue[set[bytes]]()
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
 
@@ -166,7 +168,7 @@ class Controller(ControllerBase):
         self.running = True
         await self._get_aiohttp_client_session()
         await self.setup()
-        wait_for_mysql()
+        wait_for_db()
         self.tasks.append(create_task(self.start_jobs()))
         await self.connect_session()
         assert self.bitcoin_p2p_client is not None
@@ -377,7 +379,7 @@ class Controller(ControllerBase):
                     continue
 
                 self.sync_state.local_tip_height = self.sync_state.update_local_tip_height()
-                self.logger.debug(
+                self.logger.info(
                     "New headers tip height: %s",
                     self.sync_state.local_tip_height,
                 )
@@ -511,6 +513,8 @@ class Controller(ControllerBase):
         current block store tip"""
         is_reorg = any([x.is_reorg for x in batch])
         start_header_height = min([x.start_header.height for x in batch])
+        if start_header_height <= 0:
+            start_header_height = 1
         stop_header_height = max([x.stop_header.height for x in batch])
 
         # We only care about the longest chain headers at this point so
@@ -562,7 +566,7 @@ class Controller(ControllerBase):
             )
 
             # ------------------------- Batch complete ------------------------- #
-            self.logger.debug(
+            self.logger.info(
                 f"Controller Batch {batch_id} Complete."
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )

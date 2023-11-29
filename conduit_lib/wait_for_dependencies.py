@@ -5,10 +5,8 @@ import os
 import socket
 import time
 
-import MySQLdb
-
+from . import DBInterface
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from .database.mysql.mysql_database import MySQLDatabase, load_mysql_database
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
@@ -57,33 +55,10 @@ async def wait_for_node(
                 await asyncio.sleep(5)
 
 
-def wait_for_mysql() -> None:
-    logger = logging.getLogger("wait-for-dependencies")
-
-    # Node
-    client = None
-    while True:
-        is_available = False
-        try:
-            # Attempt to connect
-            mysql_db: MySQLDatabase = load_mysql_database()
-            _result = mysql_db.tables.get_tables()
-            is_available = True
-            break
-        except ConnectionRefusedError:
-            # logger.exception("unexpected exception")
-            pass
-        except MySQLdb.OperationalError:
-            # logger.exception("unexpected exception")
-            pass
-        finally:
-            if is_available:
-                logger.debug(f"MySQL server is available")
-                if client:
-                    client.close()
-            else:
-                logger.debug(f"MySQL server currently unavailable - waiting...")
-                time.sleep(5)
+def wait_for_db() -> None:
+    db = DBInterface.load_db(worker_id="controller")
+    if db is not None:
+        db.close()
 
 
 def wait_for_ipc_socket_server() -> None:

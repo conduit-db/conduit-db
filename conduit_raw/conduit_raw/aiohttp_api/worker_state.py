@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from typing import cast
 import typing
 from pathlib import Path
 
@@ -10,21 +11,20 @@ import zmq
 import zmq.asyncio
 from bitcoinx import hash_to_hex_str
 
+from conduit_lib import DBInterface
 from conduit_lib.constants import ZERO_HASH
-from conduit_lib.database.mysql.types import PushdataRowParsed
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.types import outpoint_struct, OutpointType, output_spend_struct
 from conduit_lib.utils import create_task, zmq_send_no_block_async
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 from .constants import UTXO_REGISTRATION_TOPIC, PUSHDATA_REGISTRATION_TOPIC
 
-from .mysql_db_tip_filtering import MySQLTipFilterQueries
 from .types import (
-    OutputSpendRow,
     OutpointStateUpdate,
     OutpointMessageType,
     RequestId,
     PushdataFilterStateUpdate,
-    TipFilterRegistrationEntry,
     PushdataFilterMessageType,
     BackendWorkerOfflineError,
 )
@@ -42,10 +42,10 @@ class WorkerStateManager:
     def __init__(
         self,
         app_state: "ApplicationState",
-        mysql_db_tip_filter_queries: MySQLTipFilterQueries,
+        db: DBInterface,
     ) -> None:
         self.app_state = app_state
-        self.mysql_db = mysql_db_tip_filter_queries
+        self.db = db
         # Tip filtering API
         self.zmq_async_context = self.app_state.zmq_context
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")
@@ -168,7 +168,7 @@ class WorkerStateManager:
         await self.wait_for_output_spend_worker_acks(request_id, outpoints)
         # Subsequent notifications are send via the web socket.
         logger.debug(f"Successfully sent utxo registrations for {len(outpoints)} outpoints")
-        return self.mysql_db.get_spent_outpoints(outpoints, self.app_state.lmdb)
+        return self.db.get_spent_outpoints(outpoints, self.app_state.lmdb)
 
     async def unregister_output_spend_notifications(self, outpoints: list[OutpointType]) -> None:
         """raises `BackendWorkerOfflineError"""
@@ -358,10 +358,12 @@ class WorkerStateManager:
     async def listen_for_utxo_spend_notifications_async(self) -> None:
         logger.debug(f"Waiting for all 'TxParser' workers to give 'READY' signal")
         while True:
-            msg = await self.socket_utxo_spend_notifications.recv()
+            msg = cast(bytes, await self.socket_utxo_spend_notifications.recv())
             if not msg:
                 raise ValueError("Workers should never send empty zmq messages")
-            notification: OutpointStateUpdate = OutpointStateUpdate(*cbor2.loads(msg))
+
+            notification: OutpointStateUpdate = OutpointStateUpdate(
+                *cast(OutpointStateUpdate, cbor2.loads(msg)))
             logger.debug(f"Got notification: {notification}")
             if notification.command & OutpointMessageType.READY:
                 assert notification.worker_id is not None
@@ -377,10 +379,11 @@ class WorkerStateManager:
 
     async def listen_for_pushdata_notifications_async(self) -> None:
         while True:
-            msg = await self.socket_pushdata_notifications.recv()
+            msg = cast(bytes, await self.socket_pushdata_notifications.recv())
             if not msg:
                 raise ValueError("Workers should never send empty zmq messages")
-            notification = PushdataFilterStateUpdate(*cbor2.loads(msg))
+            notification = PushdataFilterStateUpdate(
+                *cast(PushdataFilterStateUpdate, cbor2.loads(msg)))
             logger.debug(f"Got notification: {notification}")
             if notification.command & PushdataFilterMessageType.ACK:
                 self._pushdata_inbound_queue.put_nowait(notification)

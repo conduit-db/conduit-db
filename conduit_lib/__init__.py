@@ -1,6 +1,6 @@
 __all__ = [
     "LMDB_Database",
-    "MySQLDatabase",
+    "DBInterface",
     "Deserializer",
     "IPCSocketClient",
     "Peer",
@@ -14,7 +14,7 @@ __all__ = [
 ]
 
 from .database.lmdb.lmdb_database import LMDB_Database
-from .database.mysql.mysql_database import MySQLDatabase
+from .database.db_interface.db import DBInterface
 from .deserializer import Deserializer
 from .ipc_sock_client import IPCSocketClient
 from .serializer import Serializer

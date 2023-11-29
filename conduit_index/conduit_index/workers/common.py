@@ -1,28 +1,24 @@
 import MySQLdb
 import cbor2
 import logging
-import time
 import typing
 
 from conduit_lib.constants import HashXLength
-from conduit_lib.utils import zmq_send_no_block
-from ..types import (
-    ProcessedBlockAcks,
-    MySQLFlushBatchWithAcks,
-    MySQLFlushBatchWithAcksMempool,
-    MempoolTxAck,
-)
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.types import (
-    MempoolTransactionRow,
-    ConfirmedTransactionRow,
-    InputRow,
-    OutputRow,
-    PushdataRow,
+from conduit_lib.database.db_interface.types import (
     MySQLFlushBatch,
+    ConfirmedTransactionRow,
+    MempoolTransactionRow,
+    InputRow,
+    PushdataRow,
     PushdataRowParsed,
     InputRowParsed,
+    DBFlushBatchWithAcks,
+    DBFlushBatchWithAcksMempool,
+    ProcessedBlockAcks,
+    MempoolTxAck,
 )
+from conduit_lib.utils import zmq_send_no_block
+from conduit_lib import DBInterface
 
 if typing.TYPE_CHECKING:
     from .flush_blocks_thread import FlushConfirmedTransactionsThread
@@ -34,46 +30,52 @@ def extend_batched_rows(
     txs: list[ConfirmedTransactionRow],
     txs_mempool: list[MempoolTransactionRow],
     ins: list[InputRow],
-    outs: list[OutputRow],
     pds: list[PushdataRow],
 ) -> MySQLFlushBatch:
     """The updates are grouped as a safety precaution to not accidentally forget one of them"""
-    tx_rows, tx_rows_mempool, in_rows, out_rows, set_pd_rows = blk_rows
+    tx_rows, tx_rows_mempool, in_rows, set_pd_rows = blk_rows
     txs.extend(tx_rows)
     txs_mempool.extend(tx_rows_mempool)
     ins.extend(in_rows)
-    outs.extend(out_rows)
     pds.extend(set_pd_rows)
-    return MySQLFlushBatch(txs, txs_mempool, ins, outs, pds)
+    return MySQLFlushBatch(txs, txs_mempool, ins, pds)
 
 
-def mysql_flush_ins_outs_and_pushdata_rows(
+def flush_ins_outs_and_pushdata_rows(
     in_rows: list[InputRow],
-    out_rows: list[OutputRow],
     pd_rows: list[PushdataRow],
-    mysql_db: MySQLDatabase,
+    db: DBInterface,
 ) -> None:
-    mysql_db.mysql_bulk_load_output_rows(out_rows)
-    mysql_db.mysql_bulk_load_input_rows(in_rows)
-    mysql_db.mysql_bulk_load_pushdata_rows(pd_rows)
+    db.bulk_load_input_rows(in_rows)
+    db.bulk_load_pushdata_rows(pd_rows)
 
 
-def mysql_flush_rows_confirmed(
+def flush_rows_confirmed(
     worker: "FlushConfirmedTransactionsThread",
-    flush_batch_with_acks: MySQLFlushBatchWithAcks,
-    mysql_db: MySQLDatabase,
+    flush_batch_with_acks: DBFlushBatchWithAcks,
+    db: DBInterface,
 ) -> None:
     (
         tx_rows,
         tx_rows_mempool,
         in_rows,
-        out_rows,
         pd_rows,
         acks,
     ) = flush_batch_with_acks
     try:
-        mysql_db.mysql_bulk_load_confirmed_tx_rows(tx_rows)
-        mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
+        check_duplicates = False
+        special_block_hashes = {
+            bytes.fromhex('00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f'),
+            bytes.fromhex('00000000000a4d0a398161ffc163c503763b1f4360639393e0e4c8e300e0caec'),
+            bytes.fromhex('00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e'),
+            bytes.fromhex('00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721'),
+        }
+        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
+            if blk_hash in special_block_hashes:
+                check_duplicates = True
+
+        db.bulk_load_confirmed_tx_rows(tx_rows, check_duplicates)
+        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
 
         # Ack for all flushed blocks
         assert worker.socket_mined_tx_ack is not None
@@ -99,22 +101,21 @@ def mysql_flush_rows_confirmed(
         raise
 
 
-def mysql_flush_rows_mempool(
+def flush_rows_mempool(
     worker: "FlushMempoolTransactionsThread",
-    flush_batch_with_acks: MySQLFlushBatchWithAcksMempool,
-    mysql_db: MySQLDatabase,
+    flush_batch_with_acks: DBFlushBatchWithAcksMempool,
+    db: DBInterface,
 ) -> None:
     (
         tx_rows,
         tx_rows_mempool,
         in_rows,
-        out_rows,
         pd_rows,
         acks,
     ) = flush_batch_with_acks
     try:
-        mysql_db.mysql_bulk_load_mempool_tx_rows(tx_rows_mempool)
-        mysql_flush_ins_outs_and_pushdata_rows(in_rows, out_rows, pd_rows, mysql_db)
+        db.bulk_load_mempool_tx_rows(tx_rows_mempool)
+        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
     except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise
@@ -125,7 +126,6 @@ def reset_rows() -> (
         list[ConfirmedTransactionRow],
         list[MempoolTransactionRow],
         list[InputRow],
-        list[OutputRow],
         list[PushdataRow],
         ProcessedBlockAcks,
     ]
@@ -133,10 +133,9 @@ def reset_rows() -> (
     txs: list[ConfirmedTransactionRow] = []
     txs_mempool: list[MempoolTransactionRow] = []
     ins: list[InputRow] = []
-    outs: list[OutputRow] = []
     pds: list[PushdataRow] = []
     acks: ProcessedBlockAcks = []
-    return txs, txs_mempool, ins, outs, pds, acks
+    return txs, txs_mempool, ins, pds, acks
 
 
 def reset_rows_mempool() -> (
@@ -144,7 +143,6 @@ def reset_rows_mempool() -> (
         list[ConfirmedTransactionRow],
         list[MempoolTransactionRow],
         list[InputRow],
-        list[OutputRow],
         list[PushdataRow],
         MempoolTxAck,
     ]
@@ -152,25 +150,15 @@ def reset_rows_mempool() -> (
     txs: list[ConfirmedTransactionRow] = []
     txs_mempool: list[MempoolTransactionRow] = []
     ins: list[InputRow] = []
-    outs: list[OutputRow] = []
     pds: list[PushdataRow] = []
     acks: MempoolTxAck = 0
-    return txs, txs_mempool, ins, outs, pds, acks
+    return txs, txs_mempool, ins, pds, acks
 
 
-def maybe_refresh_mysql_connection(
-    mysql_db: MySQLDatabase, last_mysql_activity: int, logger: logging.Logger
-) -> tuple[MySQLDatabase, int]:
-    REFRESH_TIMEOUT = 600
-    if int(time.time()) - last_mysql_activity > REFRESH_TIMEOUT:
-        logger.info(
-            f"Refreshing MySQLDatabase connection due to {REFRESH_TIMEOUT} " f"second refresh timeout"
-        )
-        mysql_db.mysql_conn.ping()
-        last_mysql_activity = int(time.time())
-        return mysql_db, last_mysql_activity
-    else:
-        return mysql_db, last_mysql_activity
+def maybe_refresh_connection(
+    db: DBInterface, last_activity: int, logger: logging.Logger
+) -> tuple[DBInterface, int]:
+    return db.maybe_refresh_connection(last_activity, logger)
 
 
 def convert_pushdata_rows_for_flush(

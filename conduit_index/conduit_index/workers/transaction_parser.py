@@ -4,29 +4,22 @@ import logging
 import multiprocessing
 import os
 from pathlib import Path
-import queue
 import sys
 import threading
 import time
 import refcuckoo
 import zmq
 
-from conduit_lib import MySQLDatabase
-from conduit_lib.database.mysql.mysql_database import mysql_connect
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
+from conduit_lib import DBInterface
+from conduit_lib.constants import CONDUIT_INDEX_SERVICE_NAME
+from conduit_lib.database.db_interface.tip_filter_types import IndexerPushdataRegistrationFlag
+from conduit_lib.database.db_interface.types import InputRowParsed, PushdataRowParsed
 from conduit_lib.logging_client import setup_tcp_logging
 from conduit_lib.types import OutpointType, output_spend_struct
+from conduit_lib.utils import get_log_level
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
-from conduit_raw.conduit_raw.aiohttp_api.mysql_db_tip_filtering import (
-    MySQLTipFilterQueries,
-)
 from conduit_raw.conduit_raw.aiohttp_api.types import (
     CuckooResult,
-    IndexerPushdataRegistrationFlag,
     OutpointMessageType,
     OutpointStateUpdate,
     PushdataFilterMessageType,
@@ -34,7 +27,6 @@ from conduit_raw.conduit_raw.aiohttp_api.types import (
 )
 from .mempool_parsing_thread import MempoolParsingThread
 from .mined_block_parsing_thread import MinedBlockParsingThread
-from ..types import ProcessedBlockAcks, MempoolTxAck, TipFilterNotifications
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,26 +41,14 @@ class TxParser(multiprocessing.Process):
 
     def __init__(self, worker_id: int) -> None:
         super(TxParser, self).__init__()
-        self.confirmed_tx_flush_queue: queue.Queue[
-            tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ] | None = None
-        self.mempool_tx_flush_queue: queue.Queue[
-            tuple[
-                MySQLFlushBatch,
-                MempoolTxAck,
-                list[InputRowParsed],
-                list[PushdataRowParsed],
-            ]
-        ] | None = None
-
-        self.last_mysql_activity: float = time.time()
+        self.last_activity: float = time.time()
         self.worker_id = worker_id
 
     def run(self) -> None:
         if sys.platform == "win32":
             setup_tcp_logging(port=65421)
         self.logger = logging.getLogger(f"tx-parser-{self.worker_id}")
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
         self.logger.info(f"Started {self.__class__.__name__}")
 
         # ZMQ Setup
@@ -79,27 +59,19 @@ class TxParser(multiprocessing.Process):
             zmq.SocketType.SUB,
             options=[(zmq.SocketOption.SUBSCRIBE, b"stop_signal")],
         )
-        self.confirmed_tx_flush_queue = queue.Queue()
-        self.mempool_tx_flush_queue = queue.Queue()
-
         self.setup_tip_filtering()
         try:
             main_thread = threading.Thread(target=self.main_thread, daemon=True)
             main_thread.start()
-
-            assert self.confirmed_tx_flush_queue is not None
-            assert self.mempool_tx_flush_queue is not None
             threads = [
                 MinedBlockParsingThread(
                     self,
                     self.worker_id,
-                    self.confirmed_tx_flush_queue,
                     daemon=True,
                 ),
                 MempoolParsingThread(
                     self,
                     self.worker_id,
-                    self.mempool_tx_flush_queue,
                     daemon=True,
                 ),
             ]
@@ -127,8 +99,7 @@ class TxParser(multiprocessing.Process):
             sys.exit(0)
 
     def setup_tip_filtering(self) -> None:
-        mysql_db: MySQLDatabase = mysql_connect(worker_id=self.worker_id)
-        mysql_db_tip_filter_queries = MySQLTipFilterQueries(mysql_db)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
 
         self.unspent_output_registrations: set[OutpointType] = set()
 
@@ -138,7 +109,8 @@ class TxParser(multiprocessing.Process):
         # Note that at the time of writing the bits per item is 12 (compiled into `refcuckoo`).
         self.common_cuckoo = refcuckoo.CuckooFilter(500000)  # pylint: disable=I1101
         self._filter_expiry_next_time = int(time.time()) + 30
-        registration_entries = mysql_db_tip_filter_queries.read_tip_filter_registrations(
+        assert db.tip_filter_api is not None
+        registration_entries = db.tip_filter_api.read_tip_filter_registrations(
             mask=IndexerPushdataRegistrationFlag.DELETING | IndexerPushdataRegistrationFlag.FINALISED,
             expected_flags=IndexerPushdataRegistrationFlag.FINALISED,
         )
@@ -216,9 +188,6 @@ class TxParser(multiprocessing.Process):
             result = self.common_cuckoo.contains(pushdata_match.pushdata_hash)
             if result == CuckooResult.OK:
                 filter_matches.append(pushdata_match)
-            else:
-                # TODO: DEBUGGING - MUST REMOVE - THIS IS VERY WASTEFUL
-                assert self.common_cuckoo.contains(pushdata_match.pushdata_hash) == CuckooResult.NOT_FOUND
 
         if len(filter_matches):
             # NOTE: if there is message delivery failure, the acks

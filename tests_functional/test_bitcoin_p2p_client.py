@@ -2,18 +2,19 @@ import asyncio
 import bitcoinx
 from bitcoinx import double_sha256, hash_to_hex_str, pack_varint
 import shutil
-import stat
 import time
 import io
 import unittest
 from math import ceil
 from pathlib import Path
-from typing import cast, Callable
+from typing import cast
 import unittest.mock
 import electrumsv_node
 import pytest
 import logging
 import os
+
+from modulefinder import Module
 
 from conduit_lib.algorithms import unpack_varint
 from conduit_lib.bitcoin_p2p_types import (
@@ -172,7 +173,7 @@ def setup_module(module) -> None:
     time.sleep(5)
 
 
-def teardown_module(module) -> None:
+def teardown_module(module: Module) -> None:
     if Path(DATADIR_HDD).exists():
         shutil.rmtree(DATADIR_HDD, onerror=remove_readonly)
     if Path(DATADIR_SSD).exists():
@@ -180,7 +181,7 @@ def teardown_module(module) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handshake():
+async def test_handshake() -> None:
     client = None
     try:
         got_message_queue = asyncio.Queue()
@@ -210,7 +211,7 @@ async def test_handshake():
 
 
 @pytest.mark.asyncio
-async def test_getheaders_request_and_headers_response():
+async def test_getheaders_request_and_headers_response() -> None:
     # Otherwise the node might still be in initial block download mode (ignores header requests)
     electrumsv_node.call_any("generate", 1)
 
@@ -243,7 +244,7 @@ async def test_getheaders_request_and_headers_response():
 
 
 @pytest.mark.asyncio
-async def test_getblocks_request_and_blocks_response():
+async def test_getblocks_request_and_blocks_response() -> None:
     client = None
     try:
         got_message_queue = asyncio.Queue()
@@ -310,7 +311,7 @@ def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
 
 
 @pytest.mark.asyncio
-async def test_big_block_exceeding_network_buffer_capacity():
+async def test_big_block_exceeding_network_buffer_capacity() -> None:
     os.environ["NETWORK_BUFFER_SIZE"] = "500000"
     client = None
     task = None

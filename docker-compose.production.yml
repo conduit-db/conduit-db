@@ -1,0 +1,138 @@
+version: '2.4'
+
+# Note, there is no bitcoin node here. ConduitDB connects to the node over the p2p network so either
+# run your own node (most ideal for best performance and lower latencies)
+# or connect to a remote node on the p2p network (less reliable & higher latencies).
+
+# You should ideally be whitelisted by said node because occasionally mempool txs are not relayed reliably
+# unless whitelisted. Hopefully this is not required in the future.
+
+services:
+
+  scylladb:
+    image: scylladb/scylla
+    network_mode: host
+    ports:
+      - "9042:9042"
+      - "19042:19042"
+    env_file: .env.docker.production
+    volumes:
+      - ${SCYLLA_CONF_DIR}/scylla.yml:/etc/scylla/scylla.yml
+      - ${SCYLLA_DATA_DIR}:/var/lib/scylla/data
+    cpus: 30
+    cpuset: 2-31
+    mem_limit: 32G
+
+  redis:
+    image: redis:latest
+    network_mode: host
+    ports:
+      - "6379:6379"
+    env_file: .env.docker.production
+    volumes:
+      - ${REDIS_CONF_DIR}/redis.conf:/usr/local/etc/redis/redis.conf
+    mem_limit: 2G
+
+  conduit-raw:
+    build:
+      context: .
+      dockerfile: ./conduit_raw/Dockerfile
+    network_mode: host
+    ports:
+      - "50000:50000"
+      - "34525:34525"
+      - "51495:51495"
+      - "60000:60000"
+      - "60001:60001"
+      - "60002:60002"
+      - "60003:60003"
+    depends_on:
+      - scylladb
+    stdin_open: true
+    tty: true
+    env_file: .env.docker.production
+    environment:
+      - MODE=PRODUCTION
+      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
+      - LMDB_DATABASE_PATH=/opt/lmdb_data
+      - ZMQ_CONNECT_HOST=127.0.0.1
+      - REFERENCE_SERVER_HOST=127.0.0.1
+    working_dir: /opt
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    volumes:
+      - ${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
+      - ${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
+      - ${LOGS_DIR}:/opt/logs
+    command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
+    mem_limit: 16G
+
+  conduit-index:
+    build:
+      context: .
+      dockerfile: ./conduit_index/Dockerfile
+    network_mode: host
+    depends_on:
+      - scylladb
+      - conduit-raw
+    stdin_open: true
+    tty: true
+    env_file: .env.docker.production
+    environment:
+      - MODE=PRODUCTION
+      - IPC_SOCKET_SERVER_HOST=127.0.0.1:50000
+      - ZMQ_CONNECT_HOST=127.0.0.1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    working_dir: /opt
+    volumes:
+      - ${CONDUIT_INDEX_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ${LOGS_DIR}:/opt/logs
+    command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
+    mem_limit: 48G
+    memswap_limit: 48G
+
+
+  reference_server:
+    container_name: reference_server
+    depends_on:
+      - "conduit-raw"
+      - "conduit-index"
+    build:
+      context: .
+      dockerfile: ./contrib/reference_server/Dockerfile
+    network_mode: host
+    ports:
+      - "47124:47124"
+      - "47126:47126"
+    environment:
+      SKIP_DOTENV_FILE: 1  # Allows us to overrride all of the defaults in the .env file
+      EXTERNAL_HOST: "0.0.0.0"
+      EXTERNAL_PORT: 47124
+      INTERNAL_HOST: "0.0.0.0"
+      INTERNAL_PORT: 47126
+      EXPOSE_HEADER_SV_APIS: 1
+      HEADER_SV_URL: 'http://127.0.0.1:34525'
+      EXPOSE_PAYMAIL_APIS: 1
+      EXPOSE_INDEXER_APIS: 1
+      INDEXER_URL: 'http://127.0.0.1:34525'
+      NOTIFICATION_TEXT_NEW_MESSAGE: New message arrived
+      MAX_MESSAGE_CONTENT_LENGTH: 65536
+      CHUNKED_BUFFER_SIZE: 1024
+      NETWORK: regtest
+      ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200m"
+    working_dir: /reference_server
+    volumes:
+      - ${REFERENCE_SERVER_DIR}:/reference_server/localdata
+    command:
+      sh -c 'python3 /reference_server/server.py'
+    mem_limit: 2G

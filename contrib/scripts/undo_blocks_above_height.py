@@ -7,7 +7,6 @@ import asyncio
 import logging
 import os
 import struct
-import array
 import sys
 from pathlib import Path
 
@@ -17,17 +16,12 @@ from conduit_index.conduit_index.workers.common import (
     convert_pushdata_rows_for_flush,
     convert_input_rows_for_flush,
 )
-from conduit_lib import IPCSocketClient, setup_storage, NetworkConfig
+from conduit_lib import IPCSocketClient, setup_storage, NetworkConfig, DBInterface
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.database.mysql.mysql_database import load_mysql_database
+from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
+from conduit_lib.startup_utils import load_dotenv, resolve_hosts_and_update_env_vars
 from conduit_lib.types import BlockSliceRequestType, Slice
-from conduit_lib.utils import (
-    get_header_for_hash,
-    get_header_for_height,
-    get_network_type,
-    load_dotenv,
-    resolve_hosts_and_update_env_vars,
-)
+from conduit_lib.utils import get_network_type
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,16 +43,17 @@ class DbRepairTool:
         os.environ["RESET_CONDUIT_INDEX"] = "0"
         os.environ["RESET_CONDUIT_RAW"] = "0"
 
-        self.mysql_db = load_mysql_database()
+        self.db = DBInterface.load_db()
         headers_dir = MODULE_DIR.parent.parent / "conduit_index"
         net_config = NetworkConfig(get_network_type(), node_host="127.0.0.1", node_port=18444)
         self.storage = setup_storage(net_config, headers_dir)
+        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
 
     def get_header_for_hash(self, block_hash: bytes) -> bitcoinx.Header:
-        return get_header_for_hash(block_hash, self.storage.headers, self.storage.headers_lock)
+        return self.headers_threadsafe.get_header_for_hash(block_hash)
 
     def get_header_for_height(self, height: int) -> bitcoinx.Header:
-        return get_header_for_height(height, self.storage.headers, self.storage.headers_lock)
+        return self.headers_threadsafe.get_header_for_height(height)
 
     def get_local_block_tip(self) -> bitcoinx.Header:
         with self.storage.block_headers_lock:
@@ -68,9 +63,9 @@ class DbRepairTool:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
         block hash, we need to purge those rows from the tables before we resume synchronization.
         """
-        result = self.mysql_db.queries.mysql_get_checkpoint_state()
+        result = self.db.get_checkpoint_state()
         if not result:
-            self.mysql_db.tables.initialise_checkpoint_state()
+            self.db.initialise_checkpoint_state()
             return None
 
         (
@@ -82,36 +77,44 @@ class DbRepairTool:
             old_hashes_array,
             new_hashes_array,
         ) = result
-        needs_repair = best_flushed_block_hash != last_allocated_block_hash
-        if not needs_repair:
-            return
+        # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         self.logger.debug(
             f"ConduitDB did not shut down cleanly last session. " f"Performing automated database repair..."
         )
 
         # Drop and re-create mempool table
-        self.mysql_db.tables.mysql_drop_mempool_table()
-        self.mysql_db.tables.mysql_create_mempool_table()
+        self.db.drop_mempool_table()
+        self.db.create_mempool_table()
 
         # Delete / Clean up all db entries for blocks above the best_flushed_block_hash
         if reorg_was_allocated:
-            await self.undo_specific_block_hashes(new_hashes_array)
+            old_hashes: list[bytes] | None = [
+                old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)
+            ]
+            new_hashes: list[bytes] | None = [
+                new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)
+            ]
+            assert new_hashes is not None
+            await self.undo_specific_block_hashes(new_hashes)
         else:
-            best_header = self.get_header_for_hash(best_flushed_block_hash)
+            old_hashes = None
+            new_hashes = None
+            best_header = self.headers_threadsafe.get_header_for_hash(best_flushed_block_hash)
             await self.undo_blocks_above_height(best_header.height)
 
-        # Re-attempt indexing of allocated work (that did not complete last time)
-        self.logger.debug(f"Re-attempting previously allocated work")
-        first_allocated_header = self.get_header_for_hash(first_allocated_block_hash)
-        last_allocated_header = self.get_header_for_hash(last_allocated_block_hash)
-        best_flushed_tip_height = await self.index_blocks(
-            reorg_was_allocated,
-            first_allocated_header,
-            last_allocated_header,
-            old_hashes_array,
-            new_hashes_array,
-        )
-        self.logger.debug(f"Database repair complete. " f"New chain tip: {best_flushed_tip_height}")
+        # # Re-attempt indexing of allocated work (that did not complete last time)
+        # self.logger.debug(f"Re-attempting previously allocated work")
+        # first_allocated_header = self.headers_threadsafe.get_header_for_hash(first_allocated_block_hash)
+        # last_allocated_header = self.headers_threadsafe.get_header_for_hash(last_allocated_block_hash)
+        #
+        # best_flushed_tip_height = await self.index_blocks(
+        #     reorg_was_allocated,
+        #     first_allocated_header,
+        #     last_allocated_header,
+        #     old_hashes,
+        #     new_hashes,
+        # )
+        # self.logger.debug(f"Database repair complete. " f"New tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
         unsafe_blocks = []
@@ -143,7 +146,6 @@ class DbRepairTool:
                 tx_rows,
                 _tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -159,11 +161,10 @@ class DbRepairTool:
 
             # Delete
             tx_hashes = [row[0] for row in tx_rows]
-            self.mysql_db.queries.mysql_delete_transaction_rows(tx_hashes)
-            self.mysql_db.queries.mysql_delete_pushdata_rows(pushdata_rows_for_flushing)
-            self.mysql_db.queries.mysql_delete_output_rows(out_rows)
-            self.mysql_db.queries.mysql_delete_input_rows(input_rows_for_flushing)
-            self.mysql_db.queries.mysql_delete_header_row(block_hash)
+            self.db.delete_transaction_rows(tx_hashes)
+            self.db.delete_pushdata_rows(pushdata_rows_for_flushing)
+            self.db.delete_input_rows(input_rows_for_flushing)
+            self.db.delete_header_rows([block_hash])
 
 
 async def main() -> None:

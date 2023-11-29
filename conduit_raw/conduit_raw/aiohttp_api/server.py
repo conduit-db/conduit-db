@@ -13,14 +13,14 @@ import queue
 import os
 import time
 import threading
-from typing import AsyncIterator, Optional, Any
+from typing import AsyncIterator, Optional, Any, cast
 import zmq
 import zmq.asyncio
 
-from conduit_lib import NetworkConfig
+from conduit_lib import NetworkConfig, DBInterface
+from conduit_lib.database.db_interface.tip_filter_types import OutboundDataFlag, OutboundDataRow
+from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.database.mysql.mysql_database import load_mysql_database
-from conduit_lib.database.mysql.types import PushdataRowParsed
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.utils import (
     create_task,
@@ -33,13 +33,10 @@ from .constants import (
     REFERENCE_SERVER_SCHEME,
     REFERENCE_SERVER_HOST,
     REFERENCE_SERVER_PORT,
-    OutboundDataFlag,
 )
 from . import handlers_restoration, handlers_tip_filter, handlers_headers
-from .mysql_db_tip_filtering import MySQLTipFilterQueries
 from .server_websocket import WSClient, ReferenceServerWebSocket
 from .types import (
-    OutboundDataRow,
     TipFilterNotificationEntry,
     TipFilterNotificationBatch,
 )
@@ -74,12 +71,12 @@ class ApplicationState(object):
         self.BITCOINX_COIN = network_str_to_bitcoinx_network(net_config.NET)
         self.net_config = net_config
 
-        self.mysql_db = load_mysql_database()
-        self.mysql_db_tip_filter_queries = MySQLTipFilterQueries(self.mysql_db)
-        self.mysql_db_tip_filter_queries.setup()
+        self.db = DBInterface.load_db(worker_id="external-api")
+        assert self.db.tip_filter_api is not None
+        self.db.tip_filter_api.setup()
         self.lmdb = lmdb
         self.headers_threadsafe = headers_threadsafe
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.executor = ThreadPoolExecutor(max_workers=10)
 
         self.zmq_context = zmq.asyncio.Context.instance()
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")
@@ -100,13 +97,13 @@ class ApplicationState(object):
 
         self._outbound_data_delivery_event = asyncio.Event()
         self.tasks: list[asyncio.Task[Any]] = []
-        self.worker_state_manager = WorkerStateManager(self, self.mysql_db_tip_filter_queries)
+        self.worker_state_manager = WorkerStateManager(self, self.db)
 
-    async def refresh_mysql_connection_task(self) -> None:
+    async def refresh_connection_task(self) -> None:
         REFRESH_TIMEOUT = 600
         while True:
             await asyncio.sleep(REFRESH_TIMEOUT)
-            self.mysql_db.mysql_conn.ping()
+            self.db.ping()
 
     def start_threads(self) -> None:
         threading.Thread(target=self.push_notifications_thread, daemon=True).start()
@@ -118,7 +115,7 @@ class ApplicationState(object):
         self.tasks = [
             create_task(self._attempt_outbound_data_delivery_task()),
             create_task(self.listen_for_reorg_event_job()),
-            create_task(self.refresh_mysql_connection_task()),
+            create_task(self.refresh_connection_task()),
             create_task(self.wait_for_new_tip()),
         ]
         self.worker_state_manager.spawn_tasks()
@@ -149,8 +146,8 @@ class ApplicationState(object):
         """
 
         while not self._exit_event.is_set():
-            cbor_msg = await self._reorg_event_socket.recv()
-            reorg_handling_complete, start_hash, stop_hash = cbor2.loads(cbor_msg)
+            cbor_msg = cast(bytes, await self._reorg_event_socket.recv())
+            reorg_handling_complete, start_hash, stop_hash = cast(tuple[bool, bytes, bytes], cbor2.loads(cbor_msg))
             self.logger.debug(
                 f"Reorg event received. "
                 f"reorg_handling_complete: {reorg_handling_complete} "
@@ -215,7 +212,8 @@ class ApplicationState(object):
             # No point in trying if there is no reference server connected.
             next_check_delay = MAXIMUM_DELAY
             if len(self.get_ws_clients()) > 0:
-                rows = self.mysql_db_tip_filter_queries.read_pending_outbound_datas(
+                assert self.db.tip_filter_api is not None
+                rows = self.db.tip_filter_api.read_pending_outbound_datas(
                     OutboundDataFlag.NONE,
                     OutboundDataFlag.DISPATCHED_SUCCESSFULLY,
                 )
@@ -234,7 +232,7 @@ class ApplicationState(object):
                         len(current_rows),
                         next_check_delay,
                     )
-                delivery_updates = list[tuple[OutboundDataFlag, int, int]]()
+                delivery_updates = list[tuple[OutboundDataFlag, int, str]]()
                 for row in current_rows:
                     assert row.outbound_data_id is not None
                     url = self.reference_server_url + "/api/v1/tip-filter/matches"
@@ -269,7 +267,7 @@ class ApplicationState(object):
                 if len(delivery_updates) > 0:
                     await asyncio.get_running_loop().run_in_executor(
                         self.executor,
-                        self.mysql_db_tip_filter_queries.update_outbound_data_last_tried_write,
+                        self.db.tip_filter_api.update_outbound_data_last_tried_write,
                         delivery_updates,
                     )
             else:
@@ -320,7 +318,8 @@ class ApplicationState(object):
                 matches_by_hash[match.pushdata_hash] = [match]
 
         # Get all the accounts and which pushdata they have registered.
-        rows = self.mysql_db_tip_filter_queries.read_indexer_filtering_registrations_for_notifications(
+        assert self.db.tip_filter_api is not None
+        rows = self.db.tip_filter_api.read_indexer_filtering_registrations_for_notifications(
             list(matches_by_hash)
         )
         self.logger.debug("Found %d registrations for tip filter notifications", len(rows))
@@ -337,7 +336,7 @@ class ApplicationState(object):
         )
 
         # Gather the true matches for each account so that we can notify them of those matches.
-        matches_by_account_id = dict[int, list[PushdataRowParsed]]()
+        matches_by_account_id = dict[str, list[PushdataRowParsed]]()
         for row in rows:
             matched_rows = matches_by_hash[row.pushdata_hash]
             if row.account_id in matches_by_account_id:
@@ -350,7 +349,7 @@ class ApplicationState(object):
         #     delivered.
         metadata_by_account_id = {
             row.account_id: row
-            for row in self.mysql_db_tip_filter_queries.read_account_metadata(list(matches_by_account_id))
+            for row in self.db.tip_filter_api.read_account_metadata(list(matches_by_account_id))
         }
         block_id = hash_to_hex_str(block_hash) if block_hash is not None else None
 
@@ -424,7 +423,7 @@ class ApplicationState(object):
 
         await asyncio.get_running_loop().run_in_executor(
             self.executor,
-            self.mysql_db_tip_filter_queries.create_outbound_data_write,
+            self.db.tip_filter_api.create_outbound_data_write,
             creation_row,
         )
 

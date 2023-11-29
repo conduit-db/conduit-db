@@ -7,10 +7,9 @@ from typing import Any, Optional, NamedTuple, TypedDict
 
 from bitcoinx import hash_to_hex_str
 
-from conduit_lib.database.mysql.types import PushdataRowParsed
-from conduit_lib.types import OutpointType, output_spend_struct
-
-from .constants import AccountFlag, OutboundDataFlag
+from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow, TipFilterRegistrationEntry
+from conduit_lib.database.db_interface.types import PushdataRowParsed
+from conduit_lib.types import OutpointType
 
 PushdataRegistrationJSONType = tuple[str, int]  # pushdata_hash, duration_seconds
 
@@ -64,17 +63,6 @@ class OutpointStateUpdate(NamedTuple):
         )
 
 
-class TipFilterRegistrationEntry(NamedTuple):
-    pushdata_hash: bytes
-    duration_seconds: int  # when unregistering duration_seconds=0xffffffff
-
-    def __str__(self) -> str:
-        return (
-            f"TipFilterRegistrationEntry(pushdata_hash={self.pushdata_hash.hex()}, "
-            f"duration_seconds={self.duration_seconds})"
-        )
-
-
 class PushdataFilterMessageType(IntEnum):
     REGISTER = 1 << 0
     UNREGISTER = 1 << 1
@@ -97,25 +85,6 @@ class PushdataFilterStateUpdate(NamedTuple):
             f"matches={self.matches}, "
             f"block_hash={hash_to_hex_str(self.block_hash) if self.block_hash is not None else None})"
         )
-
-
-class OutputSpendRow(NamedTuple):
-    out_tx_hash: bytes
-    out_idx: int
-    in_tx_hash: bytes
-    in_idx: int
-    block_hash: Optional[bytes]
-
-    @classmethod
-    def from_output_spend_struct(cls, buf: bytes) -> "OutputSpendRow":
-        (
-            out_tx_hash,
-            out_idx,
-            in_tx_hash,
-            in_idx,
-            block_hash,
-        ) = output_spend_struct.unpack(buf)
-        return cls(out_tx_hash, out_idx, in_tx_hash, in_idx, block_hash)
 
 
 class RestorationFilterRequest(TypedDict):
@@ -145,17 +114,6 @@ FILTER_RESPONSE_SIZE = 1 + 32 + 32 + 4 + 32 + 4
 assert struct.calcsize(RESULT_UNPACK_FORMAT) == FILTER_RESPONSE_SIZE
 
 filter_response_struct = struct.Struct(RESULT_UNPACK_FORMAT)
-
-
-class IndexerPushdataRegistrationFlag(enum.IntFlag):
-    NONE = 0
-    FINALISED = 1 << 0
-    DELETING = 1 << 1
-
-    MASK_ALL = ~NONE
-    MASK_DELETING_CLEAR = ~DELETING
-    MASK_FINALISED_CLEAR = ~FINALISED
-    MASK_FINALISED_DELETING_CLEAR = ~(FINALISED | DELETING)
 
 
 def le_int_to_char(le_int: int) -> bytes:
@@ -241,12 +199,6 @@ TIP_FILTER_ENTRY_FORMAT = ">32sI"
 tip_filter_entry_struct = struct.Struct(TIP_FILTER_ENTRY_FORMAT)
 
 
-class AccountMetadata(NamedTuple):
-    account_id: int
-    external_account_id: int
-    account_flags: AccountFlag
-
-
 class TipFilterNotificationMatch(TypedDict):
     pushDataHashHex: str
     transactionId: str
@@ -267,14 +219,6 @@ class TipFilterNotificationBatch(TypedDict):
 class TipFilterPushDataMatchesData(TypedDict):
     blockId: str | None
     matches: list[TipFilterNotificationMatch]
-
-
-class OutboundDataRow(NamedTuple):
-    outbound_data_id: Optional[int]
-    outbound_data: bytes
-    outbound_data_flags: OutboundDataFlag
-    date_created: int
-    date_last_tried: int
 
 
 class HeaderJSONType(TypedDict):

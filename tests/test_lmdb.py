@@ -28,7 +28,7 @@ DATADIR_HDD = os.environ["DATADIR_HDD"] = str(MODULE_DIR / "test_datadir_hdd")
 DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
 
-def ipc_sock_server_thread(lmdb: LMDB_Database):
+def ipc_sock_server_thread(lmdb: LMDB_Database) -> None:
     from conduit_lib.store import setup_headers_store
 
     HOST, PORT = "127.0.0.1", 34586
@@ -46,7 +46,7 @@ def ipc_sock_server_thread(lmdb: LMDB_Database):
 
 
 class TestLMDBDatabase:
-    def setup_class(self):
+    def setup_class(self) -> None:
         self.lmdb = LMDB_Database(lock=True)  # uses DATADIR_SSD environment variable above
         self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread, args=[self.lmdb])
         self.ipc_sock_server_thread.start()
@@ -54,7 +54,7 @@ class TestLMDBDatabase:
         os.environ["IPC_SOCKET_SERVER_PORT"] = "34586"
         self.ipc_sock_client = IPCSocketClient()
 
-    def teardown_class(self):
+    def teardown_class(self) -> None:
         self.ipc_sock_client.stop()
         time.sleep(5)  # allow time for server to stop (and close lmdb handle)
         self.ipc_sock_client.close()  # closes client channel
@@ -66,7 +66,7 @@ class TestLMDBDatabase:
         if os.path.exists(MODULE_DIR / "test_headers.mmap"):
             os.remove(MODULE_DIR / "test_headers.mmap")
 
-    def test_block_storage(self):
+    def test_block_storage(self) -> None:
         expected_block_num = 1
         expected_block_size = len(TEST_RAW_BLOCK_413567)
         block_hash = double_sha256(TEST_RAW_BLOCK_413567[0:80])
@@ -79,7 +79,9 @@ class TestLMDBDatabase:
         assert expected_block_num == actual_block_num
         assert expected_block_num == actual_block_num_ipc
 
-        actual_block_size = self.lmdb.get_block_metadata(block_hash).block_size
+        metadata = self.lmdb.get_block_metadata(block_hash)
+        assert metadata is not None
+        actual_block_size = metadata.block_size
         actual_block_size_ipc = (
             self.ipc_sock_client.block_metadata_batched([block_hash]).block_metadata_batch[0].block_size
         )
@@ -114,7 +116,9 @@ class TestLMDBDatabase:
         assert expected_block_num == actual_block_num
         assert expected_block_num == actual_block_num_ipc
 
-        actual_block_size = self.lmdb.get_block_metadata(block_hash).block_size
+        metadata = self.lmdb.get_block_metadata(block_hash)
+        assert metadata is not None
+        actual_block_size = metadata.block_size
         actual_block_size_ipc = (
             self.ipc_sock_client.block_metadata_batched([block_hash]).block_metadata_batch[0].block_size
         )
@@ -122,9 +126,7 @@ class TestLMDBDatabase:
         assert expected_block_size == actual_block_size_ipc
 
         actual_raw_block = self.lmdb.get_block(expected_block_num)
-        block_requests: list[BlockSliceRequestType] = list(
-            [BlockSliceRequestType(expected_block_num, Slice(0, 0))]
-        )
+        block_requests = list([BlockSliceRequestType(expected_block_num, Slice(0, 0))])
         batched_block_slices = self.ipc_sock_client.block_batched(block_requests)
 
         block_num, len_slice = struct.unpack_from(f"<IQ", batched_block_slices, 0)
@@ -136,7 +138,7 @@ class TestLMDBDatabase:
         assert expected_raw_block == actual_raw_block
         assert expected_raw_block == actual_raw_block_ipc
 
-    def test_merkle_tree_storage(self):
+    def test_merkle_tree_storage(self) -> None:
         block_hash = bytes.fromhex("ff" * 32)
         tx1 = bytes.fromhex("aa" * 32)
         tx2 = bytes.fromhex("bb" * 32)
@@ -206,7 +208,7 @@ class TestLMDBDatabase:
         #  (to be added to the same .dat file) - this complicates the offset calculations
         #  So needs tests to ensure no regressions
 
-    def test_tx_offset_storage(self):
+    def test_tx_offset_storage(self) -> None:
         block_hash = bytes.fromhex("ff" * 64)
         tx_offsets = array.array("Q", [1, 2, 3])
         batched_tx_offsets = [(block_hash, tx_offsets)]
@@ -225,26 +227,30 @@ class TestLMDBDatabase:
         tx_offsets = array.array("Q", TX_OFFSETS)
         self.lmdb.put_tx_offsets([(block_hash, tx_offsets)])
         block_num = self.lmdb.get_block_num(block_hash)
+        assert block_num is not None
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=0)
-        (
-            coinbase_start_offset,
-            coinbase_end_offset,
-        ) = self.lmdb.get_single_tx_slice(tx_loc)
+        slice = self.lmdb.get_single_tx_slice(tx_loc)
+        assert slice is not None
+        coinbase_start_offset, coinbase_end_offset = slice
         assert coinbase_start_offset == 83
         assert coinbase_end_offset == 268
 
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=1)
+        slice = self.lmdb.get_single_tx_slice(tx_loc)
+        assert slice is not None
         (
             coinbase_start_offset,
             coinbase_end_offset,
-        ) = self.lmdb.get_single_tx_slice(tx_loc)
+        ) = slice
         assert coinbase_start_offset == 268
         assert coinbase_end_offset == 494
 
         tx_loc = TxLocation(block_hash=block_hash, block_num=block_num, tx_position=2)
+        slice = self.lmdb.get_single_tx_slice(tx_loc)
+        assert slice is not None
         (
             coinbase_start_offset,
             coinbase_end_offset,
-        ) = self.lmdb.get_single_tx_slice(tx_loc)
+        ) = slice
         assert coinbase_start_offset == 494
         assert coinbase_end_offset == 720

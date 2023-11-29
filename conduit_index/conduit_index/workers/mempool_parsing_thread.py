@@ -1,26 +1,26 @@
 import array
+import queue
 from functools import partial
 import logging
 import struct
 import threading
 import time
-from queue import Queue
 import typing
 import zmq
 
+from conduit_lib.database.db_interface.types import (
+    MySQLFlushBatch,
+    MempoolTxAck,
+    InputRowParsed,
+    PushdataRowParsed,
+)
 from conduit_lib.zmq_sockets import connect_non_async_zmq_socket
 from .common import (
     convert_pushdata_rows_for_flush,
     convert_input_rows_for_flush,
 )
 from .flush_mempool_thread import FlushMempoolTransactionsThread
-from ..types import MempoolTxAck
 from conduit_lib.algorithms import parse_txs
-from conduit_lib.database.mysql.types import (
-    InputRowParsed,
-    MySQLFlushBatch,
-    PushdataRowParsed,
-)
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 
 if typing.TYPE_CHECKING:
@@ -32,14 +32,6 @@ class MempoolParsingThread(threading.Thread):
         self,
         parent: "TxParser",
         worker_id: int,
-        mempool_tx_flush_queue: Queue[
-            tuple[
-                MySQLFlushBatch,
-                MempoolTxAck,
-                list[InputRowParsed],
-                list[PushdataRowParsed],
-            ]
-        ],
         daemon: bool = True,
     ) -> None:
         self.logger = logging.getLogger(f"mempool-parsing-thread-{worker_id}")
@@ -48,7 +40,13 @@ class MempoolParsingThread(threading.Thread):
 
         self.parent = parent
         self.worker_id = worker_id
-        self.mempool_tx_flush_queue = mempool_tx_flush_queue
+        self.mempool_tx_flush_queue: queue.Queue[
+            tuple[
+                MySQLFlushBatch,MempoolTxAck,
+                list[InputRowParsed],
+                list[PushdataRowParsed]
+            ]
+        ] = queue.Queue(maxsize=100_000)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
         self.socket_mempool_tx = connect_non_async_zmq_socket(
@@ -101,10 +99,8 @@ class MempoolParsingThread(threading.Thread):
         (
             tx_rows_batched,
             in_rows_batched,
-            out_rows_batched,
             set_pd_rows_batched,
         ) = (
-            [],
             [],
             [],
             [],
@@ -119,7 +115,6 @@ class MempoolParsingThread(threading.Thread):
                 tx_rows,
                 tx_rows_mempool,
                 in_rows,
-                out_rows,
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
@@ -128,7 +123,6 @@ class MempoolParsingThread(threading.Thread):
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
             tx_rows_batched.extend(tx_rows_mempool)
             in_rows_batched.extend(input_rows_for_flushing)
-            out_rows_batched.extend(out_rows)
             set_pd_rows_batched.extend(pushdata_rows_for_flushing)
 
         num_mempool_txs_processed = len(tx_rows_batched)
@@ -139,7 +133,6 @@ class MempoolParsingThread(threading.Thread):
                     [],
                     tx_rows_batched,
                     in_rows_batched,
-                    out_rows_batched,
                     set_pd_rows_batched,
                 ),
                 num_mempool_txs_processed,

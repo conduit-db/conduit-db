@@ -56,9 +56,9 @@ def get_parser() -> argparse.ArgumentParser:
         "(for convenience when testing on RegTest)",
     )
     parser.add_argument(
-        "--mysql-host",
+        "--db-host",
         action="store",
-        dest="mysql_host",
+        dest="db_host",
         default="127.0.0.1:52525",
         type=str,
         help="e.g. localhost:52525 for use outside of docker or " "mysql:3306 for use within docker",

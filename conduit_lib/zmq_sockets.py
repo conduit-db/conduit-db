@@ -1,3 +1,5 @@
+from typing import cast
+
 import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
@@ -32,11 +34,15 @@ def bind_async_zmq_socket(
     zmq_socket_type: zmq.SocketType,
     options: list[tuple[zmq.SocketOption, int | bytes]] | None = None,
 ) -> zmq.asyncio.Socket:
+    if options is None:
+        options = []
     zmq_socket = context.socket(zmq_socket_type)
     if options:
         set_options_before(zmq_socket, options)
     zmq_socket.bind(uri)
     if options:
+        opt = cast(tuple[zmq.SocketOption, int], (zmq.LINGER, 0))
+        options.append(opt)
         set_options_after(zmq_socket, options)
     return zmq_socket
 
@@ -47,11 +53,15 @@ def connect_async_zmq_socket(
     zmq_socket_type: zmq.SocketType,
     options: list[tuple[zmq.SocketOption, int | bytes]] | None = None,
 ) -> zmq.asyncio.Socket:
+    if options is None:
+        options = []
     zmq_socket = context.socket(zmq_socket_type)
     if options:
         set_options_before(zmq_socket, options)
     zmq_socket.connect(uri)
     if options:
+        opt = cast(tuple[zmq.SocketOption, int], (zmq.LINGER, 0))
+        options.append(opt)
         set_options_after(zmq_socket, options)
     return zmq_socket
 
@@ -63,10 +73,14 @@ def bind_non_async_zmq_socket(
     options: list[tuple[zmq.SocketOption, int | bytes]] | None = None,
 ) -> zmq.Socket[bytes]:
     zmq_socket = context.socket(zmq_socket_type)
+    if options is None:
+        options = []
     if options:
         set_options_before(zmq_socket, options)
     zmq_socket.bind(uri)
     if options:
+        opt = cast(tuple[zmq.SocketOption, int], (zmq.LINGER, 0))
+        options.append(opt)
         set_options_after(zmq_socket, options)
     return zmq_socket
 
@@ -78,9 +92,13 @@ def connect_non_async_zmq_socket(
     options: list[tuple[zmq.SocketOption, int | bytes]] | None = None,
 ) -> zmq.Socket[bytes]:
     zmq_socket = context.socket(zmq_socket_type)
+    if options is None:
+        options = []
     if options:
         set_options_before(zmq_socket, options)
     zmq_socket.connect(uri)
     if options:
+        opt = cast(tuple[zmq.SocketOption, int], (zmq.LINGER, 0))
+        options.append(opt)
         set_options_after(zmq_socket, options)
     return zmq_socket

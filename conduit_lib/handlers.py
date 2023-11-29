@@ -40,7 +40,7 @@ def pack_block_chunk_message_for_worker(
     block_chunk_data: BlockChunkData,
 ) -> bytes:
     tx_offsets_bytes_for_chunk = block_chunk_data.tx_offsets_for_chunk
-    return cast(
+    return cast(  # type: ignore[redundant-cast]
         bytes,
         cbor2.dumps(
             (
@@ -57,7 +57,7 @@ def pack_block_chunk_message_for_worker(
 def pack_block_data_message_for_worker(block_chunk_data: BlockDataMsg) -> bytes:
     chunk_num = 1
     num_chunks = 1
-    return cast(
+    return cast(  # type: ignore[redundant-cast]
         bytes,
         cbor2.dumps(
             (

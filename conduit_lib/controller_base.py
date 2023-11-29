@@ -30,10 +30,23 @@ class ControllerBase:
         estimated_ideal_block_count = math.ceil(
             (target_bytes / (1024**2)) / self.estimated_moving_av_block_size_mb
         )
-        if service_type == 'conduit_index':
-            MAX_BLOCK_COUNT = 50
-        else:
+        # If MAX_BLOCK_COUNT is too small it wastes a lot of time on the checkpointing process
+        # between each batch of blocks.
+        # If MAX_BLOCK_COUNT is too large, the checkpoints are too infrequent and a crash
+        # will result in a very large rollback (this should also be avoided).
+        # When the blocks are small on average we want the MAX_BLOCK_COUNT to be relatively
+        # large.
+        # When the blocks are larger (and especially when they have a high density tx count per
+        # GB of data) we want the MAX_BLOCK_COUNT to be relatively smaller to "lock-in" hard-won
+        # progress more frequently.
+        MAX_BLOCK_COUNT = 1000
+        tip_height = self.headers_threadsafe.tip().height
+        if tip_height > 200000:
             MAX_BLOCK_COUNT = 250
+        if tip_height > 710000:
+            MAX_BLOCK_COUNT = 100
+        if tip_height > 800000:
+            MAX_BLOCK_COUNT = 50
         estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count

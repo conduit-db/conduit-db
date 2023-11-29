@@ -21,7 +21,7 @@ FFDB_LOCKFILE = os.environ["FFDB_LOCKFILE"] = "ffdb.lock"
 os.makedirs(TEST_DATADIR, exist_ok=True)
 
 
-def _do_general_read_and_write_ops(ffdb: FlatFileDb):
+def _do_general_read_and_write_ops(ffdb: FlatFileDb) -> FlatFileDb:
     logging.basicConfig(level=logging.DEBUG)
     # NOTE The use case of a chain indexer does not require fsync because we can always
     # re-sync from the node if we crash...
@@ -46,7 +46,7 @@ def _do_general_read_and_write_ops(ffdb: FlatFileDb):
         return ffdb
 
 
-def test_general_read_and_write_db():
+def test_general_read_and_write_db() -> None:
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
@@ -55,7 +55,7 @@ def test_general_read_and_write_db():
     _do_general_read_and_write_ops(ffdb)
 
 
-def test_delete():
+def test_delete() -> None:
     with FlatFileDb(
         datadir=Path(TEST_DATADIR),
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
@@ -69,7 +69,7 @@ def test_delete():
             ffdb.get(data_location_aa)
 
 
-def test_slicing():
+def test_slicing() -> None:
     with FlatFileDb(
         datadir=Path(TEST_DATADIR),
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
@@ -89,7 +89,7 @@ def _task_multithreaded(ffdb: FlatFileDb, x: int) -> None:
     _do_general_read_and_write_ops(ffdb)
 
 
-def _task(x):
+def _task(x: int) -> None:
     """Create each FlatFileDb instance anew within each process"""
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
@@ -99,7 +99,7 @@ def _task(x):
     _do_general_read_and_write_ops(ffdb)
 
 
-def test_multithreading_access():
+def test_multithreading_access() -> None:
     starttime = time.time()
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
@@ -115,7 +115,7 @@ def test_multithreading_access():
     logger.debug(f"Time taken {endtime - starttime} seconds")
 
 
-def test_multiprocessing_access():
+def test_multiprocessing_access() -> None:
     starttime = time.time()
     with multiprocessing.Pool(4) as pool:
         pool.map(_task, range(0, 32))
@@ -124,7 +124,7 @@ def test_multiprocessing_access():
     logger.debug(f"Time taken {endtime - starttime} seconds")
 
 
-def test_cleanup():
+def test_cleanup() -> None:
     if os.path.exists(TEST_DATADIR):
         shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
 

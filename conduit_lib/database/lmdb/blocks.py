@@ -1,6 +1,7 @@
 import logging
 import os
 
+from typing import cast
 import typing
 from io import BytesIO
 from pathlib import Path
@@ -55,7 +56,7 @@ class LmdbBlocks:
         with self.db.env.begin(db=self.block_nums_db) as txn:
             result = txn.get(block_hash)
             if result:
-                return typing.cast(int, struct_be_I.unpack(result)[0])
+                return cast(int, struct_be_I.unpack(result)[0])
             self.logger.error(
                 f"Block num for block_hash: " f"{bitcoinx.hash_to_hex_str(block_hash)} not found"
             )
@@ -71,7 +72,7 @@ class LmdbBlocks:
             read_path,
             start_offset_in_dat_file,
             end_offset_in_dat_file,
-        ) = cbor2.loads(val)
+        ) = cast(tuple[str, int, int], cbor2.loads(val))
         return DataLocation(read_path, start_offset_in_dat_file, end_offset_in_dat_file)
 
     def get_block(self, block_num: int, slice: Slice | None = None) -> bytes | None:
