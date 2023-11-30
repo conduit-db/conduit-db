@@ -37,13 +37,20 @@ ConduitDB connects to the p2p Bitcoin network so doesn't technically
 require you to run your own full node. However, ideally you will have a 
 bare metal, localhost bitcoind instance. You can get the latest version 
 from here (https://www.bsvblockchain.org/svnode). See 
-[notes](##-notes-on-using-a-non-localhost-node) below on using a [non-localhost node](#1-this-is-my-header).
+[notes](##-notes-on-using-a-non-localhost-node) below on using a [non-localhost node](##-notes-on-using-a-non-localhost-node).
+
+These settings in the bitcoin.conf file are recommended:
+
+    whitelist=127.0.0.1
+    whitelist=172.17.0.1
+    p2phandshaketimeout=300
 
 Once you have a node to connect to, update the `.env.docker.production`
 config file where it says:
 
     NODE_HOST=127.0.0.1
     NODE_PORT=8333
+
 
 Set the other configuration options in `.env.docker.production` such as:
     
@@ -62,20 +69,40 @@ By default all directories will be bind mounded (by Docker Compose) into the abo
 of this cloned repository. If you're running in prune mode (deleting raw block data after parsing), then the defaults
 will work well for you on NVME storage. This is the recommended configuration.
 
+Running the production configuration is only supported on linux.
+If you really want to test out the production configuration on windows you could use WSL.
 
     ./run_production.sh
+
+To tail the docker container logs:
+
+    ./tail_production_logs.sh
 
 
 # Development
 ## Python Version
 Currently `python3.10` is required
 
-## 1) Run BitcoinD, ScyllaDB and Redis in docker:
+## Build all of the images
 
-    docker-compose -f .\docker-compose.yml kill
-    docker-compose -f .\docker-compose.yml down
-    docker volume prune --force
-    docker-compose -f .\docker-compose.yml up -d node scylladb redis
+    docker build -f ./contrib/python_base/Dockerfile . -t python_base
+    docker-compose -f docker-compose.yml build --parallel --no-cache
+
+## Run static analysis checks
+
+    ./run_static_checks.bat
+
+Or on Unix:
+
+    ./run_static_checks.sh
+
+## Run all functional tests and unittests locally
+
+    ./run_all_tests_fresh.bat
+
+Or on Unix:
+
+    ./run_all_tests_fresh.sh
 
 
 ## 2) Running ConduitRaw & ConduitIndex
