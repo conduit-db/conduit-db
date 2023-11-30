@@ -70,6 +70,11 @@ async def wait_for_conduit_index_to_catch_up(db: DBInterface | None, tip_height:
     logger = logging.getLogger("wait-for-dependencies")
     logged_once = False
 
+    tables = db.get_tables()
+    if tables not in db.get_tables():
+        db.create_permanent_tables()
+        db.initialise_checkpoint_state()
+
     while True:
         checkpoint_state_row = db.get_checkpoint_state()
         assert checkpoint_state_row is not None

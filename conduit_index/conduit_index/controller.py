@@ -599,9 +599,12 @@ class Controller(ControllerBase):
         self,
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        local_tip = self.headers_threadsafe.tip()
-        if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
-            await self.maybe_start_processing_mempool_txs()
+
+        request_mempool = bool(os.environ.get('REQUEST_MEMPOOL', "0"))
+        if request_mempool:
+            local_tip = self.headers_threadsafe.tip()
+            if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
+                await self.maybe_start_processing_mempool_txs()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         old_hashes = None
@@ -617,7 +620,8 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name
+                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name,
+                    tip_height
                 )
 
                 # Long-polling

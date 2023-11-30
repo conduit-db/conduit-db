@@ -571,7 +571,7 @@ class Controller(ControllerBase):
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )
             await wait_for_conduit_index_to_catch_up(self.storage.db,
-                self.sync_state.get_local_tip_height())
+                self.sync_state.get_local_block_tip_height())
 
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:

@@ -21,7 +21,7 @@ class ControllerBase:
     def __init__(self) -> None:
         self.headers_threadsafe: HeadersAPIThreadsafe
 
-    def get_ideal_block_batch_count(self, target_bytes: int, service_type: str) -> int:
+    def get_ideal_block_batch_count(self, target_bytes: int, service_type: str, tip_height: int) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point
         of requesting 1 block at a time.
 
@@ -40,8 +40,6 @@ class ControllerBase:
         # When the blocks are larger (and especially when they have a high density tx count per
         # GB of data) we want the MAX_BLOCK_COUNT to be relatively smaller to "lock-in" hard-won
         # progress more frequently.
-
-        tip_height = self.headers_threadsafe.tip().height
         max_block_count = MAX_BLOCK_PER_BATCH_COUNT
         if tip_height > 200000:
             max_block_count = 250

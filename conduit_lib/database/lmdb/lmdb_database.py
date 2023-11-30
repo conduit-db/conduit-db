@@ -338,6 +338,9 @@ class LMDB_Database:
             ]
 
             if self.is_safe_to_delete_file(block_hashes, tip_hash_conduit_index):
+                self.logger.info(f"Pruning raw block data for "
+                    f"{block_info.block_hash}, height={block_info.block_height}, "
+                    f"size:{block_info.block_size//1024**2:.3f}MB")
                 try:
                     self.global_lock.acquire()
                     assert block_num is not None
