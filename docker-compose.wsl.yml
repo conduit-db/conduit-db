@@ -79,7 +79,7 @@ services:
     env_file: .env.docker.wsl
     environment:
       - MODE=PRODUCTION
-      - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
+      - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
       - LMDB_DATABASE_PATH=/opt/lmdb_data
       - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
       - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
