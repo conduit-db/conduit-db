@@ -14,7 +14,7 @@ services:
     ports:
       - "9042:9042"
       - "19042:19042"
-    env_file: .env.docker.production
+    env_file: .env.docker.wsl
     volumes:
       - ${SCYLLA_CONF_DIR}/scylla.yml:/etc/scylla/scylla.yml
       - ${SCYLLA_DATA_DIR}:/var/lib/scylla/data
@@ -26,7 +26,7 @@ services:
     image: redis:latest
     ports:
       - "6379:6379"
-    env_file: .env.docker.production
+    env_file: .env.docker.wsl
     volumes:
       - ${REDIS_CONF_DIR}/redis.conf:/usr/local/etc/redis/redis.conf
     mem_limit: 2G
@@ -47,7 +47,7 @@ services:
       - scylladb
     stdin_open: true
     tty: true
-    env_file: .env.docker.production
+    env_file: .env.docker.wsl
     environment:
       - MODE=PRODUCTION
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
@@ -76,7 +76,7 @@ services:
       - conduit-raw
     stdin_open: true
     tty: true
-    env_file: .env.docker.production
+    env_file: .env.docker.wsl
     environment:
       - MODE=PRODUCTION
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
