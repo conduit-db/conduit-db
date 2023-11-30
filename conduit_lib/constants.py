@@ -2,6 +2,9 @@
 from enum import IntEnum
 import os
 
+MAX_BLOCK_PER_BATCH_COUNT = 1000
+MAX_BLOCKS_SYNCRONIZED_AHEAD = 250  # Max number of blocks ConduitRaw can get ahead of ConduitIndex
+
 ERROR = 0
 MSG_TX = 1
 MSG_BLOCK = 2

@@ -31,7 +31,7 @@ from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.types import HeaderSpan
 from conduit_lib.utils import create_task, get_conduit_raw_host_and_port
-from conduit_lib.wait_for_dependencies import wait_for_db
+from conduit_lib.wait_for_dependencies import wait_for_db, wait_for_conduit_index_to_catch_up
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
 
 from .aiohttp_api import server_main
@@ -570,6 +570,8 @@ class Controller(ControllerBase):
                 f"Controller Batch {batch_id} Complete."
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )
+            await wait_for_conduit_index_to_catch_up(self.storage.db,
+                self.sync_state.get_local_tip_height())
 
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:

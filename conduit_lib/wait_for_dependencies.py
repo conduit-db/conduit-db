@@ -6,6 +6,8 @@ import socket
 import time
 
 from . import DBInterface
+
+from .constants import MAX_BLOCKS_SYNCRONIZED_AHEAD
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
 from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
@@ -59,6 +61,33 @@ def wait_for_db() -> None:
     db = DBInterface.load_db(worker_id="controller")
     if db is not None:
         db.close()
+
+
+async def wait_for_conduit_index_to_catch_up(db: DBInterface | None, tip_height: int) -> None:
+    if not db:
+        db = DBInterface.load_db(worker_id="main-process")
+    assert db is not None
+    logger = logging.getLogger("wait-for-dependencies")
+    logged_once = False
+
+    while True:
+        checkpoint_state_row = db.get_checkpoint_state()
+        assert checkpoint_state_row is not None
+        too_far_ahead = (
+            tip_height > checkpoint_state_row.best_flushed_block_height + MAX_BLOCKS_SYNCRONIZED_AHEAD
+        )
+        if too_far_ahead:
+            if not logged_once:
+                logger.debug(f"ConduitIndex is still catching up. Waiting...")
+                logged_once = True
+
+            sleep_time = 1  # For responsiveness to initial fast blocks
+            if tip_height > 200000:
+                sleep_time = 5
+
+            await asyncio.sleep(sleep_time)
+            continue
+        return
 
 
 def wait_for_ipc_socket_server() -> None:

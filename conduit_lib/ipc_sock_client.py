@@ -5,15 +5,16 @@ import socket
 import time
 from pathlib import Path
 from types import TracebackType
-from typing import Iterator, Type, cast, Any
+from typing import cast, Iterator, Type, Any
 
 import cbor2
+from bitcoinx import Header
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 from conduit_lib.constants import REGTEST
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
-from conduit_lib.types import BlockSliceRequestType, ChainHashes
+from conduit_lib.types import BlockSliceRequestType, ChainHashes, BlockHeaderRow
 
 BatchedBlockSlices = bytearray
 
@@ -247,6 +248,24 @@ class IPCSocketClient:
         except ConnectionResetError:
             self.wait_for_connection()
             return self.reorg_differential(old_hashes, new_hashes)  # recurse
+
+    def delete_blocks_when_safe(self, header_rows: list[BlockHeaderRow], tip_hash: bytes) -> \
+            ipc_sock_msg_types.DeleteBlocksResponse:
+        try:
+            # Request
+            msg_req = ipc_sock_msg_types.DeleteBlocksRequest(header_rows, tip_hash)
+            # self.logger.debug(f"Sending {ipc_sock_commands.DELETE_BLOCKS} request: {msg_req}")
+            send_msg(self.sock, msg_req.to_cbor())
+
+            # Recv
+            data = self.receive_data()
+            cbor_obj = cast(tuple[list[BlockHeaderRow], Header], cbor2.loads(data))
+            msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(*cbor_obj)
+            # self.logger.debug(f"Received {ipc_sock_commands.DELETE_BLOCKS} response: {msg_resp}")
+            return msg_resp
+        except ConnectionResetError:
+            self.wait_for_connection()
+            return self.delete_blocks_when_safe(header_rows, tip_hash)  # recurse
 
 
 if __name__ == "__main__":

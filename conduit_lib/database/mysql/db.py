@@ -21,7 +21,7 @@ from ..db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
-    PushdataRow,
+    PushdataRow, CheckpointStateRow,
 )
 from ... import LMDB_Database
 from ...types import ChainHashes, BlockHeaderRow, TxMetadata, RestorationFilterQueryResult, OutpointType
@@ -160,7 +160,7 @@ class MySQLDatabase(DBInterface):
 
     def get_checkpoint_state(
         self,
-    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+    ) -> CheckpointStateRow | None:
         return self.queries.get_checkpoint_state()
 
     def initialise_checkpoint_state(self) -> None:

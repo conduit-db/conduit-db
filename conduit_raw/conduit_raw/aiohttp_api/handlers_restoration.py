@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import os
 from enum import IntEnum
 from json import JSONDecodeError
 from typing import cast, TYPE_CHECKING
@@ -44,7 +44,7 @@ class MatchFormat(IntEnum):
 BITCOIN_RPC_NOT_FOUND_ERROR = -5
 
 
-async def getrawtransaction_from_node_rpc(
+async def get_rawtransaction_from_node_rpc(
     app_state: "ApplicationState",
     txid: str,
     rpcport: int = 18332,
@@ -91,6 +91,7 @@ def _get_tsc_merkle_proof(
     lmdb: LMDB_Database,
     include_full_tx: bool = True,
     target_type: str = "hash",
+    rawtx: bytes | None = None
 ) -> TSCMerkleProof:
     """
     Return a pair (tsc_proof, cost) where tsc_proof is a dictionary with fields:
@@ -107,9 +108,13 @@ def _get_tsc_merkle_proof(
     # Txid or Raw Transaction
     tx_location = TxLocation(tx_metadata.block_hash, tx_metadata.block_num, tx_metadata.tx_position)
     if include_full_tx:
-        rawtx = lmdb.get_rawtx_by_loc(tx_location)
-        assert rawtx is not None
-        txid_or_tx_field = rawtx.hex()
+        if os.environ['PRUNE_MODE'] == "1":
+            assert rawtx is not None  # fetched from external source (e.g. node RPC API)
+            txid_or_tx_field = rawtx.hex()
+        else:
+            rawtx = lmdb.get_rawtx_by_loc(tx_location)
+            assert rawtx is not None
+            txid_or_tx_field = rawtx.hex()
     else:
         txid_or_tx_field = hash_to_hex_str(get_full_tx_hash(tx_location, lmdb))
 
@@ -142,21 +147,30 @@ def _get_tsc_merkle_proof(
 
 
 async def _get_tsc_merkle_proof_async(
-    executor: ThreadPoolExecutor,
+    app_state: 'ApplicationState',
     tx_metadata: TxMetadata,
     db: DBInterface,
     lmdb: LMDB_Database,
+    tx_hash: bytes,
     include_full_tx: bool = True,
     target_type: str = "hash",
 ) -> TSCMerkleProof:
+    # The Node's RPC API which returns hex is used in favour of the REST API
+    # (which delivers binary) because TAAL only offers remote RPC access in their plan
+    rawtx: bytes | None = None
+    if os.environ['PRUNE_MODE'] == "1":
+        logger.debug("Fetching rawtransaction from node RPC tx_hash: %s", hash_to_hex_str(tx_hash))
+        rawtx_hex = await get_rawtransaction_from_node_rpc(
+            app_state,
+            hash_to_hex_str(tx_hash),
+            rpchost=app_state.net_config.node_rpc_host,
+            rpcport=app_state.net_config.node_rpc_port,
+        )
+        rawtx = bytes.fromhex(rawtx_hex)
+
     tsc_merkle_proof = await asyncio.get_running_loop().run_in_executor(
-        executor,
-        _get_tsc_merkle_proof,
-        tx_metadata,
-        db,
-        lmdb,
-        include_full_tx,
-        target_type,
+        app_state.executor, _get_tsc_merkle_proof, tx_metadata, db, lmdb, include_full_tx,
+        target_type, rawtx
     )
     return tsc_merkle_proof
 
@@ -300,7 +314,7 @@ async def get_transaction(request: web.Request) -> web.Response:
     # TODO: The only reason to pull from the node has been because mempool state
     #  was not storing full rawtxs. This will be done by Redis with a hard memory usage limit
     #  and an eviction policy to simply drop the oldest entries first (FIFO)
-    rawtx = await getrawtransaction_from_node_rpc(
+    rawtx = await get_rawtransaction_from_node_rpc(
         app_state,
         txid,
         rpchost=app_state.net_config.node_rpc_host,
@@ -335,11 +349,13 @@ async def get_tsc_merkle_proof(request: web.Request) -> web.Response:
     if not tx_metadata:
         raise web.HTTPNotFound(reason="transaction metadata not found")
     assert target_type is not None
+
     tsc_merkle_proof = await _get_tsc_merkle_proof_async(
-        app_state.executor,
+        app_state,
         tx_metadata,
         db,
         lmdb,
+        tx_hash,
         include_full_tx,
         target_type,
     )

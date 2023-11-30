@@ -12,7 +12,7 @@ import bitcoinx
 
 from .bulk_loads import MySQLBulkLoads
 from .tables import MySQLTables
-from ..db_interface.types import MinedTxHashes
+from ..db_interface.types import MinedTxHashes, CheckpointStateRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -234,7 +234,7 @@ class MySQLQueries:
 
     def get_checkpoint_state(
         self,
-    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+    ) -> CheckpointStateRow | None:
         """We 'allocate' work up to a given block hash and then we set the new checkpoint only
         after every block in the batch is successfully flushed"""
         try:
@@ -244,21 +244,14 @@ class MySQLQueries:
             rows = result.fetch_row(0)
             if len(rows) != 0:
                 row = rows[0]
-                best_flushed_block_height = row[1]
-                best_flushed_block_hash = row[2]
-                reorg_was_allocated = row[3]
-                first_allocated_block_hash = row[4]
-                last_allocated_block_hash = row[5]
-                old_hashes_array = row[6]
-                new_hashes_array = row[7]
-                return (
-                    best_flushed_block_height,
-                    best_flushed_block_hash,
-                    reorg_was_allocated,
-                    first_allocated_block_hash,
-                    last_allocated_block_hash,
-                    old_hashes_array,
-                    new_hashes_array,
+                return CheckpointStateRow(
+                    best_flushed_block_height=row[1],
+                    best_flushed_block_hash=row[2],
+                    reorg_was_allocated=row[3],
+                    first_allocated_block_hash=row[4],
+                    last_allocated_block_hash=row[5],
+                    old_hashes_array=row[6],
+                    new_hashes_array=row[7],
                 )
             else:
                 return None

@@ -17,7 +17,7 @@ from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.ipc_sock_msg_types import REQUEST_MAP, BaseMsg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
-from conduit_lib.types import BlockMetadata, Slice
+from conduit_lib.types import BlockMetadata, Slice, BlockHeaderRow
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 
 struct_be_Q = struct.Struct(">Q")
@@ -281,6 +281,15 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.reorg_differential")
+
+    def delete_blocks_when_safe(self, msg_req: ipc_sock_msg_types.DeleteBlocksRequest) -> None:
+        try:
+            block_header_rows = [BlockHeaderRow(*x) for x in msg_req.blocks]
+            self.server.lmdb.delete_blocks_when_safe(block_header_rows, msg_req.tip_hash)
+            msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(msg_req.blocks, msg_req.tip_hash)
+            self.send_msg(msg_resp.to_cbor())
+        except Exception:
+            logger.exception("Exception in ThreadedTCPRequestHandler.mark_blocks_for_deletion")
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

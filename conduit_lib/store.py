@@ -27,10 +27,10 @@ class Storage:
         self,
         headers: Headers,
         block_headers: Headers,
-        database: DBInterface | None,
+        db: DBInterface | None,
         lmdb: LMDB_Database | None,
     ) -> None:
-        self.database = database
+        self.db = db
         self.headers = headers
         self.headers_lock = threading.RLock()
         self.block_headers = block_headers
@@ -38,8 +38,8 @@ class Storage:
         self.lmdb = lmdb
 
     async def close(self) -> None:
-        if self.database:
-            self.database.close()
+        if self.db:
+            self.db.close()
 
     # External API
 
@@ -99,16 +99,16 @@ def remove_contents(dir_path: Path) -> None:
 
 def reset_datastore(headers_path: Path, block_headers_path: Path) -> None:
     if os.environ["SERVER_TYPE"] == "ConduitIndex" and int(os.environ.get("RESET_CONDUIT_INDEX", 0)) == 1:
-        database = DBInterface.load_db(worker_id="controller")
+        db = DBInterface.load_db(worker_id="controller")
         try:
-            database.drop_tables()
+            db.drop_tables()
             if int(os.environ.get("RESET_EXTERNAL_API_DATABASE_TABLES", 0)) == 1:
-                assert database.tip_filter_api is not None
-                database.tip_filter_api.drop_tables()
-                database.tip_filter_api.create_tables()
-            database.create_permanent_tables()
+                assert db.tip_filter_api is not None
+                db.tip_filter_api.drop_tables()
+                db.tip_filter_api.create_tables()
+            db.create_permanent_tables()
         finally:
-            database.close()
+            db.close()
 
     DATADIR_SSD = Path(os.environ["DATADIR_SSD"])
     DATADIR_HDD = Path(os.environ["DATADIR_HDD"])
@@ -141,14 +141,14 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
     block_headers = setup_headers_store(net_config, block_headers_path)
 
     if os.environ["SERVER_TYPE"] == "ConduitIndex":
-        database = DBInterface.load_db(worker_id="controller")
+        db = DBInterface.load_db(worker_id="main-process")
     else:
-        database = None
+        db = None
 
     if os.environ["SERVER_TYPE"] == "ConduitRaw":
         lmdb_db = LMDB_Database(lock=True)
     else:
         lmdb_db = None
 
-    storage = Storage(headers, block_headers, database, lmdb_db)
+    storage = Storage(headers, block_headers, db, lmdb_db)
     return storage

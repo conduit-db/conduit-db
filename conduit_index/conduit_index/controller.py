@@ -129,7 +129,10 @@ class ZMQSocketListeners:
 
 
 class Controller(ControllerBase):
-    def __init__(self, net_config: "NetworkConfig", loop_type: None = None) -> None:
+
+    def __init__(self, net_config: 'NetworkConfig',
+            loop_type: None=None) -> None:
+        self.prune_mode = os.environ['PRUNE_MODE'] == "1"
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -412,7 +415,7 @@ class Controller(ControllerBase):
         await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
     async def start_jobs(self) -> None:
-        self.db = self.storage.database
+        self.db = self.storage.db
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
@@ -550,6 +553,10 @@ class Controller(ControllerBase):
             )
             header_rows.append(row)
         self.db.bulk_load_headers(header_rows)
+
+        if self.prune_mode:
+            tip_hash = self.headers_threadsafe.tip().hash
+            ipc_socket_client.delete_blocks_when_safe(header_rows, tip_hash)
 
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header height {tip.height}, " f"hash {hash_to_hex_str(tip.hash)}")

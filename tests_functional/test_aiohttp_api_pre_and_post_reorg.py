@@ -41,13 +41,11 @@ from tests_functional.reference_server_support import (
     GenericPeerChannelMessage,
     NotificationJsonData,
 )
+from tests_functional.utils import GET_TRANSACTION_URL
 
 BASE_URL = f"http://127.0.0.1:34525"
 PING_URL = BASE_URL + "/"
 ERROR_URL = BASE_URL + "/error"
-GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
-GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
-RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 

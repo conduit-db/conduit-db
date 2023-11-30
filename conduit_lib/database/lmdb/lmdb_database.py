@@ -1,13 +1,16 @@
 import asyncio
 from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
-import logging
-import os
-import threading
+import cbor2
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from pathlib import Path
+import logging
 import lmdb
+import os
+from pathlib import Path
+import threading
 import typing
+
+from bitcoinx.packing import struct_be_I
 
 from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
 
@@ -26,12 +29,13 @@ from conduit_lib.types import (
     ChainHashes,
     Slice,
     DataLocation,
+    BlockHeaderRow,
 )
 
 try:
-    from ...constants import PROFILING
+    from ...constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT
 except ImportError:
-    from conduit_lib.constants import PROFILING
+    from conduit_lib.constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,7 +59,7 @@ class LMDB_Database:
         self._storage_path = storage_path
         self.env = lmdb.open(
             self._storage_path,
-            max_dbs=5,
+            max_dbs=7,
             readahead=False,
             sync=False,
             map_size=self._map_size,
@@ -153,6 +157,10 @@ class LMDB_Database:
         with self.global_lock:
             return self.blocks.get_block_num(block_hash)
 
+    def get_block_delete_markers(self, block_hash: bytes) -> BlockHeaderRow | None:
+        with self.global_lock:
+            return self.blocks.get_block_delete_markers(block_hash)
+
     def check_block(self, block_hash: bytes) -> None:
         if block_hash == hex_str_to_hash(os.environ["GENESIS_BLOCK_HASH"]):
             return None
@@ -162,7 +170,11 @@ class LMDB_Database:
         with self.global_lock:
             assert block_num is not None
             data_location = self.blocks.get_data_location(block_num)
-            assert data_location is not None
+            if os.environ['PRUNE_MODE'] == "0":
+                assert data_location is not None
+            else:
+                if data_location is None:  # it was pruned
+                    return None
             file_size = os.path.getsize(data_location.file_path)
             assert (
                 data_location.end_offset <= file_size
@@ -268,6 +280,88 @@ class LMDB_Database:
                 additions_to_mempool,
                 old_chain_tx_hashes,
             )
+
+    def is_safe_to_delete_file(self, block_hashes: list[bytearray], tip_hash_conduit_index: bytes) -> bool:
+        # ConduitIndex might be up to 250 blocks behind so we want to find the tip hash
+        # of ConduitIndex and preserve a further 250 blocks deep from there. So it might be
+        # up to 500 blocks that are preserved.
+        # This is done for two reasons:
+        # 1) We cannot delete the last block_num -> block location entry because it will break
+        #    the sequencing procedure ensuring that each allocated block_num is unique
+        # 2) ConduitIndex needs to have blocks on disc to complete its db repair procedure
+        #    for rewinding parsed tx data that was part of a batch that did not fully complete.
+        block_num_tip = self.get_block_num(tip_hash_conduit_index)
+        assert block_num_tip is not None
+        block_num_safe_to_delete_before = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT
+
+        block_num = self.get_block_num(tip_hash_conduit_index)
+        assert block_num is not None
+        # We are iterating over the blocks in a single file to make sure
+        # that ALL of them have been marked safe for deletion.
+        # Only delete when all have been marked safe for deletion and they blocks
+        # are old enough to allow pruning.
+        for block_hash in block_hashes:
+            block_hash_bytes = bytes(block_hash)
+            if block_num >= block_num_safe_to_delete_before:
+                return False
+            result = self.get_block_delete_markers(block_hash_bytes)
+            if result is None:
+                return False
+        return True
+
+    def delete_blocks_when_safe(self, blocks: list[BlockHeaderRow], tip_hash_conduit_index: bytes) -> None:
+        assert self.env is not None
+        # Persist intention to delete these blocks as soon as it is safe
+        # There can be multiple blocks per file and deleting one would affect the byte offsets
+        # which would then invalidate the other stored metadata about where to locate each block
+        # and rawtxs within each block. We only want to delete files when all blocks in a given
+        # file are marked for deletion. Until then, we wait.
+        with self.env.begin(write=True, buffers=False) as txn:
+            for block_info in blocks:
+                txn.put(
+                    bytes.fromhex(block_info.block_hash),
+                    cbor2.dumps(block_info),
+                    db=self.blocks.block_delete_markers_db,
+                )
+
+        for block_info in blocks:
+            block_hash = bytes.fromhex(block_info.block_hash)
+            block_num = self.get_block_num(block_hash)
+            assert block_num is not None
+            data_location = self.blocks.get_data_location(block_num)
+            assert data_location is not None
+
+            block_hashes_arr = self.blocks.get_block_hashes_in_file(data_location.file_path)
+            assert block_hashes_arr is not None
+            block_hashes = [
+                block_hashes_arr[i * 32 : (i + 1) * 32] for i in range(len(block_hashes_arr) // 32)
+            ]
+
+            if self.is_safe_to_delete_file(block_hashes, tip_hash_conduit_index):
+                try:
+                    self.global_lock.acquire()
+                    assert block_num is not None
+                    with self.env.begin(write=True, buffers=False) as txn:
+                        txn.delete(struct_be_I.pack(block_num), db=self.blocks.blocks_db)
+                        # NOTE: We do not delete the entry in the block_nums_db because
+                        # block_num must always increment correctly and always be unique.
+                        # Disc usage to keep this in storage is trivial anyway
+
+                        data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
+                        assert data_location_tx_offsets is not None
+                        txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
+
+                    if Path(data_location.file_path).exists():
+                        self.blocks.ffdb.delete_file(Path(data_location.file_path))
+                    if Path(data_location_tx_offsets.file_path).exists():
+                        self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
+                except Exception:
+                    self.logger.exception(
+                        f"Failed to complete full purge of block data for block hash: "
+                        f"{hash_to_hex_str(block_hash)}"
+                    )
+                finally:
+                    self.global_lock.release()
 
 
 def get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:

@@ -10,7 +10,7 @@ from cassandra.cluster import Session  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
 from cassandra.query import BatchStatement  # pylint:disable=E0611
 
-from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow
+from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, CheckpointStateRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -61,8 +61,9 @@ class ScyllaDBQueries:
                 unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool")
                 return cast(set[bytes], unprocessed_transactions)
             else:
-                unprocessed_transactions = self.db.cache.r.sdiff(inbound_tx_table_name, b"mempool",
-                    b'temp_orphaned_txs')
+                unprocessed_transactions = self.db.cache.r.sdiff(
+                    inbound_tx_table_name, b"mempool", b'temp_orphaned_txs'
+                )
                 return cast(set[bytes], unprocessed_transactions)
         finally:
             self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
@@ -83,7 +84,7 @@ class ScyllaDBQueries:
         futures = []
         assert self.db.executor is not None
         for i in range(0, len(mined_tx_hashes_list), batch_size):
-            batch = mined_tx_hashes_list[i:i+batch_size]
+            batch = mined_tx_hashes_list[i : i + batch_size]
             future = self.db.executor.submit(remove_batch, batch)
             futures.append(future)
 
@@ -132,27 +133,20 @@ class ScyllaDBQueries:
             (checkpoint_tip.height, block_hash_bytes, 0),
         )
 
-    def get_checkpoint_state(self) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+    def get_checkpoint_state(self) -> CheckpointStateRow | None:
         # Execute the SELECT query and fetch all results
         rows = self.session.execute("SELECT * FROM checkpoint_state;")
         # In Cassandra and ScyllaDB, we usually get a list of rows directly
         if rows:
             row = rows[0]
-            best_flushed_block_height = row.best_flushed_block_height
-            best_flushed_block_hash = row.best_flushed_block_hash
-            reorg_was_allocated = bool(row.reorg_was_allocated)
-            first_allocated_block_hash = row.first_allocated_block_hash
-            last_allocated_block_hash = row.last_allocated_block_hash
-            old_hashes_array = row.old_hashes_array
-            new_hashes_array = row.new_hashes_array
-            return (
-                best_flushed_block_height,
-                best_flushed_block_hash,
-                reorg_was_allocated,
-                first_allocated_block_hash,
-                last_allocated_block_hash,
-                old_hashes_array,
-                new_hashes_array,
+            return CheckpointStateRow(
+                row.best_flushed_block_height,
+                row.best_flushed_block_hash,
+                bool(row.reorg_was_allocated),
+                row.first_allocated_block_hash,
+                row.last_allocated_block_hash,
+                row.old_hashes_array,
+                row.new_hashes_array,
             )
         else:
             return None

@@ -236,7 +236,10 @@ class FlatFileDb:
         """
         with self.mutable_file_rwlock.write_lock():
             try:
+                if self.mutable_file_path == file_path:
+                    self._maybe_get_new_mutable_file(force_new_file=True)
                 os.remove(file_path)
+                logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:
                 logger.error(f"File not found at path: {file_path}. Was it already deleted?")
             except OSError:

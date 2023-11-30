@@ -4,6 +4,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 from conduit_lib import IPCSocketClient
+from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 
@@ -39,15 +40,16 @@ class ControllerBase:
         # When the blocks are larger (and especially when they have a high density tx count per
         # GB of data) we want the MAX_BLOCK_COUNT to be relatively smaller to "lock-in" hard-won
         # progress more frequently.
-        MAX_BLOCK_COUNT = 1000
+
         tip_height = self.headers_threadsafe.tip().height
+        max_block_count = MAX_BLOCK_PER_BATCH_COUNT
         if tip_height > 200000:
-            MAX_BLOCK_COUNT = 250
+            max_block_count = 250
         if tip_height > 710000:
-            MAX_BLOCK_COUNT = 100
+            max_block_count = 100
         if tip_height > 800000:
-            MAX_BLOCK_COUNT = 50
-        estimated_ideal_block_count = min(estimated_ideal_block_count, MAX_BLOCK_COUNT)
+            max_block_count = 50
+        estimated_ideal_block_count = min(estimated_ideal_block_count, max_block_count)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count
 
