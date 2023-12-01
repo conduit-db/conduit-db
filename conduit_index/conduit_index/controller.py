@@ -129,9 +129,7 @@ class ZMQSocketListeners:
 
 
 class Controller(ControllerBase):
-
-    def __init__(self, net_config: 'NetworkConfig',
-            loop_type: None=None) -> None:
+    def __init__(self, net_config: 'NetworkConfig', loop_type: None = None) -> None:
         self.prune_mode = os.environ['PRUNE_MODE'] == "1"
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
@@ -209,10 +207,7 @@ class Controller(ControllerBase):
             await self.bitcoin_p2p_client.connection_lost_event.wait()
             self.bitcoin_p2p_client.connection_lost_event.clear()
             await self.connect_session(self.peer)
-            self.logger.debug(
-                f"The bitcoin node disconnected but is now reconnected. "
-                f"Re-requesting mempool (as appropriate)..."
-            )
+            self.logger.debug(f"The bitcoin node disconnected but is now reconnected")
 
     async def stop(self) -> None:
         self.running = False
@@ -592,7 +587,9 @@ class Controller(ControllerBase):
             assert self.bitcoin_p2p_client is not None
             await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
             await self.bitcoin_p2p_client.handshake_complete_event.wait()
-            await self.request_mempool()
+            request_mempool = int(os.environ.get('REQUEST_MEMPOOL', "0"))
+            if request_mempool:
+                await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
 
     async def long_poll_conduit_raw_chain_tip(
@@ -600,11 +597,9 @@ class Controller(ControllerBase):
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
 
-        request_mempool = bool(os.environ.get('REQUEST_MEMPOOL', "0"))
-        if request_mempool:
-            local_tip = self.headers_threadsafe.tip()
-            if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
-                await self.maybe_start_processing_mempool_txs()
+        local_tip = self.headers_threadsafe.tip()
+        if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
+            await self.maybe_start_processing_mempool_txs()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
         old_hashes = None
@@ -620,8 +615,7 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name,
-                    tip_height
+                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name, tip_height
                 )
 
                 # Long-polling
@@ -878,7 +872,7 @@ class Controller(ControllerBase):
         assert self.db is not None
         while True:
             self.logger.debug(f"Mempool size: {self.db.get_mempool_size()} " f"transactions")
-            await asyncio.sleep(60)
+            await asyncio.sleep(180)
 
     async def sync_all_blocks_job(self) -> None:
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""

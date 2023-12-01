@@ -71,7 +71,7 @@ async def wait_for_conduit_index_to_catch_up(db: DBInterface | None, tip_height:
     logged_once = False
 
     tables = db.get_tables()
-    if tables not in db.get_tables():
+    if ("checkpoint_state",) not in tables:
         db.create_permanent_tables()
         db.initialise_checkpoint_state()
 

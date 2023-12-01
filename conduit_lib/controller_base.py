@@ -4,7 +4,7 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 from conduit_lib import IPCSocketClient
-from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT
+from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT, CONDUIT_RAW_SERVICE_NAME
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 
@@ -41,6 +41,8 @@ class ControllerBase:
         # GB of data) we want the MAX_BLOCK_COUNT to be relatively smaller to "lock-in" hard-won
         # progress more frequently.
         max_block_count = MAX_BLOCK_PER_BATCH_COUNT
+        if service_type == CONDUIT_RAW_SERVICE_NAME:
+            max_block_count = min(MAX_BLOCK_PER_BATCH_COUNT, 500)
         if tip_height > 200000:
             max_block_count = 250
         if tip_height > 710000:
