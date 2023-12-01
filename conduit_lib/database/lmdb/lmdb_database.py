@@ -172,13 +172,13 @@ class LMDB_Database:
             data_location = self.blocks.get_data_location(block_num)
             if os.environ['PRUNE_MODE'] == "0":
                 assert data_location is not None
+                file_size = os.path.getsize(data_location.file_path)
+                assert (
+                    data_location.end_offset <= file_size
+                ), f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
             else:
                 if data_location is None:  # it was pruned
                     return None
-            file_size = os.path.getsize(data_location.file_path)
-            assert (
-                data_location.end_offset <= file_size
-            ), f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
 
         # Ensure that the merkle tree table and tx offsets table are aligned to return the
         # correct coinbase transaction from the raw block data.
@@ -293,15 +293,13 @@ class LMDB_Database:
         block_num_tip = self.get_block_num(tip_hash_conduit_index)
         assert block_num_tip is not None
         block_num_safe_to_delete_before = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT
-
-        block_num = self.get_block_num(tip_hash_conduit_index)
-        assert block_num is not None
         # We are iterating over the blocks in a single file to make sure
         # that ALL of them have been marked safe for deletion.
         # Only delete when all have been marked safe for deletion and they blocks
         # are old enough to allow pruning.
         for block_hash in block_hashes:
             block_hash_bytes = bytes(block_hash)
+            block_num = self.get_block_num(block_hash_bytes)
             if block_num >= block_num_safe_to_delete_before:
                 return False
             result = self.get_block_delete_markers(block_hash_bytes)
@@ -316,6 +314,7 @@ class LMDB_Database:
         # which would then invalidate the other stored metadata about where to locate each block
         # and rawtxs within each block. We only want to delete files when all blocks in a given
         # file are marked for deletion. Until then, we wait.
+        self.logger.debug(f"LMDB delete_blocks_when_safe was called for {len(blocks)} blocks")
         with self.env.begin(write=True, buffers=False) as txn:
             for block_info in blocks:
                 txn.put(
@@ -324,36 +323,43 @@ class LMDB_Database:
                     db=self.blocks.block_delete_markers_db,
                 )
 
-        for block_info in blocks:
-            block_hash = bytes.fromhex(block_info.block_hash)
-            block_num = self.get_block_num(block_hash)
-            assert block_num is not None
-            data_location = self.blocks.get_data_location(block_num)
-            assert data_location is not None
+        last_block_num = self.blocks._get_last_block_num()
+        data_location = self.blocks.get_data_location(last_block_num)
+        filename = Path(data_location.file_path).name
+        file_num = int(filename.lstrip('data_').rstrip('.dat'))
 
-            block_hashes_arr = self.blocks.get_block_hashes_in_file(data_location.file_path)
+        for file_num in reversed(range(0, file_num)):
+            # TODO rename _file_num_to_mutable_file_path to remove 'mutable'
+            filepath = self.blocks.ffdb._file_num_to_mutable_file_path(file_num)
+            if not filepath.exists():
+                return  # early exit if these earlier blocks have already been cleaned up
+
+            # TODO is this filepath the right one!?!!!! CHECK THIS HERE PLEASE!
+            block_hashes_arr = self.blocks.get_block_hashes_in_file(str(filepath))
             assert block_hashes_arr is not None
             block_hashes = [
                 block_hashes_arr[i * 32 : (i + 1) * 32] for i in range(len(block_hashes_arr) // 32)
             ]
-
-            if self.is_safe_to_delete_file(block_hashes, tip_hash_conduit_index):
-                self.logger.info(f"Pruning raw block data for "
-                    f"{block_info.block_hash}, height={block_info.block_height}, "
-                    f"size:{block_info.block_size//1024**2:.3f}MB")
+            safe_to_delete = self.is_safe_to_delete_file(block_hashes, tip_hash_conduit_index)
+            if safe_to_delete:
+                self.logger.info(f"Pruning raw block data file: {str(filepath)}")
+                block_hash = b""
                 try:
                     self.global_lock.acquire()
-                    assert block_num is not None
-                    with self.env.begin(write=True, buffers=False) as txn:
-                        txn.delete(struct_be_I.pack(block_num), db=self.blocks.blocks_db)
-                        # NOTE: We do not delete the entry in the block_nums_db because
-                        # block_num must always increment correctly and always be unique.
-                        # Disc usage to keep this in storage is trivial anyway
+                    # Delete the LMDB Entries
+                    for block_hash in block_hashes:
+                        block_num = self.get_block_num(block_hash)
+                        assert block_num is not None
+                        with self.env.begin(write=True, buffers=False) as txn:
+                            txn.delete(struct_be_I.pack(block_num), db=self.blocks.blocks_db)
+                            # NOTE: We do not delete the entry in the block_nums_db because
+                            # block_num must always increment correctly and always be unique.
+                            # Disc usage to keep this in storage is trivial anyway
+                            data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
+                            if data_location_tx_offsets:
+                                txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
 
-                        data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
-                        assert data_location_tx_offsets is not None
-                        txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
-
+                    # Delete the FFDB Entries
                     if Path(data_location.file_path).exists():
                         self.blocks.ffdb.delete_file(Path(data_location.file_path))
                     if Path(data_location_tx_offsets.file_path).exists():

@@ -549,7 +549,9 @@ class Controller(ControllerBase):
             header_rows.append(row)
         self.db.bulk_load_headers(header_rows)
 
+        self.logger.debug(f"self.prune_mode={self.prune_mode}")
         if self.prune_mode:
+            self.logger.debug(f"Calling IPC delete_blocks_when_safe...")
             tip_hash = self.headers_threadsafe.tip().hash
             ipc_socket_client.delete_blocks_when_safe(header_rows, tip_hash)
 

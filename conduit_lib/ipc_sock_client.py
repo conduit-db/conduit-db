@@ -260,7 +260,7 @@ class IPCSocketClient:
             # Recv
             data = self.receive_data()
             cbor_obj = cast(tuple[list[BlockHeaderRow], Header], cbor2.loads(data))
-            msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(*cbor_obj)
+            msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.DELETE_BLOCKS} response: {msg_resp}")
             return msg_resp
         except ConnectionResetError:

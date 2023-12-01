@@ -284,6 +284,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def delete_blocks_when_safe(self, msg_req: ipc_sock_msg_types.DeleteBlocksRequest) -> None:
         try:
+            logger.debug(f"Got delete_blocks_when_safe message")
             block_header_rows = [BlockHeaderRow(*x) for x in msg_req.blocks]
             self.server.lmdb.delete_blocks_when_safe(block_header_rows, msg_req.tip_hash)
             msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(msg_req.blocks, msg_req.tip_hash)
