@@ -236,8 +236,14 @@ class FlatFileDb:
         """
         with self.mutable_file_rwlock.write_lock():
             try:
+                logger.debug(f"delete_file called with file_path: {file_path}")
+                logger.debug(f"self.mutable_file_path={self.mutable_file_path}")
                 if self.mutable_file_path == file_path:
-                    self._maybe_get_new_mutable_file(force_new_file=True)
+                    raise FlatFileDbUnsafeAccessError(
+                        "You tried to delete the mutable file. "
+                        "This is not allowed because it can cause consistency issues."
+                    )
+                    # self._maybe_get_new_mutable_file(force_new_file=True)
                 os.remove(file_path)
                 logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:

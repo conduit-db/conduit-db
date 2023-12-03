@@ -12,10 +12,9 @@ import typing
 
 from bitcoinx.packing import struct_be_I
 
-from conduit_lib.database.lmdb.merkle_tree import LmdbMerkleTree
-
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
+from .merkle_tree import LmdbMerkleTree
 
 if typing.TYPE_CHECKING:
     import array
@@ -281,7 +280,66 @@ class LMDB_Database:
                 old_chain_tx_hashes,
             )
 
-    def is_safe_to_delete_file(self, block_hashes: list[bytearray], tip_hash_conduit_index: bytes) -> bool:
+    def is_safe_to_delete_block_file(
+        self, block_hashes: list[bytearray], block_num_prune_threshold: int
+    ) -> bool:
+        # We are iterating over the blocks in a single file to make sure
+        # that ALL of them have been marked safe for deletion.
+        # Only delete when all have been marked safe for deletion and they blocks
+        # are old enough to allow pruning.
+        for block_hash in block_hashes:
+            block_hash_bytes = bytes(block_hash)
+            block_num = self.get_block_num(block_hash_bytes)
+            assert block_num is not None
+            if block_num >= block_num_prune_threshold:
+                return False
+            result = self.get_block_delete_markers(block_hash_bytes)
+            if result is None:
+                return False
+        return True
+
+    def prune_data_file_if_safe(self, filepath: Path, block_num_prune_threshold: int) -> None:
+        block_hashes_arr = self.blocks.get_block_hashes_in_file(str(filepath))
+        assert block_hashes_arr is not None
+        block_hashes = [block_hashes_arr[i * 32 : (i + 1) * 32] for i in range(len(block_hashes_arr) // 32)]
+        # We can't delete the tx_offsets or merkle_tree data files on the same schedule because
+        # tx_offsets pack much more tightly into a 128MB file, so we'd need to
+        # run an independent check for these other types of data files
+        # Merkle Tree data files are also needed to unpack the short hashes from ScyllaDB
+        # So pretty much need to be kept around
+
+        safe_to_delete = self.is_safe_to_delete_block_file(block_hashes, block_num_prune_threshold)
+        if safe_to_delete:
+            self.logger.info(
+                f"Pruning raw block data file: {str(filepath)} "
+                f"Size: {filepath.stat().st_size // 1024 ** 2:.3f}MB"
+            )
+            block_hash = b""
+            try:
+                self.global_lock.acquire()
+                # Delete the LMDB Entries
+                for block_hash in block_hashes:
+                    block_num = self.get_block_num(block_hash)
+                    assert block_num is not None
+                    with self.env.begin(write=True, buffers=False) as txn:
+                        txn.delete(struct_be_I.pack(block_num), db=self.blocks.blocks_db)
+                        # NOTE: We do not delete the entry in the block_nums_db because
+                        # block_num must always increment correctly and always be unique.
+                        # Disc usage to keep this in storage is trivial anyway
+
+                # Delete the FFDB Entries
+                if Path(filepath).exists():
+                    self.blocks.ffdb.delete_file(Path(filepath))
+            except Exception:
+                self.logger.exception(
+                    f"Failed to complete full purge of block data for block hash: "
+                    f"{hash_to_hex_str(block_hash)}"
+                )
+            finally:
+                self.global_lock.release()
+
+    def delete_blocks_when_safe(self, blocks: list[BlockHeaderRow], tip_hash_conduit_index: bytes) -> None:
+        assert self.env is not None
         # ConduitIndex might be up to 250 blocks behind so we want to find the tip hash
         # of ConduitIndex and preserve a further 250 blocks deep from there. So it might be
         # up to 500 blocks that are preserved.
@@ -292,23 +350,8 @@ class LMDB_Database:
         #    for rewinding parsed tx data that was part of a batch that did not fully complete.
         block_num_tip = self.get_block_num(tip_hash_conduit_index)
         assert block_num_tip is not None
-        block_num_safe_to_delete_before = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT
-        # We are iterating over the blocks in a single file to make sure
-        # that ALL of them have been marked safe for deletion.
-        # Only delete when all have been marked safe for deletion and they blocks
-        # are old enough to allow pruning.
-        for block_hash in block_hashes:
-            block_hash_bytes = bytes(block_hash)
-            block_num = self.get_block_num(block_hash_bytes)
-            if block_num >= block_num_safe_to_delete_before:
-                return False
-            result = self.get_block_delete_markers(block_hash_bytes)
-            if result is None:
-                return False
-        return True
+        block_num_prune_threshold = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT
 
-    def delete_blocks_when_safe(self, blocks: list[BlockHeaderRow], tip_hash_conduit_index: bytes) -> None:
-        assert self.env is not None
         # Persist intention to delete these blocks as soon as it is safe
         # There can be multiple blocks per file and deleting one would affect the byte offsets
         # which would then invalidate the other stored metadata about where to locate each block
@@ -325,52 +368,20 @@ class LMDB_Database:
 
         last_block_num = self.blocks._get_last_block_num()
         data_location = self.blocks.get_data_location(last_block_num)
-        filename = Path(data_location.file_path).name
+        assert data_location is not None
+        filepath = Path(data_location.file_path)
+        filename = filepath.name
         file_num = int(filename.lstrip('data_').rstrip('.dat'))
-
+        self.logger.debug(
+            f"Current mutable raw block data file: {filepath}. "
+            f"Size: {filepath.stat().st_size//1024**2:.3f}MB"
+        )
         for file_num in reversed(range(0, file_num)):
-            # TODO rename _file_num_to_mutable_file_path to remove 'mutable'
+            self.logger.debug(f"delete_blocks_when_safe: file_num: {file_num}")
             filepath = self.blocks.ffdb._file_num_to_mutable_file_path(file_num)
             if not filepath.exists():
                 return  # early exit if these earlier blocks have already been cleaned up
-
-            # TODO is this filepath the right one!?!!!! CHECK THIS HERE PLEASE!
-            block_hashes_arr = self.blocks.get_block_hashes_in_file(str(filepath))
-            assert block_hashes_arr is not None
-            block_hashes = [
-                block_hashes_arr[i * 32 : (i + 1) * 32] for i in range(len(block_hashes_arr) // 32)
-            ]
-            safe_to_delete = self.is_safe_to_delete_file(block_hashes, tip_hash_conduit_index)
-            if safe_to_delete:
-                self.logger.info(f"Pruning raw block data file: {str(filepath)}")
-                block_hash = b""
-                try:
-                    self.global_lock.acquire()
-                    # Delete the LMDB Entries
-                    for block_hash in block_hashes:
-                        block_num = self.get_block_num(block_hash)
-                        assert block_num is not None
-                        with self.env.begin(write=True, buffers=False) as txn:
-                            txn.delete(struct_be_I.pack(block_num), db=self.blocks.blocks_db)
-                            # NOTE: We do not delete the entry in the block_nums_db because
-                            # block_num must always increment correctly and always be unique.
-                            # Disc usage to keep this in storage is trivial anyway
-                            data_location_tx_offsets = self.tx_offsets.get_data_location(block_hash)
-                            if data_location_tx_offsets:
-                                txn.delete(block_hash, db=self.tx_offsets.tx_offsets_db)
-
-                    # Delete the FFDB Entries
-                    if Path(data_location.file_path).exists():
-                        self.blocks.ffdb.delete_file(Path(data_location.file_path))
-                    if Path(data_location_tx_offsets.file_path).exists():
-                        self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
-                except Exception:
-                    self.logger.exception(
-                        f"Failed to complete full purge of block data for block hash: "
-                        f"{hash_to_hex_str(block_hash)}"
-                    )
-                finally:
-                    self.global_lock.release()
+            self.prune_data_file_if_safe(filepath, block_num_prune_threshold)
 
 
 def get_full_tx_hash(tx_location: TxLocation, lmdb: LMDB_Database) -> bytes | None:
