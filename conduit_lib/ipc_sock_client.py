@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import cast, Iterator, Type, Any
 
 import cbor2
+from bitcoinx import MissingHeader
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
@@ -224,6 +225,8 @@ class IPCSocketClient:
             cbor_obj = cast(dict[Any, Any], cbor2.loads(data))
             msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(**cbor_obj)
             # self.logger.debug(f"Received {ipc_sock_commands.HEADERS_BATCHED} response: {msg_resp}")
+            if not msg_resp.headers_batch:
+                raise MissingHeader
             return msg_resp
         except ConnectionResetError:
             self.wait_for_connection()
@@ -254,7 +257,7 @@ class IPCSocketClient:
         try:
             # Request
             msg_req = ipc_sock_msg_types.DeleteBlocksRequest(header_rows, tip_hash)
-            self.logger.debug(f"Sending {ipc_sock_commands.DELETE_BLOCKS} request: {msg_req}")
+            # self.logger.debug(f"Sending {ipc_sock_commands.DELETE_BLOCKS} request: {msg_req}")
             send_msg(self.sock, msg_req.to_cbor())
 
             # Recv

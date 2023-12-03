@@ -434,11 +434,11 @@ class ApplicationState(object):
             for_deletion = []
             for (
                 block_hash,
-                new_tip_event,
+                new_tip_event_external_api,
             ) in self.pushdata_notification_can_send_event.items():
                 height = self.headers_threadsafe.get_header_for_hash(block_hash).height
                 if height <= current_tip_height:
-                    new_tip_event.set()
+                    new_tip_event_external_api.set()
                 for_deletion.append(block_hash)
             await asyncio.sleep(0.2)
             for block_hash in for_deletion:

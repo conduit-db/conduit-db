@@ -131,7 +131,7 @@ class TCPLoggingServer(multiprocessing.Process):
         self.stop_event = threading.Event()
         self.tcpserver = LogRecordSocketReceiver(port=self.port)
         self.logger = logging.getLogger("logging-server")
-        self.logger.info(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f'Starting {self.__class__.__name__}')
 
         # PUB-SUB from Controller to worker to kill the worker
         context3 = zmq.Context[zmq.Socket[bytes]]()

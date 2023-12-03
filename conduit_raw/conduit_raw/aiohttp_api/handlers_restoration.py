@@ -175,7 +175,8 @@ async def _get_tsc_merkle_proof_async(
     return tsc_merkle_proof
 
 
-async def _get_pushdata_filter_matches(request: web.Request, match_format: MatchFormat) -> StreamResponse:
+async def _get_pushdata_filter_matches(request: web.Request, match_format: MatchFormat) \
+        -> StreamResponse:
     try:
         app_state: "ApplicationState" = request.app["app_state"]
         db: DBInterface = app_state.db

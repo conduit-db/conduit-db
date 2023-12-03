@@ -356,7 +356,7 @@ class WorkerStateManager:
         self.app_state.ws_queue.put_nowait(output_spend)
 
     async def listen_for_utxo_spend_notifications_async(self) -> None:
-        logger.debug(f"Waiting for all 'TxParser' workers to give 'READY' signal")
+        logger.debug(f"Waiting for all TxParser workers to give READY signal")
         while True:
             msg = cast(bytes, await self.socket_utxo_spend_notifications.recv())
             if not msg:
