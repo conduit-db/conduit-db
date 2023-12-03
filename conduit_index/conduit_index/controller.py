@@ -256,10 +256,11 @@ class Controller(ControllerBase):
         )
         try:
             self.bitcoin_p2p_client = BitcoinP2PClient(
+                1,
                 peer.remote_host,
                 peer.remote_port,
                 self.handlers,
-                self.net_config,
+                self.net_config
             )
             await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
@@ -598,7 +599,6 @@ class Controller(ControllerBase):
         self,
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-
         local_block_tip = self.headers_threadsafe_blocks.tip()
         if await self.sync_state.is_post_ibd_state(local_block_tip, conduit_best_tip):
             await self.maybe_start_processing_mempool_txs()
@@ -796,7 +796,7 @@ class Controller(ControllerBase):
             assert new_hashes is not None
             await self.load_temp_tables_for_reorg_handling(old_hashes, new_hashes)
 
-        conduit_tip = await self.sync_state.get_conduit_best_tip()
+        conduit_tip = self.headers_threadsafe.get_header_for_hash(stop_header.hash)
         remaining = conduit_tip.height - (start_header.height - 1)
         allocated_count = stop_header.height - start_header.height + 1
         self.logger.debug(
@@ -806,15 +806,11 @@ class Controller(ControllerBase):
         self.logger.info(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
-        main_batch = await self.loop.run_in_executor(
-            self.general_executor,
-            self.sync_state.get_main_batch,
-            start_header,
-            stop_header,
-        )
+        main_batch = await self.sync_state.get_main_batch(start_header, stop_header)
         all_pending_block_hashes: set[bytes] = set()
 
-        all_work_units = self.sync_state.get_work_units_all(is_reorg, all_pending_block_hashes, main_batch)
+        all_work_units = self.sync_state.get_work_units_all(is_reorg,
+            all_pending_block_hashes, main_batch)
 
         self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 

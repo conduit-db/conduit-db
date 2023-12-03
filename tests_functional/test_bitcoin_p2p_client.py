@@ -1,6 +1,8 @@
 import asyncio
+import queue
+
 import bitcoinx
-from bitcoinx import double_sha256, hash_to_hex_str, pack_varint
+from bitcoinx import double_sha256, hash_to_hex_str, pack_varint, hex_str_to_hash
 import shutil
 import time
 import io
@@ -17,6 +19,7 @@ import os
 from modulefinder import Module
 
 from conduit_lib.algorithms import unpack_varint
+from conduit_lib.bitcoin_p2p_client import PeerManager
 from conduit_lib.bitcoin_p2p_types import (
     BlockChunkData,
     BlockDataMsg,
@@ -187,7 +190,8 @@ async def test_handshake() -> None:
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
+        client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -220,7 +224,8 @@ async def test_getheaders_request_and_headers_response() -> None:
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
+        client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -244,13 +249,76 @@ async def test_getheaders_request_and_headers_response() -> None:
 
 
 @pytest.mark.asyncio
-async def test_getblocks_request_and_blocks_response() -> None:
+async def test_peer_manager():
+    # Otherwise the node might still be in initial block download mode (ignores header requests)
+    electrumsv_node.call_any('generate', 1)
+
+    peer_manager = None
+    try:
+        got_message_queue = asyncio.Queue()
+        message_handler = MockHandlers(got_message_queue)
+        net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
+        client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
+        client2 = BitcoinP2PClient(2, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
+        client3 = BitcoinP2PClient(3, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
+        peer_manager = PeerManager(clients=[client, client2, client3])
+        await peer_manager.try_connect_to_all_peers()
+        assert len(peer_manager.get_connected_peers()) == len(peer_manager.clients) == 3
+
+        # No index out of range
+        client_ids = []
+        for i in range(6):
+            client = peer_manager.get_current_peer()
+            client_ids.append(client.id)
+            peer_manager.select_next_peer()
+        assert client_ids == [1, 2, 3, 1, 2, 3]
+        assert len(peer_manager.get_connected_peers()) == 3
+
+        locator_hashes = [
+            hash_to_hex_str(ZERO_HASH),
+            "6183377618699384b4409f0906d3f15413f29ce1b9951e4eab99570d3f8ba7c0",  # height=10
+            "4ee607aadb468f44c9b82dffb0d8741112c10f0249be6d592b8a19579e414a07",  # height=20
+        ]
+        for i in range(len(peer_manager.clients)):
+            peer_manager.select_next_peer()
+            client = peer_manager.get_current_peer()
+            await client.connect()
+            await client.handshake("127.0.0.1", 18444)
+            await _drain_handshake_messages(client, message_handler)
+
+        for i in range(len(peer_manager.clients)):
+            peer_manager.select_next_peer()
+            client = peer_manager.get_current_peer()
+            serializer = Serializer(net_config)
+            message = serializer.getheaders(1,
+                block_locator_hashes=[hex_str_to_hash(locator_hashes[0])],
+                hash_stop=ZERO_HASH)
+            await client.send_message(message)
+            deserializer = Deserializer(net_config)
+            command, message = await message_handler.got_message_queue.get()
+            headers = deserializer.headers(io.BytesIO(message))
+            node_rpc_result = electrumsv_node.call_any('getinfo').json()['result']
+            height = node_rpc_result['blocks']
+            assert len(headers) == height
+            headers_count, offset = unpack_varint(message, 0)
+            assert headers_count == len(headers)
+    finally:
+        if peer_manager:
+            await peer_manager.close()
+
+
+@pytest.mark.asyncio
+async def test_getblocks_request_and_blocks_response():
     client = None
     try:
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
+        client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -335,7 +403,8 @@ async def test_big_block_exceeding_network_buffer_capacity() -> None:
 
         message_handler = MockHandlers(got_message_queue)
 
-        client = BitcoinP2PClient(REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler, net_config)
+        client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
+            net_config)
         client.reader = asyncio.StreamReader()
         client.reader.feed_data(message_to_send)
         client.writer = unittest.mock.Mock()

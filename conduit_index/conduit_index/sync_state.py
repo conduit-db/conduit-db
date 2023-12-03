@@ -245,10 +245,17 @@ class SyncState:
 
         return remaining_work, work_for_this_batch
 
-    def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) -> MainBatch:
+    async def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) \
+            -> MainBatch:
         """Must run in thread due to ipc_sock_client not being async"""
+        ipc_sock_client_pool = None
         try:
-            ipc_sock_client = IPCSocketClient()
+            # There should be a global connection pool but this will do for now
+            ipc_sock_client_pool = []
+            for i in range(3):
+                ipc_sock_client = await asyncio.get_running_loop().run_in_executor(
+                    self.controller.general_executor, IPCSocketClient)
+                ipc_sock_client_pool.append(ipc_sock_client)
 
             with self.storage.headers_lock:
                 block_height_deficit = stop_header.height - (start_header.height - 1)
@@ -263,12 +270,18 @@ class SyncState:
 
                 header_hashes = [block_header.hash for block_header in block_headers]
 
-            # Todo: All four of these network calls could be done in parallel in a thread pool executor
+            task = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
+                ipc_sock_client_pool[0].block_metadata_batched, header_hashes)
+            task2 = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
+                ipc_sock_client_pool[1].transaction_offsets_batched, header_hashes)
+            task3 = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
+                ipc_sock_client_pool[2].block_number_batched, header_hashes)
 
-            block_metadata_batch = ipc_sock_client.block_metadata_batched(header_hashes).block_metadata_batch
+            self.logger.debug(f"get_main_batch called...")
+            block_metadata_batch = (await task).block_metadata_batch
+            tx_offsets_results = await task2
+            block_numbers = (await task3).block_numbers
             block_sizes_batch = [block_metadata.block_size for block_metadata in block_metadata_batch]
-            tx_offsets_results = ipc_sock_client.transaction_offsets_batched(header_hashes)
-            block_numbers = ipc_sock_client.block_number_batched(header_hashes).block_numbers
 
             all_work_units = list(
                 zip(
@@ -282,6 +295,9 @@ class SyncState:
         except Exception as e:
             self.logger.exception(f"Unexpected exception in get_main_batch thread")
             raise
+        finally:
+            for ipc_sock_client in ipc_sock_client_pool:
+                ipc_sock_client.close()
 
     # ----- SUPERVISE BATCH COMPLETION ----- #
     # Maximum number of blocks in this batch is 'MAIN_BATCH_HEADERS_COUNT_LIMIT'

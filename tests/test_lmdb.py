@@ -1,4 +1,5 @@
 import array
+import asyncio
 import os
 import shutil
 import struct
@@ -41,6 +42,7 @@ def ipc_sock_server_thread(lmdb: LMDB_Database) -> None:
         handler=ThreadedTCPRequestHandler,
         headers_threadsafe_blocks=headers_threadsafe_blocks,
         lmdb=lmdb,
+        new_tip_event=asyncio.Event()
     )
     ipc_sock_server.serve_forever()
 

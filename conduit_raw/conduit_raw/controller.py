@@ -25,7 +25,7 @@ from conduit_lib import (
     Peer,
     DBInterface,
 )
-from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
+from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient, PeerManager
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
@@ -111,13 +111,14 @@ class Controller(ControllerBase):
         self.blocks_batch_set_queue_mtree = queue.Queue[set[bytes]]()
 
         # Bitcoin Network Socket
-        self.bitcoin_p2p_client: BitcoinP2PClient | None = None
+        self.peer_manager: PeerManager = PeerManager([])
 
         self.estimated_moving_av_block_size_mb = (
             0.1 if self.sync_state.get_local_block_tip_height() < 2016 else 500
         )
         self.aiohttp_client_session: aiohttp.ClientSession | None = None
         self.new_headers_queue: asyncio.Queue[tuple[bool, Header, Header]] = asyncio.Queue()
+        self.new_tip_event = threading.Event()
 
     def bind_merkle_tree_worker_zmq_listeners(self) -> None:
         # The Merkle Tree worker needs individual ZMQ sockets so we can ensure that
@@ -146,22 +147,18 @@ class Controller(ControllerBase):
         self.batch_completion_mtree.start()
         self.batch_completion_raw.start()
 
-    async def connect_session(self) -> None:
+    async def connect_sessions(self) -> None:
+        CONCURRENT_CONNECTIONS = int(os.environ['P2P_CONNECTION_COUNT'])
         peer = self.get_peer()
-        self.logger.debug(
-            "Connecting to (%s, %s) [%s]",
-            peer.remote_host,
-            peer.remote_port,
-            self.net_config.NET,
-        )
+        self.logger.debug("Opening %s concurrent connections to (%s, %s) [%s]",
+            CONCURRENT_CONNECTIONS, peer.remote_host, peer.remote_port, self.net_config.NET)
         try:
-            self.bitcoin_p2p_client = BitcoinP2PClient(
-                peer.remote_host,
-                peer.remote_port,
-                self.handlers,
-                self.net_config,
-            )
-            await self.bitcoin_p2p_client.wait_for_connection()
+            for i in range(CONCURRENT_CONNECTIONS):
+                bitcoin_p2p_client = BitcoinP2PClient(i, peer.remote_host, peer.remote_port,
+                    self.handlers, self.net_config)
+                self.peer_manager.add_client(bitcoin_p2p_client)
+            await self.peer_manager.try_connect_to_all_peers()
+            assert len(self.peer_manager.get_connected_peers()) == CONCURRENT_CONNECTIONS
         except ConnectionResetError:
             await self.stop()
 
@@ -170,19 +167,26 @@ class Controller(ControllerBase):
         await self._get_aiohttp_client_session()
         await self.setup()
         wait_for_db()
+        await self.connect_sessions()
         self.tasks.append(create_task(self.start_jobs()))
-        await self.connect_session()
-        assert self.bitcoin_p2p_client is not None
-        await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
-        wait_until_connection_lost = create_task(self.bitcoin_p2p_client.connection_lost_event.wait())
-        self.tasks.append(wait_until_connection_lost)
-        await asyncio.gather(wait_until_connection_lost)
+        assert self.peer_manager is not None
+        await self.peer_manager.try_handshake_for_all_peers("127.0.0.1", self.net_config.PORT)
+
+        tasks = []
+        for client in self.peer_manager.get_connected_peers():
+            wait_until_connection_lost = create_task(client.connection_lost_event.wait())
+            tasks.append(wait_until_connection_lost)
+            self.tasks.append(wait_until_connection_lost)
+        for conn_lost_event in tasks:
+            await conn_lost_event
+            # If any of the connections drop - the application is an unclear state so shutdown
+            break
 
     async def stop(self) -> None:
         self.running = False
         await self._close_aiohttp_client_session()
-        if self.bitcoin_p2p_client:
-            await self.bitcoin_p2p_client.close_connection()
+        if self.peer_manager:
+            await self.peer_manager.close()
         if self.storage:
             await self.storage.close()
 
@@ -268,8 +272,7 @@ class Controller(ControllerBase):
             addr=(host, port),
             handler=ThreadedTCPRequestHandler,
             headers_threadsafe_blocks=self.headers_threadsafe_blocks,
-            lmdb=self.lmdb,
-        )
+            lmdb=self.lmdb, new_tip_event=self.new_tip_event)
         self.ipc_sock_server.serve_forever()
 
     def database_integrity_check(self) -> None:
@@ -309,12 +312,14 @@ class Controller(ControllerBase):
                 height -= 1
 
     async def start_jobs(self) -> None:
-        assert self.bitcoin_p2p_client is not None
+        assert self.peer_manager is not None
         self.database_integrity_check()
         thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
         thread.start()
         await self.spawn_aiohttp_api()
-        await self.bitcoin_p2p_client.handshake_complete_event.wait()
+        self.logger.debug(f"Waiting for handshake events for all peers...")
+        for client in self.peer_manager.get_connected_peers():
+            await client.handshake_complete_event.wait()
         self.start_workers()
 
         # In regtest old block timestamps (submitted to node) will not take the node out of IBD
@@ -326,8 +331,8 @@ class Controller(ControllerBase):
         await self.sync_state.headers_event_initial_sync.wait()  # one-off
         self.tasks.append(create_task(self.sync_all_blocks_job()))
 
-    async def _get_max_headers(self) -> None:
-        assert self.bitcoin_p2p_client is not None
+    async def _get_max_headers(self, client: BitcoinP2PClient) -> None:
+        assert self.peer_manager is not None
         tip = self.sync_state.get_local_tip()
         block_locator_hashes = []
         for i in range(0, 25, 2):
@@ -336,9 +341,8 @@ class Controller(ControllerBase):
                 locator_hash = self.headers_threadsafe.get_header_for_height(height).hash
                 block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
-        await self.bitcoin_p2p_client.send_message(
-            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH)
-        )
+        await client.send_message(
+            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
 
     async def _get_aiohttp_client_session(self) -> aiohttp.ClientSession:
         if not self.aiohttp_client_session:
@@ -352,8 +356,7 @@ class Controller(ControllerBase):
     async def sync_headers_job(self) -> None:
         """supervises completion of syncing all headers to target height"""
         try:
-            self.logger.debug("Starting sync_headers_job...")
-
+            self.logger.debug("Starting sync_headers_job")
             blocks_tip = self.sync_state.get_local_block_tip()
             headers_tip = self.sync_state.get_local_tip()
             if headers_tip.height != 0:
@@ -369,12 +372,13 @@ class Controller(ControllerBase):
                 )
             self.sync_state.target_block_header_height = self.sync_state.get_local_tip_height()
             assert self.sync_state.target_header_height is not None
+            client = self.peer_manager.get_current_peer()
             while True:
                 if not self.sync_state.local_tip_height < self.sync_state.target_header_height:
                     self.sync_state.headers_event_initial_sync.set()
                     await self.sync_state.headers_new_tip_queue.get()
 
-                await self._get_max_headers()  # Gets ignored when node is in IBD
+                await self._get_max_headers(client)  # Gets ignored when node is in IBD
                 msg = await self.sync_state.headers_msg_processed_queue.get()
                 if msg is None:
                     continue
@@ -398,9 +402,10 @@ class Controller(ControllerBase):
         This method relies on the node responding to the prior getblocks request with up to 500
         inv messages.
         """
-        assert self.bitcoin_p2p_client is not None
+        assert self.peer_manager is not None
         count_pending = len(blocks_batch_set)
         count_requested = 0
+        header: Header | None = None
         while True:
             inv = await self.sync_state.pending_blocks_inv_queue.get()
             # self.logger.debug(f"got block inv: {inv}, batch_id={_batch_id}")
@@ -416,6 +421,7 @@ class Controller(ControllerBase):
                 else:
                     continue
 
+            assert header is not None
             if not header.height <= stop_header_height:
                 self.logger.debug(f"Ignoring block height={header.height} until sync'd")
                 self.logger.debug(f"len(pending_getdata_requests)={count_pending}")
@@ -424,7 +430,9 @@ class Controller(ControllerBase):
                 else:
                     continue
 
-            await self.bitcoin_p2p_client.send_message(self.serializer.getdata([inv]))
+            # Load balance block download evenly across all connections
+            client = self.peer_manager.get_next_peer()
+            await client.send_message(self.serializer.getdata([inv]))
 
             count_requested += 1
             count_pending -= 1
@@ -504,6 +512,8 @@ class Controller(ControllerBase):
 
             await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
             await self.connect_done_block_headers(all_pending_block_hashes.copy())
+            # TODO FIXME - Synchronizing stops progressing
+            # await wait_for_conduit_index_to_catch_up(self.sync_state.get_local_block_tip_height())
 
         except Exception:
             self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
@@ -520,12 +530,15 @@ class Controller(ControllerBase):
 
         # We only care about the longest chain headers at this point so
         # lookups by height is fine
+        if start_header_height == 0:
+            start_header_height = 1  # Never request genesis block
         start_header = self.headers_threadsafe.get_header_for_height(start_header_height)
         stop_header = self.headers_threadsafe.get_header_for_height(stop_header_height)
         return HeaderSpan(is_reorg, start_header, stop_header)
 
-    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) -> None:
-        assert self.bitcoin_p2p_client is not None
+    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
+            -> None:
+        assert self.peer_manager is not None
         original_stop_height = stop_header.height
         while True:
             first_locator = self.headers_threadsafe.get_header_for_height(start_header.height - 1)
@@ -557,9 +570,8 @@ class Controller(ControllerBase):
             ) = next_batch
             hash_stop = self.get_hash_stop(stop_header_height)
 
-            await self.bitcoin_p2p_client.send_message(
-                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop)
-            )
+            await self.peer_manager.get_next_peer().send_message(
+                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
 
             # Workers are loaded by Handlers.on_block handler as messages are received
             await self.wait_for_batched_blocks_completion(
@@ -571,6 +583,7 @@ class Controller(ControllerBase):
                 f"Controller Batch {batch_id} Complete."
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )
+            self.new_tip_event.set()
             if not self.storage.db:
                 self.storage.db = DBInterface.load_db("main-process")
             await wait_for_conduit_index_to_catch_up(

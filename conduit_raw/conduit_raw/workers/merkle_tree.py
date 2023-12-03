@@ -58,7 +58,7 @@ class MTreeCalculator(multiprocessing.Process):
         if sys.platform == "win32":
             setup_tcp_logging(port=54545)
         self.logger.setLevel(logging.DEBUG)
-        self.logger.info(f"Starting {self.__class__.__name__}...")
+        self.logger.info(f"Starting {self.__class__.__name__} (id={self.worker_id})")
 
         # PUB-SUB from Controller to worker to kill the worker
         self.kill_worker_socket = self.zmq_context.socket(zmq.SUB)

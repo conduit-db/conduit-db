@@ -476,7 +476,7 @@ class DeleteBlocksRequest(BaseMsg):
         return json.dumps({
             'command': self.command,
             'blocks': self.blocks,
-            'tip_hash': self.tip_hash,
+            'tip_hash': hash_to_hex_str(self.tip_hash),
         })
 
 

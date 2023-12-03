@@ -3,7 +3,6 @@ import os
 import threading
 import socket
 import struct
-import time
 from pathlib import Path
 
 import bitcoinx
@@ -206,6 +205,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def block_metadata_batched(self, msg_req: ipc_sock_msg_types.BlockMetadataBatchedRequest) -> None:
         try:
+            # logger.debug(f"Received {ipc_sock_commands.BLOCK_METADATA_BATCHED} request: {msg_req}")
             block_metadata_batch = []
             for block_hash in msg_req.block_hashes:
                 # NOTE(AustEcon): should the client handle errors / null results?
@@ -218,6 +218,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
                 block_metadata_batch=block_metadata_batch
             )
+            # logger.debug(f"Sending {ipc_sock_commands.BLOCK_METADATA_BATCHED} response: {msg_resp}")
             self.send_msg(msg_resp.to_cbor())
         except Exception:
             logger.exception("Exception in ThreadedTCPRequestHandler.block_metadata_batched")
@@ -226,25 +227,28 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
         return self.server.headers_threadsafe_blocks.get_header_for_height(height, lock=True)
 
     def headers_batched(self, msg_req: ipc_sock_msg_types.HeadersBatchedRequest) -> None:
-        # Todo - this should not be doing a while True / sleep. It should be waiting on
-        #  a queue for new tip notifications
         try:
-            start_height = msg_req.start_height
-            batch_size = msg_req.batch_size
+            headers_batch: list[bytes] = []
             while self.server.is_running:
                 headers_batch = []
+                start_height = msg_req.start_height
+                max_allowed = self.server.headers_threadsafe_blocks.tip().height - start_height + 1
+                if max_allowed < 0:
+                    max_allowed = 0
+                batch_size = min(msg_req.batch_size, max_allowed)  # Otherwise will hit MissingHeaders
                 for height in range(start_height, start_height + batch_size):
                     try:
                         header = self._get_header_for_height(height)
                     except bitcoinx.MissingHeader:
-                        # logger.error(f"Missing header at height: {height}")
+                        logger.error(f"Missing header at height: {height}")
                         break
                     headers_batch.append(header.raw)
 
                 if headers_batch:
                     break
                 else:
-                    time.sleep(0.2)  # Allows client to long-poll for latest tip
+                    self.server.new_tip_event.wait()  # Allows client to long-poll for latest tip
+                    self.server.new_tip_event.clear()
                     continue
 
             msg_resp = ipc_sock_msg_types.HeadersBatchedResponse(headers_batch=headers_batch)
@@ -284,7 +288,6 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def delete_blocks_when_safe(self, msg_req: ipc_sock_msg_types.DeleteBlocksRequest) -> None:
         try:
-            logger.debug(f"Got delete_blocks_when_safe message")
             block_header_rows = [BlockHeaderRow(*x) for x in msg_req.blocks]
             self.server.lmdb.delete_blocks_when_safe(block_header_rows, msg_req.tip_hash)
             msg_resp = ipc_sock_msg_types.DeleteBlocksResponse(msg_req.blocks, msg_req.tip_hash)
@@ -302,7 +305,9 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         handler: Type[ThreadedTCPRequestHandler],
         headers_threadsafe_blocks: HeadersAPIThreadsafe,
         lmdb: LMDB_Database,
+        new_tip_event: threading.Event
     ) -> None:
+        self.new_tip_event = new_tip_event
         self.allow_reuse_address = True
         super(ThreadedTCPServer, self).__init__(addr, handler)
         logger.info(f"Started IPC Socket Server on tcp://{addr[0]}:{addr[1]}")
@@ -353,6 +358,7 @@ if __name__ == "__main__":
         ThreadedTCPRequestHandler,
         headers_threadsafe_blocks,
         lmdb=lmdb,
+        new_tip_event=threading.Event()
     )
     with server:
         ip, port = server.server_address

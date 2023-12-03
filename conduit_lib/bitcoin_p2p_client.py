@@ -85,16 +85,10 @@ class BitcoinP2PClient:
     concatenated in memory before writing them all to the same file. Otherwise the spinning HDD
     discs will 'stutter' with too many tiny writes.
     """
-
-    def __init__(
-        self,
-        remote_host: str,
-        remote_port: int,
-        message_handler: MessageHandlerProtocol,
-        net_config: NetworkConfig,
-        reader: StreamReader | None = None,
-        writer: StreamWriter | None = None,
-    ) -> None:
+    def __init__(self, id: int, remote_host: str, remote_port: int,
+            message_handler: MessageHandlerProtocol, net_config: NetworkConfig,
+            reader: StreamReader | None=None, writer: StreamWriter | None=None) -> None:
+        self.id = id
         self.remote_host = remote_host
         self.remote_port = remote_port
         self.message_handler = message_handler
@@ -113,6 +107,7 @@ class BitcoinP2PClient:
 
         self.connection_lost_event = asyncio.Event()
         self.handshake_complete_event = asyncio.Event()
+        self.connected = False
 
         self.tasks: list[Task[Any]] = []
 
@@ -139,7 +134,8 @@ class BitcoinP2PClient:
     async def connect(self) -> None:
         """raises `ConnectionResetError`"""
         reader, writer = await asyncio.open_connection(host=self.remote_host, port=self.remote_port)
-        logger.info("Connection made")
+        self.connected = True
+        logger.debug(f"Connection made to peer: {self.remote_host}:{self.remote_port} (peer_id={self.id})")
         self.reader = reader
         self.writer = writer
         self.peer = BitcoinPeerInstance(self.reader, self.writer, self.remote_host, self.remote_port)
@@ -150,7 +146,6 @@ class BitcoinP2PClient:
         while True:
             try:
                 await self.connect()
-                logger.debug(f"Bitcoin node on: {self.remote_host}:{self.remote_port} is available")
                 return
             except ConnectionRefusedError:
                 logger.debug(
@@ -167,6 +162,7 @@ class BitcoinP2PClient:
         logger.info("Closing bitcoin p2p socket connection gracefully")
         if self.writer and not self.writer.is_closing():
             self.writer.close()
+        self.connected = False
         self.connection_lost_event.set()
         for task in self.tasks:
             if not task.done():
@@ -476,3 +472,60 @@ class BitcoinP2PClient:
             ping_msg = self.serializer.ping()
             await self.send_message(ping_msg)
             await asyncio.sleep(2 * 60)  # Matches bitcoin-sv/net/net.h constant PING_INTERVAL
+
+
+class PeerManagerFailedError(Exception):
+    pass
+
+
+class PeerManager:
+    """This can also manage multiple connections to the same node on the same port to overcome
+    latency effects on data transfer rates.
+    See: https://en.wikipedia.org/wiki/Bandwidth-delay_product"""
+
+    def __init__(self, clients: list[BitcoinP2PClient]) -> None:
+        self._logger = logging.getLogger("bitcoin-p2p-client-pool")
+        self.clients = clients
+        self._connection_pool: list[BitcoinP2PClient] = []
+        self._currently_selected_peer_index: int = 0
+
+    def add_client(self, client: BitcoinP2PClient) -> None:
+        self.clients.append(client)
+
+    def select_next_peer(self) -> None:
+        if self._currently_selected_peer_index == len(self._connection_pool) - 1:
+            self._currently_selected_peer_index = 0
+        else:
+            self._currently_selected_peer_index += 1
+
+    def get_connected_peers(self) -> list[BitcoinP2PClient]:
+        return self._connection_pool
+
+    def get_next_peer(self) -> BitcoinP2PClient:
+        self.select_next_peer()
+        return self.get_current_peer()
+
+    def get_current_peer(self) -> BitcoinP2PClient:
+        return self._connection_pool[self._currently_selected_peer_index]
+
+    async def try_connect_to_all_peers(self) -> None:
+        for client in self.clients:
+            try:
+                await client.wait_for_connection()
+                self._connection_pool.append(client)
+            except ConnectionResetError:
+                logger.error(f"Failed to connect to peer. host: {client.peer.host}, "
+                    f"port: {client.peer.port}")
+        assert len(self._connection_pool) == len(self.clients)
+        if len(self._connection_pool) == 0:
+            raise PeerManagerFailedError("All connections failed")
+
+    async def try_handshake_for_all_peers(self, local_host: str, local_port: int) -> None:
+        for client in self._connection_pool:
+            await client.handshake(local_host, local_port)
+
+    async def close(self) -> None:
+        # Force close all outstanding connections
+        outstanding_connections = list(self._connection_pool)
+        for conn in outstanding_connections:
+            await conn.close_connection()
