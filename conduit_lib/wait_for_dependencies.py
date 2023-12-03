@@ -63,9 +63,7 @@ def wait_for_db() -> None:
         db.close()
 
 
-async def wait_for_conduit_index_to_catch_up(db: DBInterface | None, tip_height: int) -> None:
-    if not db:
-        db = DBInterface.load_db(worker_id="main-process")
+async def wait_for_conduit_index_to_catch_up(db: DBInterface, tip_height: int) -> None:
     assert db is not None
     logger = logging.getLogger("wait-for-dependencies")
     logged_once = False

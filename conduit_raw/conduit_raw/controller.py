@@ -23,6 +23,7 @@ from conduit_lib import (
     Handlers,
     NetworkConfig,
     Peer,
+    DBInterface,
 )
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
@@ -570,8 +571,11 @@ class Controller(ControllerBase):
                 f"Controller Batch {batch_id} Complete."
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )
-            await wait_for_conduit_index_to_catch_up(self.storage.db,
-                self.sync_state.get_local_block_tip_height())
+            if not self.storage.db:
+                self.storage.db = DBInterface.load_db("main-process")
+            await wait_for_conduit_index_to_catch_up(
+                self.storage.db, self.sync_state.get_local_block_tip_height()
+            )
 
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:

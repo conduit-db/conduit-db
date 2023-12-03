@@ -471,7 +471,7 @@ class BitcoinP2PClient:
                 ) and self.cur_header.payload_size > self.BUFFER_SIZE:
                     await self.handle_block(block_type=BlockType.BIG_BLOCK)
 
-    async def keepalive_ping_loop(self):
+    async def keepalive_ping_loop(self) -> None:
         while True:
             ping_msg = self.serializer.ping()
             await self.send_message(ping_msg)
