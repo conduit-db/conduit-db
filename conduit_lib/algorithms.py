@@ -259,7 +259,8 @@ def parse_txs(
     result because these have already been flushed to disc earlier - this could be from either
     a reorg or from mempool processing
     """
-    genesis_height = int(os.environ["GENESIS_ACTIVATION_HEIGHT"])
+    assert len(buffer) != 0
+    genesis_height = int(os.environ['GENESIS_ACTIVATION_HEIGHT'])
     tx_rows_confirmed = []
     tx_rows_mempool = []
     in_rows = []

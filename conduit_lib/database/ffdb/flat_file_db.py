@@ -138,9 +138,9 @@ class FlatFileDb:
             # lower mutable_file_num even if they get deleted)
             while True:
                 logger.debug(f"Scanning forward... self.mutable_file_num={self.mutable_file_num}")
+                self.immutable_files.add(str(self.mutable_file_path.name))
                 self.mutable_file_num += 1
                 self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
-                self.immutable_files.add(str(self.mutable_file_path))
 
                 if os.path.exists(self.mutable_file_path):
                     if _mutable_file_is_full():
@@ -198,7 +198,7 @@ class FlatFileDb:
         advantage is unfettered lock-free read access to all immutable files. A lock must ALWAYS
         be acquired for reading the mutable file - this can never be disabled.
         """
-        is_accessing_mutable_file = data_location.file_path not in self.immutable_files
+        is_accessing_mutable_file = Path(data_location.file_path).name not in self.immutable_files
 
         if is_accessing_mutable_file or not lock_free_access:
             self.mutable_file_rwlock.acquire_read_lock()
@@ -236,7 +236,16 @@ class FlatFileDb:
         """
         with self.mutable_file_rwlock.write_lock():
             try:
+                logger.debug(f"Deleting file: {file_path}")
+                logger.debug(f"Current mutable file: {self.mutable_file_path}")
+                if self.mutable_file_path == file_path:
+                    raise FlatFileDbUnsafeAccessError(
+                        "Deleting the mutable file is not allowed because it can cause " "consistency issues."
+                    )
+                    # self._maybe_get_new_mutable_file(force_new_file=True)
+                assert file_path.name in self.immutable_files, f"{file_path.name} not in {self.immutable_files}"
                 os.remove(file_path)
+                logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:
                 logger.error(f"File not found at path: {file_path}. Was it already deleted?")
             except OSError:

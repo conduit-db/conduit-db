@@ -425,6 +425,7 @@ class BitcoinP2PClient:
 
         for i in range(self.message_handler_task_count):
             self.tasks.append(create_task(self.handle_message_task_async()))
+        self.tasks.append(create_task(self.keepalive_ping_loop()))
 
         self.pos = 0  # how many bytes have been read into the buffer
         self.last_msg_end_pos = 0
@@ -469,3 +470,9 @@ class BitcoinP2PClient:
                     self.cur_header.command == BLOCK_BIN or self.cur_header.ext_command == BLOCK_BIN
                 ) and self.cur_header.payload_size > self.BUFFER_SIZE:
                     await self.handle_block(block_type=BlockType.BIG_BLOCK)
+
+    async def keepalive_ping_loop(self) -> None:
+        while True:
+            ping_msg = self.serializer.ping()
+            await self.send_message(ping_msg)
+            await asyncio.sleep(2 * 60)  # Matches bitcoin-sv/net/net.h constant PING_INTERVAL

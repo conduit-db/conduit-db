@@ -27,6 +27,7 @@ from conduit_lib.database.db_interface.types import (
     MempoolTransactionRow,
     InputRow,
     PushdataRow,
+    CheckpointStateRow,
 )
 from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.database.scylladb.api_queries import ScyllaDBAPIQueries
@@ -180,7 +181,7 @@ class ScyllaDB(DBInterface):
 
     def get_checkpoint_state(
         self,
-    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+    ) -> CheckpointStateRow | None:
         return self.queries.get_checkpoint_state()
 
     def initialise_checkpoint_state(self) -> None:

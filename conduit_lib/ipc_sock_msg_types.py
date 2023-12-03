@@ -9,7 +9,7 @@ from typing import Any, cast, Sequence
 import cbor2
 from bitcoinx import hash_to_hex_str
 
-from conduit_lib.types import BlockMetadata, BlockSliceRequestType, ChainHashes
+from conduit_lib.types import BlockMetadata, BlockSliceRequestType, ChainHashes, BlockHeaderRow
 from conduit_lib import ipc_sock_commands
 
 BlockHashes = list[bytes]
@@ -456,6 +456,33 @@ class ReorgDifferentialResponse(BaseMsg):
         )
 
 
+class DeleteBlocksRequest(BaseMsg):
+    command = ipc_sock_commands.DELETE_BLOCKS
+
+    def __init__(self, blocks: list[BlockHeaderRow], tip_hash: bytes, command: str | None=None) \
+            -> None:
+        super().__init__()
+        self.blocks = blocks
+        self.tip_hash = tip_hash
+
+    def to_cbor(self) -> bytes:
+        return cast(bytes, cbor2.dumps({  # type: ignore[redundant-cast]
+            'command': self.command,
+            'blocks': self.blocks,
+            'tip_hash': self.tip_hash,
+        }))
+
+    def to_json(self) -> str:
+        return json.dumps({
+            'command': self.command,
+            'blocks': self.blocks,
+            'tip_hash': self.tip_hash,
+        })
+
+
+DeleteBlocksResponse = DeleteBlocksRequest
+
+
 REQUEST_MAP = {
     ipc_sock_commands.PING: PingRequest,
     ipc_sock_commands.STOP: StopRequest,
@@ -468,6 +495,7 @@ REQUEST_MAP = {
     ipc_sock_commands.HEADERS_BATCHED: HeadersBatchedRequest,
     ipc_sock_commands.HEADERS_BATCHED2: HeadersBatchedRequest,
     ipc_sock_commands.REORG_DIFFERENTIAL: ReorgDifferentialRequest,
+    ipc_sock_commands.DELETE_BLOCKS: DeleteBlocksRequest
 }
 
 RESPONSE_MAP = {
@@ -482,4 +510,5 @@ RESPONSE_MAP = {
     ipc_sock_commands.HEADERS_BATCHED: HeadersBatchedResponse,
     ipc_sock_commands.HEADERS_BATCHED2: HeadersBatchedResponse,
     ipc_sock_commands.REORG_DIFFERENTIAL: ReorgDifferentialResponse,
+    ipc_sock_commands.DELETE_BLOCKS: DeleteBlocksResponse,
 }

@@ -129,7 +129,8 @@ class ZMQSocketListeners:
 
 
 class Controller(ControllerBase):
-    def __init__(self, net_config: "NetworkConfig", loop_type: None = None) -> None:
+    def __init__(self, net_config: 'NetworkConfig', loop_type: None = None) -> None:
+        self.prune_mode = os.environ['PRUNE_MODE'] == "1"
         self.service_name = CONDUIT_INDEX_SERVICE_NAME
         self.running = False
         self.processes: list[BaseProcess] = []
@@ -206,10 +207,7 @@ class Controller(ControllerBase):
             await self.bitcoin_p2p_client.connection_lost_event.wait()
             self.bitcoin_p2p_client.connection_lost_event.clear()
             await self.connect_session(self.peer)
-            self.logger.debug(
-                f"The bitcoin node disconnected but is now reconnected. "
-                f"Re-requesting mempool (as appropriate)..."
-            )
+            self.logger.debug(f"The bitcoin node disconnected but is now reconnected")
 
     async def stop(self) -> None:
         self.running = False
@@ -412,7 +410,7 @@ class Controller(ControllerBase):
         await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
     async def start_jobs(self) -> None:
-        self.db = self.storage.database
+        self.db = self.storage.db
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
@@ -551,6 +549,12 @@ class Controller(ControllerBase):
             header_rows.append(row)
         self.db.bulk_load_headers(header_rows)
 
+        self.logger.debug(f"self.prune_mode={self.prune_mode}")
+        if self.prune_mode:
+            self.logger.debug(f"Calling IPC delete_blocks_when_safe...")
+            tip_hash = self.headers_threadsafe.tip().hash
+            ipc_socket_client.delete_blocks_when_safe(header_rows, tip_hash)
+
         tip = self.sync_state.get_local_block_tip()
         self.logger.debug(f"Connected up to header height {tip.height}, " f"hash {hash_to_hex_str(tip.hash)}")
         t1 = time.perf_counter() - t0
@@ -585,13 +589,16 @@ class Controller(ControllerBase):
             assert self.bitcoin_p2p_client is not None
             await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
             await self.bitcoin_p2p_client.handshake_complete_event.wait()
-            await self.request_mempool()
+            request_mempool = int(os.environ.get('REQUEST_MEMPOOL', "0"))
+            if request_mempool:
+                await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
 
     async def long_poll_conduit_raw_chain_tip(
         self,
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+
         local_tip = self.headers_threadsafe.tip()
         if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
             await self.maybe_start_processing_mempool_txs()
@@ -610,7 +617,7 @@ class Controller(ControllerBase):
                     await self.update_moving_average(tip_height)
 
                 estimated_ideal_block_count = self.get_ideal_block_batch_count(
-                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name
+                    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, self.service_name, tip_height
                 )
 
                 # Long-polling
@@ -867,7 +874,7 @@ class Controller(ControllerBase):
         assert self.db is not None
         while True:
             self.logger.debug(f"Mempool size: {self.db.get_mempool_size()} " f"transactions")
-            await asyncio.sleep(60)
+            await asyncio.sleep(180)
 
     async def sync_all_blocks_job(self) -> None:
         """Supervises synchronization to catch up to the block tip of ConduitRaw service"""

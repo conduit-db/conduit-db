@@ -1,10 +1,9 @@
 import logging
 import os
-
-from typing import cast
-import typing
 from io import BytesIO
 from pathlib import Path
+import typing
+from typing import cast
 
 import bitcoinx
 import cbor2
@@ -13,7 +12,7 @@ from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
-from conduit_lib.types import BlockMetadata, Slice, DataLocation
+from conduit_lib.types import BlockMetadata, Slice, DataLocation, BlockHeaderRow
 
 if typing.TYPE_CHECKING:
     from conduit_lib import LMDB_Database
@@ -29,6 +28,8 @@ class LmdbBlocks:
     BLOCKS_DB = b"blocks_db"
     BLOCK_NUMS_DB = b"block_nums_db"
     BLOCK_METADATA_DB = b"block_metadata_db"
+    BLOCK_DELETE_MARKERS_DB = b"block_delete_markers_db"
+    FILE_TO_BLOCK_HASH_DB = b"file_to_block_hash_db"
 
     def __init__(self, db: "LMDB_Database"):
         self.db = db
@@ -40,6 +41,8 @@ class LmdbBlocks:
         self.blocks_db = self.db.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.db.env.open_db(self.BLOCK_NUMS_DB)
         self.block_metadata_db = self.db.env.open_db(self.BLOCK_METADATA_DB)
+        self.block_delete_markers_db = self.db.env.open_db(self.BLOCK_DELETE_MARKERS_DB)
+        self.file_to_block_hash_db = self.db.env.open_db(self.FILE_TO_BLOCK_HASH_DB)
 
     def _get_last_block_num(self) -> int:
         with self.db.env.begin(db=self.blocks_db, write=False) as txn:
@@ -84,6 +87,13 @@ class LmdbBlocks:
         with self.ffdb:
             return self.ffdb.get(data_location, slice, lock_free_access=True)
 
+    def get_block_hashes_in_file(self, file_path: str) -> bytearray | None:
+        with self.db.env.begin(write=True, buffers=False) as txn:
+            result = txn.get(file_path.encode('utf-8'), db=self.file_to_block_hash_db)
+            if result is None:
+                return None
+            return bytearray(result)
+
     def put_blocks(self, small_batched_blocks: list[bytes]) -> None:
         """write blocks in append-only mode to disc."""
         try:
@@ -94,6 +104,7 @@ class LmdbBlocks:
                 cursor_blocks: Cursor = txn.cursor(db=self.blocks_db)
                 cursor_block_nums: Cursor = txn.cursor(db=self.block_nums_db)
                 cursor_block_metadata: Cursor = txn.cursor(db=self.block_metadata_db)
+                cursor_file_to_block_hash_db = txn.cursor(db=self.file_to_block_hash_db)
                 with self.ffdb:
                     block_nums = range(
                         next_block_num,
@@ -121,6 +132,13 @@ class LmdbBlocks:
                         cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
                         cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
 
+                        val = cursor_file_to_block_hash_db.get(data_location.file_path.encode('utf-8'))
+                        block_hashes = bytearray()
+                        if val is not None:
+                            block_hashes = bytearray(val)
+                        block_hashes += blk_hash
+                        cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
+                            block_hashes, overwrite=True)
         except Exception as e:
             self.logger.exception("Caught exception")
 
@@ -136,6 +154,7 @@ class LmdbBlocks:
                 cursor_blocks: Cursor = txn.cursor(db=self.blocks_db)
                 cursor_block_nums: Cursor = txn.cursor(db=self.block_nums_db)
                 cursor_block_metadata: Cursor = txn.cursor(db=self.block_metadata_db)
+                cursor_file_to_block_hash_db = txn.cursor(db=self.file_to_block_hash_db)
                 with self.ffdb:
                     blk_hash, data_location, tx_count = big_block
                     new_data_location: DataLocation = self.ffdb.put_big_block(data_location)
@@ -151,6 +170,11 @@ class LmdbBlocks:
                     )
                     cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
                     cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
+
+                    val = cursor_file_to_block_hash_db.get(data_location.file_path.encode('utf-8'))
+                    assert val is None, "There should never be more than one 'big block' in a file"
+                    cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
+                        blk_hash, overwrite=True)
         except Exception as e:
             self.logger.exception("Caught exception")
 
@@ -167,3 +191,13 @@ class LmdbBlocks:
                 tx_count = struct_le_Q.unpack(val[8:16])[0]
                 return BlockMetadata(block_size, tx_count)
             return None
+
+    def get_block_delete_markers(self, block_hash: bytes) -> BlockHeaderRow | None:
+        assert self.db.env is not None
+        with self.db.env.begin(db=self.block_delete_markers_db, write=False, buffers=False) as txn:
+            val = txn.get(block_hash)
+            if val:
+                # Note: This can return zero - which is a "falsey" type value. Take care
+                return cast(BlockHeaderRow, cbor2.loads(val))
+            return None
+

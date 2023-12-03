@@ -312,9 +312,10 @@ class MinedBlockParsingThread(threading.Thread):
             raw_block_slice_array = ipc_socket_client.block_batched(
                 [BlockSliceRequestType(block_num, Slice(slice_start_offset, slice_end_offset))]
             )
-            self.logger.debug(
+            self.logger.log(
+                PROFILING,
                 f"Size of received raw_block slice {blk_hash.hex()[0:8]} (worker-{self.worker_id}): "
-                f"{(len(raw_block_slice_array) / 1024 ** 2):.2f}MB"
+                f"{(len(raw_block_slice_array) / 1024 ** 2):.2f}MB",
             )
 
             is_reorg = bool(is_reorg)

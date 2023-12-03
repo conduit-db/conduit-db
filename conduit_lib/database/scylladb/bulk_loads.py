@@ -42,8 +42,7 @@ class ScyllaDBBulkLoads:
         self.total_rows_flushed_since_startup = 0
 
     def load_data_batched(
-        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]],
-            max_retries: int = 5
+        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], max_retries: int = 5
     ) -> None:
         """This function requires that the `insert_statement` is idempotent so that failed
         UNLOGGED batches (which are not atomic and may be partially applied) can be retries and
@@ -99,28 +98,33 @@ class ScyllaDBBulkLoads:
                     check_connection = True
                 else:
                     check_connection = True
-                    self.logger.exception(f"Unexpected exception for the item number {i} in "
-                            f"the batch")
+                    try:
+                        raise result_or_exception
+                    except Exception:
+                        self.logger.exception(
+                            f"Unexpected exception for the item number {i} in " f"the batch"
+                        )
 
             if check_connection:
                 hosts: list[Host] = list(self.db.session.get_pool_state().keys())
                 while len(hosts) == 0:
-                    self.logger.error(f"There are no ScyllaDB hosts available. "
-                        f"Waiting for reconnection")
+                    self.logger.error(f"There are no ScyllaDB hosts available. " f"Waiting for reconnection")
                     time.sleep(10)
                     hosts = list(self.db.session.get_pool_state().keys())
                 host = hosts[0]
                 while host.is_currently_reconnecting():
                     self.logger.debug(f"Host: {host} is reconnecting...")
                     time.sleep(10)
-                while not host.is_up():
+                while not host.is_up:
                     self.logger.debug(f"Host: {host} is still not up yet...")
                     time.sleep(10)
 
                 compulsory_recovery_time = 10
-                self.logger.info(f"ScyllaDB connection check complete, host: {host} is up."
-                                 f"Will resume bulk loading after a {compulsory_recovery_time} "
-                                 f"second recovery time")
+                self.logger.info(
+                    f"ScyllaDB connection check complete, host: {host} is up."
+                    f"Will resume bulk loading after a {compulsory_recovery_time} "
+                    f"second recovery time"
+                )
                 time.sleep(compulsory_recovery_time)
 
             return failed_batches
@@ -245,8 +249,7 @@ class ScyllaDBBulkLoads:
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
-            PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for "
-                f"{len(pd_rows)} rows"
+            PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for " f"{len(pd_rows)} rows"
         )
 
     def bulk_load_headers(self, block_header_rows: list[BlockHeaderRow]) -> None:
