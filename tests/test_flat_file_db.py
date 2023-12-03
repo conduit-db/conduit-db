@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE
+from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE, FlatFileDbUnsafeAccessError
 from conduit_lib.types import Slice
 from conduit_lib.utils import remove_readonly
 
@@ -61,10 +61,19 @@ def test_delete() -> None:
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
         fsync=True,
     ) as ffdb:
-        data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
-        # logger.debug(f"Put to {data_location_aa.file_path}")
+        data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))  # immutable file
+        ffdb._maybe_get_new_mutable_file(force_new_file=True)
+        data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))  # mutable file
+
+        # Cannot delete the mutable file - not safe
+        with pytest.raises(FlatFileDbUnsafeAccessError):
+            ffdb.delete_file(Path(data_location_bb.file_path))
+
+        # Deleting immutable files is okay (but checks should be done first to make
+        # sure that ConduitIndex has parsed and check pointed for all of the raw blocks
+        data = ffdb.get(data_location_aa)
+        assert data == b"a" * (MAX_DAT_FILE_SIZE // 16)
         ffdb.delete_file(Path(data_location_aa.file_path))
-        # logger.debug(f"Deleted from {data_location_aa.file_path}")
         with pytest.raises(FileNotFoundError):
             ffdb.get(data_location_aa)
 

@@ -22,14 +22,13 @@ class ConfirmedTransactionRow(NamedTuple):
 
 
 class CheckpointStateRow(NamedTuple):
-    id: int
     best_flushed_block_height: int
-    best_flushed_block_hash: str
-    reorg_was_allocated: int
-    first_allocated_block_hash: str
-    last_allocated_block_hash: str
-    old_hashes_array: str
-    new_hashes_array: str
+    best_flushed_block_hash: bytes
+    reorg_was_allocated: bool
+    first_allocated_block_hash: bytes
+    last_allocated_block_hash: bytes
+    old_hashes_array: bytes
+    new_hashes_array: bytes
 
 
 class InputRow(NamedTuple):

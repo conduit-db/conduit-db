@@ -18,7 +18,7 @@ from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
-    PushdataRow,
+    PushdataRow, CheckpointStateRow,
 )
 from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.types import (
@@ -184,7 +184,7 @@ class DBInterface(abc.ABC):
     @abc.abstractmethod
     def get_checkpoint_state(
         self,
-    ) -> tuple[int, bytes, bool, bytes, bytes, bytes, bytes] | None:
+    ) -> CheckpointStateRow | None:
         pass
 
     @abc.abstractmethod

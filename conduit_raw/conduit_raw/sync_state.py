@@ -78,9 +78,10 @@ class SyncState:
         """
         self.all_pending_block_hashes = set[bytes]()
         block_height_deficit = to_height - from_height
-
+        tip_height = self.get_local_block_tip_height()
         estimated_ideal_block_count = self.controller.get_ideal_block_batch_count(
-            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW, self.controller.service_name
+            TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_RAW, self.controller.service_name,
+            tip_height
         )
 
         batch_count = min(block_height_deficit, estimated_ideal_block_count)
