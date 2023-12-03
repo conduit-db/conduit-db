@@ -599,8 +599,8 @@ class Controller(ControllerBase):
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
 
-        local_tip = self.headers_threadsafe.tip()
-        if await self.sync_state.is_post_ibd_state(local_tip, conduit_best_tip):
+        local_block_tip = self.headers_threadsafe_blocks.tip()
+        if await self.sync_state.is_post_ibd_state(local_block_tip, conduit_best_tip):
             await self.maybe_start_processing_mempool_txs()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
