@@ -82,7 +82,6 @@ class Controller(ControllerBase):
         self.merkle_tree_worker_sockets: dict[int, AsyncZMQSocket] = {}  # worker_id: zmq_socket
         self.WORKER_COUNT_MTREE_CALCULATORS = int(os.getenv("WORKER_COUNT_MTREE_CALCULATORS", "4"))
         self.bind_merkle_tree_worker_zmq_listeners()
-        self.current_mtree_worker_id = 1  # rotate through them evenly 1 -> 4
 
         headers_dir = get_headers_dir_conduit_raw()
         self.storage = setup_storage(self.net_config, headers_dir)
@@ -150,12 +149,18 @@ class Controller(ControllerBase):
     async def connect_sessions(self) -> None:
         CONCURRENT_CONNECTIONS = int(os.environ['P2P_CONNECTION_COUNT'])
         peer = self.get_peer()
-        self.logger.debug("Opening %s concurrent connections to (%s, %s) [%s]",
-            CONCURRENT_CONNECTIONS, peer.remote_host, peer.remote_port, self.net_config.NET)
+        self.logger.debug(
+            "Opening %s concurrent connections to (%s, %s) [%s]",
+            CONCURRENT_CONNECTIONS,
+            peer.remote_host,
+            peer.remote_port,
+            self.net_config.NET,
+        )
         try:
             for i in range(CONCURRENT_CONNECTIONS):
-                bitcoin_p2p_client = BitcoinP2PClient(i, peer.remote_host, peer.remote_port,
-                    self.handlers, self.net_config)
+                bitcoin_p2p_client = BitcoinP2PClient(
+                    i, peer.remote_host, peer.remote_port, self.handlers, self.net_config
+                )
                 self.peer_manager.add_client(bitcoin_p2p_client)
             await self.peer_manager.try_connect_to_all_peers()
             assert len(self.peer_manager.get_connected_peers()) == CONCURRENT_CONNECTIONS
@@ -272,7 +277,9 @@ class Controller(ControllerBase):
             addr=(host, port),
             handler=ThreadedTCPRequestHandler,
             headers_threadsafe_blocks=self.headers_threadsafe_blocks,
-            lmdb=self.lmdb, new_tip_event=self.new_tip_event)
+            lmdb=self.lmdb,
+            new_tip_event=self.new_tip_event,
+        )
         self.ipc_sock_server.serve_forever()
 
     def database_integrity_check(self) -> None:
@@ -341,8 +348,7 @@ class Controller(ControllerBase):
                 locator_hash = self.headers_threadsafe.get_header_for_height(height).hash
                 block_locator_hashes.append(locator_hash)
         hash_count = len(block_locator_hashes)
-        await client.send_message(
-            self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
+        await client.send_message(self.serializer.getheaders(hash_count, block_locator_hashes, ZERO_HASH))
 
     async def _get_aiohttp_client_session(self) -> aiohttp.ClientSession:
         if not self.aiohttp_client_session:
@@ -536,8 +542,7 @@ class Controller(ControllerBase):
         stop_header = self.headers_threadsafe.get_header_for_height(stop_header_height)
         return HeaderSpan(is_reorg, start_header, stop_header)
 
-    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) \
-            -> None:
+    async def sync_blocks_batch(self, batch_id: int, start_header: Header, stop_header: Header) -> None:
         assert self.peer_manager is not None
         original_stop_height = stop_header.height
         while True:
@@ -571,7 +576,8 @@ class Controller(ControllerBase):
             hash_stop = self.get_hash_stop(stop_header_height)
 
             await self.peer_manager.get_next_peer().send_message(
-                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop))
+                self.serializer.getblocks(hash_count, block_locator_hashes, hash_stop)
+            )
 
             # Workers are loaded by Handlers.on_block handler as messages are received
             await self.wait_for_batched_blocks_completion(
