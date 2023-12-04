@@ -1,6 +1,4 @@
 import asyncio
-import queue
-
 import bitcoinx
 from bitcoinx import double_sha256, hash_to_hex_str, pack_varint, hex_str_to_hash
 import shutil
@@ -144,7 +142,8 @@ class MockHandlers(MessageHandlerProtocol):
     async def on_tx(self, rawtx: bytes, peer: BitcoinPeerInstance) -> None:
         self.got_message_queue.put_nowait((commands.TX, rawtx))
 
-    async def on_block_chunk(self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance) -> None:
+    async def on_block_chunk(self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance,
+            worker_id: int) -> None:
         self.got_message_queue.put_nowait((commands.BLOCK, block_chunk_data))
 
     async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinPeerInstance) -> None:

@@ -13,7 +13,7 @@ import logging
 import struct
 
 from .algorithms import double_sha256
-from .constants import MsgType
+from .constants import MsgType, CONDUIT_RAW_SERVICE_NAME, CONDUIT_INDEX_SERVICE_NAME
 from .deserializer import Deserializer
 from .deserializer_types import Inv
 from .headers_api_threadsafe import HeadersAPIThreadsafe
@@ -76,6 +76,12 @@ class MessageHandlerProtocol(typing.Protocol):
     verack, protoconf, ping and pong are the bare minimum just to connect and stay connected
     """
 
+    async def acquire_next_available_worker_id(self) -> int:
+        ...
+
+    async def release_worker_id(self, worker_id: int) -> None:
+        ...
+
     async def on_version(self, message: bytes, peer: BitcoinPeerInstance) -> None:
         ...
 
@@ -118,7 +124,11 @@ class MessageHandlerProtocol(typing.Protocol):
     async def on_tx(self, rawtx: bytes, peer: BitcoinPeerInstance) -> None:
         ...
 
-    async def on_block_chunk(self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance) -> None:
+    async def on_block_chunk(
+        self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance, worker_id: int
+    ) -> None:
+        """The `worker_id` parameter gives control over whether big block chunks are routed to
+        different workers or the same worker."""
         ...
 
     async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinPeerInstance) -> None:
@@ -141,6 +151,11 @@ class Handlers(MessageHandlerProtocol):
         self.server_type = os.environ["SERVER_TYPE"]
         self.small_blocks: list[bytes] = []
         self.batched_tx_offsets: list[tuple[bytes, "array.ArrayType[int]"]] = []
+        # Allocated to workers at random
+        self.mtree_worker_pool: asyncio.Queue[int] = asyncio.Queue()
+        if controller.service_name == CONDUIT_RAW_SERVICE_NAME:
+            for worker_id in range(1, self.controller.WORKER_COUNT_MTREE_CALCULATORS + 1):
+                self.mtree_worker_pool.put_nowait(worker_id)
 
         # A ThreadPoolExecutor is used to flush to disc. These locks avoid
         # `blocks_flush_task_async` from emptying out newly appended `self.small_blocks` and
@@ -254,7 +269,7 @@ class Handlers(MessageHandlerProtocol):
         # logger.debug(f"Got mempool tx")
         size_tx = len(rawtx)
         packed_message = struct.pack(f"<II{size_tx}s", MsgType.MSG_TX, size_tx, rawtx)
-        if hasattr(self.controller.zmq_socket_listeners, "socket_mempool_tx"):  # type: ignore
+        if self.controller.service_name == CONDUIT_INDEX_SERVICE_NAME:
             await self.controller.zmq_socket_listeners.socket_mempool_tx.send(packed_message)  # type: ignore
             self.controller.mempool_tx_count += 1  # type: ignore
 
@@ -280,24 +295,25 @@ class Handlers(MessageHandlerProtocol):
             batched_tx_offsets,
         )
 
-    def get_next_mtree_worker_id(self) -> None:
-        self.controller.current_mtree_worker_id += 1
-        if self.controller.current_mtree_worker_id == self.controller.WORKER_COUNT_MTREE_CALCULATORS:
-            self.controller.current_mtree_worker_id = 1  # keep cycling around 1 -> 4
+    async def release_worker_id(self, worker_id: int) -> None:
+        await self.mtree_worker_pool.put(worker_id)
 
-    async def send_to_worker_async(self, packed_message: bytes) -> None:
-        merkle_tree_socket = self.controller.merkle_tree_worker_sockets[
-            self.controller.current_mtree_worker_id
-        ]
+    async def acquire_next_available_worker_id(self) -> int:
+        return await self.mtree_worker_pool.get()
+
+    async def send_to_worker_async(self, packed_message: bytes, worker_id: int) -> None:
+        merkle_tree_socket = self.controller.merkle_tree_worker_sockets[worker_id]
         if merkle_tree_socket:
             await merkle_tree_socket.send(packed_message)
 
-    async def on_block_chunk(self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance) -> None:
+    async def on_block_chunk(
+        self, block_chunk_data: BlockChunkData, peer: BitcoinPeerInstance, worker_id: int
+    ) -> None:
         """Any blocks that exceed the size of the network buffer are written to file but
         while the chunk of data is still in memory, it can be intercepted here to send to worker
         processes."""
         packed_message = pack_block_chunk_message_for_worker(block_chunk_data)
-        await self.send_to_worker_async(packed_message)
+        await self.send_to_worker_async(packed_message, worker_id)
 
     def ack_for_loaded_blocks(self, small_blocks: list[bytes]) -> None:
         if len(small_blocks) == 0:
@@ -375,5 +391,8 @@ class Handlers(MessageHandlerProtocol):
                 assert block_data_msg.small_block_data is not None
                 self.small_blocks.append(block_data_msg.small_block_data)
                 packed_message = pack_block_data_message_for_worker(block_data_msg)
-                await self.send_to_worker_async(packed_message)
-        self.get_next_mtree_worker_id()
+                try:
+                    worker_id = await self.acquire_next_available_worker_id()
+                    await self.send_to_worker_async(packed_message, worker_id)
+                finally:
+                    await self.release_worker_id(worker_id)

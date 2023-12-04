@@ -35,10 +35,6 @@ class BitcoinP2PClientError(Exception):
     pass
 
 
-logger = logging.getLogger("bitcoin-p2p-socket")
-logger.setLevel(logging.DEBUG)
-
-
 def unpack_msg_header(header: bytes) -> ExtendedP2PHeader:
     magic, command, length, checksum = struct.unpack_from("<4s12sI4s", header, offset=0)
     ext_command: bytes | None = None
@@ -85,10 +81,20 @@ class BitcoinP2PClient:
     concatenated in memory before writing them all to the same file. Otherwise the spinning HDD
     discs will 'stutter' with too many tiny writes.
     """
-    def __init__(self, id: int, remote_host: str, remote_port: int,
-            message_handler: MessageHandlerProtocol, net_config: NetworkConfig,
-            reader: StreamReader | None=None, writer: StreamWriter | None=None) -> None:
+
+    def __init__(
+        self,
+        id: int,
+        remote_host: str,
+        remote_port: int,
+        message_handler: MessageHandlerProtocol,
+        net_config: NetworkConfig,
+        reader: StreamReader | None = None,
+        writer: StreamWriter | None = None,
+    ) -> None:
         self.id = id
+        self.logger = logging.getLogger(f"bitcoin-p2p-socket(id={self.id})")
+        self.logger.setLevel(logging.DEBUG)
         self.remote_host = remote_host
         self.remote_port = remote_port
         self.message_handler = message_handler
@@ -135,7 +141,9 @@ class BitcoinP2PClient:
         """raises `ConnectionResetError`"""
         reader, writer = await asyncio.open_connection(host=self.remote_host, port=self.remote_port)
         self.connected = True
-        logger.debug(f"Connection made to peer: {self.remote_host}:{self.remote_port} (peer_id={self.id})")
+        self.logger.debug(
+            f"Connection made to peer: {self.remote_host}:{self.remote_port} (peer_id={self.id})"
+        )
         self.reader = reader
         self.writer = writer
         self.peer = BitcoinPeerInstance(self.reader, self.writer, self.remote_host, self.remote_port)
@@ -148,7 +156,7 @@ class BitcoinP2PClient:
                 await self.connect()
                 return
             except ConnectionRefusedError:
-                logger.debug(
+                self.logger.debug(
                     f"Bitcoin node on:  {self.remote_host}:{self.remote_port} currently unavailable "
                     f"- waiting..."
                 )
@@ -159,7 +167,7 @@ class BitcoinP2PClient:
         self.writer.write(message)
 
     async def close_connection(self) -> None:
-        logger.info("Closing bitcoin p2p socket connection gracefully")
+        self.logger.info("Closing bitcoin p2p socket connection gracefully")
         if self.writer and not self.writer.is_closing():
             self.writer.close()
         self.connected = False
@@ -180,7 +188,7 @@ class BitcoinP2PClient:
                 handler_func = getattr(self.message_handler, handler_func_name)
                 await handler_func(message, self.peer)
             except AttributeError:
-                logger.debug(f"Handler not implemented for command: {command!r}")
+                self.logger.debug(f"Handler not implemented for command: {command!r}")
             if command == VERACK_BIN:
                 self.handshake_complete_event.set()
 
@@ -275,7 +283,7 @@ class BitcoinP2PClient:
             await self.message_handler.on_block(block_data_msg, self.peer)
             return
 
-        logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
+        self.logger.debug(f"Handling a 'Big Block' (>{self.BUFFER_SIZE})")
         chunk_num = 0
         num_chunks = math.ceil(self.cur_header.payload_size / self.BUFFER_SIZE)
         expected_tx_count_for_block = 0
@@ -283,8 +291,10 @@ class BitcoinP2PClient:
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
         file = open(big_block_filepath, "ab")
+        worker_id = None
         try:
             assert self.reader is not None
+            worker_id = await self.message_handler.acquire_next_available_worker_id()
             while total_block_bytes_read < self.cur_header.payload_size:
                 chunk_num += 1
                 if chunk_num == 1:
@@ -293,11 +303,11 @@ class BitcoinP2PClient:
                     self.pos, self.last_msg_end_pos = self.rotate_buffer()
                     next_chunk: bytes = cast(bytes, self.network_buffer[0 : self.BUFFER_SIZE])
                     total_block_bytes_read += len(next_chunk)
-                    logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
+                    self.logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
                 else:
                     next_chunk = await self.read_block_chunk(total_block_bytes_read)
                     total_block_bytes_read += len(next_chunk)
-                    logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
+                    self.logger.debug(f"total_block_bytes_read = {total_block_bytes_read}")
 
                 # ---------- TxOffsets logic start ---------- #
                 if chunk_num == 1:
@@ -332,7 +342,8 @@ class BitcoinP2PClient:
                         slice_for_worker,
                         tx_offsets_for_chunk,
                     )
-                    await self.message_handler.on_block_chunk(block_chunk_data, self.peer)
+                    await self.message_handler.on_block_chunk(block_chunk_data, self.peer,
+                        worker_id)
 
                 if chunk_num == num_chunks:
                     self.last_msg_end_pos = len(next_chunk)
@@ -343,11 +354,13 @@ class BitcoinP2PClient:
             assert total_block_bytes_read == self.cur_header.payload_size
             assert file.tell() == self.cur_header.payload_size
         finally:
+            if worker_id:
+                await self.message_handler.release_worker_id(worker_id)
             if file:
                 file.close()
 
         assert chunk_num == num_chunks
-        logger.debug(f"Finished streaming big block to disc")
+        self.logger.debug(f"Finished streaming big block to disc")
 
         # Sanity checks and reset buffer, to be ready to receive the next p2p message
         assert total_block_bytes_read == self.cur_header.payload_size
@@ -368,7 +381,7 @@ class BitcoinP2PClient:
         await asyncio.get_running_loop().run_in_executor(self.file_write_executor, file.write, data)
 
     def log_buffer_full_message(self) -> None:
-        logger.debug(
+        self.logger.debug(
             f"Buffer is full for command: "
             f"'{bin_p2p_command_to_ascii(self.cur_header.command)}', "
             f"payload size: {self.cur_header.payload_size}"
@@ -408,7 +421,7 @@ class BitcoinP2PClient:
         try:
             await self.start_session()
         except ConnectionResetError:
-            logger.error(f"Bitcoin node disconnected")
+            self.logger.error(f"Bitcoin node disconnected")
         finally:
             if self.writer and not self.writer.is_closing():
                 await self.close_connection()
@@ -514,8 +527,9 @@ class PeerManager:
                 await client.wait_for_connection()
                 self._connection_pool.append(client)
             except ConnectionResetError:
-                logger.error(f"Failed to connect to peer. host: {client.peer.host}, "
-                    f"port: {client.peer.port}")
+                self._logger.error(
+                    f"Failed to connect to peer. host: {client.peer.host}, " f"port: {client.peer.port}"
+                )
         assert len(self._connection_pool) == len(self.clients)
         if len(self._connection_pool) == 0:
             raise PeerManagerFailedError("All connections failed")
