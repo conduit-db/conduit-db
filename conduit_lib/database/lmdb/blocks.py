@@ -88,7 +88,7 @@ class LmdbBlocks:
             return self.ffdb.get(data_location, slice, lock_free_access=True)
 
     def get_block_hashes_in_file(self, file_path: str) -> bytearray | None:
-        with self.db.env.begin(write=True, buffers=False) as txn:
+        with self.db.env.begin(write=False, buffers=False) as txn:
             result = txn.get(file_path.encode('utf-8'), db=self.file_to_block_hash_db)
             if result is None:
                 return None
@@ -157,14 +157,15 @@ class LmdbBlocks:
                 cursor_file_to_block_hash_db = txn.cursor(db=self.file_to_block_hash_db)
                 with self.ffdb:
                     blk_hash, data_location, tx_count = big_block
-                    new_data_location: DataLocation = self.ffdb.put_big_block(data_location)
+                    # DataLocation moved from temp location to permanent .dat file
+                    data_location = self.ffdb.put_big_block(data_location)
                     block_size = data_location.end_offset - data_location.start_offset
                     block_num_bytes = struct_be_I.pack(next_block_num)
                     len_block_bytes = struct_le_Q.pack(block_size)
                     tx_count_bytes = struct_le_Q.pack(tx_count)
                     cursor_blocks.put(
                         block_num_bytes,
-                        cbor2.dumps(new_data_location),
+                        cbor2.dumps(data_location),
                         append=True,
                         overwrite=False,
                     )
