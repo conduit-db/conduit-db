@@ -33,7 +33,7 @@ conduit_index_data_ssd/
 conduit_index_data_hdd/
 conduit_raw_data_ssd/
 conduit_raw_data_hdd/
-scylla_data/
+scylla/
 reference_server/
 **/test_lmdb/**
 **/raw_blocks/**
