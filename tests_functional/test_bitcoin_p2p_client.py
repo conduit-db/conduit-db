@@ -13,7 +13,7 @@ import io
 import unittest
 from math import ceil
 from pathlib import Path
-from typing import cast
+from typing import cast, Coroutine, Any, TypeVar
 import unittest.mock
 import electrumsv_node
 import pytest
@@ -40,7 +40,7 @@ from conduit_lib import (
     Serializer,
     Deserializer,
 )
-from conduit_lib.utils import create_task, remove_readonly
+from conduit_lib.utils import remove_readonly
 from contrib.scripts.import_blocks import import_blocks
 
 from .data.big_data_carrier_tx import DATA_CARRIER_TX
@@ -56,6 +56,29 @@ logger.setLevel(logging.DEBUG)
 
 REGTEST_NODE_HOST = "127.0.0.1"
 REGTEST_NODE_PORT = 18444
+
+
+T1 = TypeVar("T1")
+
+
+def asyncio_future_callback_raise_exception(future: asyncio.Task[Any]) -> None:
+    if future.cancelled():
+        return
+    try:
+        future.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception(f"Unexpected exception in task")
+        raise
+
+
+def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
+    task = asyncio.create_task(coro)
+    # Futures catch all exceptions that are raised and store them. A task is a future. By adding
+    # this callback we reraise any encountered exception in the callback and ensure it is visible.
+    task.add_done_callback(asyncio_future_callback_raise_exception)
+    return task
 
 
 class MockHandlers(MessageHandlerProtocol):
@@ -315,15 +338,16 @@ async def test_peer_manager():
             await peer_manager.close()
 
 
+@pytest.mark.parametrize("use_compression", [False, True])
 @pytest.mark.asyncio
-async def test_getblocks_request_and_blocks_response():
+async def test_getblocks_request_and_blocks_response(use_compression: bool):
     client = None
     try:
         got_message_queue = asyncio.Queue()
         message_handler = MockHandlers(got_message_queue)
         net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
         client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+            net_config, use_compression=use_compression)
         await client.connect()
         await client.handshake("127.0.0.1", 18444)
 
@@ -382,9 +406,9 @@ def _parse_txs_with_bitcoinx(message: BlockChunkData) -> None:
         assert len(tx.to_bytes()) == size_data_carrier_tx
         assert tx.hash() == correct_tx_hash
 
-
+@pytest.mark.parametrize("use_compression", [False, True])
 @pytest.mark.asyncio
-async def test_big_block_exceeding_network_buffer_capacity() -> None:
+async def test_big_block_exceeding_network_buffer_capacity(use_compression: bool) -> None:
     os.environ["NETWORK_BUFFER_SIZE"] = "500000"
     client = None
     task = None
@@ -409,7 +433,7 @@ async def test_big_block_exceeding_network_buffer_capacity() -> None:
         message_handler = MockHandlers(got_message_queue)
 
         client = BitcoinP2PClient(1, REGTEST_NODE_HOST, REGTEST_NODE_PORT, message_handler,
-            net_config)
+            net_config, use_compression=use_compression)
         client.reader = asyncio.StreamReader()
         client.reader.feed_data(message_to_send)
         client.writer = unittest.mock.Mock()
@@ -500,5 +524,11 @@ async def test_big_block_exceeding_network_buffer_capacity() -> None:
                 assert raw_block == big_block
 
     finally:
+        if task:
+            try:
+                # Raise any exceptions in this thread otherwise timeout and pass
+                await asyncio.wait_for(task, timeout=3.0)
+            except asyncio.TimeoutError:
+                pass
         if client:
             await client.close_connection()

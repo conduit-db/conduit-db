@@ -336,12 +336,13 @@ def index_exists(conn: MySQLdb.Connection, index_name: str, table_name: str) -> 
 
 
 class Timer:
-    def __init__(self, count: int | None = None, name: str | None = None):
+    def __init__(self, count: int | None = None, name: str | None = None, units: str = ""):
         self.count = count
         self.name = name
+        self.units = units
 
     def __enter__(self) -> "Timer":
-        self.start = time.time()
+        self.start = time.perf_counter()
         return self
 
     def __exit__(
@@ -350,7 +351,7 @@ class Timer:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        self.end = time.time()
+        self.end = time.perf_counter()
         self.interval = self.end - self.start
         if self.name:
             logger.debug(f"Timer{'['+ self.name+ ']'}: interval of {self.interval:.4f} seconds")
@@ -359,7 +360,9 @@ class Timer:
                 logger.debug(f"Timer: interval of {self.interval:.4f} seconds")
         if self.count and self.name:
             logger.debug(
-                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{int(self.count/self.interval)} per second"
+                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{float(self.count/self.interval):.1f}"
+                f"{self.units} per second"
             )
         elif self.count:
-            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval)} per second")
+            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval):.1f}"
+                         f"{self.units} per second")

@@ -43,7 +43,7 @@ class LmdbBlocks:
         raw_blocks_dir = Path(os.environ["DATADIR_HDD"]) / "raw_blocks"
         raw_blocks_lockfile = Path(os.environ["DATADIR_SSD"]) / "raw_blocks.lock"
 
-        self.ffdb = FlatFileDb(raw_blocks_dir, raw_blocks_lockfile)
+        self.ffdb = FlatFileDb(raw_blocks_dir, raw_blocks_lockfile, use_compression=True)
         self.blocks_db = self.db.env.open_db(self.BLOCKS_DB)
         self.block_nums_db = self.db.env.open_db(self.BLOCK_NUMS_DB)
         self.block_metadata_db = self.db.env.open_db(self.BLOCK_METADATA_DB)
@@ -124,7 +124,7 @@ class LmdbBlocks:
                         tx_count = bitcoinx.read_varint(stream.read)
                         raw_blocks_arr += raw_block
 
-                        data_location: DataLocation = self.ffdb.put(raw_block)
+                        data_location: DataLocation = self.ffdb.put(raw_block, blk_hash, tx_count)
 
                         block_num_bytes = struct_be_I.pack(block_num)
                         len_block_bytes = struct_le_Q.pack(len(raw_block))

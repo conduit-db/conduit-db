@@ -21,6 +21,7 @@ from bitcoinx.packing import struct_be_I
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
 from .merkle_tree import LmdbMerkleTree
+from ...compression import zstd_get_uncompressed_file_size
 
 if typing.TYPE_CHECKING:
     import array
@@ -177,10 +178,14 @@ class LMDB_Database:
             data_location = self.blocks.get_data_location(block_num)
             if os.environ['PRUNE_MODE'] == "0":
                 assert data_location is not None
-                file_size = os.path.getsize(data_location.file_path)
+                if self.blocks.ffdb.use_compression:
+                    with open(data_location.file_path, 'rb') as file:
+                        uncompressed_size = zstd_get_uncompressed_file_size(file)
+                else:
+                    uncompressed_size = os.path.getsize(data_location.file_path)
                 assert (
-                    data_location.end_offset <= file_size
-                ), f"There is data missing from the data file for {hex_str_to_hash(block_hash)}"
+                    data_location.end_offset <= uncompressed_size
+                ), f"There is data missing from the data file for {hash_to_hex_str(block_hash)}"
             else:
                 if data_location is None:  # it was pruned
                     return None
@@ -377,7 +382,10 @@ class LMDB_Database:
         assert data_location is not None
         filepath = Path(data_location.file_path)
         filename = filepath.name
-        file_num = int(filename.lstrip('data_').rstrip('.dat'))
+        if self.blocks.ffdb.use_compression:
+            file_num = int(filename.lstrip('data_').rstrip('.dat.zst'))
+        else:
+            file_num = int(filename.lstrip('data_').rstrip('.dat'))
         self.logger.debug(
             f"Current mutable raw block data file: {filepath}. "
             f"Size: {filepath.stat().st_size//1024**2:.3f}MB"

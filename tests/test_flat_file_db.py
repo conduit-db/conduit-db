@@ -12,8 +12,10 @@ import shutil
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 import time
+from typing import Iterator
 
 import pytest
+from _pytest.fixtures import FixtureRequest
 
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE, FlatFileDbUnsafeAccessError
 from conduit_lib.types import Slice
@@ -52,96 +54,101 @@ def _do_general_read_and_write_ops(ffdb: FlatFileDb) -> FlatFileDb:
         return ffdb
 
 
-def test_general_read_and_write_db() -> None:
-    ffdb = FlatFileDb(
-        datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
-        fsync=True,
-    )
-    _do_general_read_and_write_ops(ffdb)
-
-
-def test_delete() -> None:
-    with FlatFileDb(
-        datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
-        fsync=True,
-    ) as ffdb:
-        data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))  # immutable file
-        ffdb._maybe_get_new_mutable_file(force_new_file=True)
-        data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))  # mutable file
-
-        # Cannot delete the mutable file - not safe
-        with pytest.raises(FlatFileDbUnsafeAccessError):
-            ffdb.delete_file(Path(data_location_bb.file_path))
-
-        # Deleting immutable files is okay (but checks should be done first to make
-        # sure that ConduitIndex has parsed and check pointed for all of the raw blocks
-        data = ffdb.get(data_location_aa)
-        assert data == b"a" * (MAX_DAT_FILE_SIZE // 16)
-        ffdb.delete_file(Path(data_location_aa.file_path))
-        with pytest.raises(FileNotFoundError):
-            ffdb.get(data_location_aa)
-
-
-def test_slicing() -> None:
-    with FlatFileDb(
-        datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
-        fsync=True,
-    ) as ffdb:
-        data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
-        # print(data_location_mixed)
-
-        slice = Slice(start_offset=5, end_offset=10)
-        data_bb_slice = ffdb.get(data_location_mixed, slice)
-        assert data_bb_slice == b"bbbbb"
-        # print(data_bb_slice)
-
-
 def _task_multithreaded(ffdb: FlatFileDb, x: int) -> None:
     """Need to instantiate and pass into threads"""
     _do_general_read_and_write_ops(ffdb)
 
 
-def _task(x: int) -> None:
+def _task(use_compression: bool, x: int) -> None:
     """Create each FlatFileDb instance anew within each process"""
     ffdb = FlatFileDb(
         datadir=Path(TEST_DATADIR),
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
         fsync=True,
+        use_compression=use_compression
     )
     _do_general_read_and_write_ops(ffdb)
 
 
-def test_multithreading_access() -> None:
-    starttime = time.time()
-    ffdb = FlatFileDb(
-        datadir=Path(TEST_DATADIR),
-        mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
-        fsync=True,
-    )
-    func = functools.partial(_task_multithreaded, ffdb)
-    with ThreadPoolExecutor(4) as pool:
-        for result in pool.map(func, range(0, 32)):
-            if result:
-                logger.debug(result)
-    endtime = time.time()
-    logger.debug(f"Time taken {endtime - starttime} seconds")
+class TestFlatFileDb:
 
+    @pytest.fixture(scope="class", params=[False, True])
+    def use_compression(self, request: FixtureRequest) -> Iterator[bool]:
+        yield request.param
+        if os.path.exists(TEST_DATADIR):
+            shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
 
-def test_multiprocessing_access() -> None:
-    starttime = time.time()
-    with multiprocessing.Pool(4) as pool:
-        pool.map(_task, range(0, 32))
+        if os.path.exists(FFDB_LOCKFILE):
+            os.remove(FFDB_LOCKFILE)
 
-    endtime = time.time()
-    logger.debug(f"Time taken {endtime - starttime} seconds")
+    def test_general_read_and_write_db(self, use_compression: bool) -> None:
+        ffdb = FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+            fsync=True,
+            use_compression=use_compression
+        )
+        _do_general_read_and_write_ops(ffdb)
 
+    def test_delete(self, use_compression: bool) -> None:
+        with FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+            fsync=True,
+            use_compression=use_compression
+        ) as ffdb:
+            data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))  # immutable file
+            ffdb._maybe_get_new_mutable_file(force_new_file=True)
+            data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))  # mutable file
 
-def test_cleanup() -> None:
-    if os.path.exists(TEST_DATADIR):
-        shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
+            # Cannot delete the mutable file - not safe
+            with pytest.raises(FlatFileDbUnsafeAccessError):
+                ffdb.delete_file(Path(data_location_bb.file_path))
 
-    if os.path.exists(FFDB_LOCKFILE):
-        os.remove(FFDB_LOCKFILE)
+            # Deleting immutable files is okay (but checks should be done first to make
+            # sure that ConduitIndex has parsed and check pointed for all of the raw blocks
+            data = ffdb.get(data_location_aa)
+            assert data == b"a" * (MAX_DAT_FILE_SIZE // 16)
+            ffdb.delete_file(Path(data_location_aa.file_path))
+            with pytest.raises(FileNotFoundError):
+                ffdb.get(data_location_aa)
+
+    def test_slicing(self, use_compression: bool) -> None:
+        with FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+            fsync=True,
+            use_compression=use_compression
+        ) as ffdb:
+            data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
+            # print(data_location_mixed)
+
+            slice = Slice(start_offset=5, end_offset=10)
+            data_bb_slice = ffdb.get(data_location_mixed, slice)
+            assert data_bb_slice == b"bbbbb"
+            # print(data_bb_slice)
+
+    def test_multithreading_access(self, use_compression: bool) -> None:
+        starttime = time.time()
+        ffdb = FlatFileDb(
+            datadir=Path(TEST_DATADIR),
+            mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
+            fsync=True,
+            use_compression=use_compression
+        )
+        func = functools.partial(_task_multithreaded, ffdb)
+        with ThreadPoolExecutor(4) as pool:
+            for result in pool.map(func, range(0, 32)):
+                if result:
+                    logger.debug(result)
+        endtime = time.time()
+        logger.debug(f"Time taken {endtime - starttime} seconds")
+
+    def test_multiprocessing_access(self, use_compression: bool) -> None:
+        starttime = time.time()
+        with multiprocessing.Pool(4) as pool:
+            func = functools.partial(_task, use_compression)
+            pool.map(func, range(0, 32))
+
+        endtime = time.time()
+        logger.debug(f"Time taken {endtime - starttime} seconds")

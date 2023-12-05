@@ -6,6 +6,7 @@
 
 import array
 import asyncio
+import typing
 from concurrent.futures import ThreadPoolExecutor
 from bitcoinx import double_sha256
 import math
@@ -15,6 +16,13 @@ from pathlib import Path
 from typing import BinaryIO, cast, Any
 import logging
 import struct
+
+from .compression import zstd_create_chunker, zstd_append_chunks, zstd_finish_appending_chunks
+from .database.ffdb.flat_file_db import collect_compression_stats, \
+    create_compression_stats_file_if_not_exists
+
+if typing.TYPE_CHECKING:
+    from zstandard import ZstdCompressionChunker
 
 from . import NetworkConfig, Serializer
 from .algorithms import unpack_varint, preprocessor
@@ -97,6 +105,7 @@ class BitcoinP2PClient:
         net_config: NetworkConfig,
         reader: StreamReader | None = None,
         writer: StreamWriter | None = None,
+        use_compression: bool = True
     ) -> None:
         self.id = id
         self.logger = logging.getLogger(f"bitcoin-p2p-socket(id={self.id})")
@@ -106,6 +115,8 @@ class BitcoinP2PClient:
         self.message_handler = message_handler
         self.net_config = net_config
         self.serializer = Serializer(net_config)
+        self.use_compression = use_compression
+        create_compression_stats_file_if_not_exists()
 
         # Any blocks that exceed the size of the network buffer are instead writted to file
         self.big_block_write_directory = Path(os.environ.get("DATADIR_HDD", MODULE_DIR)) / "big_blocks"
@@ -297,6 +308,10 @@ class BitcoinP2PClient:
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
         file = open(big_block_filepath, "ab")
+        zstd_chunker: ZstdCompressionChunker | None = None
+        uncompressed_bytes_written_total = 0  #
+        if self.use_compression:
+            zstd_chunker = zstd_create_chunker()
         worker_id = None
         try:
             assert self.reader is not None
@@ -340,7 +355,17 @@ class BitcoinP2PClient:
 
                 # Big blocks use a file for writing to incrementally
                 if file:
-                    await self.write_file_async(file, next_chunk)
+                    if self.use_compression:
+                        assert zstd_chunker is not None
+                        await self.write_zstd_file_async(zstd_chunker, file, next_chunk)
+                        uncompressed_bytes_written_total += len(next_chunk)
+                        if chunk_num == num_chunks:
+                            await self.finish_zstd_file_async(zstd_chunker, file)
+                            collect_compression_stats(uncompressed_bytes_written_total,
+                                0, file.tell(), 0, block_hash, expected_tx_count_for_block
+                            )
+                    else:
+                        await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(
                         chunk_num,
                         num_chunks,
@@ -356,9 +381,13 @@ class BitcoinP2PClient:
                     self.pos = len(next_chunk)
                     break
 
+            # Safety checks
             assert len(block_hash) == 32
             assert total_block_bytes_read == self.cur_header.payload_size
-            assert file.tell() == self.cur_header.payload_size
+            if self.use_compression:
+                assert uncompressed_bytes_written_total == self.cur_header.payload_size
+            else:
+                assert file.tell() == self.cur_header.payload_size
         finally:
             if worker_id:
                 await self.message_handler.release_worker_id(worker_id)
@@ -385,6 +414,16 @@ class BitcoinP2PClient:
 
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:
         await asyncio.get_running_loop().run_in_executor(self.file_write_executor, file.write, data)
+
+    async def write_zstd_file_async(self, zstd_chunker: "ZstdCompressionChunker", file: BinaryIO,
+            data: bytes) -> None:
+        await asyncio.get_running_loop().run_in_executor(
+            self.file_write_executor, zstd_append_chunks, zstd_chunker, file, data)
+
+    async def finish_zstd_file_async(self, zstd_chunker: "ZstdCompressionChunker",
+            file: BinaryIO) -> None:
+        await asyncio.get_running_loop().run_in_executor(
+            self.file_write_executor, zstd_finish_appending_chunks, zstd_chunker, file)
 
     def log_buffer_full_message(self) -> None:
         self.logger.debug(
