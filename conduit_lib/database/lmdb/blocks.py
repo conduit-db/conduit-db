@@ -124,7 +124,7 @@ class LmdbBlocks:
                         tx_count = bitcoinx.read_varint(stream.read)
                         raw_blocks_arr += raw_block
 
-                        data_location: DataLocation = self.ffdb.put(raw_block)
+                        data_location: DataLocation = self.ffdb.put(raw_block, blk_hash, tx_count)
 
                         block_num_bytes = struct_be_I.pack(block_num)
                         len_block_bytes = struct_le_Q.pack(len(raw_block))

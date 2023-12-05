@@ -18,17 +18,26 @@ import typing
 from pathlib import Path
 from types import TracebackType
 from typing import Type
+
+from bitcoinx import hash_to_hex_str
 from fasteners import InterProcessReaderWriterLock
 
 if typing.TYPE_CHECKING:
     from zstandard import ZstdCompressionChunker
 
-from conduit_lib.compression import zstd_get_uncompressed_eof_offset, \
-    zstd_create_chunker, zstd_append_chunks, zstd_read_fd, zstd_create_reader, \
-    zstd_finish_appending_chunks
+from conduit_lib.compression import (
+    zstd_get_uncompressed_eof_offset,
+    zstd_create_chunker,
+    zstd_append_chunks,
+    zstd_read_fd,
+    zstd_create_reader,
+    zstd_finish_appending_chunks,
+)
 from conduit_lib.types import Slice, DataLocation
 
 logger = logging.getLogger("lmdb-utils")
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 class FlatFileDbUnsafeAccessError(Exception):
@@ -40,6 +49,49 @@ class FlatFileDbWriteFailedError(Exception):
 
 
 MAX_DAT_FILE_SIZE = 128 * (1024**2)  # 128MB
+
+
+def create_compression_stats_file_if_not_exists() -> None:
+    datadir = Path(os.getenv('DATADIR_SSD', str(MODULE_DIR)))
+    if not datadir.exists():
+        os.makedirs(datadir, exist_ok=True)
+    compression_stats_file_path = datadir / "compression_stats.csv"
+    if not compression_stats_file_path.exists():
+        compression_stats_file_handle = open(compression_stats_file_path, 'a')
+        headings = [
+            "without_compression_size",
+            "with_compression_size",
+            "fraction_of_uncompressed",
+            "block_hash",
+            "tx_count",
+        ]
+        compression_stats_file_handle.write(",".join(headings) + "\n")
+
+
+def collect_compression_stats(
+    uncompressed_end_offset: int,
+    uncompressed_start_offset: int,
+    compressed_end_offset: int,
+    compressed_start_offset: int,
+    block_hash: bytes,
+    tx_count: int,
+) -> None:
+    """Hopefully this will be on fast storage to save IOPS"""
+    without_compression = uncompressed_end_offset - uncompressed_start_offset
+    with_compression = compressed_end_offset - compressed_start_offset
+    fraction_of_uncompressed = with_compression / without_compression
+
+    datadir = Path(os.getenv('DATADIR_SSD', str(MODULE_DIR)))
+    compression_stats_file_path = datadir / "compression_stats.csv"
+    with open(compression_stats_file_path, 'a') as file:
+        row = [
+            str(without_compression),
+            str(with_compression),
+            str(fraction_of_uncompressed),
+            hash_to_hex_str(block_hash),
+            str(tx_count),
+        ]
+        file.write(",".join(row) + "\n")
 
 
 class FlatFileDb:
@@ -72,13 +124,16 @@ class FlatFileDb:
     NOTE: FlatFileDB is thread-safe but __init__ method is not. Must instantiate in parent thread
     """
 
-    def __init__(self, datadir: Path, mutable_file_lock_path: Path, fsync: bool = False,
-            use_compression: bool = False) -> None:
+    def __init__(
+        self, datadir: Path, mutable_file_lock_path: Path, fsync: bool = False, use_compression: bool = False
+    ) -> None:
         self.threading_lock = threading.RLock()
         self.fsync: bool = fsync
         self.datadir = datadir
         self.mutable_file_lock_path = mutable_file_lock_path
         self.use_compression = use_compression
+        create_compression_stats_file_if_not_exists()
+
         assert str(self.mutable_file_lock_path).endswith(
             ".lock"
         ), "mutable_file_lock_path must end with '.lock'"
@@ -113,11 +168,13 @@ class FlatFileDb:
             self.mutable_file_num = self._mutable_filename_to_num(mutable_filename)
             self.mutable_file_path = self._file_num_to_mutable_file_path(self.mutable_file_num)
             if self.use_compression:
-                assert str(self.mutable_file_path).endswith(".zst"), \
-                    "Once compressed mode is on, you cannot switch"
+                assert str(self.mutable_file_path).endswith(
+                    ".zst"
+                ), "Once compressed mode is on, you cannot switch"
             else:
-                assert str(self.mutable_file_path).endswith(".dat"), \
-                    "Operating in compressed mode requires a full reindex"
+                assert str(self.mutable_file_path).endswith(
+                    ".dat"
+                ), "Operating in compressed mode requires a full reindex"
             self.immutable_files = set(_immutable_files)
 
     def __enter__(self) -> "FlatFileDb":
@@ -183,13 +240,14 @@ class FlatFileDb:
 
         return self.mutable_file_path, self.mutable_file_num
 
-    def put(self, data: bytes) -> DataLocation:
+    def put(self, data: bytes, block_hash: bytes | None = None, tx_count: int | None = None) -> DataLocation:
         assert self.mutable_file_path is not None
         with self.mutable_file_rwlock.write_lock():
             self._maybe_get_new_mutable_file()
             if self.use_compression:
                 with open(self.mutable_file_path, 'rb') as file:
                     uncompressed_start_offset = zstd_get_uncompressed_eof_offset(file)
+                    compressed_start_offset = file.tell()
 
                 with open(self.mutable_file_path, "ab") as file:
                     chunker: ZstdCompressionChunker | None = None
@@ -198,13 +256,26 @@ class FlatFileDb:
                         zstd_append_chunks(chunker, file, data)
                         uncompressed_bytes_written = len(data)
                         uncompressed_end_offset = uncompressed_start_offset + uncompressed_bytes_written
-                        return DataLocation(str(self.mutable_file_path),
-                            uncompressed_start_offset, uncompressed_end_offset)
+                        return DataLocation(
+                            str(self.mutable_file_path), uncompressed_start_offset, uncompressed_end_offset
+                        )
                     finally:
                         if chunker:
                             zstd_finish_appending_chunks(chunker, file)
+                            compressed_end_offset = file.tell()
+
+                            if block_hash and tx_count:
+                                collect_compression_stats(
+                                    uncompressed_end_offset,
+                                    uncompressed_start_offset,
+                                    compressed_end_offset,
+                                    compressed_start_offset,
+                                    block_hash,
+                                    tx_count,
+                                )
                         if self.fsync:
                             os.fsync(file.fileno())
+
             else:
                 with open(self.mutable_file_path, "ab") as file:
                     start_offset = file.tell()
@@ -303,7 +374,9 @@ class FlatFileDb:
                         "Deleting the mutable file is not allowed because it can cause " "consistency issues."
                     )
                     # self._maybe_get_new_mutable_file(force_new_file=True)
-                assert file_path.name in self.immutable_files, f"{file_path.name} not in {self.immutable_files}"
+                assert (
+                    file_path.name in self.immutable_files
+                ), f"{file_path.name} not in {self.immutable_files}"
                 os.remove(file_path)
                 logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:

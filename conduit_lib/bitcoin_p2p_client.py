@@ -18,6 +18,8 @@ import logging
 import struct
 
 from .compression import zstd_create_chunker, zstd_append_chunks, zstd_finish_appending_chunks
+from .database.ffdb.flat_file_db import collect_compression_stats, \
+    create_compression_stats_file_if_not_exists
 
 if typing.TYPE_CHECKING:
     from zstandard import ZstdCompressionChunker
@@ -114,6 +116,7 @@ class BitcoinP2PClient:
         self.net_config = net_config
         self.serializer = Serializer(net_config)
         self.use_compression = use_compression
+        create_compression_stats_file_if_not_exists()
 
         # Any blocks that exceed the size of the network buffer are instead writted to file
         self.big_block_write_directory = Path(os.environ.get("DATADIR_HDD", MODULE_DIR)) / "big_blocks"
@@ -358,6 +361,9 @@ class BitcoinP2PClient:
                         uncompressed_bytes_written_total += len(next_chunk)
                         if chunk_num == num_chunks:
                             await self.finish_zstd_file_async(zstd_chunker, file)
+                            collect_compression_stats(uncompressed_bytes_written_total,
+                                0, file.tell(), 0, block_hash, expected_tx_count_for_block
+                            )
                     else:
                         await self.write_file_async(file, next_chunk)
                     block_chunk_data = BlockChunkData(
