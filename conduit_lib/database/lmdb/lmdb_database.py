@@ -377,7 +377,10 @@ class LMDB_Database:
         assert data_location is not None
         filepath = Path(data_location.file_path)
         filename = filepath.name
-        file_num = int(filename.lstrip('data_').rstrip('.dat'))
+        if self.blocks.ffdb.use_compression:
+            file_num = int(filename.lstrip('data_').rstrip('.dat.zst'))
+        else:
+            file_num = int(filename.lstrip('data_').rstrip('.dat'))
         self.logger.debug(
             f"Current mutable raw block data file: {filepath}. "
             f"Size: {filepath.stat().st_size//1024**2:.3f}MB"

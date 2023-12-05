@@ -285,7 +285,8 @@ class MinedBlockParsingThread(threading.Thread):
         process = psutil.Process()
         self.logger.log(
             PROFILING,
-            f"Memory usage check before processing work items: " f"{process.memory_info().rss//1024**2}MB",
+            f"Memory usage check before processing work items: "
+            f"{process.memory_info().rss//1024**2}MB",
         )
         blk_hash: bytes
         block_num: int
@@ -394,10 +395,10 @@ class MinedBlockParsingThread(threading.Thread):
                 )
             )
         self.logger.log(
-            PROFILING, f"Memory usage check before join on queue: " f"{process.memory_info().rss//1024**2}MB"
+            PROFILING, f"Memory usage check before join on queue: {process.memory_info().rss//1024**2}MB"
         )
         self.confirmed_tx_flush_queue.join()
         self.logger.log(
             PROFILING,
-            f"Memory usage check after processing work items: " f"{process.memory_info().rss//1024**2}MB",
+            f"Memory usage check after processing work items: {process.memory_info().rss//1024**2}MB",
         )
