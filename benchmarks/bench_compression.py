@@ -14,7 +14,7 @@ from conduit_lib.compression import (
     zstd_read_fd,
     zstd_close_reader,
     zstd_create_reader,
-    zstd_get_uncompressed_eof_offset,
+    zstd_get_uncompressed_file_size,
 )
 from conduit_lib.utils import Timer
 
@@ -32,14 +32,14 @@ def test_compression_sequential() -> None:
         # data = bytearray(b"aabbccddee") * ((1000**2) * 500 // 10)
 
         # 500 repeats of 1MB uncompressible data -> 9.49% of original size
-        data = bytearray(os.urandom((1000**2)))*500
+        data = bytearray(os.urandom((1000**2))) * 500
 
         # uncompressible data -> 100% of original size
         # data = bytearray(os.urandom((1000**2) * 500))
         len_data = len(data)
         print(f"Size of input data: {len(data)} bytes")
 
-        with Timer(count=len_data//1024**2, name='bench-zstd-write', units=" MB"):
+        with Timer(count=len_data // 1024**2, name='bench-zstd-write', units=" MB"):
             zstd_append_chunks(chunker, append_handle, data)
             zstd_finish_appending_chunks(chunker, append_handle)
             uncompressed_bytes_written = len_data
@@ -60,7 +60,7 @@ def test_compression_sequential() -> None:
 
         read_handle = open(filepath, 'rb')
         read_handle.seek(0)
-        eof_offset = zstd_get_uncompressed_eof_offset(read_handle)
+        eof_offset = zstd_get_uncompressed_file_size(read_handle)
         read_handle.seek(0)
         with Timer(count=400, name='bench-zstd-random-reads', units=" random 100 byte reads"):
             try:

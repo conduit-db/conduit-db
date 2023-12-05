@@ -64,7 +64,7 @@ def zstd_read_fd(reader: ZstdDecompressionReader, offset: int, size: int) -> byt
     return reader.read(size)
 
 
-def zstd_get_uncompressed_eof_offset(file: BinaryIO) -> int:
+def zstd_get_uncompressed_file_size(file: BinaryIO) -> int:
     # WARNING: This doesn't seem to work when the zstd writer has not first closed the file
     # so this should only be done on a file that was freshly opened. So why not just
     # open the file here to enforce this behaviour? Because the caller will be caching

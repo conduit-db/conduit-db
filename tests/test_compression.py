@@ -7,7 +7,7 @@ from conduit_lib.compression import (
     zstd_append_chunks,
     zstd_finish_appending_chunks,
     zstd_create_reader,
-    zstd_get_uncompressed_eof_offset,
+    zstd_get_uncompressed_file_size,
 )
 
 
@@ -39,7 +39,7 @@ def test_compression() -> None:
         print(f"Size of compressed file: {os.stat(filepath).st_size} bytes")
         with open(filepath, 'rb') as read_handle:
             try:
-                eof_offset = zstd_get_uncompressed_eof_offset(read_handle)
+                eof_offset = zstd_get_uncompressed_file_size(read_handle)
                 assert eof_offset == end_offset
                 reader = zstd_create_reader(read_handle)
                 assert zstd_read_fd(reader, 0 + start_offset, 100) == expected_data_a

@@ -26,7 +26,7 @@ if typing.TYPE_CHECKING:
     from zstandard import ZstdCompressionChunker
 
 from conduit_lib.compression import (
-    zstd_get_uncompressed_eof_offset,
+    zstd_get_uncompressed_file_size,
     zstd_create_chunker,
     zstd_append_chunks,
     zstd_read_fd,
@@ -246,7 +246,7 @@ class FlatFileDb:
             self._maybe_get_new_mutable_file()
             if self.use_compression:
                 with open(self.mutable_file_path, 'rb') as file:
-                    uncompressed_start_offset = zstd_get_uncompressed_eof_offset(file)
+                    uncompressed_start_offset = zstd_get_uncompressed_file_size(file)
                     compressed_start_offset = file.tell()
 
                 with open(self.mutable_file_path, "ab") as file:
