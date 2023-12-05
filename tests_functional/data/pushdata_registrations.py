@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 PUSHDATAS = [
     ["04bca2ae277997940152716854a95347819c2e07d370d22c093b39708fb9d5eb", 6000],
     ["e351e4d2499786e8a3ac5468cbf1444b3416b41e424524b50e2dafc8f6f454db", 6000],

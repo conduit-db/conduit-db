@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """
 There is no reason to believe that database corruption should ever occur but I want to be prepared
 in case it does.

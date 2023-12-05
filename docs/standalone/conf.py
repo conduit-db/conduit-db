@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 # Configuration file for the Sphinx documentation builder.
 #
 # This file only contains a selection of the most common options. For a full

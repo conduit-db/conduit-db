@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """
 These are separated from `utils.py` because loading environment variables from the `.env` file
 must occur before importing any other files such as `constants.py` which in turn checks for the

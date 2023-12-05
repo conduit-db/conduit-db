@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """
 Used for generating the:
  - conduit_test._test_data.MERKLE_PROOFS_TARGET_AS_HASH

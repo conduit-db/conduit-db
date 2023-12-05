@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 import bitcoinx
 from aiohttp import web
 from bitcoinx import hash_to_hex_str, hex_str_to_hash, Header, Chain

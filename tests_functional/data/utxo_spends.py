@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 UTXO_REGISTRATIONS = [
     ["f90e0a8b2667bfc9bb19d2eac8cf48f78f00f8fa5ca168591e3c1b0346203004", 0],
     ["1008fd90bb1055af8af5272bb60b0e11fe34b777983156714d7dfd2695393513", 0],

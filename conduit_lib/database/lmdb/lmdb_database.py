@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 import asyncio
 from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
 import cbor2

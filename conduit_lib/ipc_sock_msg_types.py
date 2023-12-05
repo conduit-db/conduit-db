@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """This is kind of a replacement for protobufs where we can still get type safety but
 without introducing heavy new technologies to the tech stack. We should constrain ourselves
 to primitive types supported by cbor by default for simplicity sake (although I am sure we

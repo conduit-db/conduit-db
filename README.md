@@ -29,6 +29,23 @@ perhaps only scanning for a token sub-protocol or bitcom namespace of interest t
 An instance that indexes and stores everything is running at [conduit-db.com](http://conduit-db.com) and is free for 
 public use but may need to be rate-limited depending on demand.
 
+<table>
+  <tr>
+    <td><b>Licence</b></td>
+    <td>MIT</td>
+  </tr>
+  <tr>
+    <td><b>Language</b></td>
+    <td>Python 3.10</td>
+  </tr>
+  <tr>
+    <td><b>Author</b></td>
+    <td>Hayden Donnelly (AustEcon)</td>
+  </tr>
+</table>
+
+
+
 ## Getting Started
 ConduitDB deployment is docker-based only. ScyllaDB only loses
 [3% performance in docker when properly configured](https://www.scylladb.com/2018/08/09/cost-containerization-scylla/)

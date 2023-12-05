@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """
 These database access functions maintain the same API as the MySQL implementation which in turn is a
 direct translation of the SQLite ElectrumSV reference implementation:

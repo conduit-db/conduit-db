@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """
 This is a simple script - there is no utxo splitting algorithm. This is achieved by mining more
 blocks. I suggest you mine 3000 blocks (in batches of 1000) then run this script for as long

@@ -1,3 +1,9 @@
+# Copyright (c) 2020-2023, Hayden Donnelly
+#
+# All rights reserved.
+#
+# Licensed under the MIT License; see LICENCE for details.
+
 """https://en.bitcoin.it/wiki/Protocol_documentation#Message_structure"""
 import logging
 import math
