@@ -159,6 +159,7 @@ class Controller(ControllerBase):
         wait_for_db()
         headers_dir = get_headers_dir_conduit_index()
         self.storage: Storage = setup_storage(self.net_config, headers_dir)
+        self.db: DBInterface | None = self.storage.db
         self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
         self.headers_threadsafe_blocks = HeadersAPIThreadsafe(
             self.storage.block_headers, self.storage.block_headers_lock
@@ -185,7 +186,6 @@ class Controller(ControllerBase):
         self.mempool_tx_count: int = 0
 
         # Database Interfaces
-        self.db: DBInterface | None = None
         self.ipc_sock_client = IPCSocketClient()
         self.total_time_connecting_headers = 0.0
         self.estimated_moving_av_block_size_mb = (
@@ -193,8 +193,7 @@ class Controller(ControllerBase):
         )
 
     def setup(self) -> None:
-        self.db = DBInterface.load_db(worker_id="controller")
-
+        assert self.db is not None
         # Drop mempool table for now and re-fill - easiest brute force way to achieve consistency
         self.db.drop_mempool_table()
         self.db.create_permanent_tables()
@@ -556,7 +555,6 @@ class Controller(ControllerBase):
             header_rows.append(row)
         self.db.bulk_load_headers(header_rows)
 
-        self.logger.debug(f"self.prune_mode={self.prune_mode}")
         if self.prune_mode:
             self.logger.debug(f"Calling IPC delete_blocks_when_safe...")
             tip_hash = self.headers_threadsafe.tip().hash

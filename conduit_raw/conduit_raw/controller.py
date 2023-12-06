@@ -524,9 +524,6 @@ class Controller(ControllerBase):
 
             await self.enforce_lmdb_flush()  # Until this completes a crash leads to rollback
             await self.connect_done_block_headers(all_pending_block_hashes.copy())
-            # TODO FIXME - Synchronizing stops progressing
-            # await wait_for_conduit_index_to_catch_up(self.sync_state.get_local_block_tip_height())
-
         except Exception:
             self.logger.exception("Unexpected exception in 'wait_for_batched_blocks_completion' ")
 
@@ -596,11 +593,12 @@ class Controller(ControllerBase):
                 f" New tip height: {self.sync_state.get_local_block_tip_height()}"
             )
             self.new_tip_event.set()
-            if not self.storage.db:
-                self.storage.db = DBInterface.load_db("main-process")
-            await wait_for_conduit_index_to_catch_up(
-                self.storage.db, self.sync_state.get_local_block_tip_height()
-            )
+            if os.environ['PRUNE_MODE'] == "1":
+                if not self.storage.db:
+                    self.storage.db = DBInterface.load_db("main-process")
+                await wait_for_conduit_index_to_catch_up(
+                    self.storage.db, self.sync_state.get_local_block_tip_height()
+                )
 
             batch_id += 1
             if self.sync_state.get_local_block_tip_height() == original_stop_height:
