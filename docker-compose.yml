@@ -60,6 +60,8 @@ services:
       - mysql
       - scylladb
     env_file: .env.docker.development
+    stdin_open: true
+    tty: true
     environment:
       - MODE=DEVELOPMENT
       - IPC_SOCKET_SERVER_HOST=0.0.0.0:50000
@@ -79,6 +81,8 @@ services:
       - scylladb
       - conduit-raw
     env_file: .env.docker.development
+    stdin_open: true
+    tty: true
     environment:
       - MODE=DEVELOPMENT
       - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
@@ -97,6 +101,8 @@ services:
     ports:
       - "47124:47124"
       - "47126:47126"
+    stdin_open: true
+    tty: true
     environment:
       SKIP_DOTENV_FILE: 1  # Allows us to overrride all of the defaults in the .env file
       EXTERNAL_HOST: "0.0.0.0"

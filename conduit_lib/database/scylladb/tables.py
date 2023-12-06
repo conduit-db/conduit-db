@@ -88,57 +88,69 @@ class ScyllaDBTables:
     def create_permanent_tables(self) -> None:
         try:
             self.session.execute(
-                f"""
+                """
                 CREATE TABLE IF NOT EXISTS confirmed_transactions (
                     tx_hash blob,
                     tx_block_num int,
                     tx_position bigint,
                     PRIMARY KEY (tx_hash, tx_block_num)
-                );
+                ) WITH compression = {
+                    'sstable_compression': 'org.apache.cassandra.io.compress.ZstdCompressor', 
+                    'compression_level': 3, 
+                    'chunk_length_in_kb': '64'
+                };
                 """
             )
-
             self.session.execute(
-                f"""
+                """
                 CREATE TABLE IF NOT EXISTS inputs_table (
                     out_tx_hash blob,
                     out_idx bigint,
                     in_tx_hash blob,
                     in_idx bigint,
                     PRIMARY KEY (out_tx_hash, out_idx)
-                );
+                ) WITH compression = {
+                    'sstable_compression': 'org.apache.cassandra.io.compress.ZstdCompressor', 
+                    'compression_level': 3, 
+                    'chunk_length_in_kb': '64'
+                };
                 """
             )
 
             self.session.execute(
-                f"""
+                """
                 CREATE TABLE IF NOT EXISTS pushdata (
                     pushdata_hash blob,
                     tx_hash blob,
                     idx bigint,
                     ref_type tinyint,
                     PRIMARY KEY (pushdata_hash, tx_hash, idx, ref_type)
-                );
+                ) WITH compression = {
+                    'sstable_compression': 'org.apache.cassandra.io.compress.ZstdCompressor', 
+                    'compression_level': 3, 
+                    'chunk_length_in_kb': '64'
+                };
                 """
             )
 
             self.session.execute(
                 """
                 CREATE TABLE IF NOT EXISTS checkpoint_state (
-                    id int PRIMARY KEY,
+                    id int,
                     best_flushed_block_height int,
                     best_flushed_block_hash blob,
                     reorg_was_allocated boolean,
                     first_allocated_block_hash blob,
                     last_allocated_block_hash blob,
                     old_hashes_array blob,
-                    new_hashes_array blob
+                    new_hashes_array blob,
+                    PRIMARY KEY (id)
                 );
                 """
             )
 
             self.session.execute(
-                f"""
+                """
                 CREATE TABLE IF NOT EXISTS headers (
                     block_num int PRIMARY KEY,
                     block_hash blob,
@@ -147,7 +159,11 @@ class ScyllaDBTables:
                     block_tx_count bigint,
                     block_size bigint,
                     is_orphaned tinyint
-                );
+                ) WITH compression = {
+                    'sstable_compression': 'org.apache.cassandra.io.compress.ZstdCompressor', 
+                    'compression_level': 3, 
+                    'chunk_length_in_kb': '64'
+                };
                 """
             )
 
@@ -164,7 +180,7 @@ class ScyllaDBTables:
                 """
             )
         except Exception:
-            self.logger.debug(f"Exception creating tables")
+            self.logger.exception(f"Exception creating tables")
 
     def initialise_checkpoint_state(self) -> None:
         try:
