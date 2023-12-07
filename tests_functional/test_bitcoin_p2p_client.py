@@ -199,6 +199,8 @@ async def _drain_handshake_messages(client: BitcoinP2PClient, message_handler: M
 
 
 def setup_module(module) -> None:
+    os.makedirs(DATADIR_SSD, exist_ok=True)
+    os.makedirs(DATADIR_HDD, exist_ok=True)
     blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
     import_blocks(str(blockchain_dir))
     time.sleep(5)

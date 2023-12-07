@@ -20,7 +20,8 @@ class RedisCache:
         # it also minimizes unnecessary type conversion overheads
         # integer inputs are still auto-converted to a utf-8 string representation which needs
         # to be decoded and converted back into an integer.
-        self.r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=6379, decode_responses=False)
+        self.r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=6379,
+            decode_responses=False)
 
     def get(self, key: bytes) -> bytes | None:
         return self.r.get(key)

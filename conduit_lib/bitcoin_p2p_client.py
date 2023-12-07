@@ -6,9 +6,8 @@
 
 import array
 import asyncio
-import typing
 from concurrent.futures import ThreadPoolExecutor
-from bitcoinx import double_sha256
+from bitcoinx import double_sha256, hash_to_hex_str
 import math
 import os
 from asyncio import StreamReader, StreamWriter, Task
@@ -17,12 +16,7 @@ from typing import BinaryIO, cast, Any
 import logging
 import struct
 
-from .compression import zstd_create_chunker, zstd_append_chunks, zstd_finish_appending_chunks
-from .database.ffdb.flat_file_db import collect_compression_stats, \
-    create_compression_stats_file_if_not_exists
-
-if typing.TYPE_CHECKING:
-    from zstandard import ZstdCompressionChunker
+from pyzstd import SeekableZstdFile
 
 from . import NetworkConfig, Serializer
 from .algorithms import unpack_varint, preprocessor
@@ -35,6 +29,8 @@ from .bitcoin_p2p_types import (
 )
 from .commands import BLOCK_BIN, VERACK_BIN, EXTMSG_BIN
 from .constants import HEADER_LENGTH, EXTENDED_HEADER_LENGTH
+from .database.ffdb.compression import open_seekable_writer_zstd, update_compresson_stats, \
+    CompressionStats, write_compression_stats, CompressionBlockInfo
 from .handlers import MessageHandlerProtocol
 from .utils import create_task, bin_p2p_command_to_ascii
 
@@ -116,7 +112,6 @@ class BitcoinP2PClient:
         self.net_config = net_config
         self.serializer = Serializer(net_config)
         self.use_compression = use_compression
-        create_compression_stats_file_if_not_exists()
 
         # Any blocks that exceed the size of the network buffer are instead writted to file
         self.big_block_write_directory = Path(os.environ.get("DATADIR_HDD", MODULE_DIR)) / "big_blocks"
@@ -307,11 +302,15 @@ class BitcoinP2PClient:
         total_block_bytes_read = 0
         remainder = b""  # the bit left over due to a tx going off the end of the current chunk
         big_block_filepath = self.big_block_write_directory / os.urandom(16).hex()
-        file = open(big_block_filepath, "ab")
-        zstd_chunker: ZstdCompressionChunker | None = None
         uncompressed_bytes_written_total = 0  #
+        file: BinaryIO | None = None
+        file_zstd: SeekableZstdFile | None = None
+        compression_stats = CompressionStats()
         if self.use_compression:
-            zstd_chunker = zstd_create_chunker()
+            file_zstd = open_seekable_writer_zstd(big_block_filepath, mode='wb')
+        else:
+            file = open(big_block_filepath, "ab")
+
         worker_id = None
         try:
             assert self.reader is not None
@@ -354,29 +353,34 @@ class BitcoinP2PClient:
                 # ---------- TxOffsets logic end ---------- #
 
                 # Big blocks use a file for writing to incrementally
-                if file:
-                    if self.use_compression:
-                        assert zstd_chunker is not None
-                        await self.write_zstd_file_async(zstd_chunker, file, next_chunk)
-                        uncompressed_bytes_written_total += len(next_chunk)
-                        if chunk_num == num_chunks:
-                            await self.finish_zstd_file_async(zstd_chunker, file)
-                            collect_compression_stats(uncompressed_bytes_written_total,
-                                0, file.tell(), 0, block_hash, expected_tx_count_for_block
-                            )
-                    else:
-                        await self.write_file_async(file, next_chunk)
-                    block_chunk_data = BlockChunkData(
-                        chunk_num,
-                        num_chunks,
-                        block_hash,
-                        slice_for_worker,
-                        tx_offsets_for_chunk,
-                    )
-                    await self.message_handler.on_block_chunk(block_chunk_data, self.peer,
-                        worker_id)
+                if self.use_compression:
+                    assert file_zstd is not None
+                    uncompressed_size, compressed_size = \
+                        await self.write_file_async_zstd(file_zstd, next_chunk)
+                    update_compresson_stats(big_block_filepath, uncompressed_size,
+                        compressed_size, compression_stats)
+                else:
+                    assert file is not None
+                    await self.write_file_async(file, next_chunk)
+
+                block_chunk_data = BlockChunkData(
+                    chunk_num,
+                    num_chunks,
+                    block_hash,
+                    slice_for_worker,
+                    tx_offsets_for_chunk,
+                )
+                await self.message_handler.on_block_chunk(block_chunk_data, self.peer,
+                    worker_id)
 
                 if chunk_num == num_chunks:
+                    block_metadata = CompressionBlockInfo(
+                        block_id=hash_to_hex_str(block_hash),
+                        tx_count=expected_tx_count_for_block,
+                        size_mb=self.cur_header.payload_size
+                    )
+                    compression_stats.block_metadata=[block_metadata]
+                    write_compression_stats(compression_stats)
                     self.last_msg_end_pos = len(next_chunk)
                     self.pos = len(next_chunk)
                     break
@@ -385,14 +389,18 @@ class BitcoinP2PClient:
             assert len(block_hash) == 32
             assert total_block_bytes_read == self.cur_header.payload_size
             if self.use_compression:
-                assert uncompressed_bytes_written_total == self.cur_header.payload_size
+                assert file_zstd is not None
+                assert file_zstd.tell() == self.cur_header.payload_size
             else:
+                assert file is not None
                 assert file.tell() == self.cur_header.payload_size
         finally:
             if worker_id:
                 await self.message_handler.release_worker_id(worker_id)
             if file:
                 file.close()
+            if file_zstd:
+                file_zstd.close()
 
         assert chunk_num == num_chunks
         self.logger.debug(f"Finished streaming big block to disc")
@@ -415,15 +423,21 @@ class BitcoinP2PClient:
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:
         await asyncio.get_running_loop().run_in_executor(self.file_write_executor, file.write, data)
 
-    async def write_zstd_file_async(self, zstd_chunker: "ZstdCompressionChunker", file: BinaryIO,
-            data: bytes) -> None:
-        await asyncio.get_running_loop().run_in_executor(
-            self.file_write_executor, zstd_append_chunks, zstd_chunker, file, data)
+    def write_data_zstd(self, seekable_zstd: SeekableZstdFile, data: bytes) -> tuple[int, int]:
+        uncompressed_start_offset = 0  # SeekableZstdFile.tell() always 0 in append mode
+        compressed_start_offset = seekable_zstd._fp.tell()  # type: ignore[attr-defined]
 
-    async def finish_zstd_file_async(self, zstd_chunker: "ZstdCompressionChunker",
-            file: BinaryIO) -> None:
-        await asyncio.get_running_loop().run_in_executor(
-            self.file_write_executor, zstd_finish_appending_chunks, zstd_chunker, file)
+        seekable_zstd.write(data)
+
+        uncompressed_end_offset = len(data)
+        seekable_zstd.flush(SeekableZstdFile.FLUSH_FRAME)
+        uncompressed_size = uncompressed_end_offset - uncompressed_start_offset
+        compressed_size = seekable_zstd._fp.tell() - compressed_start_offset  # type: ignore[attr-defined]
+        return uncompressed_size, compressed_size
+
+    async def write_file_async_zstd(self, file: SeekableZstdFile, data: bytes) -> tuple[int, int]:
+        return await asyncio.get_running_loop().run_in_executor(
+            self.file_write_executor, self.write_data_zstd, file, data)
 
     def log_buffer_full_message(self) -> None:
         self.logger.debug(

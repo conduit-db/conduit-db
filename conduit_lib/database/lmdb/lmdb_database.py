@@ -21,7 +21,6 @@ from bitcoinx.packing import struct_be_I
 from .blocks import LmdbBlocks
 from .tx_offsets import LmdbTxOffsets
 from .merkle_tree import LmdbMerkleTree
-from ...compression import zstd_get_uncompressed_file_size
 
 if typing.TYPE_CHECKING:
     import array
@@ -178,11 +177,7 @@ class LMDB_Database:
             data_location = self.blocks.get_data_location(block_num)
             if os.environ['PRUNE_MODE'] == "0":
                 assert data_location is not None
-                if self.blocks.ffdb.use_compression:
-                    with open(data_location.file_path, 'rb') as file:
-                        uncompressed_size = zstd_get_uncompressed_file_size(file)
-                else:
-                    uncompressed_size = os.path.getsize(data_location.file_path)
+                uncompressed_size = self.blocks.ffdb.uncompressed_file_size(data_location.file_path)
                 assert (
                     data_location.end_offset <= uncompressed_size
                 ), f"There is data missing from the data file for {hash_to_hex_str(block_hash)}"
