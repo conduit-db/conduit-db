@@ -20,7 +20,7 @@ ZSTANDARD_LEVEL = 3
 class CompressionBlockInfo(TypedDict):
     block_id: str
     tx_count: int
-    size_mb: int
+    size: int
 
 
 class CompressionStats:
@@ -70,7 +70,7 @@ class CompressionStats:
             "compressed_size": self.compressed_size,
             "fraction_of_compressed_size": self.fraction_of_compressed_size,
             "max_window_size": self.max_window_size,
-            "zstandard_level": self.zstandard_level
+            "zstandard_level": self.zstandard_level,
         }
         return json.dumps(data)
 

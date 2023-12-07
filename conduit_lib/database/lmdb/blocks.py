@@ -17,8 +17,11 @@ from bitcoinx import double_sha256, hash_to_hex_str
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
-from conduit_lib.database.ffdb.compression import CompressionStats, write_compression_stats, \
-    CompressionBlockInfo
+from conduit_lib.database.ffdb.compression import (
+    CompressionStats,
+    write_compression_stats,
+    CompressionBlockInfo,
+)
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.types import BlockMetadata, Slice, DataLocation, BlockHeaderRow
 
@@ -115,8 +118,9 @@ class LmdbBlocks:
                 cursor_file_to_block_hash_db = txn.cursor(db=self.file_to_block_hash_db)
                 with self.ffdb:
                     compression_stats = CompressionStats()  # To be updated in-place
-                    data_locations: list[DataLocation] = self.ffdb.put_many(small_batched_blocks,
-                        compression_stats)
+                    data_locations: list[DataLocation] = self.ffdb.put_many(
+                        small_batched_blocks, compression_stats
+                    )
                     assert compression_stats.filename is not None
 
                 block_nums = range(
@@ -125,8 +129,9 @@ class LmdbBlocks:
                 )
                 raw_blocks_arr = bytearray()
                 compression_stats.block_metadata = []
-                for block_num, data_location, raw_block in zip(block_nums, data_locations,
-                        small_batched_blocks):
+                for block_num, data_location, raw_block in zip(
+                    block_nums, data_locations, small_batched_blocks
+                ):
                     stream = BytesIO(raw_block[0:89])
                     raw_header = stream.read(80)
                     blk_hash = double_sha256(raw_header)
@@ -150,13 +155,14 @@ class LmdbBlocks:
                     if val is not None:
                         block_hashes = bytearray(val)
                     block_hashes += blk_hash
-                    cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
-                        block_hashes, overwrite=True)
+                    cursor_file_to_block_hash_db.put(
+                        data_location.file_path.encode('utf-8'), block_hashes, overwrite=True
+                    )
 
                     compression_block_metadata = CompressionBlockInfo(
                         block_id=hash_to_hex_str(blk_hash),
                         tx_count=tx_count,
-                        size_mb=len(raw_block),
+                        size=len(raw_block),
                     )
                     compression_stats.block_metadata.append(compression_block_metadata)
 
@@ -196,8 +202,9 @@ class LmdbBlocks:
 
                     val = cursor_file_to_block_hash_db.get(data_location.file_path.encode('utf-8'))
                     assert val is None, "There should never be more than one 'big block' in a file"
-                    cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
-                        blk_hash, overwrite=True)
+                    cursor_file_to_block_hash_db.put(
+                        data_location.file_path.encode('utf-8'), blk_hash, overwrite=True
+                    )
         except Exception as e:
             self.logger.exception("Caught exception")
 
@@ -223,4 +230,3 @@ class LmdbBlocks:
                 # Note: This can return zero - which is a "falsey" type value. Take care
                 return cast(BlockHeaderRow, cbor2.loads(val))
             return None
-

@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import queue
-import subprocess
 import sys
 import threading
 import time
