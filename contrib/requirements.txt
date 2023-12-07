@@ -14,4 +14,4 @@ python-snappy
 scales
 redis
 psutil
-zstandard
+pyzstd

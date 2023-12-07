@@ -5,6 +5,8 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 import asyncio
+from datetime import datetime, timedelta
+
 import bitcoinx
 from bitcoinx import unpack_header, double_sha256
 from bitcoinx.networks import Header
@@ -16,7 +18,7 @@ import typing
 from typing import cast
 
 from conduit_lib.ipc_sock_client import IPCSocketClient
-from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT
+from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT, REGTEST
 from conduit_lib.store import Storage
 from .load_balance_algo import distribute_load
 from .types import WorkUnit, MainBatch, WorkPart
@@ -120,15 +122,17 @@ class SyncState:
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
         # which has the benefit of pre-filling the mempool to prepare for switching to the
         # compact block protocol by the time it reaches the chain tip.
-
-        # conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
-        # our_tip = datetime.utcfromtimestamp(tip.timestamp)
-        # conduit_best_minus_24_hrs = conduit_best - timedelta(hours=24)
-        # if our_tip > conduit_best_minus_24_hrs:
-        #     self.is_post_ibd = True
-        #     return True
-        if tip.hash == conduit_best_tip.hash:
-            return True
+        if self.controller.net_config.NET != REGTEST:
+            conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
+            our_tip = datetime.utcfromtimestamp(tip.timestamp)
+            one_day_ago = datetime.utcnow() - timedelta(hours=24)
+            if conduit_best > one_day_ago and our_tip > one_day_ago:
+                return True
+        else:
+            # Regtest timestamps are not reliable when submitting old testing blocks
+            # Just exit IBD mode as soon as ConduitIndex catches up to ConduitRaw
+            if tip.hash == conduit_best_tip.hash:
+                return True
         return False
 
     def set_target_header_height(self, height: int) -> None:

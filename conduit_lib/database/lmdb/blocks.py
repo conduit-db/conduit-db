@@ -13,10 +13,12 @@ from typing import cast
 
 import bitcoinx
 import cbor2
-from bitcoinx import double_sha256
+from bitcoinx import double_sha256, hash_to_hex_str
 from bitcoinx.packing import struct_le_Q, struct_be_I
 from lmdb import Cursor
 
+from conduit_lib.database.ffdb.compression import CompressionStats, write_compression_stats, \
+    CompressionBlockInfo
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.types import BlockMetadata, Slice, DataLocation, BlockHeaderRow
 
@@ -112,39 +114,53 @@ class LmdbBlocks:
                 cursor_block_metadata: Cursor = txn.cursor(db=self.block_metadata_db)
                 cursor_file_to_block_hash_db = txn.cursor(db=self.file_to_block_hash_db)
                 with self.ffdb:
-                    block_nums = range(
-                        next_block_num,
-                        (len(small_batched_blocks) + next_block_num),
+                    compression_stats = CompressionStats()  # To be updated in-place
+                    data_locations: list[DataLocation] = self.ffdb.put_many(small_batched_blocks,
+                        compression_stats)
+                    assert compression_stats.filename is not None
+
+                block_nums = range(
+                    next_block_num,
+                    (len(small_batched_blocks) + next_block_num),
+                )
+                raw_blocks_arr = bytearray()
+                compression_stats.block_metadata = []
+                for block_num, data_location, raw_block in zip(block_nums, data_locations,
+                        small_batched_blocks):
+                    stream = BytesIO(raw_block[0:89])
+                    raw_header = stream.read(80)
+                    blk_hash = double_sha256(raw_header)
+                    tx_count = bitcoinx.read_varint(stream.read)
+                    raw_blocks_arr += raw_block
+
+                    block_num_bytes = struct_be_I.pack(block_num)
+                    len_block_bytes = struct_le_Q.pack(len(raw_block))
+                    tx_count_bytes = struct_le_Q.pack(tx_count)
+                    cursor_blocks.put(
+                        block_num_bytes,
+                        cbor2.dumps(data_location),
+                        append=True,
+                        overwrite=False,
                     )
-                    raw_blocks_arr = bytearray()
-                    for block_num, raw_block in zip(block_nums, small_batched_blocks):
-                        stream = BytesIO(raw_block[0:89])
-                        raw_header = stream.read(80)
-                        blk_hash = double_sha256(raw_header)
-                        tx_count = bitcoinx.read_varint(stream.read)
-                        raw_blocks_arr += raw_block
+                    cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
+                    cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
 
-                        data_location: DataLocation = self.ffdb.put(raw_block, blk_hash, tx_count)
+                    val = cursor_file_to_block_hash_db.get(data_location.file_path.encode('utf-8'))
+                    block_hashes = bytearray()
+                    if val is not None:
+                        block_hashes = bytearray(val)
+                    block_hashes += blk_hash
+                    cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
+                        block_hashes, overwrite=True)
 
-                        block_num_bytes = struct_be_I.pack(block_num)
-                        len_block_bytes = struct_le_Q.pack(len(raw_block))
-                        tx_count_bytes = struct_le_Q.pack(tx_count)
-                        cursor_blocks.put(
-                            block_num_bytes,
-                            cbor2.dumps(data_location),
-                            append=True,
-                            overwrite=False,
-                        )
-                        cursor_block_nums.put(blk_hash, block_num_bytes, overwrite=False)
-                        cursor_block_metadata.put(blk_hash, len_block_bytes + tx_count_bytes)
+                    compression_block_metadata = CompressionBlockInfo(
+                        block_id=hash_to_hex_str(blk_hash),
+                        tx_count=tx_count,
+                        size_mb=len(raw_block),
+                    )
+                    compression_stats.block_metadata.append(compression_block_metadata)
 
-                        val = cursor_file_to_block_hash_db.get(data_location.file_path.encode('utf-8'))
-                        block_hashes = bytearray()
-                        if val is not None:
-                            block_hashes = bytearray(val)
-                        block_hashes += blk_hash
-                        cursor_file_to_block_hash_db.put(data_location.file_path.encode('utf-8'),
-                            block_hashes, overwrite=True)
+            write_compression_stats(compression_stats)
         except Exception as e:
             self.logger.exception("Caught exception")
 

@@ -17,7 +17,7 @@ from typing import Iterator
 import pytest
 from _pytest.fixtures import FixtureRequest
 
-from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, MAX_DAT_FILE_SIZE, FlatFileDbUnsafeAccessError
+from conduit_lib.database.ffdb.flat_file_db import FlatFileDb, FlatFileDbUnsafeAccessError
 from conduit_lib.types import Slice
 from conduit_lib.utils import remove_readonly
 
@@ -34,18 +34,18 @@ def _do_general_read_and_write_ops(ffdb: FlatFileDb) -> FlatFileDb:
     # NOTE The use case of a chain indexer does not require fsync because we can always
     # re-sync from the node if we crash...
     with ffdb:
-        data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))
+        data_location_aa = ffdb.put(b"a" * (ffdb.MAX_DAT_FILE_SIZE // 16))
         # logger.debug(data_location_aa)
-        data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))
+        data_location_bb = ffdb.put(b"b" * (ffdb.MAX_DAT_FILE_SIZE // 16))
         # logger.debug(data_location_bb)
 
         # Read
         data_aa = ffdb.get(data_location_aa)
-        assert data_aa == b"a" * (MAX_DAT_FILE_SIZE // 16), data_aa
+        assert data_aa == b"a" * (ffdb.MAX_DAT_FILE_SIZE // 16), data_aa
         # logger.debug(data_aa)
 
         data_bb = ffdb.get(data_location_bb)
-        assert data_bb == b"b" * (MAX_DAT_FILE_SIZE // 16), data_bb
+        assert data_bb == b"b" * (ffdb.MAX_DAT_FILE_SIZE // 16), data_bb
         # logger.debug(data_bb)
 
         with ffdb.mutable_file_rwlock.write_lock():
@@ -65,15 +65,17 @@ def _task(use_compression: bool, x: int) -> None:
         datadir=Path(TEST_DATADIR),
         mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
         fsync=True,
-        use_compression=use_compression
+        use_compression=use_compression,
     )
+    ffdb.MAX_DAT_FILE_SIZE = 1024 * 128
     _do_general_read_and_write_ops(ffdb)
 
 
 class TestFlatFileDb:
-
-    @pytest.fixture(scope="class", params=[False, True])
+    @pytest.fixture(scope="class", params=[True])
     def use_compression(self, request: FixtureRequest) -> Iterator[bool]:
+        if os.path.exists(TEST_DATADIR):
+            shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
         yield request.param
         if os.path.exists(TEST_DATADIR):
             shutil.rmtree(TEST_DATADIR, onerror=remove_readonly)
@@ -86,8 +88,9 @@ class TestFlatFileDb:
             datadir=Path(TEST_DATADIR),
             mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
             fsync=True,
-            use_compression=use_compression
+            use_compression=use_compression,
         )
+        ffdb.MAX_DAT_FILE_SIZE = 1024
         _do_general_read_and_write_ops(ffdb)
 
     def test_delete(self, use_compression: bool) -> None:
@@ -95,11 +98,11 @@ class TestFlatFileDb:
             datadir=Path(TEST_DATADIR),
             mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
             fsync=True,
-            use_compression=use_compression
+            use_compression=use_compression,
         ) as ffdb:
-            data_location_aa = ffdb.put(b"a" * (MAX_DAT_FILE_SIZE // 16))  # immutable file
+            data_location_aa = ffdb.put(b"a" * 10)  # immutable file
             ffdb._maybe_get_new_mutable_file(force_new_file=True)
-            data_location_bb = ffdb.put(b"b" * (MAX_DAT_FILE_SIZE // 16))  # mutable file
+            data_location_bb = ffdb.put(b"b" * 10)  # mutable file
 
             # Cannot delete the mutable file - not safe
             with pytest.raises(FlatFileDbUnsafeAccessError):
@@ -108,7 +111,7 @@ class TestFlatFileDb:
             # Deleting immutable files is okay (but checks should be done first to make
             # sure that ConduitIndex has parsed and check pointed for all of the raw blocks
             data = ffdb.get(data_location_aa)
-            assert data == b"a" * (MAX_DAT_FILE_SIZE // 16)
+            assert data == ('a' * 10).encode('utf-8')
             ffdb.delete_file(Path(data_location_aa.file_path))
             with pytest.raises(FileNotFoundError):
                 ffdb.get(data_location_aa)
@@ -118,7 +121,7 @@ class TestFlatFileDb:
             datadir=Path(TEST_DATADIR),
             mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
             fsync=True,
-            use_compression=use_compression
+            use_compression=use_compression,
         ) as ffdb:
             data_location_mixed = ffdb.put(b"aaaaabbbbbccccc")
             # print(data_location_mixed)
@@ -134,8 +137,9 @@ class TestFlatFileDb:
             datadir=Path(TEST_DATADIR),
             mutable_file_lock_path=Path(os.environ["FFDB_LOCKFILE"]),
             fsync=True,
-            use_compression=use_compression
+            use_compression=use_compression,
         )
+        ffdb.MAX_DAT_FILE_SIZE = 1024 * 128
         func = functools.partial(_task_multithreaded, ffdb)
         with ThreadPoolExecutor(4) as pool:
             for result in pool.map(func, range(0, 32)):

@@ -14,24 +14,18 @@ import logging
 import os
 import shutil
 import threading
-import typing
 from pathlib import Path
 from types import TracebackType
-from typing import Type
+from typing import BinaryIO, Type
 
-from bitcoinx import hash_to_hex_str
 from fasteners import InterProcessReaderWriterLock
+from pyzstd import SeekableZstdFile
 
-if typing.TYPE_CHECKING:
-    from zstandard import ZstdCompressionChunker
-
-from conduit_lib.compression import (
-    zstd_get_uncompressed_file_size,
-    zstd_create_chunker,
-    zstd_append_chunks,
-    zstd_read_fd,
-    zstd_create_reader,
-    zstd_finish_appending_chunks,
+from conduit_lib.database.ffdb.compression import (
+    uncompressed_file_size_zstd,
+    write_to_file_zstd,
+    CompressionStats,
+    open_seekable_writer_zstd,
 )
 from conduit_lib.types import Slice, DataLocation
 
@@ -48,50 +42,19 @@ class FlatFileDbWriteFailedError(Exception):
     pass
 
 
-MAX_DAT_FILE_SIZE = 128 * (1024**2)  # 128MB
+def write_to_file(filepath: Path, batch: list[bytes], fsync: bool = False) -> list[DataLocation]:
+    with open(filepath, "ab") as file:
+        data_locations = []
+        for data in batch:
+            start_offset = file.tell()
+            file.write(data)
+            end_offset = file.tell()
+            data_locations.append(DataLocation(str(filepath), start_offset, end_offset))
 
-
-def create_compression_stats_file_if_not_exists() -> None:
-    datadir = Path(os.getenv('DATADIR_SSD', str(MODULE_DIR)))
-    if not datadir.exists():
-        os.makedirs(datadir, exist_ok=True)
-    compression_stats_file_path = datadir / "compression_stats.csv"
-    if not compression_stats_file_path.exists():
-        compression_stats_file_handle = open(compression_stats_file_path, 'a')
-        headings = [
-            "without_compression_size",
-            "with_compression_size",
-            "fraction_of_uncompressed",
-            "block_hash",
-            "tx_count",
-        ]
-        compression_stats_file_handle.write(",".join(headings) + "\n")
-
-
-def collect_compression_stats(
-    uncompressed_end_offset: int,
-    uncompressed_start_offset: int,
-    compressed_end_offset: int,
-    compressed_start_offset: int,
-    block_hash: bytes,
-    tx_count: int,
-) -> None:
-    """Hopefully this will be on fast storage to save IOPS"""
-    without_compression = uncompressed_end_offset - uncompressed_start_offset
-    with_compression = compressed_end_offset - compressed_start_offset
-    fraction_of_uncompressed = with_compression / without_compression
-
-    datadir = Path(os.getenv('DATADIR_SSD', str(MODULE_DIR)))
-    compression_stats_file_path = datadir / "compression_stats.csv"
-    with open(compression_stats_file_path, 'a') as file:
-        row = [
-            str(without_compression),
-            str(with_compression),
-            str(fraction_of_uncompressed),
-            hash_to_hex_str(block_hash),
-            str(tx_count),
-        ]
-        file.write(",".join(row) + "\n")
+        if fsync:
+            file.flush()
+            os.fsync(file.fileno())
+    return data_locations
 
 
 class FlatFileDb:
@@ -103,11 +66,12 @@ class FlatFileDb:
     require any file locking or synchronization. The only time readers require synchronization is
     when they are reading an entry from the "mutable_file".
 
-    The API allows for reading arbitrarily small slices into each BLOB of data without thrashing
-    memory.
+    The API allows for reading arbitrarily small slices into each BLOB of data.
 
     There are many BLOB values per file to avoid writing many thousands of small 1MB files and
     thereby minimising IOPS on spinning HDDs.
+
+    Zstandard compression can optionally be applied to all files with the SeekableZstdFile
 
     The "mutable_file" will be written to until its size is >= MAX_DAT_FILE_SIZE.
     It will then open a new "mutable_file". The old mutable file can now be
@@ -132,7 +96,10 @@ class FlatFileDb:
         self.datadir = datadir
         self.mutable_file_lock_path = mutable_file_lock_path
         self.use_compression = use_compression
-        create_compression_stats_file_if_not_exists()
+        self.read_handles: dict[str, BinaryIO | SeekableZstdFile] = {}
+
+        self.MAX_DAT_FILE_SIZE = 128 * (1024 ** 2)  # 128MB
+        self.MAX_OPEN_READ_HANDLES = 100
 
         assert str(self.mutable_file_lock_path).endswith(
             ".lock"
@@ -147,7 +114,6 @@ class FlatFileDb:
 
         # Initialization
         with self.mutable_file_rwlock.write_lock():
-            # TODO if earlier files are pruned there needs to be a metadata file to record it
             # Create file data_00000000.dat if it's the first time opening the datadir
             self.mutable_file_path = self._file_num_to_mutable_file_path(file_num=0)
             if not self.mutable_file_path.exists():
@@ -210,8 +176,11 @@ class FlatFileDb:
 
         def _mutable_file_is_full() -> bool:
             assert self.mutable_file_path is not None
-            file_size = os.path.getsize(self.mutable_file_path)
-            is_full = file_size >= MAX_DAT_FILE_SIZE
+            if self.use_compression:
+                file_size = uncompressed_file_size_zstd(str(self.mutable_file_path))
+            else:
+                file_size = os.path.getsize(self.mutable_file_path)
+            is_full = file_size >= self.MAX_DAT_FILE_SIZE
             return is_full
 
         if _mutable_file_is_full() or force_new_file:
@@ -232,60 +201,45 @@ class FlatFileDb:
                         break
                 else:
                     logger.debug(f"Creating a new mutable file at: {self.mutable_file_path}")
-                    with open(self.mutable_file_path, "ab") as f:
-                        f.flush()
-                        os.fsync(f.fileno())
+                    if self.use_compression:
+                        open_seekable_writer_zstd(self.mutable_file_path, mode='wb').close()
+                    else:
+                        open(self.mutable_file_path, "wb").close()
                     self.mutable_file_path = self.mutable_file_path
                     break
 
         return self.mutable_file_path, self.mutable_file_num
 
-    def put(self, data: bytes, block_hash: bytes | None = None, tx_count: int | None = None) -> DataLocation:
+    def maybe_evict_cached_read_handles(self) -> None:
+        # Evict the 10 read handles for the lowest file number
+        if len(self.read_handles) > self.MAX_OPEN_READ_HANDLES:
+            read_handles_list = list(self.read_handles)
+            read_handles_list.sort(reverse=True)
+            for i in range(10):
+                key = read_handles_list.pop()
+                read_handle = self.read_handles.pop(key)
+                read_handle.close()
+
+    def put_many(
+        self, batch: list[bytes], compression_stats: CompressionStats | None = None
+    ) -> list[DataLocation]:
+        """Seekable Format files are desperately needed for improved random read access.
+        See: https://github.com/facebook/zstd/blob/dev/contrib/seekable_format/zstd_seekable_compression_format.md
+        """
         assert self.mutable_file_path is not None
         with self.mutable_file_rwlock.write_lock():
             self._maybe_get_new_mutable_file()
-            if self.use_compression:
-                with open(self.mutable_file_path, 'rb') as file:
-                    uncompressed_start_offset = zstd_get_uncompressed_file_size(file)
-                    compressed_start_offset = file.tell()
-
-                with open(self.mutable_file_path, "ab") as file:
-                    chunker: ZstdCompressionChunker | None = None
-                    try:
-                        chunker = zstd_create_chunker(chunk_size=32768)
-                        zstd_append_chunks(chunker, file, data)
-                        uncompressed_bytes_written = len(data)
-                        uncompressed_end_offset = uncompressed_start_offset + uncompressed_bytes_written
-                        return DataLocation(
-                            str(self.mutable_file_path), uncompressed_start_offset, uncompressed_end_offset
-                        )
-                    finally:
-                        if chunker:
-                            zstd_finish_appending_chunks(chunker, file)
-                            compressed_end_offset = file.tell()
-
-                            if block_hash and tx_count:
-                                collect_compression_stats(
-                                    uncompressed_end_offset,
-                                    uncompressed_start_offset,
-                                    compressed_end_offset,
-                                    compressed_start_offset,
-                                    block_hash,
-                                    tx_count,
-                                )
-                        if self.fsync:
-                            os.fsync(file.fileno())
-
+            if not self.use_compression:
+                data_locations = write_to_file(self.mutable_file_path, batch, self.fsync)
             else:
-                with open(self.mutable_file_path, "ab") as file:
-                    start_offset = file.tell()
-                    file.write(data)
-                    end_offset = file.tell()
-                    if self.fsync:
-                        file.flush()
-                        os.fsync(file.fileno())
+                data_locations = write_to_file_zstd(
+                    self.mutable_file_path, batch, self.fsync, compression_stats
+                )
+            return data_locations
 
-                return DataLocation(str(self.mutable_file_path), start_offset, end_offset)
+    def put(self, data: bytes) -> DataLocation:
+        """Use of this method is discouraged"""
+        return self.put_many([data])[0]
 
     def put_big_block(self, data_location: DataLocation) -> DataLocation:
         """This should return almost instantly because it's only renaming a file on the same disc"""
@@ -298,6 +252,22 @@ class FlatFileDb:
                 data_location.start_offset,
                 data_location.end_offset,
             )
+
+    def get_read_handle(self, read_path: str | Path) -> BinaryIO | SeekableZstdFile:
+        read_path = str(read_path)
+        if self.use_compression:
+            read_handle = self.read_handles.get(read_path)
+            if not read_handle:
+                self.maybe_evict_cached_read_handles()
+                read_handle = SeekableZstdFile(read_path, mode='rb')
+                self.read_handles[read_path] = read_handle
+        else:
+            read_handle = self.read_handles.get(read_path)
+            if not read_handle:
+                self.maybe_evict_cached_read_handles()
+                read_handle = open(read_path, 'rb')
+                self.read_handles[read_path] = read_handle
+        return read_handle
 
     def get(
         self,
@@ -318,42 +288,30 @@ class FlatFileDb:
         if is_accessing_mutable_file or not lock_free_access:
             self.mutable_file_rwlock.acquire_read_lock()
 
+        read_path, start_offset, end_offset = data_location
+        read_handle = self.get_read_handle(read_path)
         try:
-            read_path, start_offset, end_offset = data_location
-            if self.use_compression:
-                full_data_length = end_offset - start_offset
-                if not slice:
-                    read_handle = open(read_path, 'rb')
-                    reader = zstd_create_reader(read_handle, read_size=1024 * 4)
-                    return zstd_read_fd(reader, start_offset, full_data_length)
-                start_offset_within_entry = start_offset + slice.start_offset
-                if slice.end_offset == 0:
-                    end_offset_within_entry = end_offset
-                else:
-                    end_offset_within_entry = start_offset + slice.end_offset
-                len_data = end_offset_within_entry - start_offset_within_entry
-                read_handle = open(read_path, 'rb')
-                reader = zstd_create_reader(read_handle, read_size=1024 * 4)
-                return zstd_read_fd(reader, start_offset_within_entry, len_data)
+            read_handle.seek(start_offset)
+            full_data_length = end_offset - start_offset
+            if not slice:
+                return read_handle.read(full_data_length)
 
-            with open(read_path, "rb") as f:
-                f.seek(start_offset)
-                full_data_length = end_offset - start_offset
-                if not slice:
-                    return f.read(full_data_length)
-
-                start_offset_within_entry = start_offset + slice.start_offset
-                if slice.end_offset == 0:
-                    end_offset_within_entry = end_offset
-                else:
-                    end_offset_within_entry = start_offset + slice.end_offset
-                f.seek(start_offset_within_entry)
-                len_data = end_offset_within_entry - start_offset_within_entry
-                return f.read(len_data)
+            start_offset_within_entry = start_offset + slice.start_offset
+            if slice.end_offset == 0:
+                end_offset_within_entry = end_offset
+            else:
+                end_offset_within_entry = start_offset + slice.end_offset
+            read_handle.seek(start_offset_within_entry)
+            len_data = end_offset_within_entry - start_offset_within_entry
+            return read_handle.read(len_data)
         except OSError:
             logger.error(f"Error reading from file_path: {data_location.file_path}")
             raise FileNotFoundError(f"Error reading from file_path: {data_location.file_path}")
         finally:
+            if is_accessing_mutable_file:
+                read_handle.close()
+                del self.read_handles[read_path]
+
             if is_accessing_mutable_file or not lock_free_access:
                 self.mutable_file_rwlock.release_read_lock()
 
@@ -377,9 +335,24 @@ class FlatFileDb:
                 assert (
                     file_path.name in self.immutable_files
                 ), f"{file_path.name} not in {self.immutable_files}"
+                read_handle = self.read_handles.get(str(file_path))
+                if read_handle:
+                    read_handle.close()
+                    del self.read_handles[str(file_path)]
+                if self.use_compression:
+                    assert file_path.name.endswith(".zst")
+                else:
+                    assert file_path.name.endswith(".dat")
                 os.remove(file_path)
                 logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:
                 logger.error(f"File not found at path: {file_path}. Was it already deleted?")
             except OSError:
                 logger.exception(f"Exception while attempting to delete file: {file_path}")
+
+    def uncompressed_file_size(self, file_path: str) -> int:
+        if self.use_compression:
+            uncompressed_size = uncompressed_file_size_zstd(file_path)
+        else:
+            uncompressed_size = os.path.getsize(file_path)
+        return uncompressed_size
