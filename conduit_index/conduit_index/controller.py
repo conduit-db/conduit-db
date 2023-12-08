@@ -5,6 +5,8 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 import asyncio
+import sys
+
 import bitcoinx
 import cbor2
 from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
@@ -78,6 +80,27 @@ if typing.TYPE_CHECKING:
 
 def get_headers_dir_conduit_index() -> Path:
     return Path(os.getenv("DATADIR_SSD", str(MODULE_DIR.parent))) / "headers_conduit_index"
+
+
+def get_size(obj, seen=None):
+    """Recursively finds size of objects in bytes."""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+
+    if isinstance(obj, dict):
+        size += sum([get_size(v, seen) for v in obj.values()])
+        size += sum([get_size(k, seen) for k in obj.keys()])
+    elif hasattr(obj, '__dict__'):
+        size += get_size(obj.__dict__, seen)
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        size += sum([get_size(i, seen) for i in obj])
+
+    return size
 
 
 class ZMQSocketListeners:
@@ -180,8 +203,10 @@ class Controller(ControllerBase):
         self.ibd_signal_sent = False
 
         # Batch Completion
+        # TODO(memory-leak): check for memory leak
         self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
+        # TODO(memory-leak): check for memory leak
         self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
         self.mempool_tx_count: int = 0
 
@@ -261,11 +286,7 @@ class Controller(ControllerBase):
         )
         try:
             self.bitcoin_p2p_client = BitcoinP2PClient(
-                1,
-                peer.remote_host,
-                peer.remote_port,
-                self.handlers,
-                self.net_config
+                1, peer.remote_host, peer.remote_port, self.handlers, self.net_config
             )
             await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
@@ -813,8 +834,7 @@ class Controller(ControllerBase):
         main_batch = await self.sync_state.get_main_batch(start_header, stop_header)
         all_pending_block_hashes: set[bytes] = set()
 
-        all_work_units = self.sync_state.get_work_units_all(is_reorg,
-            all_pending_block_hashes, main_batch)
+        all_work_units = self.sync_state.get_work_units_all(is_reorg, all_pending_block_hashes, main_batch)
 
         self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
@@ -852,6 +872,8 @@ class Controller(ControllerBase):
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
             self.db.drop_temp_orphaned_txs()
+            self.logger.debug(f"len(global_tx_hashes_dict)={len(self.global_tx_hashes_dict)}")
+            self.logger.debug(f"get_size(global_tx_hashes_dict)={get_size(self.global_tx_hashes_dict)}")
 
         else:
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
