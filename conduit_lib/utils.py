@@ -5,6 +5,7 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 import asyncio
+import sys
 from types import TracebackType
 
 import MySQLdb
@@ -360,9 +361,30 @@ class Timer:
                 logger.debug(f"Timer: interval of {self.interval:.4f} seconds")
         if self.count and self.name:
             logger.debug(
-                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{float(self.count/self.interval):.1f}"
+                f"Timer{'['+ self.name+ ']'}: throughput rate: "
+                f"{float(self.count/self.interval):.1f}"
                 f"{self.units} per second"
             )
         elif self.count:
-            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval):.1f}"
-                         f"{self.units} per second")
+            logger.debug(
+                f"Timer: throughput rate: " f"{int(self.count/self.interval):.1f}" f"{self.units} per second"
+            )
+
+
+def get_memory_size_of_obj(obj, seen=None):
+    """Recursively finds size of objects in bytes."""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+    if isinstance(obj, dict):
+        size += sum([get_memory_size_of_obj(v, seen) for v in obj.values()])
+        size += sum([get_memory_size_of_obj(k, seen) for k in obj.keys()])
+    elif hasattr(obj, '__dict__'):
+        size += get_memory_size_of_obj(obj.__dict__, seen)
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        size += sum([get_memory_size_of_obj(i, seen) for i in obj])
+    return size

@@ -53,7 +53,7 @@ from conduit_lib.types import (
     BlockSliceRequestType,
     Slice,
 )
-from conduit_lib.utils import create_task, headers_to_p2p_struct
+from conduit_lib.utils import create_task, headers_to_p2p_struct, get_memory_size_of_obj
 from conduit_lib.wait_for_dependencies import (
     wait_for_db,
     wait_for_ipc_socket_server,
@@ -876,7 +876,6 @@ class Controller(ControllerBase):
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
             self.db.drop_temp_orphaned_txs()
-
         else:
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
         self.sync_state.reset_pending_blocks()
@@ -927,6 +926,10 @@ class Controller(ControllerBase):
             )
             self.logger.info(
                 f"Controller Batch {batch_id} Complete. " f"New tip height: {best_flushed_tip_height}"
+            )
+            self.logger.debug(f"Items in global_tx_hashes_dict: {len(self.global_tx_hashes_dict)}")
+            self.logger.debug(
+                f"Memory size of global_tx_hashes_dict: {get_memory_size_of_obj(self.global_tx_hashes_dict)}"
             )
             batch_id += 1
 
