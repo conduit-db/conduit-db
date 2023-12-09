@@ -29,8 +29,13 @@ from .bitcoin_p2p_types import (
 )
 from .commands import BLOCK_BIN, VERACK_BIN, EXTMSG_BIN
 from .constants import HEADER_LENGTH, EXTENDED_HEADER_LENGTH
-from .database.ffdb.compression import open_seekable_writer_zstd, update_compresson_stats, \
-    CompressionStats, write_compression_stats, CompressionBlockInfo
+from .database.ffdb.compression import (
+    open_seekable_writer_zstd,
+    update_compresson_stats,
+    CompressionStats,
+    write_compression_stats,
+    CompressionBlockInfo,
+)
 from .handlers import MessageHandlerProtocol
 from .utils import create_task, bin_p2p_command_to_ascii
 
@@ -101,7 +106,7 @@ class BitcoinP2PClient:
         net_config: NetworkConfig,
         reader: StreamReader | None = None,
         writer: StreamWriter | None = None,
-        use_compression: bool = True
+        use_compression: bool = True,
     ) -> None:
         self.id = id
         self.logger = logging.getLogger(f"bitcoin-p2p-socket(id={self.id})")
@@ -355,10 +360,12 @@ class BitcoinP2PClient:
                 # Big blocks use a file for writing to incrementally
                 if self.use_compression:
                     assert file_zstd is not None
-                    uncompressed_size, compressed_size = \
-                        await self.write_file_async_zstd(file_zstd, next_chunk)
-                    update_compresson_stats(big_block_filepath, uncompressed_size,
-                        compressed_size, compression_stats)
+                    uncompressed_size, compressed_size = await self.write_file_async_zstd(
+                        file_zstd, next_chunk
+                    )
+                    update_compresson_stats(
+                        big_block_filepath, uncompressed_size, compressed_size, compression_stats
+                    )
                 else:
                     assert file is not None
                     await self.write_file_async(file, next_chunk)
@@ -370,16 +377,15 @@ class BitcoinP2PClient:
                     slice_for_worker,
                     tx_offsets_for_chunk,
                 )
-                await self.message_handler.on_block_chunk(block_chunk_data, self.peer,
-                    worker_id)
+                await self.message_handler.on_block_chunk(block_chunk_data, self.peer, worker_id)
 
                 if chunk_num == num_chunks:
                     block_metadata = CompressionBlockInfo(
                         block_id=hash_to_hex_str(block_hash),
                         tx_count=expected_tx_count_for_block,
-                        size_mb=self.cur_header.payload_size
+                        size_mb=self.cur_header.payload_size,
                     )
-                    compression_stats.block_metadata=[block_metadata]
+                    compression_stats.block_metadata = [block_metadata]
                     write_compression_stats(compression_stats)
                     self.last_msg_end_pos = len(next_chunk)
                     self.pos = len(next_chunk)
@@ -418,6 +424,8 @@ class BitcoinP2PClient:
             small_block_data=None,
             big_block_filepath=big_block_filepath,
         )
+        # If the server is killed before this line then no Ack is sent to the controller
+        # and the tip is not updated.
         await self.message_handler.on_block(block_data_msg, self.peer)
 
     async def write_file_async(self, file: BinaryIO, data: bytes) -> None:
@@ -437,7 +445,8 @@ class BitcoinP2PClient:
 
     async def write_file_async_zstd(self, file: SeekableZstdFile, data: bytes) -> tuple[int, int]:
         return await asyncio.get_running_loop().run_in_executor(
-            self.file_write_executor, self.write_data_zstd, file, data)
+            self.file_write_executor, self.write_data_zstd, file, data
+        )
 
     def log_buffer_full_message(self) -> None:
         self.logger.debug(
@@ -540,6 +549,8 @@ class BitcoinP2PClient:
                     await self.handle_block(block_type=BlockType.BIG_BLOCK)
 
     async def keepalive_ping_loop(self) -> None:
+        await self.handshake_complete_event.wait()
+        await asyncio.sleep(10)
         while True:
             ping_msg = self.serializer.ping()
             await self.send_message(ping_msg)

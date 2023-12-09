@@ -10,7 +10,8 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 
 from conduit_lib import IPCSocketClient
-from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT, CONDUIT_RAW_SERVICE_NAME
+from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX, CONDUIT_RAW_SERVICE_NAME, \
+    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 
@@ -46,9 +47,9 @@ class ControllerBase:
         # When the blocks are larger (and especially when they have a high density tx count per
         # GB of data) we want the MAX_BLOCK_COUNT to be relatively smaller to "lock-in" hard-won
         # progress more frequently.
-        max_block_count = MAX_BLOCK_PER_BATCH_COUNT
+        max_block_count = MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX
         if service_type == CONDUIT_RAW_SERVICE_NAME:
-            max_block_count = min(MAX_BLOCK_PER_BATCH_COUNT, 500)
+            max_block_count = MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW
         if tip_height > 200000:
             max_block_count = 250
         if tip_height > 710000:
@@ -59,10 +60,10 @@ class ControllerBase:
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count
 
-    async def update_moving_average(self, current_tip_height: int) -> None:
+    async def update_moving_average(self, to_height: int) -> None:
         # sample every 72nd block for its size over the last 2 weeks (two samples per day)
         block_hashes = []
-        for height in range(current_tip_height - 2016, current_tip_height, 72):
+        for height in range(to_height - 2016, to_height, 72):
             header = self.headers_threadsafe.get_header_for_height(height)
             block_hashes.append(header.hash)
 

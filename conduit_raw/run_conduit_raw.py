@@ -12,6 +12,7 @@ import logging.handlers
 import logging
 import os
 import sys
+import time
 from asyncio import AbstractEventLoop
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,7 @@ async def main() -> None:
     # Logging configuration is via environment variables
     set_logging_level(get_log_level(CONDUIT_RAW_SERVICE_NAME))
     tcp_log_handler = setup_tcp_logging(port=54545)
+    time.sleep(2)  # Give a brief moment for the logging server to initialize
 
     try:
         logger = logging.getLogger("main-task")

@@ -12,10 +12,10 @@ from pathlib import Path
 import subprocess
 import threading
 
-from import_blocks import import_blocks
+# from import_blocks import import_blocks
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-INITIAL_TEST_BLOCKCHAIN = Path(MODULE_DIR / "blockchains" / "blockchain_116_7c9cd2")
+# INITIAL_TEST_BLOCKCHAIN = Path(MODULE_DIR / "blockchains" / "blockchain_116_7c9cd2")
 
 extra_config_options = [
     "-debug=1",
@@ -30,8 +30,8 @@ extra_config_options = [
 
 def load_initial_blockchain_thread():
     # Polls node until ready to receive initial test blockchain
-    if electrumsv_node.is_node_running():
-        import_blocks(blockchain_dir=str(INITIAL_TEST_BLOCKCHAIN))
+    # if electrumsv_node.is_node_running():
+    #     import_blocks(blockchain_dir=str(INITIAL_TEST_BLOCKCHAIN))
 
     while electrumsv_node.call_any("getinfo").json()["result"]["blocks"] < 115:
         time.sleep(0.2)

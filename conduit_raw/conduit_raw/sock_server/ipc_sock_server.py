@@ -220,7 +220,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
                     self.server.lmdb.get_block_metadata(block_hash),
                 )
                 block_metadata_batch.append(block_metadata)
-                assert block_metadata is not None, "block_metadata is None"
+                assert block_metadata is not None, f"block_metadata for {hash_to_hex_str(block_hash)} None"
             msg_resp = ipc_sock_msg_types.BlockMetadataBatchedResponse(
                 block_metadata_batch=block_metadata_batch
             )
@@ -311,7 +311,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         handler: Type[ThreadedTCPRequestHandler],
         headers_threadsafe_blocks: HeadersAPIThreadsafe,
         lmdb: LMDB_Database,
-        new_tip_event: threading.Event
+        new_tip_event: threading.Event,
     ) -> None:
         self.new_tip_event = new_tip_event
         self.allow_reuse_address = True
@@ -364,7 +364,7 @@ if __name__ == "__main__":
         ThreadedTCPRequestHandler,
         headers_threadsafe_blocks,
         lmdb=lmdb,
-        new_tip_event=threading.Event()
+        new_tip_event=threading.Event(),
     )
     with server:
         ip, port = server.server_address

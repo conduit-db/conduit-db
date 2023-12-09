@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import queue
-import subprocess
 import sys
 import threading
 import time
@@ -48,13 +47,15 @@ from tests_functional.reference_server_support import (
     GenericPeerChannelMessage,
     NotificationJsonData,
 )
-from tests_functional.utils import GET_TRANSACTION_URL
+from tests_functional.utils import GET_TRANSACTION_URL, GET_HEADERS_TIP_URL
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+REGTEST_TEST_BLOCKCHAIN = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
+REGTEST_TEST_BLOCKCHAIN_REORG = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_118_0ebc17"
 
 BASE_URL = f"http://127.0.0.1:34525"
 PING_URL = BASE_URL + "/"
 ERROR_URL = BASE_URL + "/error"
-
-MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 logger = logging.getLogger("test-internal-aiohttp-api")
 
@@ -249,9 +250,10 @@ class TestAiohttpRESTAPI:
         self.registrations_complete_event.wait()
         logger.info(f"Registrations done!")
 
-        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_116_7c9cd2"
+        blockchain_dir = REGTEST_TEST_BLOCKCHAIN
         import_blocks(str(blockchain_dir))
         time.sleep(15)
+
 
     def setup_method(self) -> None:
         pass
@@ -272,6 +274,13 @@ class TestAiohttpRESTAPI:
         assert result.status_code == 400, result.reason
         assert result.reason is not None
         assert isinstance(result.reason, str)
+
+    def test_headers_tip(self) -> None:
+        headers = {"Accept": "application/json"}
+        result = requests.get(GET_HEADERS_TIP_URL, headers=headers)
+        assert result.status_code == 200
+        assert len(result.json()) == 1
+        assert result.json()[0]['height'] == 116
 
     @pytest.mark.timeout(20)
     def test_utxo_notifications(self) -> None:
@@ -359,10 +368,34 @@ class TestAiohttpRESTAPI:
         utils._p2ms2_json(post_reorg=False)
 
     def test_submit_reorg_blocks(self) -> None:
-        blockchain_dir = MODULE_DIR.parent / "contrib" / "blockchains" / "blockchain_118_0ebc17"
+        blockchain_dir = REGTEST_TEST_BLOCKCHAIN_REORG
         import_blocks(str(blockchain_dir))
         time.sleep(10)
         assert True
+
+    def test_headers_tip_post_reorg(self) -> None:
+        headers = {"Accept": "application/json"}
+        result = requests.get(GET_HEADERS_TIP_URL, headers=headers)
+        assert result.status_code == 200
+        assert len(result.json()) == 2
+        tip_116_found = False
+        tip_118_found = False
+        while True:
+            self.logger.debug(f"result.json(): {result.json()}")
+            for tip in result.json():
+                if tip['height'] == 116:
+                    assert tip['header']['hash'] == '7c9cd212920833de9623107c72331c69acacd1964fdd2310f0f608f1e3bee4f4'
+                    assert tip['state'] == 'STALE'
+                    tip_116_found = True
+                if tip['height'] == 118:
+                    assert tip['header']['hash'] == '0ebc17feeca04b3f37d4f50b0966ffafe012a0d928b47cf9c2f16431815d6351'
+                    assert tip['state'] == 'LONGEST_CHAIN'
+                    tip_118_found = True
+            if not (tip_116_found and tip_118_found):
+                time.sleep(2)
+                continue
+            else:
+                break
 
     @pytest.mark.timeout(10)
     def test_utxo_notifications_post_reorg(self) -> None:

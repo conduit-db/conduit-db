@@ -19,7 +19,7 @@ from types import TracebackType
 from typing import BinaryIO, Type
 
 from fasteners import InterProcessReaderWriterLock
-from pyzstd import SeekableZstdFile
+from pyzstd import SeekableZstdFile, seekable_zstdfile
 
 from conduit_lib.database.ffdb.compression import (
     uncompressed_file_size_zstd,
@@ -98,7 +98,7 @@ class FlatFileDb:
         self.use_compression = use_compression
         self.read_handles: dict[str, BinaryIO | SeekableZstdFile] = {}
 
-        self.MAX_DAT_FILE_SIZE = 128 * (1024 ** 2)  # 128MB
+        self.MAX_DAT_FILE_SIZE = 128 * (1024**2)  # 128MB
         self.MAX_OPEN_READ_HANDLES = 100
 
         assert str(self.mutable_file_lock_path).endswith(
@@ -137,6 +137,15 @@ class FlatFileDb:
                 assert str(self.mutable_file_path).endswith(
                     ".zst"
                 ), "Once compressed mode is on, you cannot switch"
+                # TODO(generic-lib): Need to do a database integrity check that truncates
+                #  whatever is in the last bad frame which would potentially leave some
+                #  partially written data in the end of the second-to-last
+                #  frame that nothing would have a reference to anymore. It would just sit there
+                #  not harming anything so long as the API of FlatFileDB is used correctly
+                #  and they don't reach in behind the interface and directly read the whole
+                #  file themselves manually.
+                #  Until there is a generic implementation, I have a Bitcoin-specific database
+                #  integrity check that re-parses the raw blocks to be 100% sure.
             else:
                 assert str(self.mutable_file_path).endswith(
                     ".dat"
@@ -154,6 +163,15 @@ class FlatFileDb:
         exc_tb: TracebackType | None,
     ) -> None:
         self.threading_lock.release()
+
+    def _cleanup_partial_writes_on_last_close(self, file_path: Path) -> None:
+        """This can happen if there is a partially written .zst archive that did not have the
+        last frame closed and flushed"""
+        try:
+            file_zstd = open_seekable_writer_zstd(file_path)
+            file_zstd.close()
+        except seekable_zstdfile.SeekableFormatError:
+            file_path.unlink()
 
     def _file_num_to_mutable_file_path(self, file_num: int) -> Path:
         padded_str_num = str(file_num).zfill(8)
@@ -316,21 +334,19 @@ class FlatFileDb:
                 self.mutable_file_rwlock.release_read_lock()
 
     def delete_file(self, file_path: Path) -> None:
-        """It is critically important that no reads are being attempted when deleting a file.
-        It is not safe.
+        """Exercise extreme caution with this method. A single file can contain multiple records
+        at different slice offsets. This will delete the whole data file.
 
-        NOTE This does not raise in case of OSError and so there's a theoretical risk of
-        leaking disc space if this goes unnoticed. But I'd rather leak some disc space and log the
-        error to allow the server to remain operational.
+        It is important that no lock_free_access=True type reads are being
+        attempted when deleting a file. lock_free_access=True requires taking on this
+        responsibility in return for better performance.
         """
         with self.mutable_file_rwlock.write_lock():
             try:
                 logger.debug(f"Deleting file: {file_path}")
                 logger.debug(f"Current mutable file: {self.mutable_file_path}")
                 if self.mutable_file_path == file_path:
-                    raise FlatFileDbUnsafeAccessError(
-                        "Deleting the mutable file is not allowed because it can cause " "consistency issues."
-                    )
+                    raise FlatFileDbUnsafeAccessError("Deleting the mutable file is not allowed. Ever.")
                     # self._maybe_get_new_mutable_file(force_new_file=True)
                 assert (
                     file_path.name in self.immutable_files
@@ -347,8 +363,6 @@ class FlatFileDb:
                 logger.info(f"File deleted at path: {file_path}")
             except FileNotFoundError:
                 logger.error(f"File not found at path: {file_path}. Was it already deleted?")
-            except OSError:
-                logger.exception(f"Exception while attempting to delete file: {file_path}")
 
     def uncompressed_file_size(self, file_path: str) -> int:
         if self.use_compression:

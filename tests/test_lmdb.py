@@ -55,7 +55,7 @@ def ipc_sock_server_thread(lmdb: LMDB_Database) -> None:
 
 class TestLMDBDatabase:
     def setup_class(self) -> None:
-        self.lmdb = LMDB_Database(lock=True)  # uses DATADIR_SSD environment variable above
+        self.lmdb = LMDB_Database(lock=True, integrity_check_raw_blocks=True)  # uses DATADIR_SSD environment variable above
         self.ipc_sock_server_thread = threading.Thread(target=ipc_sock_server_thread, args=[self.lmdb])
         self.ipc_sock_server_thread.start()
         os.environ["IPC_SOCKET_SERVER_HOST"] = "localhost"

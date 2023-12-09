@@ -15,7 +15,6 @@ import lmdb
 from bitcoinx import hash_to_hex_str
 
 from conduit_lib.algorithms import get_mtree_node_counts_per_level, calc_depth
-from conduit_lib.constants import PROFILING
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.database.lmdb.types import MerkleTree, MerkleTreeRow
 from conduit_lib.types import (
@@ -46,12 +45,12 @@ def _pack_list_to_concatenated_bytes(hashes: list[bytes]) -> bytearray:
 
 
 class LmdbMerkleTree:
-    logger = logging.getLogger("lmdb-merkle-tree")
-    logger.setLevel(PROFILING)
     MTREE_DB = b"mtree_db"
 
-    def __init__(self, db: "LMDB_Database"):
+    def __init__(self, db: "LMDB_Database", worker_id: str = ""):
         self.db = db
+        logger_name = "lmdb-merkle-tree" if not worker_id else f"lmdb-merkle-tree-{worker_id}"
+        self.logger = logging.getLogger(logger_name)
 
         merkle_trees_dir = Path(os.environ["DATADIR_HDD"]) / "merkle_trees"
         merkle_trees_lockfile = Path(os.environ["DATADIR_SSD"]) / "merkle_trees.lock"

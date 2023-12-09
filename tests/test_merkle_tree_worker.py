@@ -105,7 +105,7 @@ def mock_get_block_metadata() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def lmdb() -> LMDB_Database:
-    lmdb = LMDB_Database(lock=True)
+    lmdb = LMDB_Database(lock=True, integrity_check_raw_blocks=True)
     yield lmdb
     lmdb.close()
 

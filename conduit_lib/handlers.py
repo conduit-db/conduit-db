@@ -179,8 +179,6 @@ class Handlers(MessageHandlerProtocol):
         await peer.send_message(verack_message)
 
     async def on_verack(self, message: bytes, peer: BitcoinPeerInstance) -> None:
-        ping_message = self.serializer.ping()
-        await peer.send_message(ping_message)
         self.controller.tasks.append(create_task(self.blocks_flush_task_async()))
 
     async def on_protoconf(self, message: bytes, peer: BitcoinPeerInstance) -> None:
@@ -387,6 +385,7 @@ class Handlers(MessageHandlerProtocol):
             await self._lmdb_put_tx_offsets_in_thread(
                 [(block_data_msg.block_hash, block_data_msg.tx_offsets)]
             )
+            logger.debug(f"Acking for 1 loaded big block")
             self.ack_for_block(block_data_msg.block_hash)
         else:
             # These are batched up to prevent HDD stutter

@@ -12,8 +12,8 @@ services:
     ports:
       - "18332:18332"
       - "18444:18444"
-    volumes:
-    - bitcoin_data:/root/.electrumsv-node
+#    volumes:
+#    - bitcoin_data:/root/.electrumsv-node
 
   mysql:
     image: austecon0922/mariadb-myrocks:latest
@@ -37,11 +37,16 @@ services:
     cpus: 2
     cpuset: 0-1
     mem_limit: 2G
+    volumes:
+      - ${SCYLLA_CONF_DIR}/scylla.yml:/etc/scylla/scylla.yml
 
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
+    env_file: .env.docker.development
+    volumes:
+      - ${REDIS_CONF_DIR}/redis.conf:/usr/local/etc/redis/redis.conf
 
   conduit-raw:
     build:
@@ -69,6 +74,11 @@ services:
       - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
       - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
+    volumes:
+      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
+      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
+      - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 
   conduit-index:
@@ -88,6 +98,8 @@ services:
       - IPC_SOCKET_SERVER_HOST=conduit-raw:50000
       - ZMQ_CONNECT_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
+    volumes:
+      - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_index/run_conduit_index.py'
 
   reference_server:
@@ -119,6 +131,7 @@ services:
       CHUNKED_BUFFER_SIZE: 1024
       NETWORK: regtest
       ENABLE_OUTBOUND_DATA_DELIVERY: 1
+    working_dir: /reference_server
     command:
       sh -c 'python3 /reference_server/server.py'
 
@@ -188,5 +201,5 @@ services:
 #    command:
 #      sh -c 'dotnet /app/publish/MerchantAPI.APIGateway.Rest.dll'
 
-volumes:
-  bitcoin_data:
+#volumes:
+#  bitcoin_data:

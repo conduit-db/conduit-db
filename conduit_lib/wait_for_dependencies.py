@@ -19,7 +19,7 @@ from conduit_lib.deserializer import Deserializer
 from conduit_lib.serializer import Serializer
 
 
-async def wait_for_node(
+def wait_for_node(
     node_host: str,
     node_port: int,
     deserializer: Deserializer,
@@ -60,7 +60,7 @@ async def wait_for_node(
                     client.close()
             else:
                 logger.debug(f"Bitcoin node on: {node_host} currently unavailable - waiting...")
-                await asyncio.sleep(5)
+                time.sleep(5)
 
 
 def wait_for_db() -> None:

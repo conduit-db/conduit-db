@@ -24,7 +24,6 @@ stack_tracing*
 **/bin/**
 ../profile.svg
 profile.svg
-data/**
 *.*proj.user
 *.vs
 **/.classpath
@@ -44,5 +43,6 @@ conduit_index_data_hdd/
 conduit_raw_data_ssd/
 conduit_raw_data_hdd/
 scylla/
+mysql/
 reference_server/
 .env.docker.production

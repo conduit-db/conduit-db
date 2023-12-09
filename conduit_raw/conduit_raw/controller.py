@@ -32,7 +32,7 @@ from conduit_lib import (
     DBInterface,
 )
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient, PeerManager
-from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH
+from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
@@ -288,45 +288,69 @@ class Controller(ControllerBase):
         )
         self.ipc_sock_server.serve_forever()
 
-    def database_integrity_check(self) -> None:
+    async def database_integrity_check(self) -> None:
         """Check the last flushed block"""
         assert self.lmdb is not None
         tip_height = self.sync_state.get_local_block_tip_height()
         height = tip_height
-        while True:
-            header = self.headers_threadsafe.get_header_for_height(height)
-            try:
-                self.logger.info(f"Checking database integrity...")
-                self.lmdb.check_block(header.hash)
-                self.logger.info(f"Database integrity check passed.")
-
-                # Some blocks failed integrity checks
-                # Re-synchronizing them will overwrite the old records
-                # There is no strict guarantee that the block num for these
-                # blocks will not change which could invalidate ConduitIndex
-                # records.
-                if height < tip_height:
-                    self.logger.debug(f"Re-synchronising blocks from from: " f"{height} to {tip_height}")
-                    start_header = self.headers_threadsafe.get_header_for_height(height)
-                    stop_header = self.headers_threadsafe.get_header_for_height(tip_height)
-                    self.new_headers_queue.put_nowait(
-                        HeaderSpan(
-                            is_reorg=False,
-                            start_header=start_header,
-                            stop_header=stop_header,
-                        )
-                    )
-                return None
-            except AssertionError:
-                self.logger.debug(
-                    f"Block {hash_to_hex_str(header.hash)} failed integrity check. " f"Repairing..."
-                )
-                self.lmdb.try_purge_block_data(header.hash)
+        header = self.headers_threadsafe.get_header_for_height(height)
+        # Both ConduitRaw and ConduitIndex need to be run with this set to '1'
+        # to do the recovery procedure
+        if os.getenv('FORCE_REINDEX_RECENT_BLOCKS', '0') == '1':
+            self.logger.debug(f"Received a forced reindex trigger. Current tip height: {tip_height}")
+            # Explanation
+            # -----------
+            # Because blocks are received from the p2p network concurrently (and out of order)
+            # it's not safe to backtrack 1 block at a time. We need to go all the way back
+            # to a safe point before the corruption happened.
+            #
+            # The reason this needs to be manually triggered is because ConduitIndex has a
+            # mapping of each transaction hash -> (block_num, tx_pos). This mapping will be
+            # broken when ConduitRaw assigns new unique block_nums to each raw block.
+            # It all needs to be re-indexed on both services to get the correct block_num mappings.
+            #
+            # The largest possible batch size is 500 blocks at a time before being committed
+            # and check-pointed. If the corruption goes back deeper than this then it's probably
+            # too severe to be worth even trying to recover from.
+            for i in range(MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW):
+                self.lmdb.try_purge_block_data(header.hash, height)
                 height -= 1
+                if height <= 1:
+                    break
+
+        header = self.headers_threadsafe.get_header_for_height(height)
+        try:
+            self.logger.info(f"Checking database integrity...")
+            self.lmdb.check_block(header.hash)
+            self.logger.info(f"Database integrity check passed.")
+
+            # Some blocks failed integrity checks
+            # Re-synchronizing them will overwrite the old records
+            # There is no strict guarantee that the block num for these
+            # blocks will not change which could invalidate ConduitIndex
+            # records.
+            if height < tip_height:
+                self.logger.debug(f"Re-synchronising blocks from: {height} to {tip_height}")
+                start_header = self.headers_threadsafe.get_header_for_height(height)
+                stop_header = self.headers_threadsafe.get_header_for_height(tip_height)
+                self.new_headers_queue.put_nowait(
+                    HeaderSpan(
+                        is_reorg=False,
+                        start_header=start_header,
+                        stop_header=stop_header,
+                    )
+                )
+            return None
+        except AssertionError:
+            self.logger.error(
+                f"Block {hash_to_hex_str(header.hash)} failed integrity check. You now need to"
+                f"run both ConduitRaw and ConduitIndex with FORCE_REINDEX_RECENT_BLOCKS=1"
+            )
+            await self.stop()
 
     async def start_jobs(self) -> None:
         assert self.peer_manager is not None
-        self.database_integrity_check()
+        await self.database_integrity_check()
         thread = threading.Thread(target=self.ipc_sock_server_thread, daemon=True)
         thread.start()
         await self.spawn_aiohttp_api()
@@ -373,7 +397,7 @@ class Controller(ControllerBase):
             headers_tip = self.sync_state.get_local_tip()
             if headers_tip.height != 0:
                 self.logger.debug(
-                    f"Allocating headers to sync from: {blocks_tip.height} to " f"{headers_tip.height}"
+                    f"Allocating headers to sync from: {blocks_tip.height} to {headers_tip.height}"
                 )
                 self.new_headers_queue.put_nowait(
                     HeaderSpan(
@@ -565,7 +589,7 @@ class Controller(ControllerBase):
                 # Allocate next batch of blocks
                 # reassigns new global sync_state.blocks_batch_set
                 if chain.tip.height > 2016:
-                    await self.update_moving_average(chain.tip.height)
+                    await self.update_moving_average(start_header.height - 1)
 
                 from_height = self.headers_threadsafe.get_header_for_hash(start_header.hash).height - 1
                 to_height = stop_header.height
@@ -638,7 +662,9 @@ class Controller(ControllerBase):
 
                 is_reorg, start_header, stop_header = self.merge_batch(batch)
                 batch = []
-                if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg:
+
+                if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg\
+                        and not os.getenv('FORCE_REINDEX_RECENT_BLOCKS', '0') == '1':
                     continue
 
                 await self.sync_blocks_batch(batch_id, start_header, stop_header)
