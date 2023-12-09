@@ -25,7 +25,7 @@ from conduit_lib.database.ffdb.compression import (
     uncompressed_file_size_zstd,
     write_to_file_zstd,
     CompressionStats,
-    open_seekable_writer_zstd
+    open_seekable_writer_zstd,
 )
 from conduit_lib.types import Slice, DataLocation
 
@@ -346,9 +346,7 @@ class FlatFileDb:
                 logger.debug(f"Deleting file: {file_path}")
                 logger.debug(f"Current mutable file: {self.mutable_file_path}")
                 if self.mutable_file_path == file_path:
-                    raise FlatFileDbUnsafeAccessError(
-                        "Deleting the mutable file is not allowed. Ever."
-                    )
+                    raise FlatFileDbUnsafeAccessError("Deleting the mutable file is not allowed. Ever.")
                     # self._maybe_get_new_mutable_file(force_new_file=True)
                 assert (
                     file_path.name in self.immutable_files

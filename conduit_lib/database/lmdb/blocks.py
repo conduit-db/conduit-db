@@ -20,7 +20,8 @@ from lmdb import Cursor
 from conduit_lib.database.ffdb.compression import (
     CompressionStats,
     write_compression_stats,
-    CompressionBlockInfo, check_and_recover_zstd_file,
+    CompressionBlockInfo,
+    check_and_recover_zstd_file,
 )
 from conduit_lib.database.ffdb.flat_file_db import FlatFileDb
 from conduit_lib.types import BlockMetadata, Slice, DataLocation, BlockHeaderRow
@@ -54,7 +55,6 @@ class LmdbBlocks:
         # zstd frame at the end of the archive. If this is the case, it needs to
         # be repaired by removing only the last incomplete frame from the decompressed
         # content and then re-writing the .zst file without the partial frame.
-        self.logger.debug(f"check_zstd_file: {check_zstd_file}")
         if check_zstd_file:
             # Only the main process should do this check. Not all worker processes that
             # open the lmdb handle for read-only access.

@@ -28,12 +28,12 @@ class CompressionBlockInfo(TypedDict):
 
 class CompressionStats:
     def __init__(
-            self,
-            filename: str = "",
-            block_metadata: list[CompressionBlockInfo] | None = None,
-            uncompressed_size: int = 0,
-            compressed_size: int = 0,
-            fraction_of_compressed_size: float = 0.0,
+        self,
+        filename: str = "",
+        block_metadata: list[CompressionBlockInfo] | None = None,
+        uncompressed_size: int = 0,
+        compressed_size: int = 0,
+        fraction_of_compressed_size: float = 0.0,
     ):
         assert isinstance(filename, str)
         self.filename = filename
@@ -90,11 +90,11 @@ def open_seekable_reader_zstd(filepath: Path) -> SeekableZstdFile:
 
 
 def write_to_file_zstd(
-        filepath: Path,
-        batch: list[bytes],
-        fsync: bool = False,
-        compression_stats: CompressionStats | None = None,
-        mode: str = 'ab',
+    filepath: Path,
+    batch: list[bytes],
+    fsync: bool = False,
+    compression_stats: CompressionStats | None = None,
+    mode: str = 'ab',
 ) -> list[DataLocation]:
     """This is batched for greatly improved efficiency with multiple, small writes.
 
@@ -119,8 +119,7 @@ def write_to_file_zstd(
             seekable_zstd.write(data)
             file_end_offset_within_file = file_start_offset_within_file + len(data)
             data_locations.append(
-                DataLocation(str(filepath), file_start_offset_within_file,
-                    file_end_offset_within_file)
+                DataLocation(str(filepath), file_start_offset_within_file, file_end_offset_within_file)
             )
             file_start_offset_within_file = file_end_offset_within_file
         seekable_zstd.flush(SeekableZstdFile.FLUSH_FRAME)
@@ -141,14 +140,13 @@ def uncompressed_file_size_zstd(file_path: str) -> int:
 
 
 def update_compresson_stats(
-        filepath: Path, uncompressed_size: int, compressed_size: int,
-        compression_stats: CompressionStats
+    filepath: Path, uncompressed_size: int, compressed_size: int, compression_stats: CompressionStats
 ) -> CompressionStats:
     compression_stats.filename = str(filepath.name)
     compression_stats.uncompressed_size = compression_stats.uncompressed_size + uncompressed_size
     compression_stats.compressed_size = compression_stats.compressed_size + compressed_size
     compression_stats.fraction_of_compressed_size = (
-            compression_stats.compressed_size / compression_stats.uncompressed_size
+        compression_stats.compressed_size / compression_stats.uncompressed_size
     )
     return compression_stats
 
@@ -162,8 +160,9 @@ def write_compression_stats(compression_stats: CompressionStats) -> None:
         file.write(compression_stats.to_json() + "\n")
 
 
-def check_and_recover_zstd_file(input_file_path: str, output_file_path: str = 'recovery_file.dat',
-        worker_id: str = "") -> None:
+def check_and_recover_zstd_file(
+    input_file_path: str, output_file_path: str = 'recovery_file.dat', worker_id: str = ""
+) -> None:
     logger_name = "zstd-compression" if not worker_id else f"zstd-compression-{worker_id}"
     logger = logging.getLogger(logger_name)
 
@@ -195,6 +194,9 @@ def check_and_recover_zstd_file(input_file_path: str, output_file_path: str = 'r
                     break
                 file_zstd.write(data)
     Path(output_file_path).unlink()
+    # Need to remove this because it interferes with the
+    # mutable file numbering system
+    Path(input_file_path + ".bak").unlink()
 
 
 def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
