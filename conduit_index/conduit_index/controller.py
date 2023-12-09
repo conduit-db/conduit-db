@@ -44,7 +44,8 @@ from conduit_lib.constants import (
     NULL_HASH,
     MAIN_BATCH_HEADERS_COUNT_LIMIT,
     CONDUIT_INDEX_SERVICE_NAME,
-    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX,
+    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
 )
 from conduit_lib.types import (
     BlockHeaderRow,
@@ -308,13 +309,17 @@ class Controller(ControllerBase):
                 # unless it is None, in which case we need want to re-index back up to the current tip
                 # of ConduitIndex
                 first_allocated_block_hash = self.headers_threadsafe_blocks.get_header_for_height(
-                    best_flushed_block_height + 1)
+                    best_flushed_block_height + 1
+                ).hash
                 if last_allocated_block_hash is None:
                     last_allocated_block_hash = best_flushed_block_height
 
-                best_flushed_block_height = max(best_flushed_block_height - MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW, 0)
+                best_flushed_block_height = max(
+                    best_flushed_block_height - MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW, 0
+                )
                 best_flushed_block_hash = self.headers_threadsafe_blocks.get_header_for_height(
-                    best_flushed_block_height)
+                    best_flushed_block_height
+                ).hash
                 old_hashes_array = bytearray()
                 new_hashes_array = bytearray()
             needs_repair = True
