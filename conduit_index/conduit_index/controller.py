@@ -53,7 +53,7 @@ from conduit_lib.types import (
     BlockSliceRequestType,
     Slice,
 )
-from conduit_lib.utils import create_task, headers_to_p2p_struct, get_memory_size_of_obj
+from conduit_lib.utils import create_task, headers_to_p2p_struct
 from conduit_lib.wait_for_dependencies import (
     wait_for_db,
     wait_for_ipc_socket_server,
@@ -183,6 +183,7 @@ class Controller(ControllerBase):
         # Batch Completion
         self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
+        # This is actually only used for mempool cache invalidation
         self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
         self.mempool_tx_count: int = 0
 
@@ -504,7 +505,6 @@ class Controller(ControllerBase):
         self.db.drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
         self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
         self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-        self.global_tx_hashes_dict = {}
 
         # 3) Atomically invalidate all mempool rows that have been mined & update best flushed tip
         # If there is a reorg, it is not as simple as just deleting the mined txs
@@ -524,10 +524,10 @@ class Controller(ControllerBase):
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
         if await self.sync_state.is_post_ibd_state(checkpoint_tip, conduit_best_tip):
             await self.update_mempool_and_checkpoint_tip_atomic(checkpoint_tip, is_reorg)
-
         else:
             # No txs in mempool until is_post_ibd == True
             self.db.update_checkpoint_tip(checkpoint_tip)
+        self.global_tx_hashes_dict = {}
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return best_flushed_block_height
@@ -926,10 +926,6 @@ class Controller(ControllerBase):
             )
             self.logger.info(
                 f"Controller Batch {batch_id} Complete. " f"New tip height: {best_flushed_tip_height}"
-            )
-            self.logger.debug(f"Items in global_tx_hashes_dict: {len(self.global_tx_hashes_dict)}")
-            self.logger.debug(
-                f"Memory size of global_tx_hashes_dict: {get_memory_size_of_obj(self.global_tx_hashes_dict)}"
             )
             batch_id += 1
 
