@@ -8,7 +8,8 @@
 from enum import IntEnum
 import os
 
-MAX_BLOCK_PER_BATCH_COUNT = 1000
+MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX = 1000
+MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW = 500  # p2p network doesn't allow any more than this
 MAX_BLOCKS_SYNCRONIZED_AHEAD = 1000  # Max number of blocks ConduitRaw can get ahead of ConduitIndex
 
 ERROR = 0

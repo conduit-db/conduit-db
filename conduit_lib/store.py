@@ -152,7 +152,7 @@ def setup_storage(net_config: NetworkConfig, headers_dir: Path) -> Storage:
         db = None
 
     if os.environ["SERVER_TYPE"] == "ConduitRaw":
-        lmdb_db = LMDB_Database(lock=True)
+        lmdb_db = LMDB_Database(lock=True, integrity_check_raw_blocks=True, worker_id="main-process")
     else:
         lmdb_db = None
 

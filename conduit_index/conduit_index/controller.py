@@ -44,7 +44,7 @@ from conduit_lib.constants import (
     NULL_HASH,
     MAIN_BATCH_HEADERS_COUNT_LIMIT,
     CONDUIT_INDEX_SERVICE_NAME,
-    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX,
+    TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
 )
 from conduit_lib.types import (
     BlockHeaderRow,
@@ -261,11 +261,7 @@ class Controller(ControllerBase):
         )
         try:
             self.bitcoin_p2p_client = BitcoinP2PClient(
-                1,
-                peer.remote_host,
-                peer.remote_port,
-                self.handlers,
-                self.net_config
+                1, peer.remote_host, peer.remote_port, self.handlers, self.net_config
             )
             await self.bitcoin_p2p_client.wait_for_connection()
         except ConnectionResetError:
@@ -281,14 +277,16 @@ class Controller(ControllerBase):
         # Allow time for TxParsers to bind to the zmq socket to distribute load evenly
         time.sleep(2)
 
-    async def maybe_do_db_repair(self) -> None:
+    async def database_integrity_check(self) -> None:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
         block hash, we need to purge those rows from the tables before we resume synchronization.
         """
+        self.logger.info(f"Checking database integrity...")
         assert self.db is not None
         result = self.db.get_checkpoint_state()
         if not result:
             self.db.initialise_checkpoint_state()
+            self.logger.info(f"Database integrity check passed.")
             return None
 
         (
@@ -300,12 +298,34 @@ class Controller(ControllerBase):
             old_hashes_array,
             new_hashes_array,
         ) = result
-        needs_repair = best_flushed_block_hash != last_allocated_block_hash
+
+        if os.getenv('FORCE_REINDEX_RECENT_BLOCKS', '0') == '1':
+            # If ConduitRaw is way ahead (more than 500 blocks) then there's no reason to
+            # reindex so many blocks. Can just do the usual db integrity check
+            conduit_best_tip = await self.sync_state.get_conduit_best_tip()
+            if conduit_best_tip.height > best_flushed_block_height + MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW:
+                # Overwrite first_allocated_block_hash but keep last_allocated_block_hash the same as before
+                # unless it is None, in which case we need want to re-index back up to the current tip
+                # of ConduitIndex
+                first_allocated_block_hash = self.headers_threadsafe_blocks.get_header_for_height(
+                    best_flushed_block_height + 1)
+                if last_allocated_block_hash is None:
+                    last_allocated_block_hash = best_flushed_block_height
+
+                best_flushed_block_height = max(best_flushed_block_height - MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW, 0)
+                best_flushed_block_hash = self.headers_threadsafe_blocks.get_header_for_height(
+                    best_flushed_block_height)
+                old_hashes_array = bytearray()
+                new_hashes_array = bytearray()
+            needs_repair = True
+        else:
+            needs_repair = best_flushed_block_hash != last_allocated_block_hash
         if not needs_repair:
+            self.logger.info(f"Database integrity check passed.")
             return
 
         self.logger.debug(
-            f"ConduitDB did not shut down cleanly last session. " f"Performing automated database repair..."
+            f"ConduitDB did not shut down cleanly last session. Performing automated database repair..."
         )
 
         # Drop and re-create mempool table
@@ -420,7 +440,7 @@ class Controller(ControllerBase):
         create_task(self.wait_for_mined_tx_acks_task())
         self.start_workers()
         await self.spawn_batch_completion_job()
-        await self.maybe_do_db_repair()
+        await self.database_integrity_check()
         await self.spawn_lagging_batch_monitor()
         self.tasks.append(create_task(self.sync_all_blocks_job()))
 
@@ -671,7 +691,7 @@ class Controller(ControllerBase):
 
                 if stop_header:
                     self.logger.debug(
-                        f"Got new tip from ConduitRaw service for " f"parsing at height: {stop_header.height}"
+                        f"Got new tip from ConduitRaw service for parsing at height: {stop_header.height}"
                     )
                     return (
                         is_reorg,
@@ -813,8 +833,7 @@ class Controller(ControllerBase):
         main_batch = await self.sync_state.get_main_batch(start_header, stop_header)
         all_pending_block_hashes: set[bytes] = set()
 
-        all_work_units = self.sync_state.get_work_units_all(is_reorg,
-            all_pending_block_hashes, main_batch)
+        all_work_units = self.sync_state.get_work_units_all(is_reorg, all_pending_block_hashes, main_batch)
 
         self.tx_parser_completion_queue.put_nowait(all_pending_block_hashes.copy())
 
@@ -959,6 +978,7 @@ class Controller(ControllerBase):
                 batch_id += 1
             except Exception:
                 self.logger.exception("Exception in batch_completion_job")
+                await self.stop()
 
     def _invalidate_mempool_rows(self, best_flushed_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction

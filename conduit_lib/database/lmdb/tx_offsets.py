@@ -21,18 +21,18 @@ if typing.TYPE_CHECKING:
     from conduit_lib import LMDB_Database
     import array
 
-from conduit_lib.constants import PROFILING, SIZE_UINT64_T
+from conduit_lib.constants import SIZE_UINT64_T
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class LmdbTxOffsets:
-    logger = logging.getLogger("lmdb-tx-offsets")
-    logger.setLevel(PROFILING)
     TX_OFFSETS_DB = b"tx_offsets_db"
 
-    def __init__(self, db: "LMDB_Database"):
+    def __init__(self, db: "LMDB_Database", worker_id: str = ""):
         self.db = db
+        logger_name = "lmdb-tx-offsets" if not worker_id else f"lmdb-tx-offsets-{worker_id}"
+        self.logger = logging.getLogger(logger_name)
 
         tx_offsets_dir = Path(os.environ["DATADIR_HDD"]) / "tx_offsets"
         tx_offsets_lockfile = Path(os.environ["DATADIR_SSD"]) / "tx_offsets.lock"

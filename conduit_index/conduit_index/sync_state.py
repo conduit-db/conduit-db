@@ -152,8 +152,7 @@ class SyncState:
             work_item_id = 0
             for i, work in enumerate(all_work):
                 block_size, tx_offsets, block_header, block_num = work
-                needs_breaking_up = block_size > SMALL_BLOCK_SIZE or \
-                                    block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
+                needs_breaking_up = block_size > SMALL_BLOCK_SIZE or block_size > CHIP_AWAY_BYTE_SIZE_LIMIT
 
                 first_tx_pos_batch = 0
                 if needs_breaking_up:
@@ -255,16 +254,17 @@ class SyncState:
 
         return remaining_work, work_for_this_batch
 
-    async def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) \
-            -> MainBatch:
+    async def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) -> MainBatch:
         """Must run in thread due to ipc_sock_client not being async"""
         ipc_sock_client_pool = None
+        all_work_units: MainBatch = []
         try:
             # There should be a global connection pool but this will do for now
             ipc_sock_client_pool = []
             for i in range(3):
                 ipc_sock_client = await asyncio.get_running_loop().run_in_executor(
-                    self.controller.general_executor, IPCSocketClient)
+                    self.controller.general_executor, IPCSocketClient
+                )
                 ipc_sock_client_pool.append(ipc_sock_client)
 
             with self.storage.headers_lock:
@@ -280,12 +280,19 @@ class SyncState:
 
                 header_hashes = [block_header.hash for block_header in block_headers]
 
-            task = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
-                ipc_sock_client_pool[0].block_metadata_batched, header_hashes)
-            task2 = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
-                ipc_sock_client_pool[1].transaction_offsets_batched, header_hashes)
-            task3 = asyncio.get_running_loop().run_in_executor(self.controller.general_executor,
-                ipc_sock_client_pool[2].block_number_batched, header_hashes)
+            task = asyncio.get_running_loop().run_in_executor(
+                self.controller.general_executor,
+                ipc_sock_client_pool[0].block_metadata_batched,
+                header_hashes,
+            )
+            task2 = asyncio.get_running_loop().run_in_executor(
+                self.controller.general_executor,
+                ipc_sock_client_pool[1].transaction_offsets_batched,
+                header_hashes,
+            )
+            task3 = asyncio.get_running_loop().run_in_executor(
+                self.controller.general_executor, ipc_sock_client_pool[2].block_number_batched, header_hashes
+            )
 
             self.logger.debug(f"get_main_batch called...")
             block_metadata_batch = (await task).block_metadata_batch
@@ -301,13 +308,13 @@ class SyncState:
                     block_numbers,
                 )
             )
-            return all_work_units
         except Exception as e:
             self.logger.exception(f"Unexpected exception in get_main_batch thread")
-            raise
+            await self.controller.stop()
         finally:
             for ipc_sock_client in ipc_sock_client_pool:
                 ipc_sock_client.close()
+        return all_work_units
 
     # ----- SUPERVISE BATCH COMPLETION ----- #
     # Maximum number of blocks in this batch is 'MAIN_BATCH_HEADERS_COUNT_LIMIT'

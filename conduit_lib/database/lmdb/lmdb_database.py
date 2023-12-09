@@ -38,9 +38,9 @@ from conduit_lib.types import (
 )
 
 try:
-    from ...constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT
+    from ...constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX
 except ImportError:
-    from conduit_lib.constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT
+    from conduit_lib.constants import PROFILING, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -48,8 +48,11 @@ MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 class LMDB_Database:
     """Simple interface to LMDB - This interface must be used at all times for thread-safety"""
 
-    def __init__(self, storage_path: str | None = None, lock: bool = True) -> None:
-        self.logger = logging.getLogger("lmdb-database")
+    def __init__(self, storage_path: str | None = None, lock: bool = True, worker_id: str = "",
+            integrity_check_raw_blocks: bool = False) -> None:
+
+        logger_name = "lmdb-database" if not worker_id else f"lmdb-database-{worker_id}"
+        self.logger = logging.getLogger(logger_name)
         self.logger.setLevel(PROFILING)
 
         lmdb_database_dir: str = str(Path(os.environ["DATADIR_SSD"]) / "lmdb_data")
@@ -72,7 +75,7 @@ class LMDB_Database:
         )
         self._opened = True
 
-        self.blocks = LmdbBlocks(self)
+        self.blocks = LmdbBlocks(self, worker_id=worker_id, check_zstd_file=integrity_check_raw_blocks)
         self.merkle_tree = LmdbMerkleTree(self)
         self.tx_offsets = LmdbTxOffsets(self)
         self.logger.debug(f"Opened LMDB database at {storage_path}")
@@ -195,18 +198,20 @@ class LMDB_Database:
         rawtx = self.get_rawtx_by_loc(coinbase_tx_location)
         assert double_sha256(rawtx) == coinbase_tx_hash
 
-    def try_purge_block_data(self, block_hash: bytes) -> None:
+    def try_purge_block_data(self, block_hash: bytes, height: int) -> None:
         """Scrubs all records for this block hash.
 
         raises `AssertionError` if any of the checks fail"""
         try:
+            self.logger.debug(f"Purging all references for block: {hash_to_hex_str(block_hash)}, height: {height}")
             self.global_lock.acquire()
             block_num = self.get_block_num(block_hash)
             assert block_num is not None
             with self.env.begin(write=True, buffers=False) as txn:
                 data_location_block = self.blocks.get_data_location(block_num)
                 assert data_location_block is not None
-                txn.delete(block_num, db=self.blocks.blocks_db)
+                block_num_bytes = struct_be_I.pack(block_num)
+                txn.delete(block_num_bytes, db=self.blocks.blocks_db)
                 txn.delete(block_hash, db=self.blocks.block_nums_db)
                 txn.delete(block_hash, db=self.blocks.block_metadata_db)
 
@@ -218,22 +223,28 @@ class LMDB_Database:
                 assert data_location_merkle_tree is not None
                 txn.delete(block_hash, db=self.merkle_tree.mtree_db)
 
-            # These calls are irreversible. There is no rollback
-            self.blocks.ffdb.delete_file(Path(data_location_block.file_path))
-            self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
-            self.merkle_tree.ffdb.delete_file(Path(data_location_merkle_tree.file_path))
+            # TODO(db-repair): This is wrong. Deleting a whole file will affect other blocks.
+            #  In future, could overwrite the raw block slices with zeros and zstd would compress
+            #  it down to nothing. This way it would not change the uncompressed byte offsets of
+            #  the other data so the index remains valid for other entries.
+            # self.blocks.ffdb.delete_file(Path(data_location_block.file_path))
+            # self.tx_offsets.ffdb.delete_file(Path(data_location_tx_offsets.file_path))
+            # self.merkle_tree.ffdb.delete_file(Path(data_location_merkle_tree.file_path))
 
-        # NOTE If this situation is ever encountered. E.g. maybe some tables have data but the
-        # metadata needed to do a full purge is incomplete. The only realistic solution is start
-        # syncing the blockchain from the last good height and overwrite the records. There will
-        # be some wasted / dead disc usage that will never be reclaimed but at least the server
-        # can remain operational.
+        # NOTE If this situation is ever encountered. E.g. maybe some tables have
+        # data but the metadata needed to do a full purge is incomplete. The only
+        # realistic solution is start syncing the blockchain from the last good
+        # height and overwrite the records. There will be some wasted / dead disc
+        # usage that will never be reclaimed but at least the server can remain
+        # operational.
         except Exception:
             self.logger.exception(
                 f"Failed to complete full purge of block data for block hash: "
-                f"{hash_to_hex_str(block_hash)}"
+                f"{hash_to_hex_str(block_hash)}, height: {height}. Backtracking..."
             )
         finally:
+            self.logger.debug(f"Successfully purged all references for block: "
+                f"{hash_to_hex_str(block_hash)}, height: {height}")
             self.global_lock.release()
 
     def get_block(self, block_num: int, slice: Slice | None = None) -> bytes | None:
@@ -356,7 +367,7 @@ class LMDB_Database:
         #    for rewinding parsed tx data that was part of a batch that did not fully complete.
         block_num_tip = self.get_block_num(tip_hash_conduit_index)
         assert block_num_tip is not None
-        block_num_prune_threshold = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT
+        block_num_prune_threshold = block_num_tip - MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX
 
         # Persist intention to delete these blocks as soon as it is safe
         # There can be multiple blocks per file and deleting one would affect the byte offsets

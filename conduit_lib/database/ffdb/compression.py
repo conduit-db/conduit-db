@@ -1,9 +1,12 @@
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import TypedDict
 
+import bitcoinx
+import pyzstd
 from pyzstd import CParameter, SeekableZstdFile
 
 from conduit_lib.types import DataLocation
@@ -25,12 +28,12 @@ class CompressionBlockInfo(TypedDict):
 
 class CompressionStats:
     def __init__(
-        self,
-        filename: str = "",
-        block_metadata: list[CompressionBlockInfo] | None = None,
-        uncompressed_size: int = 0,
-        compressed_size: int = 0,
-        fraction_of_compressed_size: float = 0.0,
+            self,
+            filename: str = "",
+            block_metadata: list[CompressionBlockInfo] | None = None,
+            uncompressed_size: int = 0,
+            compressed_size: int = 0,
+            fraction_of_compressed_size: float = 0.0,
     ):
         assert isinstance(filename, str)
         self.filename = filename
@@ -70,7 +73,7 @@ class CompressionStats:
             "compressed_size": self.compressed_size,
             "fraction_of_compressed_size": self.fraction_of_compressed_size,
             "max_window_size": self.max_window_size,
-            "zstandard_level": self.zstandard_level
+            "zstandard_level": self.zstandard_level,
         }
         return json.dumps(data)
 
@@ -87,11 +90,11 @@ def open_seekable_reader_zstd(filepath: Path) -> SeekableZstdFile:
 
 
 def write_to_file_zstd(
-    filepath: Path,
-    batch: list[bytes],
-    fsync: bool = False,
-    compression_stats: CompressionStats | None = None,
-    mode: str = 'ab',
+        filepath: Path,
+        batch: list[bytes],
+        fsync: bool = False,
+        compression_stats: CompressionStats | None = None,
+        mode: str = 'ab',
 ) -> list[DataLocation]:
     """This is batched for greatly improved efficiency with multiple, small writes.
 
@@ -116,7 +119,8 @@ def write_to_file_zstd(
             seekable_zstd.write(data)
             file_end_offset_within_file = file_start_offset_within_file + len(data)
             data_locations.append(
-                DataLocation(str(filepath), file_start_offset_within_file, file_end_offset_within_file)
+                DataLocation(str(filepath), file_start_offset_within_file,
+                    file_end_offset_within_file)
             )
             file_start_offset_within_file = file_end_offset_within_file
         seekable_zstd.flush(SeekableZstdFile.FLUSH_FRAME)
@@ -137,13 +141,14 @@ def uncompressed_file_size_zstd(file_path: str) -> int:
 
 
 def update_compresson_stats(
-    filepath: Path, uncompressed_size: int, compressed_size: int, compression_stats: CompressionStats
+        filepath: Path, uncompressed_size: int, compressed_size: int,
+        compression_stats: CompressionStats
 ) -> CompressionStats:
     compression_stats.filename = str(filepath.name)
     compression_stats.uncompressed_size = compression_stats.uncompressed_size + uncompressed_size
     compression_stats.compressed_size = compression_stats.compressed_size + compressed_size
     compression_stats.fraction_of_compressed_size = (
-        compression_stats.compressed_size / compression_stats.uncompressed_size
+            compression_stats.compressed_size / compression_stats.uncompressed_size
     )
     return compression_stats
 
@@ -155,3 +160,79 @@ def write_compression_stats(compression_stats: CompressionStats) -> None:
     mode = 'a' if compression_stats_file_path.exists() else 'w'
     with open(compression_stats_file_path, mode) as file:
         file.write(compression_stats.to_json() + "\n")
+
+
+def check_and_recover_zstd_file(input_file_path: str, output_file_path: str = 'recovery_file.dat',
+        worker_id: str = "") -> None:
+    logger_name = "zstd-compression" if not worker_id else f"zstd-compression-{worker_id}"
+    logger = logging.getLogger(logger_name)
+
+    logger.debug(f"Running integrity checks on {input_file_path}.")
+    try:
+        with open(input_file_path, 'rb') as ifh:
+            with open(output_file_path, 'wb') as ofh:
+                pyzstd.decompress_stream(ifh, ofh)
+    except pyzstd.ZstdError as e:
+        logger.error(str(e))
+
+    repairs_needed = reparse_and_remove_incomplete_blocks(Path(output_file_path))
+    if not repairs_needed:
+        logger.info(f"ZStandard archive passed all integrity checks")
+        Path(output_file_path).unlink()
+        return
+    logger.info(f"Re-checking the file...")
+    repairs_needed = reparse_and_remove_incomplete_blocks(Path(output_file_path))
+    assert repairs_needed is False
+
+    # Keep a .bak copy just in case...
+    shutil.move(src=input_file_path, dst=input_file_path + ".bak")
+    logger.info(f"Re-creating {input_file_path} without the corrupted last frame")
+    with open(output_file_path, 'rb') as recovery_file:
+        with pyzstd.SeekableZstdFile(input_file_path, mode='wb') as file_zstd:
+            while True:
+                data = recovery_file.read(1024 * 1024 * 128)
+                if not data:
+                    break
+                file_zstd.write(data)
+    Path(output_file_path).unlink()
+
+
+def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
+    """This will re-parse all transactions in all bitcoin blocks to ensure they are
+    complete and valid. If it encounters partial block data, it gets truncated from the file"""
+    stream = open(file_path, 'rb')
+    file_size = file_path.stat().st_size
+    if file_size == 0:
+        logger.info(f"File passed all integrity checks")
+        return False
+    okay_up_to_offset = file_size
+    total_tx_count = 0
+    try:
+        while True:
+            header = bitcoinx.Bitcoin.deserialized_header(stream.read(80), 0)
+            # Parse header and all transactions in the raw block
+            tx_count = bitcoinx.read_varint(stream.read)
+            for i in range(tx_count):
+                tx = bitcoinx.Tx.read(stream.read)
+                total_tx_count += 1
+
+            # Checkpoint for the offset
+            okay_up_to_offset = stream.tell()
+            # logger.debug(f"Offset to: {okay_up_to_offset} okay.")
+            if okay_up_to_offset == file_size:
+                logger.info(f"File passed all integrity checks")
+                repairs_needed = False
+                return repairs_needed
+    except Exception:
+        logger.error(
+            f"The remainder of this file is corrupted most likely because the last zstandard "
+            f"frame for this file was not flushed. Truncating file at offset: {okay_up_to_offset}"
+        )
+        stream.close()
+        with open(file_path, 'ab') as file:
+            file.seek(okay_up_to_offset, os.SEEK_SET)
+            file.truncate()
+        repairs_needed = True
+        return repairs_needed
+    finally:
+        stream.close()

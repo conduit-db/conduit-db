@@ -4,6 +4,7 @@
 #
 # Licensed under the MIT License; see LICENCE for details.
 
+
 import json
 import logging
 import requests
@@ -14,6 +15,7 @@ from conduit_lib.types import PushdataMatchFlags
 BASE_URL = f"http://127.0.0.1:34525"
 GET_TRANSACTION_URL = BASE_URL + "/api/v1/transaction/{txid}"
 GET_MERKLE_PROOF_URL = BASE_URL + "/api/v1/merkle-proof/{txid}"
+GET_HEADERS_TIP_URL = BASE_URL + "/api/v1/chain/tips"
 RESTORATION_URL = BASE_URL + "/api/v1/restoration/search"
 
 STREAM_TERMINATION_SYMBOL = b"{}"
