@@ -183,6 +183,7 @@ class Controller(ControllerBase):
         # Batch Completion
         self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
+        # This is actually only used for mempool cache invalidation
         self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
         self.mempool_tx_count: int = 0
 
@@ -504,7 +505,6 @@ class Controller(ControllerBase):
         self.db.drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
         self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
         self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-        self.global_tx_hashes_dict = {}
 
         # 3) Atomically invalidate all mempool rows that have been mined & update best flushed tip
         # If there is a reorg, it is not as simple as just deleting the mined txs
@@ -524,10 +524,10 @@ class Controller(ControllerBase):
         conduit_best_tip = await self.sync_state.get_conduit_best_tip()
         if await self.sync_state.is_post_ibd_state(checkpoint_tip, conduit_best_tip):
             await self.update_mempool_and_checkpoint_tip_atomic(checkpoint_tip, is_reorg)
-
         else:
             # No txs in mempool until is_post_ibd == True
             self.db.update_checkpoint_tip(checkpoint_tip)
+        self.global_tx_hashes_dict = {}
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return best_flushed_block_height
@@ -876,7 +876,6 @@ class Controller(ControllerBase):
 
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
             self.db.drop_temp_orphaned_txs()
-
         else:
             best_flushed_tip_height = await self.sanity_checks_and_update_best_flushed_tip(is_reorg)
         self.sync_state.reset_pending_blocks()

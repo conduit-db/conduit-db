@@ -360,9 +360,11 @@ class Timer:
                 logger.debug(f"Timer: interval of {self.interval:.4f} seconds")
         if self.count and self.name:
             logger.debug(
-                f"Timer{'['+ self.name+ ']'}: throughput rate: " f"{float(self.count/self.interval):.1f}"
+                f"Timer{'['+ self.name+ ']'}: throughput rate: "
+                f"{float(self.count/self.interval):.1f}"
                 f"{self.units} per second"
             )
         elif self.count:
-            logger.debug(f"Timer: throughput rate: " f"{int(self.count/self.interval):.1f}"
-                         f"{self.units} per second")
+            logger.debug(
+                f"Timer: throughput rate: " f"{int(self.count/self.interval):.1f}" f"{self.units} per second"
+            )
