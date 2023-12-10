@@ -26,6 +26,7 @@ from conduit_lib.algorithms import (
     get_pk_and_pkh_from_script,
     unpack_varint,
     preprocessor,
+    PushdataMatch,
 )
 from conduit_lib.constants import HashXLength
 from conduit_lib.types import PushdataMatchFlags
@@ -353,3 +354,91 @@ def test_calc_mtree_base_level() -> None:
     assert mtree[0] == [
         b"a\xf5\x15[\x11\xa4\xef`\xcc\xe8\x11t@r\x0e\xc9\x82\x12u\xbaO\x9d\xd2\xb7\x83\x8e\x1e\xb4\xa1\x0e\xfau"
     ]
+
+
+def test_get_pk_and_pkh_from_script():
+    """
+    This rawtx is from mainnet and has:
+     - a hodlocker time locking script at output index 0
+        - i.e. it expects an unlocking script with format of: <signature> <pubkey> <preimage>
+        and the pubkeyhash is buried after the OP_PUSH_TX validation logic (this particular
+        implementation of OP_PUSH_TX is targeted at proving that the nlocktime is beyond a certain block height).
+     - a 1SatOrdinals output at index 1
+     - a standard p2pkh output at index 2
+    """
+    with open(
+        MODULE_DIR / "data" / "bf88f55da5e4d000a08056d68ab6945077db2c5224512d088fbea57046de9e07.hex"
+    ) as file:
+        GENESIS_ACTIVATION_HEIGHT = 620_538
+        tx = bitcoinx.Tx.from_bytes(bytes.fromhex(file.read()))
+        assert tx.hex_hash() == "bf88f55da5e4d000a08056d68ab6945077db2c5224512d088fbea57046de9e07"
+        output0 = tx.outputs[0].script_pubkey
+        pushdata_matches = get_pk_and_pkh_from_script(
+            script=bytes(output0),
+            tx_hash=tx.hash(),
+            idx=0,
+            flags=PushdataMatchFlags.OUTPUT,
+            tx_pos=1,
+            genesis_height=GENESIS_ACTIVATION_HEIGHT,
+        )
+        assert set(pushdata_matches) == {
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("5c1d6a6c1148fa41be81675e38f85744a1ac37517c17c6e4db6ce882fbe3b5cc"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("c909eaa43779ae95cd36897f2ca0c5f55f695784ec856595b6bd4b443cbda740"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("6698ed19a0b43ec3db4f34a34b9195352f5d179febde968efbb443ca236196aa"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("56e426fb6ea4e8a81f51a9d0f3d83e869ac7215057e6aea2bc764d7a841b26bf"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("a434b2a57a79c478dafa7f531fa745f2dda52dfb59e6ed6961325fec06e29efe"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("fd553e2416cfbe24b474f8c1a1aa65f6ac293d878085aeb18e4840c05830e2ec"),
+                flags=PushdataMatchFlags.OUTPUT,
+            ),
+        }
+        output1 = tx.outputs[1].script_pubkey
+        pushdata_matches = get_pk_and_pkh_from_script(
+            script=bytes(output1),
+            tx_hash=tx.hash(),
+            idx=1,
+            flags=PushdataMatchFlags.OUTPUT,
+            tx_pos=1,
+            genesis_height=GENESIS_ACTIVATION_HEIGHT,
+        )
+        assert set(pushdata_matches) == {
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("57d59224ec387d77509f0416d778f76ee0145cc11a3f9bf12ef86564aab26861"),
+                flags=PushdataMatchFlags.OUTPUT)
+        }
+        output2 = tx.outputs[2].script_pubkey
+        pushdata_matches = get_pk_and_pkh_from_script(
+            script=bytes(output2),
+            tx_hash=tx.hash(),
+            idx=2,
+            flags=PushdataMatchFlags.OUTPUT,
+            tx_pos=1,
+            genesis_height=GENESIS_ACTIVATION_HEIGHT,
+        )
+        assert set(pushdata_matches) == {
+            PushdataMatch(
+                pushdata_hash=bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"),
+                flags=PushdataMatchFlags.OUTPUT)
+        }
+
+        assert bitcoinx.sha256(bytes.fromhex("9a81c9af89491144479b08030de42b0f7ca1dfa1")) == \
+               bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6")
