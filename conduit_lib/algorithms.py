@@ -171,7 +171,9 @@ def get_pk_and_pkh_from_script(
                     i += 1
                     if unreachable_code:
                         flags |= PushdataMatchFlags.DATA
-                    all_pushdata.add((bytes(script[i : i + length]), flags))
+
+                    if not unreachable_code:
+                        all_pushdata.add((bytes(script[i : i + length]), flags))
                     i += length
                 elif script[i] in SET_OTHER_PUSH_OPS:
                     length = script[i]

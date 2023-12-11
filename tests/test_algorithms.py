@@ -385,19 +385,27 @@ def test_get_pk_and_pkh_from_script_1():
         )
         assert set(pushdata_matches) == {
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("56e426fb6ea4e8a81f51a9d0f3d83e869ac7215057e6aea2bc764d7a841b26bf"),
+                pushdata_hash=bytes.fromhex(
+                    "56e426fb6ea4e8a81f51a9d0f3d83e869ac7215057e6aea2bc764d7a841b26bf"
+                ),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"),
+                pushdata_hash=bytes.fromhex(
+                    "9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"
+                ),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("c909eaa43779ae95cd36897f2ca0c5f55f695784ec856595b6bd4b443cbda740"),
+                pushdata_hash=bytes.fromhex(
+                    "c909eaa43779ae95cd36897f2ca0c5f55f695784ec856595b6bd4b443cbda740"
+                ),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("5c1d6a6c1148fa41be81675e38f85744a1ac37517c17c6e4db6ce882fbe3b5cc"),
+                pushdata_hash=bytes.fromhex(
+                    "5c1d6a6c1148fa41be81675e38f85744a1ac37517c17c6e4db6ce882fbe3b5cc"
+                ),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
         }
@@ -412,8 +420,11 @@ def test_get_pk_and_pkh_from_script_1():
         )
         assert set(pushdata_matches) == {
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("57d59224ec387d77509f0416d778f76ee0145cc11a3f9bf12ef86564aab26861"),
-                flags=PushdataMatchFlags.OUTPUT)
+                pushdata_hash=bytes.fromhex(
+                    "57d59224ec387d77509f0416d778f76ee0145cc11a3f9bf12ef86564aab26861"
+                ),
+                flags=PushdataMatchFlags.OUTPUT,
+            )
         }
         output2 = tx.outputs[2].script_pubkey
         pushdata_matches = get_pk_and_pkh_from_script(
@@ -426,12 +437,16 @@ def test_get_pk_and_pkh_from_script_1():
         )
         assert set(pushdata_matches) == {
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"),
-                flags=PushdataMatchFlags.OUTPUT)
+                pushdata_hash=bytes.fromhex(
+                    "9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"
+                ),
+                flags=PushdataMatchFlags.OUTPUT,
+            )
         }
 
-        assert bitcoinx.sha256(bytes.fromhex("9a81c9af89491144479b08030de42b0f7ca1dfa1")) == \
-               bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6")
+        assert bitcoinx.sha256(bytes.fromhex("9a81c9af89491144479b08030de42b0f7ca1dfa1")) == bytes.fromhex(
+            "9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6"
+        )
 
 
 def test_get_pk_and_pkh_from_script_2():
@@ -459,3 +474,25 @@ def test_get_pk_and_pkh_from_script_2():
         genesis_height=GENESIS_ACTIVATION_HEIGHT,
     )
     assert len(pushdata_matches) == 0
+
+
+def test_get_pk_and_pkh_from_script_3():
+    """This asserts that I am not indexing pushdata hashes after an OP_FALSE OP_RETURN"""
+    # OP_PUSH_20 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    # OP_FALSE OP_RETURN OP_PUSH_20 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    output_script_hex = (
+        "14aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa006a14bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    )
+    GENESIS_ACTIVATION_HEIGHT = 620_538
+    pushdata_matches = get_pk_and_pkh_from_script(
+        script=bytes.fromhex(output_script_hex),
+        tx_hash=os.urandom(32),
+        idx=0,
+        flags=PushdataMatchFlags.OUTPUT,
+        tx_pos=0,
+        genesis_height=GENESIS_ACTIVATION_HEIGHT,
+    )
+    assert len(pushdata_matches) == 1
+    assert pushdata_matches[0].pushdata_hash == bitcoinx.sha256(
+        bytes.fromhex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    )
