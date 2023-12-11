@@ -164,7 +164,6 @@ def get_pk_and_pkh_from_script(
                     i += 1
                 elif script[i] in {
                     OP_PUSH_20,
-                    OP_PUSH_32,
                     OP_PUSH_33,
                     OP_PUSH_65,
                 }:

@@ -356,7 +356,7 @@ def test_calc_mtree_base_level() -> None:
     ]
 
 
-def test_get_pk_and_pkh_from_script():
+def test_get_pk_and_pkh_from_script_1():
     """
     This rawtx is from mainnet and has:
      - a hodlocker time locking script at output index 0
@@ -372,6 +372,8 @@ def test_get_pk_and_pkh_from_script():
         GENESIS_ACTIVATION_HEIGHT = 620_538
         tx = bitcoinx.Tx.from_bytes(bytes.fromhex(file.read()))
         assert tx.hex_hash() == "bf88f55da5e4d000a08056d68ab6945077db2c5224512d088fbea57046de9e07"
+
+        # 3 public keys and 1 pubkey hash
         output0 = tx.outputs[0].script_pubkey
         pushdata_matches = get_pk_and_pkh_from_script(
             script=bytes(output0),
@@ -383,15 +385,7 @@ def test_get_pk_and_pkh_from_script():
         )
         assert set(pushdata_matches) == {
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("5c1d6a6c1148fa41be81675e38f85744a1ac37517c17c6e4db6ce882fbe3b5cc"),
-                flags=PushdataMatchFlags.OUTPUT,
-            ),
-            PushdataMatch(
-                pushdata_hash=bytes.fromhex("c909eaa43779ae95cd36897f2ca0c5f55f695784ec856595b6bd4b443cbda740"),
-                flags=PushdataMatchFlags.OUTPUT,
-            ),
-            PushdataMatch(
-                pushdata_hash=bytes.fromhex("6698ed19a0b43ec3db4f34a34b9195352f5d179febde968efbb443ca236196aa"),
+                pushdata_hash=bytes.fromhex("56e426fb6ea4e8a81f51a9d0f3d83e869ac7215057e6aea2bc764d7a841b26bf"),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
@@ -399,15 +393,11 @@ def test_get_pk_and_pkh_from_script():
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("56e426fb6ea4e8a81f51a9d0f3d83e869ac7215057e6aea2bc764d7a841b26bf"),
+                pushdata_hash=bytes.fromhex("c909eaa43779ae95cd36897f2ca0c5f55f695784ec856595b6bd4b443cbda740"),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
             PushdataMatch(
-                pushdata_hash=bytes.fromhex("a434b2a57a79c478dafa7f531fa745f2dda52dfb59e6ed6961325fec06e29efe"),
-                flags=PushdataMatchFlags.OUTPUT,
-            ),
-            PushdataMatch(
-                pushdata_hash=bytes.fromhex("fd553e2416cfbe24b474f8c1a1aa65f6ac293d878085aeb18e4840c05830e2ec"),
+                pushdata_hash=bytes.fromhex("5c1d6a6c1148fa41be81675e38f85744a1ac37517c17c6e4db6ce882fbe3b5cc"),
                 flags=PushdataMatchFlags.OUTPUT,
             ),
         }
@@ -442,3 +432,30 @@ def test_get_pk_and_pkh_from_script():
 
         assert bitcoinx.sha256(bytes.fromhex("9a81c9af89491144479b08030de42b0f7ca1dfa1")) == \
                bytes.fromhex("9eeb4618a48fac6e26544b46d811da8196f5cf277915ffdfbb922bda7bb407d6")
+
+
+def test_get_pk_and_pkh_from_script_2():
+    """
+    This is the last transaction in a 3GB block at height: 804157
+    It contains 2,377,632 transactions and seems to be entirely of this type
+    (Rekord IoT OP_FALSE OP_RETURN output scripts of zero spendable value)
+
+    These contain 32 byte hashes which should not be detected. Only 20, 33 and 65 byte pushdatas.
+    """
+    tx_pos = 2377631
+    with open(
+        MODULE_DIR / "data" / "6370060cd55b046a87a72a4c07bffa1da52b3d12c227e795850b7d0ac68c203b.hex"
+    ) as file:
+        GENESIS_ACTIVATION_HEIGHT = 620_538
+        tx = bitcoinx.Tx.from_bytes(bytes.fromhex(file.read()))
+    assert tx.hex_hash() == "6370060cd55b046a87a72a4c07bffa1da52b3d12c227e795850b7d0ac68c203b"
+    output0 = tx.outputs[0].script_pubkey
+    pushdata_matches = get_pk_and_pkh_from_script(
+        script=bytes(output0),
+        tx_hash=tx.hash(),
+        idx=0,
+        flags=PushdataMatchFlags.OUTPUT,
+        tx_pos=tx_pos,
+        genesis_height=GENESIS_ACTIVATION_HEIGHT,
+    )
+    assert len(pushdata_matches) == 0
