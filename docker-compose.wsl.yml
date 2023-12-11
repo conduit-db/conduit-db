@@ -21,6 +21,7 @@ services:
     cpus: 16
     cpuset: 4-19
     mem_limit: 8G
+    command: --skip-wait-for-gossip-to-settle 0
 
   redis:
     image: redis:latest

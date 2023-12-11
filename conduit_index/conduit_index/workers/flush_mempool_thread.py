@@ -62,7 +62,7 @@ class FlushMempoolTransactionsThread(threading.Thread):
         txs, txs_mempool, ins, pds, acks = reset_rows_mempool()
         utxo_spends: list[InputRowParsed] = []
         pushdata_matches_tip_filter: list[PushdataRowParsed] = []
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         try:
             while True:
                 try:

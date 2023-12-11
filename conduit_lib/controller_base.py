@@ -55,7 +55,7 @@ class ControllerBase:
         if tip_height > 710000:
             max_block_count = 100
         if tip_height > 800000:
-            max_block_count = 50
+            max_block_count = 20
         estimated_ideal_block_count = min(estimated_ideal_block_count, max_block_count)
         self.logger.debug(f"Using estimated_ideal_block_count: {estimated_ideal_block_count}")
         return estimated_ideal_block_count
