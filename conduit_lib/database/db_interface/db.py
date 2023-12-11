@@ -77,7 +77,7 @@ class DBInterface(abc.ABC):
 
     @classmethod
     def load_db(
-        cls, worker_id: int | str | None = None, db_type: DatabaseType | None = None
+        cls, worker_id: int | str | None = None, db_type: DatabaseType | None = None, wait_time: int | None = None
     ) -> "DBInterface":
         if db_type is None:
             db_type_default: str = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
@@ -97,7 +97,7 @@ class DBInterface(abc.ABC):
             from conduit_lib.database.scylladb.db import load_scylla_database
 
             logger.info(f"Using ScyllaDB implementation")
-            return load_scylla_database(worker_id)
+            return load_scylla_database(worker_id, wait_time=wait_time)
         raise ValueError(f"Unsupported db_type: {db_type}")
 
     @abc.abstractmethod

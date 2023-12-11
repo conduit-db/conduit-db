@@ -46,3 +46,4 @@ scylla/
 mysql/
 reference_server/
 .env.docker.production
+contrib/functional_test_datadirs/

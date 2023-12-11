@@ -65,7 +65,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55889",

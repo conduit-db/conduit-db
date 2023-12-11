@@ -184,7 +184,7 @@ class Controller(ControllerBase):
         self.tx_parser_completion_queue: asyncio.Queue[set[bytes]] = asyncio.Queue()
 
         # This is actually only used for mempool cache invalidation
-        self.global_tx_hashes_dict: dict[int, list[bytes]] = {}  # blk_num:tx_hashes
+        self.global_tx_counts_dict: dict[int, int] = {}  # blk_num: count_tx_hashes
         self.mempool_tx_count: int = 0
 
         # Database Interfaces
@@ -338,8 +338,8 @@ class Controller(ControllerBase):
         self.db.drop_mempool_table()
         self.db.create_mempool_table()
 
-        new_hashes: list[bytes] | None = []
-        old_hashes: list[bytes] | None = []
+        new_hashes: list[bytes] | None = None
+        old_hashes: list[bytes] | None = None
         if reorg_was_allocated:
             old_hashes = [old_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(old_hashes_array) // 32)]
             new_hashes = [new_hashes_array[i * 32 : (i + 1) * 32] for i in range(len(new_hashes_array) // 32)]
@@ -364,13 +364,33 @@ class Controller(ControllerBase):
         first_allocated_header = self.headers_threadsafe.get_header_for_hash(first_allocated_block_hash)
         last_allocated_header = self.headers_threadsafe.get_header_for_hash(last_allocated_block_hash)
 
-        best_flushed_tip_height = await self.index_blocks(
-            reorg_was_allocated,
-            first_allocated_header,
-            last_allocated_header,
-            old_hashes,
-            new_hashes,
-        )
+        # If a reorg was allocated, do it all as one batch
+        best_flushed_tip_height = 0xffffffff
+        if reorg_was_allocated:
+            best_flushed_tip_height = await self.index_blocks(
+                reorg_was_allocated,
+                first_allocated_header,
+                last_allocated_header,
+                old_hashes,
+                new_hashes,
+            )
+        else:
+            # Go one block at a time
+            height = first_allocated_header.height
+            stop_height = last_allocated_header.height
+            while height <= stop_height:
+                first_allocated_header = self.headers_threadsafe.get_header_for_height(height)
+                last_allocated_header = first_allocated_header
+                assert old_hashes is None
+                assert new_hashes is None
+                best_flushed_tip_height = await self.index_blocks(
+                    False,
+                    first_allocated_header,
+                    last_allocated_header,
+                    None,
+                    None,
+                )
+                height += 1
         self.logger.debug(f"Database repair complete. " f"New tip: {best_flushed_tip_height}")
 
     async def undo_blocks_above_height(self, height: int) -> None:
@@ -453,28 +473,44 @@ class Controller(ControllerBase):
     async def spawn_batch_completion_job(self) -> None:
         create_task(self.batch_completion_job())
 
-    def all_blocks_processed(self, global_tx_hashes_dict: dict[int, list[bytes]]) -> bool:
+    def all_blocks_processed(self, global_tx_counts_dict: dict[int, int]) -> bool:
         expected_block_hashes = list(self.sync_state.expected_blocks_tx_counts.keys())
         expected_block_nums = self.ipc_sock_client.block_number_batched(expected_block_hashes).block_numbers
         block_hash_to_num_map = dict(zip(expected_block_hashes, expected_block_nums))
 
         for block_hash in expected_block_hashes:
             block_num: int = block_hash_to_num_map[block_hash]
-            processed_tx_count: int = len(global_tx_hashes_dict.get(block_num, []))
+            processed_tx_count: int = global_tx_counts_dict.get(block_num, 0)
             expected_tx_count: int = self.sync_state.expected_blocks_tx_counts[block_hash]
             if expected_tx_count != processed_tx_count:
+                self.logger.debug(f"Not processed yet for block_num: {block_num} "
+                                  f"with expected_tx_count: {expected_tx_count} != {processed_tx_count}")
                 return False
         return True
 
     async def wait_for_mined_tx_acks_task(self) -> None:
+        assert self.db is not None
+        is_post_ibd = await self.sync_state.is_post_ibd_state()
         while True:
             message = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_ack.recv())
-            new_mined_tx_hashes = cast(dict[int, list[bytes]], cbor2.loads(message))
+            new_mined_tx_hashes: dict[int, list[bytes]] = cast(dict[int, list[bytes]], cbor2.loads(message))
+            # 1) Transfer from dict -> Temp Table for Table join with Mempool table
+            # TODO: When dropping MySQL get rid of this loop because all it's doing is
+            #  converting the hashes to hex!
+            mined_tx_hashes = []
+            for blk_num, tx_hashes in new_mined_tx_hashes.items():
+                if not self.global_tx_counts_dict.get(blk_num):
+                    self.global_tx_counts_dict[blk_num] = 0
+                self.global_tx_counts_dict[blk_num] += len(tx_hashes)
 
-            for blk_num, new_hashes in new_mined_tx_hashes.items():
-                if not self.global_tx_hashes_dict.get(blk_num):
-                    self.global_tx_hashes_dict[blk_num] = []
-                self.global_tx_hashes_dict[blk_num].extend(new_hashes)
+                if is_post_ibd:
+                    for tx_hash in tx_hashes:
+                        mined_tx_hashes.append(MinedTxHashes(tx_hash.hex(), blk_num))
+
+            if is_post_ibd:
+                self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
+                self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
+            del mined_tx_hashes
 
     async def update_mempool_and_checkpoint_tip_atomic(
         self, best_flushed_block_tip: bitcoinx.Header, is_reorg: bool
@@ -485,28 +521,7 @@ class Controller(ControllerBase):
             1) invalidate mempool rows (that have been mined)
             2) update api chain tip
         """
-        assert self.db is not None
-
-        # 1) Check if we have received all ACKs for mined tx hashes
-        while True:
-            if len(self.global_tx_hashes_dict) >= len(
-                self.sync_state.expected_blocks_tx_counts
-            ) and self.all_blocks_processed(self.global_tx_hashes_dict):
-                break
-            else:
-                await asyncio.sleep(0.2)
-
-        # 2) Transfer from dict -> Temp Table for Table join with Mempool table
-        mined_tx_hashes = []
-        for blk_num, new_mined_tx_hashes in self.global_tx_hashes_dict.items():
-            for tx_hash in new_mined_tx_hashes:
-                mined_tx_hashes.append(MinedTxHashes(tx_hash.hex(), blk_num))
-
-        self.db.drop_temp_mined_tx_hashes()  # For good measure. Should be unnecessary..
-        self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
-        self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-
-        # 3) Atomically invalidate all mempool rows that have been mined & update best flushed tip
+        # Atomically invalidate all mempool rows that have been mined & update best flushed tip
         # If there is a reorg, it is not as simple as just deleting the mined txs
         # we must both add and remove txs based on the differential between the old and new chain
         if is_reorg:
@@ -520,14 +535,31 @@ class Controller(ControllerBase):
         checkpoint_tip: bitcoinx.Header = self.sync_state.get_local_block_tip()
         best_flushed_block_height: int = checkpoint_tip.height
 
+        while True:
+            if len(self.global_tx_counts_dict) >= len(self.sync_state.expected_blocks_tx_counts) \
+                    and self.all_blocks_processed(self.global_tx_counts_dict):
+                break
+            else:
+                await asyncio.sleep(0.2)
+
         # Update API tip for filtering of queries in the internal aiohttp API
-        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        if await self.sync_state.is_post_ibd_state(checkpoint_tip, conduit_best_tip):
+        if await self.sync_state.get_conduit_best_tip():
             await self.update_mempool_and_checkpoint_tip_atomic(checkpoint_tip, is_reorg)
         else:
             # No txs in mempool until is_post_ibd == True
             self.db.update_checkpoint_tip(checkpoint_tip)
-        self.global_tx_hashes_dict = {}
+        self.db.drop_temp_mined_tx_hashes()
+
+        total_hashes_count = 0
+        total_blocks_count = len(self.global_tx_counts_dict)
+        for block_num in self.global_tx_counts_dict:
+            total_hashes_count += self.global_tx_counts_dict[block_num]
+
+        # This cache can get quite large if too many blocks with too many transactions are
+        # allocated all at once
+        self.logger.debug(f"Total blocks in global tx hashes cache: {total_blocks_count}")
+        self.logger.debug(f"Total tx hashes count in global tx hashes cache: {total_hashes_count}")
+        self.global_tx_counts_dict = {}
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
         return best_flushed_block_height
@@ -627,9 +659,7 @@ class Controller(ControllerBase):
     async def long_poll_conduit_raw_chain_tip(
         self,
     ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
-        conduit_best_tip = await self.sync_state.get_conduit_best_tip()
-        local_block_tip = self.headers_threadsafe_blocks.tip()
-        if await self.sync_state.is_post_ibd_state(local_block_tip, conduit_best_tip):
+        if await self.sync_state.is_post_ibd_state():
             await self.maybe_start_processing_mempool_txs()
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.

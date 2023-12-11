@@ -142,7 +142,7 @@ class MinedBlockParsingThread(threading.Thread):
                 )
 
     def run(self) -> None:
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         socket_mined_tx = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55555",
@@ -359,6 +359,12 @@ class MinedBlockParsingThread(threading.Thread):
 
             # Mempool and Reorg txs already have entries for inputs, pushdata and output tables,
             # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
+            # TODO(scaling): Convert this to an iterator and
+            #  return some results for every transaction or perhaps every time
+            #  the row counts exceed certain limits (to the nearest whole transaction)
+            #  This would deal with the problem of one block where there are 68 million
+            #  p2pkh 1 sat new utxos generated in a single block size (that's not even
+            #  the whole block... Block 804157.
             all_tx_offsets_sorted = array.array("Q", sorted(tx_offsets_part))
             result = parse_txs(
                 raw_block_slice,

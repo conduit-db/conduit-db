@@ -277,20 +277,7 @@ class ScyllaDB(DBInterface):
         self.tables.drop_temp_mempool_additions()
 
 
-def wait_for_db_ready() -> ScyllaDB | None:
-    while True:
-        try:
-            scylladb = load_scylla_database()
-            print('ScyllaDB is now available')
-            return scylladb
-        except (NoHostAvailable, ConnectionRefusedError):
-            print("ScyllaDB is not yet available")
-        except Exception as e:
-            print(f"Unexpected exception type: {e}. Exiting loop")
-            return None
-
-
-def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
+def load_scylla_database(worker_id: int | str | None = None, wait_time: int | None = None) -> ScyllaDB:
     # auth_provider = PlainTextAuthProvider(
     #     username=os.environ['SCYLLA_USERNAME'],
     #     password=os.environ['SCYLLA_PASSWORD'],
@@ -305,7 +292,7 @@ def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
                 protocol_version=ProtocolVersion.V4,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 executor_threads=4,
-                connect_timeout=30,
+                connect_timeout=120,
                 idle_heartbeat_interval=60
                 # auth_provider=auth_provider,
             )
@@ -315,10 +302,14 @@ def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
             logging.getLogger('cassandra').setLevel(logging.WARNING)
             logger.info(f"ScyllaDB is now available (worker_id={worker_id})")
             cache = RedisCache()
-            return ScyllaDB(cluster, session, cache, worker_id=worker_id)
-        except (NoHostAvailable, ConnectionRefusedError):
-            logger.info(f"ScyllaDB is not yet available (worker_id={worker_id})")
+            scylladb = ScyllaDB(cluster, session, cache, worker_id=worker_id)
+            if wait_time is not None:
+                logger.debug(f"Waiting {wait_time} seconds for other connections..")
+                time.sleep(wait_time)
+            return scylladb
+        except NoHostAvailable as e:
+            logger.error(f"ScyllaDB is not yet available (worker_id={worker_id}). Reason: {e}")
             time.sleep(2)
         except Exception as e:
             logger.exception(f"Unexpected exception type: {e}. Exiting loop")
-            exit(1)
+            time.sleep(2)

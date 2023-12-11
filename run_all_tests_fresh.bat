@@ -14,5 +14,7 @@ py ./contrib/scripts/start_with_corrupted_db.py
 docker-compose -f .\docker-compose.yml up -d
 
 set DEFAULT_DB_TYPE=SCYLLADB
+REM Give time for ScyllaDB to boostrap
+timeout /t 5
 py -m pytest tests_functional --verbose
 py -m pytest tests --verbose

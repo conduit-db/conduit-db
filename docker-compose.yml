@@ -39,6 +39,7 @@ services:
     mem_limit: 2G
     volumes:
       - ${SCYLLA_CONF_DIR}/scylla.yml:/etc/scylla/scylla.yml
+    command: --skip-wait-for-gossip-to-settle 0
 
   redis:
     image: redis:latest
