@@ -29,7 +29,7 @@ services:
       MYSQL_PASSWORD: conduitpass
 
   scylladb:
-    image: scylladb/scylla
+    image: scylladb/scylla:latest
     ports:
       - "9042:9042"
       - "19042:19042"

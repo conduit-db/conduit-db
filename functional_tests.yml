@@ -4,6 +4,55 @@ parameters:
     default: 'SCYLLADB'
 
 steps:
+# Cache dockerhub database images (only the ones that remain constant)
+- task: Cache@2
+  inputs:
+    key: 'dockerHubImages | "$(Agent.OS)"'
+    path: dockerImages.tar
+  displayName: "Check for Cached Docker Hub images"
+
+- script: |
+    if [ ! -f dockerImages.tar ]; then
+      docker pull scylladb/scylla:latest
+      docker pull redis:latest
+      docker pull mariadb:latest
+      docker save scylladb/scylla:latest redis:latest mariadb:latest -o dockerImages.tar
+    fi
+  displayName: "Pull and save Docker Hub images if not cached"
+
+- script: |
+    if [ -f dockerImages.tar ]; then
+      docker load -i dockerImages.tar
+    fi
+  displayName: "Load Docker Hub images from cache"
+
+# Cache locally built docker images (only the ones that remain constant)
+- task: Cache@2
+  inputs:
+    key: 'docker | "$(Agent.OS)" | ./contrib/python_base/Dockerfile, ./contrib/node/Dockerfile'
+    path: $(dockerCache)
+  displayName: Check for Cached Docker layers
+
+- script: |
+    if [ -d "$(dockerCache)" ]; then
+      # Load the Docker cache
+      docker load -i $(dockerCache)/cache.tar
+    fi
+  displayName: Load Docker build cache
+
+- script: |
+    # Build Docker images here, making use of the Docker cache if available
+    docker build -t python-base-image ./contrib/python_base
+    docker build -t node-image ./contrib/node
+  displayName: Build Docker images
+
+- script: |
+    # Save the Docker cache
+    mkdir -p $(dockerCache)
+    docker save python-base-image node-image > $(dockerCache)/cache.tar
+  displayName: Save Docker build cache
+
+
 - script: |
     export DOCKER_GATEWAY_HOST=172.17.0.1
     docker build -f ./contrib/python_base/Dockerfile . -t python_base
