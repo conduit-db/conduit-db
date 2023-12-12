@@ -20,8 +20,8 @@ from typing import cast
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT, REGTEST
 from conduit_lib.store import Storage
-from .load_balance_algo import distribute_load
-from .types import WorkUnit, MainBatch, WorkPart
+from .load_balance_algo import distribute_load, WorkPart
+from .types import WorkUnit, MainBatch
 
 if typing.TYPE_CHECKING:
     from .controller import Controller
@@ -116,22 +116,26 @@ class SyncState:
     def get_local_block_tip_height(self) -> int:
         return cast(int, self.get_local_block_tip().height)
 
-    async def is_post_ibd_state(self, tip: bitcoinx.Header, conduit_best_tip: bitcoinx.Header) -> bool:
+    async def is_post_ibd_state(self) -> bool:
         if self.is_post_ibd:  # cache result
             return self.is_post_ibd
+
+        conduit_best_tip = await self.get_conduit_best_tip()
+        local_tip = self.get_local_block_tip()
+
         # Usually the node sets IBD mode on once it is within 24 hours of the chain tip
         # which has the benefit of pre-filling the mempool to prepare for switching to the
         # compact block protocol by the time it reaches the chain tip.
         if self.controller.net_config.NET != REGTEST:
             conduit_best = datetime.utcfromtimestamp(conduit_best_tip.timestamp)
-            our_tip = datetime.utcfromtimestamp(tip.timestamp)
+            our_tip = datetime.utcfromtimestamp(local_tip.timestamp)
             one_day_ago = datetime.utcnow() - timedelta(hours=24)
             if conduit_best > one_day_ago and our_tip > one_day_ago:
                 return True
         else:
             # Regtest timestamps are not reliable when submitting old testing blocks
             # Just exit IBD mode as soon as ConduitIndex catches up to ConduitRaw
-            if tip.hash == conduit_best_tip.hash:
+            if local_tip.hash == conduit_best_tip.hash:
                 return True
         return False
 

@@ -76,7 +76,7 @@ def flush_rows_confirmed(
             bytes.fromhex('00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e'),
             bytes.fromhex('00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721'),
         }
-        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
+        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks.values():
             if blk_hash in special_block_hashes:
                 check_duplicates = True
 
@@ -84,9 +84,13 @@ def flush_rows_confirmed(
         flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
 
         # Ack for all flushed blocks
+        # TODO: Do a merging step here to combine all of the
+        #  same part_tx_hashes for the same blk_num etc.
+        #  Currently both of these ZMQ sockets keeps hitting the
+        #  Mined Transaction ACK receiver is busy rate limit.
         assert worker.socket_mined_tx_ack is not None
         assert worker.socket_mined_tx_parsed_ack is not None
-        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks:
+        for blk_num, work_item_id, blk_hash, part_tx_hashes in acks.values():
             msg = cbor2.dumps({blk_num: part_tx_hashes})
             zmq_send_no_block(
                 worker.socket_mined_tx_ack,
@@ -140,7 +144,7 @@ def reset_rows() -> (
     txs_mempool: list[MempoolTransactionRow] = []
     ins: list[InputRow] = []
     pds: list[PushdataRow] = []
-    acks: ProcessedBlockAcks = []
+    acks: ProcessedBlockAcks = {}
     return txs, txs_mempool, ins, pds, acks
 
 

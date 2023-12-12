@@ -105,7 +105,7 @@ class TxParser(multiprocessing.Process):
             sys.exit(0)
 
     def setup_tip_filtering(self) -> None:
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
 
         self.unspent_output_registrations: set[OutpointType] = set()
 

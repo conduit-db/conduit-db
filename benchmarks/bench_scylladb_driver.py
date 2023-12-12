@@ -19,7 +19,7 @@ from cassandra.query import BatchType
 from conduit_lib.constants import HashXLength
 from conduit_lib.database.db_interface.db import DatabaseType, DBInterface
 from conduit_lib.database.db_interface.types import ConfirmedTransactionRow, MempoolTransactionRow, \
-    MinedTxHashes
+    MinedTxHashXes
 
 N = 100_000
 
@@ -112,11 +112,11 @@ def mempool_tx_rows(db: DBInterface):
 
 
 @pytest.fixture(scope="module")
-def mined_tx_hashes(db: DBInterface):
+def mined_tx_hashXes(db: DBInterface):
     tx_rows = []
     for i in range(N):
         txid = os.urandom(HashXLength).hex()
-        tx_rows.append(MinedTxHashes(txid=txid, block_number=i))
+        tx_rows.append(MinedTxHashXes(txid=txid, block_number=i))
     return tx_rows
 
 
@@ -186,11 +186,11 @@ def test_bulk_load_mempool_tx_rows(db: DBInterface, mempool_tx_rows: list[Mempoo
 
 
 # Bulk load redis mempool set: 822769.0822885996 rows/second
-def test_bulk_load_temp_mined_tx_hashes(db: DBInterface, mined_tx_hashes: list[MinedTxHashes]) \
+def test_bulk_load_temp_mined_tx_hashXes(db: DBInterface, mined_tx_hashXes) \
         -> None:
     db.cache.r.flushall()
-    func = partial(db.load_temp_mined_tx_hashes, mined_tx_hashes)
+    func = partial(db.load_temp_mined_tx_hashXes, mined_tx_hashXes)
     time_interval = benchmark(func)
     print(f"Bulk load temp mined tx hashes: {time_interval} seconds")
     print(f"Bulk load temp mined tx hashes: {N/time_interval} rows/second")
-    assert db.cache.r.scard("temp_mined_tx_hashes") == N
+    assert db.cache.r.scard("temp_mined_tx_hashXes") == N

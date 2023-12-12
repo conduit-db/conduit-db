@@ -47,7 +47,7 @@ class MySQLTables:
                 "pushdata",
                 "temp_mempool_additions",
                 "temp_mempool_removals",
-                "temp_mined_tx_hashes",
+                "temp_mined_tx_hashXes",
             ]
             WORKER_COUNT_TX_PARSERS = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
             for worker_id in range(1, WORKER_COUNT_TX_PARSERS + 1):
@@ -97,19 +97,19 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def drop_temp_mined_tx_hashes(self) -> None:
+    def drop_temp_mined_tx_hashXes(self) -> None:
         try:
             self.conn.query(
                 """
-                DROP TABLE IF EXISTS temp_mined_tx_hashes;
+                DROP TABLE IF EXISTS temp_mined_tx_hashXes;
             """
             )
         except Exception:
-            self.logger.exception("drop_temp_mined_tx_hashes failed unexpectedly")
+            self.logger.exception("drop_temp_mined_tx_hashXes failed unexpectedly")
         finally:
             self.commit_transaction()
 
-    def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
+    def drop_temp_inbound_tx_hashXes(self, inbound_tx_table_name: str) -> None:
         try:
             self.start_transaction()
             self.conn.query(
@@ -118,7 +118,7 @@ class MySQLTables:
             """
             )
         except Exception:
-            self.logger.exception("drop_temp_inbound_tx_hashes failed unexpectedly")
+            self.logger.exception("drop_temp_inbound_tx_hashXes failed unexpectedly")
         finally:
             self.commit_transaction()
 
@@ -168,7 +168,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS mempool_transactions (
-                    mp_tx_hash BINARY(32) PRIMARY KEY
+                    mp_tx_hash BINARY({HashXLength}) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;"""
             )
         except Exception:
@@ -288,13 +288,13 @@ class MySQLTables:
         finally:
             self.commit_transaction()
 
-    def create_temp_mined_tx_hashes_table(self) -> None:
+    def create_temp_mined_tx_hashXes_table(self) -> None:
         # TODO(db): Should be able to remove the blk_num field
         try:
             self.conn.query(
                 f"""
-                CREATE TABLE IF NOT EXISTS temp_mined_tx_hashes (
-                    mined_tx_hash BINARY(32) PRIMARY KEY,
+                CREATE TABLE IF NOT EXISTS temp_mined_tx_hashXes (
+                    mined_tx_hash BINARY({HashXLength}) PRIMARY KEY,
                     blk_num BIGINT
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """
@@ -331,7 +331,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS temp_orphaned_txs (
-                    tx_hash BINARY(32) PRIMARY KEY
+                    tx_hash BINARY({HashXLength}) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """
             )
@@ -343,7 +343,7 @@ class MySQLTables:
             self.conn.query(
                 f"""
                 CREATE TABLE IF NOT EXISTS {inbound_tx_table_name} (
-                    inbound_tx_hash BINARY(32) PRIMARY KEY
+                    inbound_tx_hash BINARY({HashXLength}) PRIMARY KEY
                 ) ENGINE=MEMORY DEFAULT CHARSET=latin1;
                 """
             )

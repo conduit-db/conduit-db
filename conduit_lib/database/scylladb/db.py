@@ -28,7 +28,7 @@ from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
-    MinedTxHashes,
+    MinedTxHashXes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
@@ -129,15 +129,15 @@ class ScyllaDB(DBInterface):
     def drop_tables(self) -> None:
         self.tables.drop_tables()
 
-    def drop_temp_mined_tx_hashes(self) -> None:
-        self.tables.drop_temp_mined_tx_hashes()
+    def drop_temp_mined_tx_hashXes(self) -> None:
+        self.tables.drop_temp_mined_tx_hashXes()
 
-    def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
-        self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+    def drop_temp_inbound_tx_hashXes(self, inbound_tx_table_name: str) -> None:
+        self.tables.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
 
     # QUERIES
-    def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
-        self.queries.load_temp_mined_tx_hashes(mined_tx_hashes)
+    def load_temp_mined_tx_hashXes(self, mined_tx_hashXes: list[MinedTxHashXes]) -> None:
+        self.queries.load_temp_mined_tx_hashXes(mined_tx_hashXes)
 
     def load_temp_inbound_tx_hashes(
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
@@ -205,8 +205,8 @@ class ScyllaDB(DBInterface):
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         self.queries.load_temp_mempool_removals(removals_from_mempool)
 
-    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        self.queries.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+    def load_temp_orphaned_tx_hashXes(self, orphaned_tx_hashXes: set[bytes]) -> None:
+        self.queries.load_temp_orphaned_tx_hashXes(orphaned_tx_hashXes)
 
     def update_allocated_state(
         self,
@@ -277,20 +277,7 @@ class ScyllaDB(DBInterface):
         self.tables.drop_temp_mempool_additions()
 
 
-def wait_for_db_ready() -> ScyllaDB | None:
-    while True:
-        try:
-            scylladb = load_scylla_database()
-            print('ScyllaDB is now available')
-            return scylladb
-        except (NoHostAvailable, ConnectionRefusedError):
-            print("ScyllaDB is not yet available")
-        except Exception as e:
-            print(f"Unexpected exception type: {e}. Exiting loop")
-            return None
-
-
-def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
+def load_scylla_database(worker_id: int | str | None = None, wait_time: int | None = None) -> ScyllaDB:
     # auth_provider = PlainTextAuthProvider(
     #     username=os.environ['SCYLLA_USERNAME'],
     #     password=os.environ['SCYLLA_PASSWORD'],
@@ -305,7 +292,7 @@ def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
                 protocol_version=ProtocolVersion.V4,
                 load_balancing_policy=TokenAwarePolicy(DCAwareRoundRobinPolicy()),
                 executor_threads=4,
-                connect_timeout=30,
+                connect_timeout=120,
                 idle_heartbeat_interval=60
                 # auth_provider=auth_provider,
             )
@@ -315,10 +302,14 @@ def load_scylla_database(worker_id: int | str | None = None) -> ScyllaDB:
             logging.getLogger('cassandra').setLevel(logging.WARNING)
             logger.info(f"ScyllaDB is now available (worker_id={worker_id})")
             cache = RedisCache()
-            return ScyllaDB(cluster, session, cache, worker_id=worker_id)
-        except (NoHostAvailable, ConnectionRefusedError):
-            logger.info(f"ScyllaDB is not yet available (worker_id={worker_id})")
+            scylladb = ScyllaDB(cluster, session, cache, worker_id=worker_id)
+            if wait_time is not None:
+                logger.debug(f"Waiting {wait_time} seconds for other connections..")
+                time.sleep(wait_time)
+            return scylladb
+        except NoHostAvailable as e:
+            logger.error(f"ScyllaDB is not yet available (worker_id={worker_id}). Reason: {e}")
             time.sleep(2)
         except Exception as e:
             logger.exception(f"Unexpected exception type: {e}. Exiting loop")
-            exit(1)
+            time.sleep(2)

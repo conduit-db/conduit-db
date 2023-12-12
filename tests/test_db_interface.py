@@ -19,7 +19,7 @@ from conduit_lib.constants import HashXLength, MAX_UINT32
 from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
-    MinedTxHashes,
+    MinedTxHashXes,
     MempoolTransactionRow,
     ConfirmedTransactionRow,
     InputRow,
@@ -44,7 +44,7 @@ class TestDBInterface:
         db.drop_tables()
         assert db.tip_filter_api is not None
         db.tip_filter_api.drop_tables()
-        db.drop_temp_mined_tx_hashes()
+        db.drop_temp_mined_tx_hashXes()
         db.drop_temp_orphaned_txs()
         if hasattr(db, 'cache'):
             assert db.cache is not None
@@ -218,30 +218,30 @@ class TestDBInterface:
                 ('tip_filter_registrations',),
             )
 
-    def test_temp_mined_tx_hashes_table(self, db: DBInterface) -> None:
-        db.load_temp_mined_tx_hashes([])
+    def test_temp_mined_tx_hashXes_table(self, db: DBInterface) -> None:
+        db.load_temp_mined_tx_hashXes([])
 
-        txid1 = "aa" * 32
-        txid2 = "bb" * 32
-        inserted_rows = [MinedTxHashes(txid1, 1), MinedTxHashes(txid2, 2)]
-        db.drop_temp_mined_tx_hashes()
-        db.load_temp_mined_tx_hashes(inserted_rows)
+        txid1 = "aa" * HashXLength
+        txid2 = "bb" * HashXLength
+        inserted_rows = [MinedTxHashXes(txid1, 1), MinedTxHashXes(txid2, 2)]
+        db.drop_temp_mined_tx_hashXes()
+        db.load_temp_mined_tx_hashXes(inserted_rows)
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.cache is not None
-            assert db.cache.r.smembers('temp_mined_tx_hashes') == {bytes.fromhex(txid1), bytes.fromhex(txid2)}
-            db.drop_temp_mined_tx_hashes()
-            assert db.cache.r.smembers('temp_mined_tx_hashes') == set()
+            assert db.cache.r.smembers('temp_mined_tx_hashXes') == {bytes.fromhex(txid1), bytes.fromhex(txid2)}
+            db.drop_temp_mined_tx_hashXes()
+            assert db.cache.r.smembers('temp_mined_tx_hashXes') == set()
         else:
             assert db.conn is not None
-            db.conn.query("SELECT * FROM temp_mined_tx_hashes")
+            db.conn.query("SELECT * FROM temp_mined_tx_hashXes")
             result = db.conn.store_result()
             rows = result.fetch_row(0)
             for row in rows:
-                row = MinedTxHashes(row[0].hex(), row[1])
+                row = MinedTxHashXes(row[0].hex(), row[1])
                 assert row in inserted_rows
-            assert 'temp_mined_tx_hashes' in [row[0] for row in db.get_tables()]
-            db.drop_temp_mined_tx_hashes()
-            assert 'temp_mined_tx_hashes' not in [row[0] for row in db.get_tables()]
+            assert 'temp_mined_tx_hashXes' in [row[0] for row in db.get_tables()]
+            db.drop_temp_mined_tx_hashXes()
+            assert 'temp_mined_tx_hashXes' not in [row[0] for row in db.get_tables()]
 
     def test_confirmed_transactions_table(self, db: DBInterface) -> None:
         db.drop_tables()
@@ -300,8 +300,6 @@ class TestDBInterface:
         db.bulk_load_input_rows(in_rows=[])
         txid1 = 'aa' * HashXLength
         txid2 = 'bb' * HashXLength
-        full_tx_hash1 = bytes.fromhex('aa' * 32)
-        full_tx_hash2 = bytes.fromhex('bb' * 32)
         row1 = InputRow(out_tx_hash=txid1, out_idx=1, in_tx_hash='cc' * HashXLength, in_idx=1)
         row2 = InputRow(out_tx_hash=txid2, out_idx=2, in_tx_hash='dd' * HashXLength, in_idx=2)
 
@@ -470,10 +468,10 @@ class TestDBInterface:
 
     def test_mempool_table(self, db: DBInterface) -> None:
         db.bulk_load_mempool_tx_rows(tx_rows=[])
-        txid1 = 'aa' * 32
-        txid2 = 'bb' * 32
-        row1 = MempoolTransactionRow(mp_tx_hash=txid1)
-        row2 = MempoolTransactionRow(mp_tx_hash=txid2)
+        txid1 = 'aa' * HashXLength
+        txid2 = 'bb' * HashXLength
+        row1 = MempoolTransactionRow(mp_tx_hashX=txid1)
+        row2 = MempoolTransactionRow(mp_tx_hashX=txid2)
 
         # Empty
         if db.db_type == DatabaseType.ScyllaDB:
@@ -512,9 +510,9 @@ class TestDBInterface:
 
     def test_temp_orphaned_txs_table(self, db: DBInterface) -> None:
         db.create_permanent_tables()
-        db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes=set())
-        txid1 = 'aa' * 32
-        txid2 = 'bb' * 32
+        db.load_temp_orphaned_tx_hashXes(orphaned_tx_hashXes=set())
+        txid1 = 'aa' * HashXLength
+        txid2 = 'bb' * HashXLength
         row1 = bytes.fromhex(txid1)
         row2 = bytes.fromhex(txid2)
 
@@ -530,7 +528,7 @@ class TestDBInterface:
             assert len(rows) == 0
 
         # Filled
-        db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes={row1, row2})
+        db.load_temp_orphaned_tx_hashXes(orphaned_tx_hashXes={row1, row2})
         if db.db_type == DatabaseType.ScyllaDB:
             assert db.cache is not None
             assert db.cache.r.smembers("temp_orphaned_txs") == {row1, row2}
@@ -642,10 +640,10 @@ class TestDBInterface:
     def test_temp_inbound_tx_hashes_table(self, db: DBInterface) -> None:
         worker_id = 1
         inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
-        db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+        db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
         db.load_temp_inbound_tx_hashes([], inbound_tx_table_name=inbound_tx_table_name)
-        txid1 = 'aa' * 32
-        txid2 = 'bb' * 32
+        txid1 = 'aa' * HashXLength
+        txid2 = 'bb' * HashXLength
         row1 = (txid1,)
         row2 = (txid2,)
 
@@ -678,12 +676,12 @@ class TestDBInterface:
 
         # DROP
         if db.db_type == DatabaseType.ScyllaDB:
-            db.drop_temp_inbound_tx_hashes(inbound_tx_table_name=inbound_tx_table_name)
+            db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name=inbound_tx_table_name)
             assert db.cache is not None
             assert db.cache.r.smembers(inbound_tx_table_name) == set()
         else:
             assert inbound_tx_table_name in [row[0] for row in db.get_tables()]
-            db.drop_temp_inbound_tx_hashes(inbound_tx_table_name=inbound_tx_table_name)
+            db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name=inbound_tx_table_name)
             assert inbound_tx_table_name not in [row[0] for row in db.get_tables()]
 
     def test_drop_tables(self, db: DBInterface) -> None:
@@ -1003,10 +1001,10 @@ class TestDBInterface:
 
         worker_id = 1
         inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
-        db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
-        txid1 = 'aa' * 32
-        txid2 = 'bb' * 32
-        txid3 = 'cc' * 32
+        db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
+        txid1 = 'aa' * HashXLength
+        txid2 = 'bb' * HashXLength
+        txid3 = 'cc' * HashXLength
         row1 = (txid1,)
         row2 = (txid2,)
         row3 = (txid3,)
@@ -1027,7 +1025,7 @@ class TestDBInterface:
         assert new_txs == {bytes.fromhex(txid3)}
 
         # Reorg is True so the orphaned_txs set should also be subtracted from the end result.
-        db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes={bytes.fromhex(txid3)})
+        db.load_temp_orphaned_tx_hashXes(orphaned_tx_hashXes={bytes.fromhex(txid3)})
         new_txs = db.get_unprocessed_txs(
             is_reorg=True, new_tx_hashes=[row1, row2, row3], inbound_tx_table_name=inbound_tx_table_name
         )
@@ -1036,20 +1034,20 @@ class TestDBInterface:
     def test_invalidate_mempool_rows(self, db: DBInterface) -> None:
         db.drop_tables()
         db.create_permanent_tables()
-        db.drop_temp_mined_tx_hashes()
+        db.drop_temp_mined_tx_hashXes()
 
         worker_id = 1
         inbound_tx_table_name = f'inbound_tx_table_{worker_id}'
-        db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
-        txid1 = 'aa' * 32
-        txid2 = 'bb' * 32
-        txid3 = 'cc' * 32
+        db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
+        txid1 = 'aa' * HashXLength
+        txid2 = 'bb' * HashXLength
+        txid3 = 'cc' * HashXLength
 
         # Check for correct invalidation
         db.bulk_load_mempool_tx_rows(
             tx_rows=[MempoolTransactionRow(txid1), MempoolTransactionRow(txid2), MempoolTransactionRow(txid3)]
         )
-        db.load_temp_mined_tx_hashes(mined_tx_hashes=[MinedTxHashes(txid=txid1, block_number=1)])
+        db.load_temp_mined_tx_hashXes(mined_tx_hashXes=[MinedTxHashXes(txid=txid1, block_number=1)])
         assert db.get_mempool_size() == 3
         db.invalidate_mempool_rows()
         if db.db_type == DatabaseType.ScyllaDB:

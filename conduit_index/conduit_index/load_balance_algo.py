@@ -1,124 +1,90 @@
-# Copyright (c) 2020-2023, Hayden Donnelly
-#
-# All rights reserved.
-#
-# Licensed under the MIT License; see LICENCE for details.
-
 import array
-import logging
 import math
-import os
-import time
-from os import urandom
+from typing import NamedTuple
 
-from conduit_lib.constants import CHIP_AWAY_BYTE_SIZE_LIMIT, SMALL_BLOCK_SIZE
+from conduit_lib.constants import SMALL_BLOCK_SIZE, LOAD_BALANCE_RAW_BLOCK_CHUNK_SIZE
 
-from .types import WorkPart
 
-logger = logging.getLogger("distribute_load")
+class WorkPart(NamedTuple):
+    size_of_part: int
+    blk_hash: bytes
+    blk_height: int
+    first_tx_pos: int
+    end_byte_offset: int
+    tx_offsets: "array.ArrayType[int]"
+
+
+def find_largest_tx_size(sorted_offsets: "array.ArrayType[int]") -> int:
+    max_gap = 0
+    for i in range(1, len(sorted_offsets)):
+        gap = sorted_offsets[i] - sorted_offsets[i - 1]
+        max_gap = max(gap, max_gap)
+    return max_gap
 
 
 def distribute_load(
-    blk_hash: bytes,
-    blk_height: int,
-    count_added: int,
-    block_size: int,
-    tx_offsets_array: "array.ArrayType[int]",
+        blk_hash: bytes,
+        blk_height: int,
+        count_added: int,
+        block_size: int,
+        tx_offsets_array: "array.ArrayType[int]"
 ) -> list[WorkPart]:
-    """tx_offsets_array must be all the tx_offsets in a full raw block
-    Todo - This very badly needs unittest coverage - and TDD for working around the risk of a
-        freakishly large transaction in the batch.
     """
-    # logger.debug(f"Length of tx_offsets_array={len(tx_offsets_array)}")
+    This function distributes the load of processing transactions across worker processes.
 
-    # If MAX_WORK_ITEM_SIZE is very small (smaller than the average tx size then it will lead
-    # to most of the txs 'piling up' in the last work item...
-    # Also - if MAX_WORK_ITEM_SIZE is smaller than even a single tx then it would error!
-    WORKER_COUNT_TX_PARSERS = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
-    WORK_ITEM_SIZE = CHIP_AWAY_BYTE_SIZE_LIMIT / WORKER_COUNT_TX_PARSERS
-    BATCH_COUNT = math.ceil(block_size / WORK_ITEM_SIZE)
-    BATCH_SIZE = math.floor(count_added / BATCH_COUNT)
+    There is a trade-off to be made. Dividing a block into chunks that are too small creates stutter on the
+    magnetic drive of ConduitIndex from high frequency random read access. Too large and there can be "hotspots"
+    in a raw block slice with very "dense" areas of transactions packed with 1000s of txos per transaction. These
+    are much more resource intensive to process than data carrier transactions on a per MB basis. This can lead
+    to all the other workers idling while one worker is choking on the hotspot.
 
+    So a reasonable trade-off chunk size seems to be 32MB chunks. Therefore, a 4GB block, tightly packed with
+    transactions with thousands of txos each would only allocate around 1 million txos or input rows for parsing
+    per worker (at one time). This limits the peak memory consumption of each worker process to within acceptable
+    limits too (because the whole byte array and associated caches need to hold all data for the chunk in memory
+    at one time).
+    """
+    # Constants and environment variables
+    largest_tx_size_in_block = find_largest_tx_size(tx_offsets_array)
+
+    # Calculate the work item size and batch count
+    # If the largest tx size is bigger than 32MB then the smallest chunk size needs to be large
+    # enough to accommodate at least 1 full raw transaction.
+    work_item_size = max(LOAD_BALANCE_RAW_BLOCK_CHUNK_SIZE, largest_tx_size_in_block)
+    # First go with a simple approach. Divide the block evenly based on its size
+    batch_count = math.ceil(block_size / work_item_size)
     first_tx_pos_batch = 0
-    if BATCH_COUNT == 1 or count_added < SMALL_BLOCK_SIZE:
-        start_idx_batch = 0
 
-        # This might look unnecessary (why not just return tx_offsets?)
-        # It's because this function is also used by the preprocessor which has a huge pre-allocated
-        # array.array that it operates on so the position needs to be explicit
-        end_idx_batch = start_idx_batch + count_added
-        tx_offsets = tx_offsets_array[start_idx_batch:end_idx_batch]
-        part_end_offset = block_size
-        size_of_part = part_end_offset - tx_offsets[first_tx_pos_batch]
-        return [
-            (
-                size_of_part,
-                blk_hash,
-                blk_height,
-                first_tx_pos_batch,
-                part_end_offset,
-                tx_offsets,
-            )
-        ]
+    # Handle small blocks or blocks with fewer transactions than workers
+    if count_added < SMALL_BLOCK_SIZE or batch_count == 1:
+        size_of_part = block_size
+        return [WorkPart(size_of_part, blk_hash, blk_height, first_tx_pos_batch, block_size, tx_offsets_array)]
 
+    # Distribute larger blocks across workers
     divided_tx_positions = []
-    for i in range(BATCH_COUNT):
-        if i == BATCH_COUNT - 1:  # last batch - can be a bit bigger to include the remainder
-            start_idx_batch = i * BATCH_SIZE
-            end_idx_batch = count_added
-            tx_offsets = tx_offsets_array[start_idx_batch:end_idx_batch]
-            part_end_offset = block_size
-            size_of_part = tx_offsets_array[end_idx_batch - 1] - tx_offsets_array[start_idx_batch]
-            divided_tx_positions.extend(
-                [
-                    (
-                        size_of_part,
-                        blk_hash,
-                        blk_height,
-                        first_tx_pos_batch,
-                        part_end_offset,
-                        tx_offsets,
-                    )
-                ]
-            )
-
+    last_batch_id = batch_count - 1
+    first_tx_pos = 0
+    for batch_id in range(batch_count):
+        start_idx_batch = min(batch_id * (count_added // batch_count), count_added - 1)
+        end_idx_batch = min((batch_id + 1) * (count_added // batch_count), count_added)
+        if batch_id == last_batch_id:
+            tx_offsets = tx_offsets_array[start_idx_batch:]
+            end_byte_offset = block_size  # include remainder all the way to the end of the raw block
+            size_of_part = end_byte_offset - tx_offsets[0]
         else:
-            start_idx_batch = i * BATCH_SIZE
-            end_idx_batch = (i + 1) * BATCH_SIZE
-            num_txs = end_idx_batch - start_idx_batch
             tx_offsets = tx_offsets_array[start_idx_batch:end_idx_batch]
-            size_of_part = tx_offsets_array[end_idx_batch] - tx_offsets_array[start_idx_batch]
-            part_end_offset = tx_offsets_array[end_idx_batch]
-            divided_tx_positions.extend(
-                [
-                    (
-                        size_of_part,
-                        blk_hash,
-                        blk_height,
-                        first_tx_pos_batch,
-                        part_end_offset,
-                        tx_offsets,
-                    )
-                ]
+            end_byte_offset = tx_offsets_array[end_idx_batch]
+            size_of_part = end_byte_offset - tx_offsets[0]
+
+        divided_tx_positions.append(
+            WorkPart(
+                    size_of_part,
+                    blk_hash,
+                    blk_height,
+                    first_tx_pos,
+                    end_byte_offset,
+                    tx_offsets,
             )
-            first_tx_pos_batch += num_txs
-
-    # for index, batch in enumerate(divided_tx_positions):
-    #     logger.debug(f"work part index={index} batched tx_offsets length={len(batch[5])};
-    #     first_tx_pos_batch={batch[3]}; part_end_offset={batch[4]}")
-
+        )
+        first_tx_pos += len(tx_offsets)
     return divided_tx_positions
-
-
-if __name__ == "__main__":
-    t0 = time.perf_counter()
-    blk_hash = urandom(32)
-    count_added = 10001
-    blk_height = 10
-    blk_end_pos = 100000
-    tx_offsets = array.array("Q", [i for i in range(20000)])
-    result = distribute_load(blk_hash, blk_height, count_added, blk_end_pos, tx_offsets)
-    t1 = time.perf_counter() - t0
-    # print(len(result[0][4]))
-    print(result)
-    print(f"completed in {t1} seconds for a simulated block with {count_added} txs")

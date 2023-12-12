@@ -65,7 +65,6 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55889",
@@ -78,6 +77,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             zmq.SocketType.PUSH,
             [(zmq.SocketOption.SNDHWM, 10000)],
         )
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         txs, txs_mempool, ins, pds, acks = reset_rows()
         all_tip_filter_notifications: list[TipFilterNotifications] = []
         try:
@@ -93,8 +93,16 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     txs, txs_mempool, ins, pds = extend_batched_rows(
                         confirmed_rows, txs, txs_mempool, ins, pds
                     )
-                    acks.extend(new_acks)
-                    all_tip_filter_notifications.append(tip_filter_notifications)
+                    # Merge arrays of tx hashes otherwise it overloads the zmq socket with
+                    # numerous messages
+                    for work_item_id, acks_item in new_acks.items():
+                        if acks.get(work_item_id):
+                            acks[work_item_id].partition_block_hashes.extend(acks_item.partition_block_hashes)
+                        else:
+                            acks[work_item_id] = acks_item
+
+                    if len(tip_filter_notifications.pushdata_matches) > 0:
+                        all_tip_filter_notifications.append(tip_filter_notifications)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         (

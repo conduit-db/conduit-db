@@ -12,7 +12,7 @@ from typing import Any, Sequence, Iterator
 import typing
 
 from cassandra import WriteTimeout  # pylint:disable=E0611
-from cassandra.cluster import Session, ResultSet  # pylint:disable=E0611
+from cassandra.cluster import Session, ResultSet, NoHostAvailable  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent, ExecutionResult  # pylint:disable=E0611
 from cassandra.pool import Host  # pylint:disable=E0611
 from cassandra.query import PreparedStatement, BatchStatement, BatchType  # pylint:disable=E0611
@@ -39,9 +39,9 @@ class ScyllaDBBulkLoads:
         self.db = db
         self.worker_id = self.db.worker_id
         if self.worker_id:
-            self.logger = logging.getLogger(f"scylla-tables-{self.worker_id}")
+            self.logger = logging.getLogger(f"scylla-bulk-loads-{self.worker_id}")
         else:
-            self.logger = logging.getLogger(f"scylla-tables")
+            self.logger = logging.getLogger(f"scylla-bulk-loads")
         self.session: Session = self.db.session
         self.logger.setLevel(get_log_level(CONDUIT_INDEX_SERVICE_NAME))
         self.total_db_time = 0.0
@@ -95,7 +95,8 @@ class ScyllaDBBulkLoads:
                 # limit is reached when results_generator is False. This is a hard-coded setting
                 # within the python driver.
                 # https://github.com/datastax/python-driver/pull/605/files
-                elif isinstance(result_or_exception, TypeError):
+                elif isinstance(result_or_exception, TypeError) or \
+                        isinstance(result_or_exception, NoHostAvailable):
                     # The assumption being made here is that the reason they all errored out
                     # was due to an excessive number of WriteTimeout errors.
                     # Or due to heavy load the ScyllaDB node has been marked as "down"
@@ -198,6 +199,7 @@ class ScyllaDBBulkLoads:
             "INSERT INTO confirmed_transactions (tx_hash, tx_block_num, tx_position) " "VALUES (?, ?, ?)"
         )
         insert_rows = [(bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position) for row in tx_rows]
+        self.logger.debug(f"Bulk loading {len(insert_rows)} confirmed tx rows")
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(
@@ -218,7 +220,7 @@ class ScyllaDBBulkLoads:
         futures = []
         assert self.db.executor is not None
         for i in range(0, len(tx_rows), batch_size):
-            batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i : i + batch_size]]
+            batch = [bytes.fromhex(row.mp_tx_hashX) for row in tx_rows[i : i + batch_size]]
             future = self.db.executor.submit(load_batch, batch)
             futures.append(future)
 
@@ -239,6 +241,7 @@ class ScyllaDBBulkLoads:
             (bytes.fromhex(row.out_tx_hash), row.out_idx, bytes.fromhex(row.in_tx_hash), row.in_idx)
             for row in in_rows
         ]
+        self.logger.debug(f"Bulk loading {len(in_rows)} input rows")
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
@@ -252,6 +255,7 @@ class ScyllaDBBulkLoads:
             (bytes.fromhex(row.pushdata_hash), bytes.fromhex(row.tx_hash), row.idx, row.ref_type)
             for row in pd_rows
         ]
+        self.logger.debug(f"Bulk loading {len(insert_rows)} pushdata rows")
         self.load_data_batched(insert_statement, insert_rows)
         t1 = time.time() - t0
         self.logger.log(

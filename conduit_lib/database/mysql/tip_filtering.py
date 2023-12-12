@@ -7,7 +7,6 @@
 import asyncio
 import logging
 import os
-import threading
 import time
 import typing
 import uuid
@@ -43,8 +42,7 @@ from conduit_lib.utils import index_exists
 if typing.TYPE_CHECKING:
     from conduit_lib.database.mysql.db import MySQLDatabase
 
-logger = logging.getLogger("sqlite-database")
-mined_tx_hashes_table_lock = threading.RLock()
+logger = logging.getLogger("tip-filtering-mysql")
 
 
 MARIADB_MAX_BIND_VARIABLES = 2 ^ 16 - 1

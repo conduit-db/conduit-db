@@ -26,7 +26,7 @@ from .common import (
     convert_input_rows_for_flush,
 )
 from .flush_mempool_thread import FlushMempoolTransactionsThread
-from conduit_lib.algorithms import parse_txs
+from conduit_lib.algorithms import parse_txs_to_list
 from conduit_lib.utils import zmq_recv_and_process_batchwise_no_block
 
 if typing.TYPE_CHECKING:
@@ -124,7 +124,7 @@ class MempoolParsingThread(threading.Thread):
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
-            ) = parse_txs(rawtx, tx_offsets, timestamp, False, 0)
+            ) = parse_txs_to_list(rawtx, tx_offsets, timestamp, False, 0)
             pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows)
             input_rows_for_flushing = convert_input_rows_for_flush(in_rows)
             tx_rows_batched.extend(tx_rows_mempool)

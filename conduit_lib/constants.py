@@ -53,6 +53,7 @@ LOGGING_LEVEL_VARNAME = "logging_level"
 # pushdata matches and are very very large txs.
 SMALL_BLOCK_SIZE = 10_000
 BULK_LOADING_BATCH_SIZE_ROW_COUNT = 100000
+LOAD_BALANCE_RAW_BLOCK_CHUNK_SIZE = 32 * 1000**2  # 32 MB
 
 if os.environ.get("NETWORK") == "regtest":
     CHIP_AWAY_BYTE_SIZE_LIMIT = (1024**2) * 100
