@@ -16,7 +16,7 @@ from cassandra.cluster import Session  # pylint:disable=E0611
 from cassandra.concurrent import execute_concurrent_with_args  # pylint:disable=E0611
 from cassandra.query import BatchStatement  # pylint:disable=E0611
 
-from ..db_interface.types import MinedTxHashes, InputRow, PushdataRow, CheckpointStateRow
+from ..db_interface.types import MinedTxHashXes, InputRow, PushdataRow, CheckpointStateRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -35,12 +35,12 @@ class ScyllaDBQueries:
         self.session: Session = self.db.session
         self.logger = logging.getLogger('scylladb-queries')
 
-    def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
+    def load_temp_mined_tx_hashXes(self, mined_tx_hashes: list[MinedTxHashXes]) -> None:
         # NOTE: the row.block_number value is not actually used because no queries
         # actually use it!
         if mined_tx_hashes:
             values_to_add = [bytes.fromhex(row.txid) for row in mined_tx_hashes]
-            self.db.cache.r.sadd('temp_mined_tx_hashes', *values_to_add)
+            self.db.cache.r.sadd('temp_mined_tx_hashXes', *values_to_add)
 
     def load_temp_inbound_tx_hashes(
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
@@ -72,14 +72,14 @@ class ScyllaDBQueries:
                 )
                 return cast(set[bytes], unprocessed_transactions)
         finally:
-            self.db.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+            self.db.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
 
-    def _get_temp_mined_tx_hashes(self) -> set[bytes]:
-        return self.db.cache.r.smembers('temp_mined_tx_hashes')
+    def _get_temp_mined_tx_hashXes(self) -> set[bytes]:
+        return self.db.cache.r.smembers('temp_mined_tx_hashXes')
 
     def invalidate_mempool_rows(self) -> None:
         self.logger.debug("Deleting mined mempool txs")
-        mined_tx_hashes: set[bytes] = self._get_temp_mined_tx_hashes()
+        mined_tx_hashes: set[bytes] = self._get_temp_mined_tx_hashXes()
 
         def remove_batch(batch: list[bytes]) -> None:
             self.db.cache.r.srem(b"mempool", *batch)
@@ -108,9 +108,9 @@ class ScyllaDBQueries:
         if additions_to_mempool:
             self.db.cache.r.sadd("temp_mempool_additions", *additions_to_mempool)
 
-    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        if orphaned_tx_hashes:
-            self.db.cache.r.sadd("temp_orphaned_txs", *orphaned_tx_hashes)
+    def load_temp_orphaned_tx_hashXes(self, orphaned_tx_hashXes: set[bytes]) -> None:
+        if orphaned_tx_hashXes:
+            self.db.cache.r.sadd("temp_orphaned_txs", *orphaned_tx_hashXes)
 
     def remove_from_mempool(self) -> None:
         self.logger.debug("Removing reorg differential from mempool")

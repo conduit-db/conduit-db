@@ -406,7 +406,7 @@ def parse_txs(
                 )
             else:
                 # Note mempool uses full length tx_hash
-                tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex()))
+                tx_rows_mempool.append(MempoolTransactionRow(tx_hashX.hex()))
             yield (
                 tx_rows_confirmed,
                 tx_rows_mempool,
@@ -494,6 +494,7 @@ def calc_mtree_base_level(
     mtree: MTree,
     raw_block: bytes,
     tx_offsets: "array.ArrayType[int]",
+    short_hash: bool = False
 ) -> MTree:
     mtree[base_level] = []
     for i in range(leaves_count):
@@ -502,7 +503,10 @@ def calc_mtree_base_level(
         else:
             rawtx = raw_block[tx_offsets[i] :]
         tx_hash = double_sha256(rawtx)
-        mtree[base_level].append(tx_hash)
+        if short_hash:
+            mtree[base_level].append(tx_hash[0:HashXLength])
+        else:
+            mtree[base_level].append(tx_hash)
     return mtree
 
 

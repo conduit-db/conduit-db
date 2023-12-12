@@ -18,7 +18,7 @@ import bitcoinx
 
 from .bulk_loads import MySQLBulkLoads
 from .tables import MySQLTables
-from ..db_interface.types import MinedTxHashes, CheckpointStateRow
+from ..db_interface.types import MinedTxHashXes, CheckpointStateRow
 from ...constants import PROFILING
 from ...types import ChainHashes
 
@@ -41,16 +41,16 @@ class MySQLQueries:
         self.bulk_loads = bulk_loads
         self.db = db
 
-    def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
+    def load_temp_mined_tx_hashXes(self, mined_tx_hashes: list[MinedTxHashXes]) -> None:
         """columns: tx_hashes, blk_num"""
-        self.tables.create_temp_mined_tx_hashes_table()
+        self.tables.create_temp_mined_tx_hashXes_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
             string_rows = ["%s,%s\n" % (row) for row in mined_tx_hashes]
             column_names = ["mined_tx_hash", "blk_num"]
             self.bulk_loads._load_data_infile(
-                "temp_mined_tx_hashes",
+                "temp_mined_tx_hashXes",
                 string_rows,
                 column_names,
                 binary_column_indices=[0],
@@ -104,7 +104,7 @@ class MySQLQueries:
             self.db.commit_transaction()
 
         if not is_reorg:
-            self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+            self.tables.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
             return final_result
         else:
             try:
@@ -116,28 +116,28 @@ class MySQLQueries:
                 self.db.commit_transaction()
 
             final_result = final_result - orphaned_txs
-            self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+            self.tables.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
             return set(final_result)
 
     # # Debugging
-    # def get_temp_mined_tx_hashes(self):
+    # def get_temp_mined_tx_hashXes(self):
     #     self.conn.query(
     #         """
     #         SELECT *
-    #         FROM temp_mined_tx_hashes;"""
+    #         FROM temp_mined_tx_hashXes;"""
     #     )
     #     result = self.conn.store_result()
-    #     self.logger.debug(f"get_temp_mined_tx_hashes: "
+    #     self.logger.debug(f"get_temp_mined_tx_hashXes: "
     #                       f"{[hash_to_hex_str(x[0]) for x in result.fetch_row(0)]}")
 
     def invalidate_mempool_rows(self) -> None:
         self.logger.debug(f"Deleting mined mempool txs")
-        # self.get_temp_mined_tx_hashes()
+        # self.get_temp_mined_tx_hashXes()
         query = f"""
             DELETE FROM mempool_transactions
             WHERE mp_tx_hash in (
                 SELECT mined_tx_hash
-                FROM temp_mined_tx_hashes
+                FROM temp_mined_tx_hashXes
             );
             """
         # NOTE: It would have been nice to count the rows that were deleted for accounting
@@ -180,12 +180,12 @@ class MySQLQueries:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
+    def load_temp_orphaned_tx_hashXes(self, orphaned_tx_hashXes: set[bytes]) -> None:
         self.db.create_temp_orphaned_txs_table()
 
         outfile = Path(str(uuid.uuid4()) + ".csv")
         try:
-            string_rows = ["%s\n" % tx_hash.hex() for tx_hash in orphaned_tx_hashes]
+            string_rows = ["%s\n" % tx_hash.hex() for tx_hash in orphaned_tx_hashXes]
             column_names = ["tx_hash"]
             self.bulk_loads._load_data_infile(
                 "temp_orphaned_txs",

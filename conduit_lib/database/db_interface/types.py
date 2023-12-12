@@ -52,7 +52,7 @@ class InputRowParsed(NamedTuple):
 
 
 class MempoolTransactionRow(NamedTuple):
-    mp_tx_hash: str
+    mp_tx_hashX: str
 
 
 class OutputRow(NamedTuple):
@@ -61,7 +61,7 @@ class OutputRow(NamedTuple):
     out_value: int
 
 
-class MinedTxHashes(NamedTuple):
+class MinedTxHashXes(NamedTuple):
     txid: str
     block_number: int
 
@@ -80,7 +80,7 @@ class ProcessedBlockAck(NamedTuple):
     partition_block_hashes: list[bytes]
 
 
-ProcessedBlockAcks = list[ProcessedBlockAck]
+ProcessedBlockAcks = dict[int, ProcessedBlockAck]  # block_num: ProcessedBlockAck
 
 
 class DBFlushBatchWithAcks(NamedTuple):

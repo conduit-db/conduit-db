@@ -13,7 +13,6 @@ https://github.com/electrumsv/simple-indexer/blob/master/simple_indexer/sqlite_d
 import asyncio
 import logging
 import os
-import threading
 import time
 import typing
 import uuid
@@ -51,8 +50,7 @@ from conduit_lib.types import TxMetadata
 if typing.TYPE_CHECKING:
     from conduit_lib.database.scylladb.db import ScyllaDB
 
-logger = logging.getLogger("sqlite-database")
-mined_tx_hashes_table_lock = threading.RLock()
+logger = logging.getLogger("tip-filtering-scylladb")
 
 
 MARIADB_MAX_BIND_VARIABLES = 2 ^ 16 - 1

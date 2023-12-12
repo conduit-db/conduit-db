@@ -220,7 +220,7 @@ class ScyllaDBBulkLoads:
         futures = []
         assert self.db.executor is not None
         for i in range(0, len(tx_rows), batch_size):
-            batch = [bytes.fromhex(row.mp_tx_hash) for row in tx_rows[i : i + batch_size]]
+            batch = [bytes.fromhex(row.mp_tx_hashX) for row in tx_rows[i : i + batch_size]]
             future = self.db.executor.submit(load_batch, batch)
             futures.append(future)
 

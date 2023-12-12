@@ -69,7 +69,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             self.zmq_context,
             "tcp://127.0.0.1:55889",
             zmq.SocketType.PUSH,
-            [(zmq.SocketOption.SNDHWM, 50000)],
+            [(zmq.SocketOption.SNDHWM, 10000)],
         )
         self.socket_mined_tx_parsed_ack = connect_non_async_zmq_socket(
             self.zmq_context,
@@ -93,7 +93,14 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     txs, txs_mempool, ins, pds = extend_batched_rows(
                         confirmed_rows, txs, txs_mempool, ins, pds
                     )
-                    acks.extend(new_acks)
+                    # Merge arrays of tx hashes otherwise it overloads the zmq socket with
+                    # numerous messages
+                    for block_num, acks_item in new_acks.items():
+                        if acks.get(block_num):
+                            acks[block_num].partition_block_hashes.extend(acks_item.partition_block_hashes)
+                        else:
+                            acks[block_num] = acks_item
+
                     if len(tip_filter_notifications.pushdata_matches) > 0:
                         all_tip_filter_notifications.append(tip_filter_notifications)
 

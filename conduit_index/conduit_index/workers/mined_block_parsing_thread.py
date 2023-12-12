@@ -76,13 +76,14 @@ class MinedBlockParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.confirmed_tx_flush_queue: queue.Queue[
             tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ] = queue.Queue(maxsize=10000)
+        ] = queue.Queue(maxsize=1000)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
 
         # A dedicated in-memory only table exclusive to this worker
         # it is frequently dropped and recreated for each chip-away batch
         self.inbound_tx_table_name = f"inbound_tx_table_{worker_id}"
+        self.is_post_ibd = False
 
         self.last_activity = int(time.time())
 
@@ -269,12 +270,12 @@ class MinedBlockParsingThread(threading.Thread):
         # Is this the first slice of the block? Otherwise adjust the offsets to start at zero
         if tx_offsets[0] > max_size_header_plus_tx_count_field:
             tx_offsets = array.array("Q", map(lambda x: x - tx_offsets[0], tx_offsets))
-        partition_tx_hashes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block_slice, tx_offsets)[0]
-        tx_hash_rows = []
-        for tx_hashX in partition_tx_hashes:
-            # .hex() not hash_to_hex_str() because it's for csv bulk loading
-            tx_hash_rows.append((tx_hashX.hex(),))
-        return partition_tx_hashes, tx_hash_rows
+        partition_tx_hashXes = calc_mtree_base_level(0, len(tx_offsets), {}, raw_block_slice, tx_offsets,
+            short_hash=True)[0]
+        tx_hashX_rows = []
+        for tx_hashX in partition_tx_hashXes:
+            tx_hashX_rows.append((tx_hashX.hex(),))
+        return partition_tx_hashXes, tx_hashX_rows
 
     def process_work_items(
         self,
@@ -330,7 +331,8 @@ class MinedBlockParsingThread(threading.Thread):
                 f"<IQ{len_slice}s", raw_block_slice_array, offset=0
             )
             del raw_block_slice_array  # free memory eagerly
-            part_tx_hashes, part_tx_hash_rows = self.get_block_part_tx_hashes(
+
+            part_tx_hashXes, part_tx_hashX_rows = self.get_block_part_tx_hashes(
                 raw_block_slice, tx_offsets_part
             )
             # It is wasted disc IO for input and pushdata rows to be inserted again if this has
@@ -341,15 +343,18 @@ class MinedBlockParsingThread(threading.Thread):
             # to do is fairly minimal - this should lead to a more responsive end user experience.
 
             # new_tx_offsets  # Must not be in an orphaned block or the mempool
-            not_new_tx_offsets: set[int] = set(tx_offsets_part)
-            map_tx_hashes_to_offsets = dict(zip(part_tx_hashes, tx_offsets_part))
-            unprocessed_tx_hashes = db.get_unprocessed_txs(
-                is_reorg, part_tx_hash_rows, self.inbound_tx_table_name
-            )
-            for tx_hash in unprocessed_tx_hashes:
-                tx_offset = map_tx_hashes_to_offsets[tx_hash]
-                not_new_tx_offsets.remove(tx_offset)
-            assert len(tx_offsets_part) - len(unprocessed_tx_hashes) - len(not_new_tx_offsets) == 0
+            if self.is_post_ibd_state(db):
+                not_new_tx_offsets: set[int] = set(tx_offsets_part)
+                map_tx_hashes_to_offsets = dict(zip(part_tx_hashXes, tx_offsets_part))
+                unprocessed_tx_hashes = db.get_unprocessed_txs(
+                    is_reorg, part_tx_hashX_rows, self.inbound_tx_table_name
+                )
+                for tx_hash in unprocessed_tx_hashes:
+                    tx_offset = map_tx_hashes_to_offsets[tx_hash]
+                    not_new_tx_offsets.remove(tx_offset)
+                assert len(tx_offsets_part) - len(unprocessed_tx_hashes) - len(not_new_tx_offsets) == 0
+            else:
+                not_new_tx_offsets = set()
 
             # Parse and flush
             tx_rows: list[ConfirmedTransactionRow]
@@ -386,7 +391,7 @@ class MinedBlockParsingThread(threading.Thread):
                 ) = result
                 pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
                 input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
-                acks = [ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes[i:i+1])]
+                acks = {block_num: ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashXes[i:i+1])}
                 self.confirmed_tx_flush_queue.put(
                     (
                         MySQLFlushBatch(
@@ -401,3 +406,13 @@ class MinedBlockParsingThread(threading.Thread):
                 )
             del raw_block_slice  # free memory eagerly
         self.confirmed_tx_flush_queue.join()
+
+    def is_post_ibd_state(self, db: DBInterface) -> bool:
+        if self.is_post_ibd:
+            return self.is_post_ibd
+
+        assert db.cache is not None
+        if db.cache.r.scard(b"mempool") > 0:
+            self.is_post_ibd = True
+            return True
+        return False

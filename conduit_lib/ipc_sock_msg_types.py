@@ -431,13 +431,13 @@ class ReorgDifferentialResponse(BaseMsg):
         self,
         removals_from_mempool: set[bytes],
         additions_to_mempool: set[bytes],
-        orphaned_tx_hashes: set[bytes],
+        orphaned_tx_hashXes: set[bytes],
         command: str | None = None,
     ) -> None:
         super().__init__()
         self.removals_from_mempool = removals_from_mempool
         self.additions_to_mempool = additions_to_mempool
-        self.orphaned_tx_hashes = orphaned_tx_hashes
+        self.orphaned_tx_hashXes = orphaned_tx_hashXes
 
     def to_cbor(self) -> bytes:
         return cast(  # type: ignore[redundant-cast]
@@ -447,7 +447,7 @@ class ReorgDifferentialResponse(BaseMsg):
                     "command": self.command,
                     "removals_from_mempool": self.removals_from_mempool,
                     "additions_to_mempool": self.additions_to_mempool,
-                    "orphaned_tx_hashes": self.orphaned_tx_hashes,
+                    "orphaned_tx_hashXes": self.orphaned_tx_hashXes,
                 }
             ),
         )
@@ -457,7 +457,7 @@ class ReorgDifferentialResponse(BaseMsg):
                 "command": self.command,
                 "removals_from_mempool": [x.hex() for x in self.removals_from_mempool],
                 "additions_to_mempool": [x.hex() for x in self.additions_to_mempool],
-                "orphaned_tx_hashes": [x.hex() for x in self.orphaned_tx_hashes],
+                "orphaned_tx_hashXes": [x.hex() for x in self.orphaned_tx_hashXes],
             }
         )
 

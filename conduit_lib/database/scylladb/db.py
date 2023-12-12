@@ -28,7 +28,7 @@ from conduit_lib import LMDB_Database, DBInterface
 from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
-    MinedTxHashes,
+    MinedTxHashXes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
@@ -129,15 +129,15 @@ class ScyllaDB(DBInterface):
     def drop_tables(self) -> None:
         self.tables.drop_tables()
 
-    def drop_temp_mined_tx_hashes(self) -> None:
-        self.tables.drop_temp_mined_tx_hashes()
+    def drop_temp_mined_tx_hashXes(self) -> None:
+        self.tables.drop_temp_mined_tx_hashXes()
 
-    def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
-        self.tables.drop_temp_inbound_tx_hashes(inbound_tx_table_name)
+    def drop_temp_inbound_tx_hashXes(self, inbound_tx_table_name: str) -> None:
+        self.tables.drop_temp_inbound_tx_hashXes(inbound_tx_table_name)
 
     # QUERIES
-    def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
-        self.queries.load_temp_mined_tx_hashes(mined_tx_hashes)
+    def load_temp_mined_tx_hashXes(self, mined_tx_hashXes: list[MinedTxHashXes]) -> None:
+        self.queries.load_temp_mined_tx_hashXes(mined_tx_hashXes)
 
     def load_temp_inbound_tx_hashes(
         self, inbound_tx_hashes: list[tuple[str]], inbound_tx_table_name: str
@@ -205,8 +205,8 @@ class ScyllaDB(DBInterface):
     def load_temp_mempool_removals(self, removals_from_mempool: set[bytes]) -> None:
         self.queries.load_temp_mempool_removals(removals_from_mempool)
 
-    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
-        self.queries.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+    def load_temp_orphaned_tx_hashXes(self, orphaned_tx_hashXes: set[bytes]) -> None:
+        self.queries.load_temp_orphaned_tx_hashXes(orphaned_tx_hashXes)
 
     def update_allocated_state(
         self,

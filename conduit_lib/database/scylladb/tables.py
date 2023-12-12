@@ -70,10 +70,10 @@ class ScyllaDBTables:
             self.logger.exception("db.drop_tables failed unexpectedly")
             raise FailedScyllaOperation from e
 
-    def drop_temp_mined_tx_hashes(self) -> None:
-        self.db.cache.r.delete(b'temp_mined_tx_hashes')
+    def drop_temp_mined_tx_hashXes(self) -> None:
+        self.db.cache.r.delete(b'temp_mined_tx_hashXes')
 
-    def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
+    def drop_temp_inbound_tx_hashXes(self, inbound_tx_table_name: str) -> None:
         self.db.cache.r.delete(inbound_tx_table_name)
 
     def drop_temp_mempool_removals(self) -> None:

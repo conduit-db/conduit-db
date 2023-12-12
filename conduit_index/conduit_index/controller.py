@@ -27,7 +27,7 @@ from conduit_lib.algorithms import parse_txs_to_list
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.db_interface.db import DatabaseType
-from conduit_lib.database.db_interface.types import MinedTxHashes
+from conduit_lib.database.db_interface.types import MinedTxHashXes
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.deserializer import Deserializer
@@ -45,7 +45,7 @@ from conduit_lib.constants import (
     MAIN_BATCH_HEADERS_COUNT_LIMIT,
     CONDUIT_INDEX_SERVICE_NAME,
     TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX,
-    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
+    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW, HashXLength,
 )
 from conduit_lib.types import (
     BlockHeaderRow,
@@ -99,7 +99,7 @@ class ZMQSocketListeners:
             self.zmq_async_context,
             "tcp://127.0.0.1:55889",
             zmq.SocketType.PULL,
-            [(zmq.SocketOption.RCVHWM, 50000)],
+            [(zmq.SocketOption.RCVHWM, 10000)],
         )
         self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(
             self.zmq_async_context, "tcp://127.0.0.1:54214", zmq.SocketType.PULL
@@ -452,8 +452,8 @@ class Controller(ControllerBase):
             batched_header_hashes.append(block_hash)
 
         # Delete all partially flushed rows and then start over fresh from the last good tip
-        tx_hashes = [row[0] for row in batched_tx_rows]
-        self.db.delete_transaction_rows(tx_hashes)
+        tx_hashXes = [row[0] for row in batched_tx_rows]
+        self.db.delete_transaction_rows(tx_hashXes)
         self.db.delete_pushdata_rows(batched_pd_rows)
         self.db.delete_input_rows(batched_in_rows)
         self.db.delete_header_rows(batched_header_hashes)
@@ -496,24 +496,24 @@ class Controller(ControllerBase):
         is_post_ibd = await self.sync_state.is_post_ibd_state()
         while True:
             message = cast(bytes, await self.zmq_socket_listeners.socket_mined_tx_ack.recv())
-            new_mined_tx_hashes: dict[int, list[bytes]] = cast(dict[int, list[bytes]], cbor2.loads(message))
+            new_mined_tx_hashXes: dict[int, list[bytes]] = cast(dict[int, list[bytes]], cbor2.loads(message))
             # 1) Transfer from dict -> Temp Table for Table join with Mempool table
             # TODO: When dropping MySQL get rid of this loop because all it's doing is
             #  converting the hashes to hex!
-            mined_tx_hashes = []
-            for blk_num, tx_hashes in new_mined_tx_hashes.items():
+            mined_tx_hashXes = []
+            for blk_num, tx_hashXes in new_mined_tx_hashXes.items():
                 if not self.global_tx_counts_dict.get(blk_num):
                     self.global_tx_counts_dict[blk_num] = 0
-                self.global_tx_counts_dict[blk_num] += len(tx_hashes)
+                self.global_tx_counts_dict[blk_num] += len(tx_hashXes)
 
                 if is_post_ibd:
-                    for tx_hash in tx_hashes:
-                        mined_tx_hashes.append(MinedTxHashes(tx_hash.hex(), blk_num))
+                    for tx_hashX in tx_hashXes:
+                        mined_tx_hashXes.append(MinedTxHashXes(tx_hashX.hex(), blk_num))
 
             if is_post_ibd:
-                self.logger.debug(f"Loading {len(mined_tx_hashes)} to 'temp_mined_tx_hashes' table")
-                self.db.load_temp_mined_tx_hashes(mined_tx_hashes=mined_tx_hashes)
-            del mined_tx_hashes
+                self.logger.debug(f"Loading {len(mined_tx_hashXes)} to 'temp_mined_tx_hashXes' table")
+                self.db.load_temp_mined_tx_hashXes(mined_tx_hashXes=mined_tx_hashXes)
+            del mined_tx_hashXes
 
     async def update_mempool_and_checkpoint_tip_atomic(
         self, best_flushed_block_tip: bitcoinx.Header, is_reorg: bool
@@ -551,7 +551,7 @@ class Controller(ControllerBase):
         else:
             # No txs in mempool until is_post_ibd == True
             self.db.update_checkpoint_tip(checkpoint_tip)
-        self.db.drop_temp_mined_tx_hashes()
+        self.db.drop_temp_mined_tx_hashXes()
 
         total_hashes_count = 0
         total_blocks_count = len(self.global_tx_counts_dict)
@@ -809,13 +809,13 @@ class Controller(ControllerBase):
         )
         removals_from_mempool = response.removals_from_mempool
         additions_to_mempool = response.additions_to_mempool
-        orphaned_tx_hashes = response.orphaned_tx_hashes
+        orphaned_tx_hashXes = response.orphaned_tx_hashXes
         self.logger.debug(
             f"removals_from_mempool (len={len(removals_from_mempool)}), "
             f"additions_to_mempool (len={len(additions_to_mempool)}),"
-            f"orphaned_tx_hashes (len={len(orphaned_tx_hashes)})"
+            f"orphaned_tx_hashXes (len={len(orphaned_tx_hashXes)})"
         )
-        return removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
+        return removals_from_mempool, additions_to_mempool, orphaned_tx_hashXes
 
     async def wait_for_batched_blocks_completion(self, all_pending_block_hashes: set[bytes]) -> None:
         """all_pending_block_hashes is copied into these threads to prevent mutation"""
@@ -836,12 +836,12 @@ class Controller(ControllerBase):
         (
             removals_from_mempool,
             additions_to_mempool,
-            orphaned_tx_hashes,
+            orphaned_tx_hashXes,
         ) = await self._get_differential_post_reorg(old_hashes, new_hashes)
 
-        self.db.load_temp_mempool_additions(additions_to_mempool)
-        self.db.load_temp_mempool_removals(removals_from_mempool)
-        self.db.load_temp_orphaned_tx_hashes(orphaned_tx_hashes)
+        self.db.load_temp_mempool_additions(set(tx_hash[0:HashXLength] for tx_hash in additions_to_mempool))
+        self.db.load_temp_mempool_removals(set(tx_hash[0:HashXLength] for tx_hash in removals_from_mempool))
+        self.db.load_temp_orphaned_tx_hashXes(set(tx_hash[0:HashXLength] for tx_hash in orphaned_tx_hashXes))
 
     async def index_blocks(
         self,
@@ -1026,12 +1026,12 @@ class Controller(ControllerBase):
             self.db.update_checkpoint_tip(best_flushed_tip)
         finally:
             self.db.commit_transaction()
-            self.db.drop_temp_mined_tx_hashes()
+            self.db.drop_temp_mined_tx_hashXes()
 
     def _apply_reorg_diff_to_mempool(self, best_flushed_block_tip: bitcoinx.Header) -> None:
         # Todo - this is actually not atomic - should be a single transaction
         assert self.db is not None
-        self.db.drop_temp_mined_tx_hashes()  # not required so discard it
+        self.db.drop_temp_mined_tx_hashXes()  # not required so discard it
         self.db.start_transaction()
         try:
             self.db.remove_from_mempool()

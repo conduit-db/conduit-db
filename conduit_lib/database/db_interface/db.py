@@ -20,7 +20,7 @@ from cassandra.cluster import Session  # pylint: disable=E0401,E0611
 from conduit_lib import LMDB_Database
 from conduit_lib.database.db_interface.tip_filter_types import OutputSpendRow
 from conduit_lib.database.db_interface.types import (
-    MinedTxHashes,
+    MinedTxHashXes,
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
@@ -123,15 +123,15 @@ class DBInterface(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def drop_temp_mined_tx_hashes(self) -> None:
+    def drop_temp_mined_tx_hashXes(self) -> None:
         pass
 
     @abc.abstractmethod
-    def drop_temp_inbound_tx_hashes(self, inbound_tx_table_name: str) -> None:
+    def drop_temp_inbound_tx_hashXes(self, inbound_tx_table_name: str) -> None:
         pass
 
     @abc.abstractmethod
-    def load_temp_mined_tx_hashes(self, mined_tx_hashes: list[MinedTxHashes]) -> None:
+    def load_temp_mined_tx_hashXes(self, mined_tx_hashXes: list[MinedTxHashXes]) -> None:
         pass
 
     @abc.abstractmethod
@@ -214,7 +214,7 @@ class DBInterface(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def load_temp_orphaned_tx_hashes(self, orphaned_tx_hashes: set[bytes]) -> None:
+    def load_temp_orphaned_tx_hashXes(self, orphaned_tx_hashXes: set[bytes]) -> None:
         pass
 
     @abc.abstractmethod

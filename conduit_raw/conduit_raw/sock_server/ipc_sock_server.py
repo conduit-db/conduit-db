@@ -283,10 +283,10 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
             (
                 removals_from_mempool,
                 additions_to_mempool,
-                orphaned_tx_hashes,
+                orphaned_tx_hashXes,
             ) = self.server.lmdb.get_reorg_differential(msg_req.old_hashes, msg_req.new_hashes)
             msg_resp = ipc_sock_msg_types.ReorgDifferentialResponse(
-                removals_from_mempool, additions_to_mempool, orphaned_tx_hashes
+                removals_from_mempool, additions_to_mempool, orphaned_tx_hashXes
             )
             self.send_msg(msg_resp.to_cbor())
         except Exception:
