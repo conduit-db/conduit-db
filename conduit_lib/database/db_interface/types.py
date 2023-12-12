@@ -80,7 +80,7 @@ class ProcessedBlockAck(NamedTuple):
     partition_block_hashes: list[bytes]
 
 
-ProcessedBlockAcks = dict[int, ProcessedBlockAck]  # block_num: ProcessedBlockAck
+ProcessedBlockAcks = dict[int, ProcessedBlockAck]  # work_item_id: ProcessedBlockAck
 
 
 class DBFlushBatchWithAcks(NamedTuple):

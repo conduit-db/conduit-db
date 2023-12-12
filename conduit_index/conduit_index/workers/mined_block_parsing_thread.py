@@ -391,7 +391,7 @@ class MinedBlockParsingThread(threading.Thread):
                 ) = result
                 pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
                 input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
-                acks = {block_num: ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashXes[i:i+1])}
+                acks = {work_item_id: ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashXes[i:i+1])}
                 self.confirmed_tx_flush_queue.put(
                     (
                         MySQLFlushBatch(
