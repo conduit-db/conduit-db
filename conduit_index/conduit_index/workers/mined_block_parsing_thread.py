@@ -359,51 +359,45 @@ class MinedBlockParsingThread(threading.Thread):
 
             # Mempool and Reorg txs already have entries for inputs, pushdata and output tables,
             # so we avoid re-inserting these rows a second time (`parse_txs` skips over them)
-            # TODO(scaling): Convert this to an iterator and
-            #  return some results for every transaction or perhaps every time
-            #  the row counts exceed certain limits (to the nearest whole transaction)
-            #  This would deal with the problem of one block where there are 68 million
-            #  p2pkh 1 sat new utxos generated in a single block size (that's not even
-            #  the whole block... Block 804157.
+            #
+            # Block 804157 is a great stress test for peak memory allocation here.
+            # namely transactions like:
+            # - 326a5af37f6c98421aa50c113944912c082036b1ee1c4f26ed291ae8e6733ecf
+            # - b685e76fe6cd080dac8d2cde0cb7daf0a4ba26535f784466037a105c99b500ba
+            # There are a ton of them like this producing over 68 million p2pkh scripts of 1sat value
+            # for one slice of the block i.e. that doesn't even include the full block.
             all_tx_offsets_sorted = array.array("Q", sorted(tx_offsets_part))
-            result = parse_txs(
+
+            for i, result in enumerate(parse_txs(
                 raw_block_slice,
                 all_tx_offsets_sorted,
                 blk_num,
                 True,
                 first_tx_pos_batch,
                 already_seen_offsets=not_new_tx_offsets,
-            )
-            del raw_block_slice  # free memory eagerly
-            (
-                tx_rows,
-                tx_rows_mempool,
-                in_rows_parsed,
-                pd_rows_parsed,
-                utxo_spends,
-                pushdata_matches_tip_filter,
-            ) = result
-
-            pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
-            input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
-            acks = [ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes)]
-            self.confirmed_tx_flush_queue.put(
+            )):
                 (
-                    MySQLFlushBatch(
-                        tx_rows,
-                        tx_rows_mempool,
-                        input_rows_for_flushing,
-                        pushdata_rows_for_flushing,
-                    ),
-                    acks,
-                    TipFilterNotifications(utxo_spends, pushdata_matches_tip_filter, blk_hash),
+                    tx_rows,
+                    tx_rows_mempool,
+                    in_rows_parsed,
+                    pd_rows_parsed,
+                    utxo_spends,
+                    pushdata_matches_tip_filter,
+                ) = result
+                pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
+                input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
+                acks = [ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashes[i:i+1])]
+                self.confirmed_tx_flush_queue.put(
+                    (
+                        MySQLFlushBatch(
+                            tx_rows,
+                            tx_rows_mempool,
+                            input_rows_for_flushing,
+                            pushdata_rows_for_flushing,
+                        ),
+                        acks,
+                        TipFilterNotifications(utxo_spends, pushdata_matches_tip_filter, blk_hash),
+                    )
                 )
-            )
-        # self.logger.log(
-        #     PROFILING, f"Memory usage check before join on queue: {process.memory_info().rss//1024**2}MB"
-        # )
+            del raw_block_slice  # free memory eagerly
         self.confirmed_tx_flush_queue.join()
-        # self.logger.log(
-        #     PROFILING,
-        #     f"Memory usage check after processing work items: {process.memory_info().rss//1024**2}MB",
-        # )

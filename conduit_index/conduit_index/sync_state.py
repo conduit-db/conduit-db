@@ -20,8 +20,8 @@ from typing import cast
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.constants import SMALL_BLOCK_SIZE, CHIP_AWAY_BYTE_SIZE_LIMIT, REGTEST
 from conduit_lib.store import Storage
-from .load_balance_algo import distribute_load
-from .types import WorkUnit, MainBatch, WorkPart
+from .load_balance_algo import distribute_load, WorkPart
+from .types import WorkUnit, MainBatch
 
 if typing.TYPE_CHECKING:
     from .controller import Controller

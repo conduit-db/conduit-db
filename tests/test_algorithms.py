@@ -22,10 +22,9 @@ from conduit_lib.algorithms import (
     calc_depth,
     get_mtree_node_counts_per_level,
     build_mtree_from_base,
-    parse_txs,
     get_pk_and_pkh_from_script,
     unpack_varint,
-    preprocessor,
+    preprocessor, parse_txs_to_list,
 )
 from conduit_lib.constants import HashXLength
 from conduit_lib.types import PushdataMatchFlags
@@ -224,7 +223,7 @@ def test_parse_txs() -> None:
             pd_rows,
             utxo_spends,
             pushdata_matches_tip_filter,
-        ) = parse_txs(raw_block, tx_offsets, 413567, True, 0)
+        ) = parse_txs_to_list(raw_block, tx_offsets, 413567, True, 0)
     t1 = time.perf_counter() - t0
     print_results(len(tx_rows), t1 / REPEAT_N_TIMES, raw_block)
 

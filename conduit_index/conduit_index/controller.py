@@ -23,7 +23,7 @@ from typing import Any, cast
 import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
-from conduit_lib.algorithms import parse_txs
+from conduit_lib.algorithms import parse_txs_to_list
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.db_interface.db import DatabaseType
@@ -426,6 +426,8 @@ class Controller(ControllerBase):
             raw_blocks_array = ipc_sock_client.block_batched([BlockSliceRequestType(block_num, slice)])
             block_num, len_slice = struct.unpack_from(f"<IQ", raw_blocks_array, 0)
             _block_num, _len_slice, raw_block = struct.unpack_from(f"<IQ{len_slice}s", raw_blocks_array, 0)
+            # I don't care about using the generator version of parse_txs here because the MariaDB implementation
+            # is deprecated and this will all be removed soon.
             (
                 tx_rows,
                 _tx_rows_mempool,
@@ -433,7 +435,7 @@ class Controller(ControllerBase):
                 pd_rows,
                 utxo_spends,
                 pushdata_matches_tip_filter,
-            ) = parse_txs(
+            ) = parse_txs_to_list(
                 raw_block,
                 tx_offsets,
                 height,

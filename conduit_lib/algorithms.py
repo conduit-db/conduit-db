@@ -12,7 +12,7 @@ import logging
 import os
 import struct
 from math import ceil, log
-from typing import NamedTuple
+from typing import NamedTuple, Iterator
 from struct import Struct
 
 from conduit_lib.constants import HashXLength
@@ -164,7 +164,6 @@ def get_pk_and_pkh_from_script(
                     i += 1
                 elif script[i] in {
                     OP_PUSH_20,
-                    OP_PUSH_32,
                     OP_PUSH_33,
                     OP_PUSH_65,
                 }:
@@ -245,14 +244,14 @@ def parse_txs(
     confirmed: bool,
     first_tx_pos_batch: int = 0,
     already_seen_offsets: set[int] | None = None,
-) -> tuple[
+) -> Iterator[tuple[
     list[ConfirmedTransactionRow],
     list[MempoolTransactionRow],
     list[InputRowParsed],
     list[PushdataRowParsed],
     list[InputRowParsed],
     list[PushdataRowParsed],
-]:
+]]:
     """
     This function is dual-purpose - it can:
     1) ingest raw_blocks (buffer=raw_block) and the blk_num_or_timestamp=height
@@ -326,6 +325,12 @@ def parse_txs(
                 if not previously_processed:
                     in_rows.append(InputRowParsed(in_prevout_hash, in_prevout_idx, tx_hash, in_idx))
 
+                # if len(in_rows) > 1_000_000:
+                #     logger.debug(
+                #         f"len(in_rows): {len(in_rows)}! "
+                #         f"(tx_hash={hash_to_hex_str(tx_hash)}), count_tx_in={count_tx_in}"
+                #     )
+
                 # some coinbase tx scriptsigs don't obey any rules so for now they are not
                 # included in the pushdata table at all
                 # if ((not tx_pos == 0 and confirmed) or not confirmed) \
@@ -351,7 +356,6 @@ def parse_txs(
                 offset += 8  # skip value
                 scriptpubkey_len, offset = unpack_varint(buffer, offset)
                 scriptpubkey = buffer[offset : offset + scriptpubkey_len]  # keep as array.array
-
                 pushdata_matches = get_pk_and_pkh_from_script(
                     scriptpubkey,
                     tx_hash=tx_hash,
@@ -377,6 +381,14 @@ def parse_txs(
                         if not previously_processed:
                             set_pd_rows.append(pushdata_row)
 
+                        # # TODO: DEBUGGING - PLEASE REMOVE
+                        # if len(set_pd_rows) > 1_000_000:
+                        #     logger.debug(
+                        #         f"len(set_pd_rows): {len(set_pd_rows)}! (tx_hash={hash_to_hex_str(tx_hash)}) "
+                        #         f"(pushdata_matches for output:{len(pushdata_matches)})
+                        #         (count_tx_out: {count_tx_out})"
+                        #     )
+
                 offset += scriptpubkey_len
                 # out_offset_end = offset + adjustment
                 # if not previously_processed:
@@ -393,15 +405,20 @@ def parse_txs(
             else:
                 # Note mempool uses full length tx_hash
                 tx_rows_mempool.append(MempoolTransactionRow(tx_hash.hex()))
-        assert len(tx_rows_confirmed) + len(tx_rows_mempool) == count_txs
-        return (
-            tx_rows_confirmed,
-            tx_rows_mempool,
-            in_rows,
-            set_pd_rows,
-            utxo_spends,
-            pushdata_matches_tip_filter,
-        )
+            yield (
+                tx_rows_confirmed,
+                tx_rows_mempool,
+                in_rows,
+                set_pd_rows,
+                utxo_spends,
+                pushdata_matches_tip_filter,
+            )
+            tx_rows_confirmed = []
+            tx_rows_mempool = []
+            in_rows = []
+            set_pd_rows = []
+            utxo_spends = []
+            pushdata_matches_tip_filter = []
     except Exception as e:
         logger.debug(
             f"count_txs={count_txs}, tx_pos={tx_pos}, in_idx={in_idx}, out_idx={out_idx}, "
@@ -409,6 +426,58 @@ def parse_txs(
         )
         raise
 
+
+def parse_txs_to_list(
+    buffer: bytes,
+    tx_offsets: "array.ArrayType[int]",
+    block_num_or_timestamp: int,
+    confirmed: bool,
+    first_tx_pos_batch: int = 0,
+    already_seen_offsets: set[int] | None = None,
+) -> tuple[
+    list[ConfirmedTransactionRow],
+    list[MempoolTransactionRow],
+    list[InputRowParsed],
+    list[PushdataRowParsed],
+    list[InputRowParsed],
+    list[PushdataRowParsed],
+]:
+    """Convert the generator to a list. This should not be used at scale because it will allocate too much memory"""
+    tx_rows: list[ConfirmedTransactionRow] = []
+    tx_rows_mempool: list[MempoolTransactionRow] = []
+    in_rows: list[InputRowParsed] = []
+    pd_rows: list[PushdataRowParsed] = []
+    utxo_spends: list[InputRowParsed] = []
+    pushdata_matches_tip_filter: list[PushdataRowParsed] = []
+    for (
+        tx_rows_new,
+        tx_rows_mempool_new,
+        in_rows_new,
+        pd_rows_new,
+        utxo_spends_new,
+        pushdata_matches_tip_filter_new,
+    ) in parse_txs(
+        buffer,
+        tx_offsets,
+        block_num_or_timestamp,
+        confirmed=confirmed,
+        first_tx_pos_batch=first_tx_pos_batch,
+        already_seen_offsets=already_seen_offsets
+    ):
+        tx_rows.extend(tx_rows_new)
+        tx_rows_mempool.extend(tx_rows_mempool_new)
+        in_rows.extend(in_rows_new)
+        pd_rows.extend(pd_rows_new)
+        utxo_spends.extend(utxo_spends_new)
+        pushdata_matches_tip_filter.extend(pushdata_matches_tip_filter_new)
+    return (
+        tx_rows,
+        tx_rows_mempool,
+        in_rows,
+        pd_rows,
+        utxo_spends,
+        pushdata_matches_tip_filter,
+    )
 
 # -------------------- MERKLE TREE -------------------- #
 
