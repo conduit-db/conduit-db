@@ -1,9 +1,8 @@
 import array
-import os
 import math
 from typing import NamedTuple
 
-from conduit_lib.constants import SMALL_BLOCK_SIZE
+from conduit_lib.constants import SMALL_BLOCK_SIZE, LOAD_BALANCE_RAW_BLOCK_CHUNK_SIZE
 
 
 class WorkPart(NamedTuple):
@@ -32,16 +31,28 @@ def distribute_load(
 ) -> list[WorkPart]:
     """
     This function distributes the load of processing transactions across worker processes.
+
+    There is a trade-off to be made. Dividing a block into chunks that are too small creates stutter on the
+    magnetic drive of ConduitIndex from high frequency random read access. Too large and there can be "hotspots"
+    in a raw block slice with very "dense" areas of transactions packed with 1000s of txos per transaction. These
+    are much more resource intensive to process than data carrier transactions on a per MB basis. This can lead
+    to all the other workers idling while one worker is choking on the hotspot.
+
+    So a reasonable trade-off chunk size seems to be 32MB chunks. Therefore, a 4GB block, tightly packed with
+    transactions with thousands of txos each would only allocate around 1 million txos or input rows for parsing
+    per worker (at one time). This limits the peak memory consumption of each worker process to within acceptable
+    limits too (because the whole byte array and associated caches need to hold all data for the chunk in memory
+    at one time).
     """
     # Constants and environment variables
-    worker_count = int(os.getenv("WORKER_COUNT_TX_PARSERS", "8"))
-
     largest_tx_size_in_block = find_largest_tx_size(tx_offsets_array)
 
     # Calculate the work item size and batch count
-    work_item_size = max(math.ceil(block_size / worker_count), largest_tx_size_in_block)
-    batch_count = max(math.ceil(block_size / work_item_size), 1)
-
+    # If the largest tx size is bigger than 32MB then the smallest chunk size needs to be large
+    # enough to accommodate at least 1 full raw transaction.
+    work_item_size = max(LOAD_BALANCE_RAW_BLOCK_CHUNK_SIZE, largest_tx_size_in_block)
+    # First go with a simple approach. Divide the block evenly based on its size
+    batch_count = math.ceil(block_size / work_item_size)
     first_tx_pos_batch = 0
 
     # Handle small blocks or blocks with fewer transactions than workers
