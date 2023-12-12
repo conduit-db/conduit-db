@@ -99,7 +99,7 @@ class ZMQSocketListeners:
             self.zmq_async_context,
             "tcp://127.0.0.1:55889",
             zmq.SocketType.PULL,
-            [(zmq.SocketOption.RCVHWM, 10000)],
+            [(zmq.SocketOption.RCVHWM, 50000)],
         )
         self.socket_mined_tx_parsed_ack = bind_async_zmq_socket(
             self.zmq_async_context, "tcp://127.0.0.1:54214", zmq.SocketType.PULL
@@ -270,14 +270,15 @@ class Controller(ControllerBase):
             await self.stop()
 
     # Multiprocessing Workers
-    def start_workers(self) -> None:
-        WORKER_COUNT_TX_PARSERS = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
-        for worker_id in range(WORKER_COUNT_TX_PARSERS):
+    async def start_workers(self) -> None:
+        worker_count_tx_parsers = int(os.getenv("WORKER_COUNT_TX_PARSERS", "4"))
+        for worker_id in range(worker_count_tx_parsers):
             p: multiprocessing.Process = TxParser(worker_id + 1)
             p.start()
             self.processes.append(p)
-        # Allow time for TxParsers to bind to the zmq socket to distribute load evenly
-        time.sleep(2)
+        wait_time = 15
+        self.logger.info(f"Waiting {wait_time} seconds for TxParser workers to connect to their ZMQ sockets...")
+        await asyncio.sleep(15)
 
     async def database_integrity_check(self) -> None:
         """If there were blocks that were only partially flushed that go beyond the check-pointed
@@ -466,7 +467,7 @@ class Controller(ControllerBase):
     async def start_jobs(self) -> None:
         self.db = self.storage.db
         create_task(self.wait_for_mined_tx_acks_task())
-        self.start_workers()
+        await self.start_workers()
         await self.spawn_batch_completion_job()
         await self.database_integrity_check()
         await self.spawn_lagging_batch_monitor()

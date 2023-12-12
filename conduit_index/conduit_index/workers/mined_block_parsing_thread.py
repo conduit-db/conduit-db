@@ -76,7 +76,7 @@ class MinedBlockParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.confirmed_tx_flush_queue: queue.Queue[
             tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ] = queue.Queue(maxsize=100)
+        ] = queue.Queue(maxsize=10000)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
 
@@ -142,13 +142,13 @@ class MinedBlockParsingThread(threading.Thread):
                 )
 
     def run(self) -> None:
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         socket_mined_tx = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55555",
             zmq.SocketType.PULL,
             options=[(zmq.SocketOption.RCVHWM, 10000)],
         )
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
 
         try:
             # Database flush thread

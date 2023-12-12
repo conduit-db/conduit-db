@@ -65,12 +65,11 @@ class FlushConfirmedTransactionsThread(threading.Thread):
 
     def run(self) -> None:
         assert self.confirmed_tx_flush_queue is not None
-        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         self.socket_mined_tx_ack = connect_non_async_zmq_socket(
             self.zmq_context,
             "tcp://127.0.0.1:55889",
             zmq.SocketType.PUSH,
-            [(zmq.SocketOption.SNDHWM, 10000)],
+            [(zmq.SocketOption.SNDHWM, 50000)],
         )
         self.socket_mined_tx_parsed_ack = connect_non_async_zmq_socket(
             self.zmq_context,
@@ -78,6 +77,7 @@ class FlushConfirmedTransactionsThread(threading.Thread):
             zmq.SocketType.PUSH,
             [(zmq.SocketOption.SNDHWM, 10000)],
         )
+        db: DBInterface = DBInterface.load_db(worker_id=self.worker_id, wait_time=10)
         txs, txs_mempool, ins, pds, acks = reset_rows()
         all_tip_filter_notifications: list[TipFilterNotifications] = []
         try:
@@ -94,7 +94,8 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                         confirmed_rows, txs, txs_mempool, ins, pds
                     )
                     acks.extend(new_acks)
-                    all_tip_filter_notifications.append(tip_filter_notifications)
+                    if len(tip_filter_notifications.pushdata_matches) > 0:
+                        all_tip_filter_notifications.append(tip_filter_notifications)
 
                     if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
                         (
