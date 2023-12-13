@@ -29,7 +29,7 @@ from ..workers.common import (
 if typing.TYPE_CHECKING:
     from .transaction_parser import TxParser
 
-MEMPOOL_MAX_TX_BATCH_LIMIT = 2000
+MAX_ROW_FLUSH_LIMIT = 100000
 MEMPOOL_BATCHING_RATE = 0.1
 
 
@@ -82,7 +82,9 @@ class FlushMempoolTransactionsThread(threading.Thread):
                     utxo_spends += new_utxo_spends
                     pushdata_matches_tip_filter += new_pushdata_matches
 
-                    if len(txs_mempool) > MEMPOOL_MAX_TX_BATCH_LIMIT - 1:
+                    if len(txs_mempool) >= MAX_ROW_FLUSH_LIMIT or \
+                            len(pds) >= MAX_ROW_FLUSH_LIMIT or \
+                            len(ins) >= MAX_ROW_FLUSH_LIMIT:
                         self.logger.debug(f"hit max mempool batch size ({len(txs_mempool)})")
                         (
                             db,

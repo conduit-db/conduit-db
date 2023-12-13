@@ -48,11 +48,11 @@ class MempoolParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.mempool_tx_flush_queue: queue.Queue[
             tuple[
-                MySQLFlushBatch,MempoolTxAck,
+                MySQLFlushBatch, MempoolTxAck,
                 list[InputRowParsed],
                 list[PushdataRowParsed]
             ]
-        ] = queue.Queue(maxsize=100_000)
+        ] = queue.Queue(maxsize=100)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
         self.socket_mempool_tx = connect_non_async_zmq_socket(

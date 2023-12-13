@@ -76,7 +76,7 @@ class MinedBlockParsingThread(threading.Thread):
         self.worker_id = worker_id
         self.confirmed_tx_flush_queue: queue.Queue[
             tuple[MySQLFlushBatch, ProcessedBlockAcks, TipFilterNotifications]
-        ] = queue.Queue(maxsize=1000)
+        ] = queue.Queue(maxsize=100)
 
         self.zmq_context = zmq.Context[zmq.Socket[bytes]]()
 
@@ -319,11 +319,6 @@ class MinedBlockParsingThread(threading.Thread):
             raw_block_slice_array = ipc_socket_client.block_batched(
                 [BlockSliceRequestType(block_num, Slice(slice_start_offset, slice_end_offset))]
             )
-            # self.logger.log(
-            #     PROFILING,
-            #     f"Size of received raw_block slice {blk_hash.hex()[0:8]} (worker-{self.worker_id}): "
-            #     f"{(len(raw_block_slice_array) / 1024 ** 2):.2f}MB",
-            # )
 
             is_reorg = bool(is_reorg)
             blk_num, len_slice = struct.unpack_from(f"<IQ", raw_block_slice_array, offset=0)
@@ -390,7 +385,9 @@ class MinedBlockParsingThread(threading.Thread):
                     pushdata_matches_tip_filter,
                 ) = result
                 pushdata_rows_for_flushing = convert_pushdata_rows_for_flush(pd_rows_parsed)
+                del pd_rows_parsed
                 input_rows_for_flushing = convert_input_rows_for_flush(in_rows_parsed)
+                del in_rows_parsed
                 acks = {work_item_id: ProcessedBlockAck(block_num, work_item_id, blk_hash, part_tx_hashXes[i:i+1])}
                 self.confirmed_tx_flush_queue.put(
                     (
@@ -404,7 +401,10 @@ class MinedBlockParsingThread(threading.Thread):
                         TipFilterNotifications(utxo_spends, pushdata_matches_tip_filter, blk_hash),
                     )
                 )
-            del raw_block_slice  # free memory eagerly
+                del pushdata_rows_for_flushing
+                del input_rows_for_flushing
+            # free memory eagerly
+            del raw_block_slice
         self.confirmed_tx_flush_queue.join()
 
     def is_post_ibd_state(self, db: DBInterface) -> bool:
