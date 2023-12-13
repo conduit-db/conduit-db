@@ -64,7 +64,10 @@ services:
       options:
         max-size: "200m"
     volumes:
-      - ${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
+      - ${CONDUIT_RAW_DATA_HDD}/raw_blocks:/opt/conduitdb_data_hdd/raw_blocks
+      - ${CONDUIT_RAW_DATA_HDD}/big_blocks:/opt/conduitdb_data_hdd/big_blocks
+      - ${CONDUIT_RAW_DATA_HDD}/merkle_trees:/opt/conduitdb_data_hdd/merkle_trees
+      - ${CONDUIT_RAW_DATA_HDD}/tx_offsets:/opt/conduitdb_data_hdd/tx_offsets
       - ${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
       - ${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
       - ${LOGS_DIR}:/opt/logs
