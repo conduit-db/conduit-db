@@ -76,9 +76,9 @@ services:
       - REFERENCE_SERVER_HOST=${DOCKER_GATEWAY_HOST:-host.docker.internal}
     working_dir: /opt
     volumes:
-      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
-      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
-      - ./contrib/functional_test_datadirs/${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
+      - ${CONDUIT_RAW_DATA_HDD}:/opt/conduitdb_data_hdd
+      - ${CONDUIT_RAW_DATA_SSD}:/opt/conduitdb_data_ssd
+      - ${CONDUIT_RAW_DATA_SSD}/lmdb_data:/opt/lmdb_data
       - ${LOGS_DIR}:/opt/logs
     command: sh -c 'python3 /opt/conduit_raw/run_conduit_raw.py'
 
