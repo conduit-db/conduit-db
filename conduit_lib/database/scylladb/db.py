@@ -97,9 +97,9 @@ class ScyllaDB(DBInterface):
     def ping(self) -> None:
         # The below query is lightweight and often used to test connectivity
         rs = self.session.execute('SELECT now() FROM system.local')
-        print("Ping successful, connected to cluster: " + str(self.cluster.metadata.cluster_name))
+        self.logger.debug(f"Ping successful, connected to cluster: {self.cluster.metadata.cluster_name}")
         for row in rs:
-            print("Date and time from ScyllaDB:", row[0])
+            self.logger.debug(f"Date and time from ScyllaDB: {row[0]}")
 
     def start_transaction(self) -> None:
         pass  # Not used in the ScyllaDB implementation

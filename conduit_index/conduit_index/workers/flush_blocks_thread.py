@@ -30,7 +30,7 @@ from ..workers.common import (
 if typing.TYPE_CHECKING:
     from .transaction_parser import TxParser
 
-BLOCKS_MAX_TX_BATCH_LIMIT = 100_000
+MAX_ROW_FLUSH_LIMIT = 100_000
 BLOCK_BATCHING_RATE = 0.3
 
 
@@ -104,7 +104,9 @@ class FlushConfirmedTransactionsThread(threading.Thread):
                     if len(tip_filter_notifications.pushdata_matches) > 0:
                         all_tip_filter_notifications.append(tip_filter_notifications)
 
-                    if len(txs) > BLOCKS_MAX_TX_BATCH_LIMIT:
+                    if len(txs) >= MAX_ROW_FLUSH_LIMIT or \
+                            len(pds) >= MAX_ROW_FLUSH_LIMIT or \
+                            len(ins) >= MAX_ROW_FLUSH_LIMIT:
                         (
                             db,
                             self.last_activity,
