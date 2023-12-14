@@ -168,8 +168,9 @@ class MySQLBulkLoads:
             if os.path.exists(outfile):
                 os.remove(outfile)
 
-    def handle_coinbase_dup_tx_hash(self, tx_rows: list[ConfirmedTransactionRow]) -> list[
-        ConfirmedTransactionRow]:
+    def handle_coinbase_dup_tx_hash(
+        self, tx_rows: list[ConfirmedTransactionRow]
+    ) -> list[ConfirmedTransactionRow]:
         # Todo may need to search the other input/output/pushdata rows too for these problem txids
         # rare issue see: https://en.bitcoin.it/wiki/BIP_0034
         # There are only two cases of duplicate tx_hashes:
@@ -233,7 +234,7 @@ class MySQLBulkLoads:
             f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}",
         )
 
-    def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
+    def bulk_load_input_rows(self, in_rows: list[InputRow], mempool: bool = False) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in in_rows]
         column_names = ["out_tx_hash", "out_idx", "in_tx_hash", "in_idx"]
@@ -249,7 +250,7 @@ class MySQLBulkLoads:
             f"elapsed time for bulk_load_input_rows = {t1} seconds for {len(in_rows)}",
         )
 
-    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
+    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow], mempool: bool = False) -> None:
         t0 = time.time()
         string_rows = ["%s,%s,%s,%s\n" % (row) for row in pd_rows]
         column_names = ["pushdata_hash", "tx_hash", "idx", "ref_type"]

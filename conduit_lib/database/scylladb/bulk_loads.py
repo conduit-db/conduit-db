@@ -48,7 +48,11 @@ class ScyllaDBBulkLoads:
         self.total_rows_flushed_since_startup = 0
 
     def load_data_batched(
-        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], max_retries: int = 5
+        self,
+        insert_statement: PreparedStatement,
+        rows: Sequence[tuple[Any, ...]],
+        max_retries: int = 5,
+        mempool: bool = False,
     ) -> None:
         """This function requires that the `insert_statement` is idempotent so that failed
         UNLOGGED batches (which are not atomic and may be partially applied) can be retries and
@@ -65,7 +69,8 @@ class ScyllaDBBulkLoads:
 
         num_batches = len(rows) // BATCH_SIZE + (1 if len(rows) % BATCH_SIZE != 0 else 0)
         batches = [BatchStatement(batch_type=BatchType.UNLOGGED) for _ in range(num_batches)]
-        self.logger.debug(f"Submitting {len(batches)} write batches")
+        if not mempool:
+            self.logger.debug(f"Submitting {len(batches)} write batches")
 
         for i, row in enumerate(rows):
             batch_index = i // BATCH_SIZE
@@ -95,8 +100,9 @@ class ScyllaDBBulkLoads:
                 # limit is reached when results_generator is False. This is a hard-coded setting
                 # within the python driver.
                 # https://github.com/datastax/python-driver/pull/605/files
-                elif isinstance(result_or_exception, TypeError) or \
-                        isinstance(result_or_exception, NoHostAvailable):
+                elif isinstance(result_or_exception, TypeError) or isinstance(
+                    result_or_exception, NoHostAvailable
+                ):
                     # The assumption being made here is that the reason they all errored out
                     # was due to an excessive number of WriteTimeout errors.
                     # Or due to heavy load the ScyllaDB node has been marked as "down"
@@ -188,7 +194,7 @@ class ScyllaDBBulkLoads:
         return tx_rows
 
     def bulk_load_confirmed_tx_rows(
-        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False
+        self, tx_rows: list[ConfirmedTransactionRow], check_duplicates: bool = False, mempool: bool = False
     ) -> None:
         if tx_rows:
             assert isinstance(tx_rows[0].tx_hash, str)
@@ -200,7 +206,7 @@ class ScyllaDBBulkLoads:
         )
         insert_rows = [(bytes.fromhex(row.tx_hash), row.tx_block_num, row.tx_position) for row in tx_rows]
         self.logger.debug(f"Bulk loading {len(insert_rows)} confirmed tx rows")
-        self.load_data_batched(insert_statement, insert_rows)
+        self.load_data_batched(insert_statement, insert_rows, mempool)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING,
@@ -232,7 +238,7 @@ class ScyllaDBBulkLoads:
             PROFILING, f"elapsed time for bulk_load_mempool_tx_rows = {t1} seconds for {len(tx_rows)}"
         )
 
-    def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
+    def bulk_load_input_rows(self, in_rows: list[InputRow], mempool: bool = False) -> None:
         t0 = time.time()
         insert_statement = self.session.prepare(
             "INSERT INTO inputs_table (out_tx_hash, out_idx, in_tx_hash, in_idx) VALUES (?, ?, ?, ?)"
@@ -241,12 +247,13 @@ class ScyllaDBBulkLoads:
             (bytes.fromhex(row.out_tx_hash), row.out_idx, bytes.fromhex(row.in_tx_hash), row.in_idx)
             for row in in_rows
         ]
-        self.logger.debug(f"Bulk loading {len(in_rows)} input rows")
-        self.load_data_batched(insert_statement, insert_rows)
+        if not mempool:
+            self.logger.debug(f"Bulk loading {len(in_rows)} input rows")
+        self.load_data_batched(insert_statement, insert_rows, mempool)
         t1 = time.time() - t0
         self.logger.log(PROFILING, f"elapsed time for bulk_load_input_rows = {t1} seconds for {len(in_rows)}")
 
-    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
+    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow], mempool: bool = False) -> None:
         t0 = time.time()
         insert_statement = self.session.prepare(
             "INSERT INTO pushdata (pushdata_hash, tx_hash, idx, ref_type) VALUES (?, ?, ?, ?)"
@@ -255,8 +262,9 @@ class ScyllaDBBulkLoads:
             (bytes.fromhex(row.pushdata_hash), bytes.fromhex(row.tx_hash), row.idx, row.ref_type)
             for row in pd_rows
         ]
-        self.logger.debug(f"Bulk loading {len(insert_rows)} pushdata rows")
-        self.load_data_batched(insert_statement, insert_rows)
+        if not mempool:
+            self.logger.debug(f"Bulk loading {len(insert_rows)} pushdata rows")
+        self.load_data_batched(insert_statement, insert_rows, mempool)
         t1 = time.time() - t0
         self.logger.log(
             PROFILING, f"elapsed time for bulk_load_pushdata_rows = {t1} seconds for " f"{len(pd_rows)} rows"

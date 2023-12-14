@@ -104,8 +104,10 @@ class ScyllaDB(DBInterface):
     def start_transaction(self) -> None:
         pass  # Not used in the ScyllaDB implementation
 
-    def load_data_batched(self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]]) -> None:
-        self.bulk_loads.load_data_batched(insert_statement, rows)
+    def load_data_batched(
+        self, insert_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], mempool: bool = False
+    ) -> None:
+        self.bulk_loads.load_data_batched(insert_statement, rows, mempool)
 
     def execute_with_concurrency(
         self, prepared_statement: PreparedStatement, rows: Sequence[tuple[Any, ...]], concurrency: int = 100
@@ -167,11 +169,11 @@ class ScyllaDB(DBInterface):
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.bulk_load_mempool_tx_rows(tx_rows)
 
-    def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
-        self.bulk_loads.bulk_load_input_rows(in_rows)
+    def bulk_load_input_rows(self, in_rows: list[InputRow], mempool: bool = False) -> None:
+        self.bulk_loads.bulk_load_input_rows(in_rows, mempool)
 
-    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
-        self.bulk_loads.bulk_load_pushdata_rows(pd_rows)
+    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow], mempool: bool = False) -> None:
+        self.bulk_loads.bulk_load_pushdata_rows(pd_rows, mempool)
 
     def get_tables(self) -> Sequence[tuple[str]]:
         return self.tables.get_tables()

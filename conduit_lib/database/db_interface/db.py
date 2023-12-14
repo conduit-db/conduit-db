@@ -24,7 +24,8 @@ from conduit_lib.database.db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
-    PushdataRow, CheckpointStateRow,
+    PushdataRow,
+    CheckpointStateRow,
 )
 from conduit_lib.database.redis.db import RedisCache
 from conduit_lib.types import (
@@ -77,7 +78,10 @@ class DBInterface(abc.ABC):
 
     @classmethod
     def load_db(
-        cls, worker_id: int | str | None = None, db_type: DatabaseType | None = None, wait_time: int | None = None
+        cls,
+        worker_id: int | str | None = None,
+        db_type: DatabaseType | None = None,
+        wait_time: int | None = None,
     ) -> "DBInterface":
         if db_type is None:
             db_type_default: str = os.getenv('DEFAULT_DB_TYPE', 'SCYLLADB')
@@ -168,11 +172,11 @@ class DBInterface(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
+    def bulk_load_input_rows(self, in_rows: list[InputRow], mempool: bool = False) -> None:
         pass
 
     @abc.abstractmethod
-    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
+    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow], mempool: bool = False) -> None:
         pass
 
     @abc.abstractmethod
