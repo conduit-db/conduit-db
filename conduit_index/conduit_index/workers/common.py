@@ -48,12 +48,10 @@ def extend_batched_rows(
 
 
 def flush_ins_outs_and_pushdata_rows(
-    in_rows: list[InputRow],
-    pd_rows: list[PushdataRow],
-    db: DBInterface,
+    in_rows: list[InputRow], pd_rows: list[PushdataRow], db: DBInterface, mempool: bool = False
 ) -> None:
-    db.bulk_load_input_rows(in_rows)
-    db.bulk_load_pushdata_rows(pd_rows)
+    db.bulk_load_input_rows(in_rows, mempool)
+    db.bulk_load_pushdata_rows(pd_rows, mempool)
 
 
 def flush_rows_confirmed(
@@ -125,7 +123,7 @@ def flush_rows_mempool(
     ) = flush_batch_with_acks
     try:
         db.bulk_load_mempool_tx_rows(tx_rows_mempool)
-        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db)
+        flush_ins_outs_and_pushdata_rows(in_rows, pd_rows, db, mempool=True)
     except MySQLdb.IntegrityError as e:
         worker.logger.exception(f"IntegrityError")
         raise

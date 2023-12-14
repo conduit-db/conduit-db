@@ -27,7 +27,8 @@ from ..db_interface.types import (
     ConfirmedTransactionRow,
     MempoolTransactionRow,
     InputRow,
-    PushdataRow, CheckpointStateRow,
+    PushdataRow,
+    CheckpointStateRow,
 )
 from ... import LMDB_Database
 from ...types import ChainHashes, BlockHeaderRow, TxMetadata, RestorationFilterQueryResult, OutpointType
@@ -149,11 +150,11 @@ class MySQLDatabase(DBInterface):
     def bulk_load_mempool_tx_rows(self, tx_rows: list[MempoolTransactionRow]) -> None:
         self.bulk_loads.bulk_load_mempool_tx_rows(tx_rows)
 
-    def bulk_load_input_rows(self, in_rows: list[InputRow]) -> None:
-        self.bulk_loads.bulk_load_input_rows(in_rows)
+    def bulk_load_input_rows(self, in_rows: list[InputRow], mempool: bool = False) -> None:
+        self.bulk_loads.bulk_load_input_rows(in_rows, mempool)
 
-    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow]) -> None:
-        self.bulk_loads.bulk_load_pushdata_rows(pd_rows)
+    def bulk_load_pushdata_rows(self, pd_rows: list[PushdataRow], mempool: bool = False) -> None:
+        self.bulk_loads.bulk_load_pushdata_rows(pd_rows, mempool)
 
     def get_tables(self) -> Sequence[tuple[str]]:
         return self.tables.get_tables()
