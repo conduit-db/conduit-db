@@ -28,11 +28,15 @@ from conduit_lib import (
     Deserializer,
     Handlers,
     NetworkConfig,
-    Peer,
     DBInterface,
 )
 from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient, PeerManager
-from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME, REGTEST, ZERO_HASH, MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW
+from conduit_lib.constants import (
+    CONDUIT_RAW_SERVICE_NAME,
+    REGTEST,
+    ZERO_HASH,
+    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
+)
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.deserializer_types import Inv
 from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
@@ -76,7 +80,6 @@ class Controller(ControllerBase):
         # Bitcoin network/peer net_config
         self.net_config = net_config
         self.peers = self.net_config.peers
-        self.peer = self.get_peer()
 
         self.general_executor = ThreadPoolExecutor(max_workers=4)
 
@@ -107,7 +110,6 @@ class Controller(ControllerBase):
         self.worker_in_queue_preproc: queue.Queue[
             tuple[bytes, int, int, int]
         ] = queue.Queue()  # no ack needed
-        self.worker_ack_queue_preproc: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_blk_writer: queue.Queue[bytes] = queue.Queue()
         self.worker_ack_queue_mtree: 'multiprocessing.Queue[bytes]' = (
             multiprocessing.Queue()
@@ -154,22 +156,15 @@ class Controller(ControllerBase):
 
     async def connect_sessions(self) -> None:
         CONCURRENT_CONNECTIONS = int(os.environ['P2P_CONNECTION_COUNT'])
-        peer = self.get_peer()
-        self.logger.debug(
-            "Opening %s concurrent connections to (%s, %s) [%s]",
-            CONCURRENT_CONNECTIONS,
-            peer.remote_host,
-            peer.remote_port,
-            self.net_config.NET,
-        )
+        self.logger.debug("Opening up to %s concurrent p2p network connections")
         try:
             for i in range(CONCURRENT_CONNECTIONS):
+                peer = self.net_config.get_next_peer()  # rotate through evenly
                 bitcoin_p2p_client = BitcoinP2PClient(
                     i, peer.remote_host, peer.remote_port, self.handlers, self.net_config
                 )
                 self.peer_manager.add_client(bitcoin_p2p_client)
             await self.peer_manager.try_connect_to_all_peers()
-            assert len(self.peer_manager.get_connected_peers()) == CONCURRENT_CONNECTIONS
         except ConnectionResetError:
             await self.stop()
 
@@ -242,9 +237,6 @@ class Controller(ControllerBase):
                     await task
                 except asyncio.CancelledError:
                     pass
-
-    def get_peer(self) -> Peer:
-        return self.peers[0]
 
     def run_coro_threadsafe(
         self,
@@ -663,8 +655,11 @@ class Controller(ControllerBase):
                 is_reorg, start_header, stop_header = self.merge_batch(batch)
                 batch = []
 
-                if stop_header.height <= self.sync_state.get_local_block_tip_height() and not is_reorg\
-                        and not os.getenv('FORCE_REINDEX_RECENT_BLOCKS', '0') == '1':
+                if (
+                    stop_header.height <= self.sync_state.get_local_block_tip_height()
+                    and not is_reorg
+                    and not os.getenv('FORCE_REINDEX_RECENT_BLOCKS', '0') == '1'
+                ):
                     continue
 
                 await self.sync_blocks_batch(batch_id, start_header, stop_header)

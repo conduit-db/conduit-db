@@ -45,7 +45,8 @@ from conduit_lib.constants import (
     MAIN_BATCH_HEADERS_COUNT_LIMIT,
     CONDUIT_INDEX_SERVICE_NAME,
     TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX,
-    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW, HashXLength,
+    MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW,
+    HashXLength,
 )
 from conduit_lib.types import (
     BlockHeaderRow,
@@ -261,13 +262,14 @@ class Controller(ControllerBase):
             peer.remote_port,
             self.net_config.NET,
         )
+        self.bitcoin_p2p_client = BitcoinP2PClient(
+            1, peer.remote_host, peer.remote_port, self.handlers, self.net_config
+        )
+        assert self.bitcoin_p2p_client is not None
         try:
-            self.bitcoin_p2p_client = BitcoinP2PClient(
-                1, peer.remote_host, peer.remote_port, self.handlers, self.net_config
-            )
             await self.bitcoin_p2p_client.wait_for_connection()
-        except ConnectionResetError:
-            await self.stop()
+        except ConnectionResetError as e:
+            self.logger.error(f"Connection Reset of peer_id={self.bitcoin_p2p_client.id}: {e}")
 
     # Multiprocessing Workers
     async def start_workers(self) -> None:
@@ -277,7 +279,9 @@ class Controller(ControllerBase):
             p.start()
             self.processes.append(p)
         wait_time = 15
-        self.logger.info(f"Waiting {wait_time} seconds for TxParser workers to connect to their ZMQ sockets...")
+        self.logger.info(
+            f"Waiting {wait_time} seconds for TxParser workers to connect to their ZMQ sockets..."
+        )
         await asyncio.sleep(15)
 
     async def database_integrity_check(self) -> None:
@@ -366,7 +370,7 @@ class Controller(ControllerBase):
         last_allocated_header = self.headers_threadsafe.get_header_for_hash(last_allocated_block_hash)
 
         # If a reorg was allocated, do it all as one batch
-        best_flushed_tip_height = 0xffffffff
+        best_flushed_tip_height = 0xFFFFFFFF
         if reorg_was_allocated:
             best_flushed_tip_height = await self.index_blocks(
                 reorg_was_allocated,
@@ -486,8 +490,10 @@ class Controller(ControllerBase):
             processed_tx_count: int = global_tx_counts_dict.get(block_num, 0)
             expected_tx_count: int = self.sync_state.expected_blocks_tx_counts[block_hash]
             if expected_tx_count != processed_tx_count:
-                self.logger.debug(f"Not processed yet for block_num: {block_num} "
-                                  f"with expected_tx_count: {expected_tx_count} != {processed_tx_count}")
+                self.logger.debug(
+                    f"Not processed yet for block_num: {block_num} "
+                    f"with expected_tx_count: {expected_tx_count} != {processed_tx_count}"
+                )
                 return False
         return True
 
@@ -539,8 +545,9 @@ class Controller(ControllerBase):
         best_flushed_block_height: int = checkpoint_tip.height
 
         while True:
-            if len(self.global_tx_counts_dict) >= len(self.sync_state.expected_blocks_tx_counts) \
-                    and self.all_blocks_processed(self.global_tx_counts_dict):
+            if len(self.global_tx_counts_dict) >= len(
+                self.sync_state.expected_blocks_tx_counts
+            ) and self.all_blocks_processed(self.global_tx_counts_dict):
                 break
             else:
                 await asyncio.sleep(0.2)
@@ -654,6 +661,7 @@ class Controller(ControllerBase):
             assert self.bitcoin_p2p_client is not None
             await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
             await self.bitcoin_p2p_client.handshake_complete_event.wait()
+
             request_mempool = int(os.environ.get('REQUEST_MEMPOOL', "0"))
             if request_mempool:
                 await self.request_mempool()

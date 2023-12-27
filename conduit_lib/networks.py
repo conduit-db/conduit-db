@@ -193,10 +193,21 @@ class NetworkConfig:
         self.GENESIS_ACTIVATION_HEIGHT = network.GENESIS_ACTIVATION_HEIGHT
 
         self.peers: list[Peer] = []
+        self._currently_selected_peer_index: int = 0
         self.set_peers(network)
 
     def get_peer(self) -> "Peer":
         return self.peers[random.randint(0, len(self.peers) - 1)]
+
+    def select_next_peer(self) -> None:
+        if self._currently_selected_peer_index == len(self.peers) - 1:
+            self._currently_selected_peer_index = 0
+        else:
+            self._currently_selected_peer_index += 1
+
+    def get_next_peer(self) -> "Peer":
+        self.select_next_peer()
+        return self.peers[self._currently_selected_peer_index]
 
     def get_default_peers(self, network: AbstractNetwork) -> None:
         if isinstance(network, RegTestNet):

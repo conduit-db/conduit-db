@@ -164,7 +164,7 @@ class BitcoinP2PClient:
         self.reader = reader
         self.writer = writer
         self.peer = BitcoinPeerInstance(self.reader, self.writer, self.remote_host, self.remote_port)
-        self.tasks.append(create_task(self._start_session()))
+        self.tasks.append(create_task(self.start_session()))
 
     async def wait_for_connection(self) -> None:
         """Keep retrying until the node comes online"""
@@ -485,16 +485,16 @@ class BitcoinP2PClient:
         create_task(self.send_version(local_host, local_port))
         await self.handshake_complete_event.wait()
 
-    async def _start_session(self) -> None:
+    async def start_session(self) -> None:
         try:
-            await self.start_session()
+            await self._start_session()
         except ConnectionResetError:
             self.logger.error(f"Bitcoin node disconnected")
         finally:
             if self.writer and not self.writer.is_closing():
                 await self.close_connection()
 
-    async def start_session(self) -> None:
+    async def _start_session(self) -> None:
         """raises `ConnectionResetError`"""
         assert self.reader is not None
         assert self.writer is not None
@@ -550,6 +550,7 @@ class BitcoinP2PClient:
 
     async def keepalive_ping_loop(self) -> None:
         await self.handshake_complete_event.wait()
+        self.logger.debug(f"Handshake event complete")
         await asyncio.sleep(10)
         while True:
             ping_msg = self.serializer.ping()
@@ -570,6 +571,7 @@ class PeerManager:
         self._logger = logging.getLogger("bitcoin-p2p-client-pool")
         self.clients = clients
         self._connection_pool: list[BitcoinP2PClient] = []
+        self._disconnected_pool: list[BitcoinP2PClient] = []
         self._currently_selected_peer_index: int = 0
 
     def add_client(self, client: BitcoinP2PClient) -> None:
@@ -592,6 +594,7 @@ class PeerManager:
         return self._connection_pool[self._currently_selected_peer_index]
 
     async def try_connect_to_all_peers(self) -> None:
+        """Should have tolerance for some failed connections to offline peers"""
         for client in self.clients:
             try:
                 await client.wait_for_connection()
@@ -600,7 +603,7 @@ class PeerManager:
                 self._logger.error(
                     f"Failed to connect to peer. host: {client.peer.host}, " f"port: {client.peer.port}"
                 )
-        assert len(self._connection_pool) == len(self.clients)
+                self._disconnected_pool.append(client)
         if len(self._connection_pool) == 0:
             raise PeerManagerFailedError("All connections failed")
 
@@ -612,4 +615,5 @@ class PeerManager:
         # Force close all outstanding connections
         outstanding_connections = list(self._connection_pool)
         for conn in outstanding_connections:
-            await conn.close_connection()
+            if conn.connected:
+                await conn.close_connection()
