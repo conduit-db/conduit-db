@@ -88,19 +88,6 @@ def calc_bloom_filter_size(n_elements: int, false_positive_rate: int) -> int:
     return int(filter_size)
 
 
-def unpack_varint_from_mv(buffer: bytes) -> tuple[int, int]:
-    """buffer argument should be a memory view ideally and returns the value and how many bytes
-    were read as a tuple"""
-    (n,) = struct.unpack_from("B", buffer)
-    if n < 253:
-        return n, 1
-    if n == 253:
-        return struct.unpack_from("<H", buffer, offset=1)[0], 3
-    if n == 254:
-        return struct.unpack_from("<I", buffer, offset=1)[0], 5
-    return struct.unpack_from("<Q", buffer, offset=1)[0], 9
-
-
 def get_log_level(service_name: str) -> int:
     if service_name == CONDUIT_INDEX_SERVICE_NAME:
         level = os.getenv(f"CONDUIT_INDEX_LOG_LEVEL", "DEBUG")
