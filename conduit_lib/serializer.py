@@ -79,6 +79,7 @@ class Serializer:
         send_port: int = 8333,
         version: int = 70016,
         relay: int = 1,
+        user_agent: str = ""
     ) -> bytes:
         version = pack_le_uint32(version)
         services = pack_le_uint64(0)
@@ -86,7 +87,7 @@ class Serializer:
         addr_recv = services + ipv4_to_mapped_ipv6(recv_host) + pack_be_uint16(recv_port)
         addr_sndr = services + ipv4_to_mapped_ipv6(send_host) + pack_be_uint16(send_port)
         nonce = pack_le_uint64(random.getrandbits(64))
-        user_agent = pack_varbytes(b"")
+        user_agent = pack_varbytes(user_agent.encode())
         height = pack_le_uint32(0)
         relay = pack_byte(relay)
         payload = version + services + timestamp + addr_recv + addr_sndr + nonce + user_agent + height + relay
