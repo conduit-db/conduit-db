@@ -252,7 +252,7 @@ class TestAiohttpRESTAPI:
 
         blockchain_dir = REGTEST_TEST_BLOCKCHAIN
         import_blocks(str(blockchain_dir))
-        time.sleep(30)
+        time.sleep(15)
 
     def setup_method(self) -> None:
         pass
