@@ -121,7 +121,7 @@ class TestDBInterface:
         )
         db.update_checkpoint_tip(new_tip_header)
 
-        start_header = bitcoinx.Header(
+        last_known_header = bitcoinx.Header(
             version=1,
             prev_hash=bytes.fromhex("aa" * 32),
             merkle_root=bytes.fromhex("bb" * 32),
@@ -147,7 +147,7 @@ class TestDBInterface:
         new_hashes = [bytes.fromhex("aadd" * 16), bytes.fromhex("aaee" * 16)]
         db.update_allocated_state(
             reorg_was_allocated=False,
-            first_allocated=start_header,
+            first_allocated=last_known_header,
             last_allocated=stop_header,
             old_hashes=old_hashes,
             new_hashes=new_hashes,

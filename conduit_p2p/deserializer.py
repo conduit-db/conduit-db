@@ -3,9 +3,11 @@
 # All rights reserved.
 #
 # Licensed under the MIT License; see LICENCE for details.
-
+import io
 import logging
-from typing import cast
+from typing import cast, TypedDict, NamedTuple
+import socket
+import time
 
 from bitcoinx import (
     hash_to_hex_str,
@@ -16,27 +18,81 @@ from bitcoinx import (
     read_varbytes,
     read_le_uint32,
     read_varint,
-    read_le_uint16,
     unpack_header,
+    read_be_uint16,
+    double_sha256,
     Tx,
 )
-import socket
-import time
 
-from .deserializer_types import (
-    Inv,
-    NodeAddr,
-    NodeAddrListItem,
-    SendCmpct,
-    BlockLocator,
-)
 from .constants import CCODES
-from .utils import mapped_ipv6_to_ipv4
-from conduit_lib.deserializer_types import MessageHeader, Protoconf, Version
-from conduit_lib.networks import NetworkConfig
+from .networks import NetworkConfig
 from io import BytesIO
 
-logger = logging.getLogger("deserializer")
+from .types import InvType, BlockHeader, Reject
+
+logger = logging.getLogger("conduit.p2p.deserializer")
+
+
+Hash256 = bytes
+
+
+class MessageHeader(NamedTuple):
+    magic: str
+    command: str
+    length: int
+    checksum: str
+
+
+class NodeAddr(NamedTuple):
+    services: int
+    ip: str
+    port: int
+
+
+def mapped_ipv6_to_ipv4(f: io.BytesIO) -> NodeAddr:
+    services = read_le_uint64(f.read)
+    reserved = f.read(12)
+    ipv4 = socket.inet_ntoa(f.read(4))
+    port = read_be_uint16(f.read)
+    return NodeAddr(services, ipv4, port)
+
+
+class SendCmpct(NamedTuple):
+    enable: bool
+    version: int
+
+
+class NodeAddrListItem(NamedTuple):
+    timestamp: str
+    node_addr: NodeAddr
+
+
+class Version(TypedDict):
+    version: int
+    services: str
+    timestamp: str
+    addr_recv: NodeAddr
+    addr_from: NodeAddr
+    nonce: int
+    user_agent: str
+    start_height: int
+    relay: bool
+
+
+class Protoconf(TypedDict):
+    number_of_fields: int
+    max_recv_payload_length: int
+
+
+class Inv(TypedDict):
+    inv_type: InvType
+    inv_hash: str
+
+
+class BlockLocator(NamedTuple):
+    version: int
+    block_locator_hashes: list[Hash256]
+    hash_stop: Hash256
 
 
 class Deserializer:
@@ -48,13 +104,7 @@ class Deserializer:
         command = stream.read(12).decode("ascii").strip("\x00")
         length = read_le_uint32(stream.read)
         checksum = stream.read(4).hex()
-        decoded_header: MessageHeader = {
-            "magic": magic,
-            "command": command,
-            "length": length,
-            "checksum": checksum,
-        }
-        return decoded_header
+        return MessageHeader(magic, command, length, checksum)
 
     def deserialize_extended_message_header(self, stream: BytesIO) -> MessageHeader:
         magic = stream.read(4).hex()
@@ -64,15 +114,9 @@ class Deserializer:
         assert command == "extmsg"
         assert length == 0xFFFFFFFF
         assert checksum == "00000000"
-        ext_command = stream.read(12).decode("ascii").strip("\x00")
-        ext_length = read_le_uint64(stream.read)
-        decoded_header: MessageHeader = {
-            "magic": magic,
-            "command": ext_command,
-            "length": ext_length,
-            "checksum": checksum,
-        }
-        return decoded_header
+        command = stream.read(12).decode("ascii").strip("\x00")
+        length = read_le_uint64(stream.read)
+        return MessageHeader(magic, command, length, checksum)
 
     def version(self, f: BytesIO) -> Version:
         version = read_le_int32(f.read)
@@ -81,7 +125,7 @@ class Deserializer:
         addr_recv = mapped_ipv6_to_ipv4(f)
         addr_from = mapped_ipv6_to_ipv4(f)
         nonce = read_le_uint64(f.read)
-        user_agent = read_varbytes(f.read).decode("utf-8")
+        user_agent = read_varbytes(f.read).decode()
         start_height = read_le_int32(f.read)
         relay = cast(bool, f.read(1))
         return Version(
@@ -126,7 +170,7 @@ class Deserializer:
             services = read_le_uint64(f.read)
             reserved = f.read(12)  # IPv6
             ipv4 = socket.inet_ntoa(f.read(4))
-            port = read_le_uint16(f.read)
+            port = read_be_uint16(f.read)
             addresses.append(
                 NodeAddrListItem(
                     timestamp=timestamp,
@@ -144,15 +188,13 @@ class Deserializer:
         feerate: int = read_le_int64(f.read)
         return feerate
 
-    def reject(self, f: BytesIO) -> tuple[str, str, str]:
-        message = read_varbytes(f.read).decode("utf-8")
+    def reject(self, f: BytesIO) -> Reject:
+        message = read_varbytes(f.read).decode()
         ccode = f.read(1)
-        reason = read_varbytes(f.read).decode("utf-8")
-        # TODO different ccodes will / won't have "extra data"
-        # data = read_varbytes(f.read) # no data
-
+        reason = read_varbytes(f.read).decode()
         ccode_translation = CCODES["0x" + ccode.hex()]
-        return message, ccode_translation, reason
+        item_hash = f.read(32)
+        return Reject(message, ccode_translation, reason, hash_to_hex_str(item_hash))
 
     def inv(self, f: BytesIO) -> list[Inv]:
         inv_vector = []
@@ -164,13 +206,15 @@ class Deserializer:
             inv_vector.append(inv)
         return inv_vector
 
-    def headers(self, f: BytesIO) -> list[Header]:
+    def headers(self, f: BytesIO) -> list[BlockHeader]:
         count = read_varint(f.read)
         headers = []
         for i in range(count):
             raw_header = f.read(80)
             _tx_count = read_varint(f.read)
-            headers.append(unpack_header(raw_header))
+            version, prev_block, merkle_root, timestamp, bits, nonce = unpack_header(raw_header)
+            hash = double_sha256(raw_header)
+            headers.append(BlockHeader(version, prev_block, merkle_root, timestamp, bits, nonce, raw_header, hash))
         return headers
 
     def getdata(self, f: BytesIO) -> list[Inv]:

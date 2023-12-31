@@ -7,7 +7,7 @@
 import asyncio
 import bitcoinx
 import cbor2
-from bitcoinx import hash_to_hex_str, double_sha256, MissingHeader, Header
+from bitcoinx import hash_to_hex_str, Header, deserialized_header
 from concurrent.futures.thread import ThreadPoolExecutor
 from io import BytesIO
 import logging
@@ -24,24 +24,18 @@ import zmq
 from zmq.asyncio import Context as AsyncZMQContext
 
 from conduit_lib.algorithms import parse_txs_to_list
-from conduit_lib.bitcoin_p2p_client import BitcoinP2PClient
 from conduit_lib.controller_base import ControllerBase
 from conduit_lib.database.db_interface.db import DatabaseType
 from conduit_lib.database.db_interface.types import MinedTxHashXes
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
-from conduit_lib.deserializer import Deserializer
-from conduit_lib import Peer, DBInterface
-from conduit_lib.handlers import Handlers
+from conduit_lib import DBInterface
 from conduit_lib.ipc_sock_msg_types import (
     HeadersBatchedResponse,
     ReorgDifferentialResponse,
 )
-from conduit_lib.serializer import Serializer
 from conduit_lib.store import setup_storage, Storage
 from conduit_lib.constants import (
     MsgType,
-    NULL_HASH,
     MAIN_BATCH_HEADERS_COUNT_LIMIT,
     CONDUIT_INDEX_SERVICE_NAME,
     TARGET_BYTES_BLOCK_BATCH_REQUEST_SIZE_CONDUIT_INDEX,
@@ -59,6 +53,10 @@ from conduit_lib.wait_for_dependencies import (
     wait_for_db,
     wait_for_ipc_socket_server,
 )
+from conduit_p2p import HeadersStore, BitcoinClientManager, BitcoinClientMode
+from conduit_p2p.headers import NewTipResult
+from conduit_p2p.utils import cancel_tasks
+from .handlers import IndexerHandlers
 
 from .sync_state import SyncState
 from .types import WorkUnit
@@ -75,7 +73,7 @@ from conduit_lib.zmq_sockets import (
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 if typing.TYPE_CHECKING:
-    from conduit_lib.networks import NetworkConfig
+    from conduit_p2p import NetworkConfig
 
 
 def get_headers_dir_conduit_index() -> Path:
@@ -153,28 +151,30 @@ class Controller(ControllerBase):
 
         # Bitcoin network/peer net_config
         self.net_config = net_config
-        self.peer = self.net_config.get_peer()
 
         self.general_executor = ThreadPoolExecutor(max_workers=4)
+
+        network_type = os.environ["NETWORK"]
 
         wait_for_ipc_socket_server()
         wait_for_db()
         headers_dir = get_headers_dir_conduit_index()
-        self.storage: Storage = setup_storage(self.net_config, headers_dir)
+        self.storage: Storage = setup_storage(network_type, headers_dir)
         self.db: DBInterface | None = self.storage.db
-        self.headers_threadsafe = HeadersAPIThreadsafe(self.storage.headers, self.storage.headers_lock)
-        self.headers_threadsafe_blocks = HeadersAPIThreadsafe(
-            self.storage.block_headers, self.storage.block_headers_lock
-        )
-        self.handlers: Handlers = Handlers(self, self.net_config, self.storage)  # type: ignore
-        self.serializer: Serializer = Serializer(self.net_config)
-        self.deserializer: Deserializer = Deserializer(self.net_config)
+        self.headers_threadsafe = self.storage.headers
+        self.headers_threadsafe_blocks = self.storage.block_headers
         self.sync_state: SyncState = SyncState(self.storage, self)
 
         self.zmq_socket_listeners = ZMQSocketListeners()
 
         # Bitcoin Network Socket
-        self.bitcoin_p2p_client: BitcoinP2PClient | None = None
+        message_handler = IndexerHandlers(network_type, self)
+        peers_list = [f"{os.getenv('NODE_HOST')}:{os.getenv('NODE_PORT')}"]
+        self.peer_manager = BitcoinClientManager(message_handler, peers_list,
+                mode=BitcoinClientMode.HIGH_LEVEL, relay_transactions=False,
+                use_persisted_peers=True, last_known_height=self.headers_threadsafe_blocks.tip().height,
+                concurrency=3
+        )
 
         # Mempool and API state
         self.mempool_tx_hash_set: set[bytes] = set()
@@ -208,15 +208,6 @@ class Controller(ControllerBase):
         while True:
             await asyncio.sleep(5)
 
-    async def maintain_node_connection(self) -> None:
-        assert self.bitcoin_p2p_client is not None
-        while True:
-            await self.bitcoin_p2p_client.handshake_complete_event.wait()
-            await self.bitcoin_p2p_client.connection_lost_event.wait()
-            self.bitcoin_p2p_client.connection_lost_event.clear()
-            await self.connect_session(self.peer)
-            self.logger.debug(f"The bitcoin node disconnected but is now reconnected")
-
     async def stop(self) -> None:
         self.running = False
 
@@ -245,31 +236,7 @@ class Controller(ControllerBase):
             await asyncio.sleep(1)
             self.zmq_socket_listeners.close()
 
-        self.sync_state._batched_blocks_exec.shutdown(wait=False)
-
-        for task in self.tasks:
-            if not task.done():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-    async def connect_session(self, peer: Peer) -> None:
-        self.logger.debug(
-            "Connecting to (%s, %s) [%s]",
-            peer.remote_host,
-            peer.remote_port,
-            self.net_config.NET,
-        )
-        self.bitcoin_p2p_client = BitcoinP2PClient(
-            1, peer.remote_host, peer.remote_port, self.handlers, self.net_config
-        )
-        assert self.bitcoin_p2p_client is not None
-        try:
-            await self.bitcoin_p2p_client.wait_for_connection()
-        except ConnectionResetError as e:
-            self.logger.error(f"Connection Reset of peer_id={self.bitcoin_p2p_client.id}: {e}")
+        await cancel_tasks(self.tasks)
 
     # Multiprocessing Workers
     async def start_workers(self) -> None:
@@ -369,12 +336,14 @@ class Controller(ControllerBase):
         first_allocated_header = self.headers_threadsafe.get_header_for_hash(first_allocated_block_hash)
         last_allocated_header = self.headers_threadsafe.get_header_for_hash(last_allocated_block_hash)
 
+        last_known_header = self.headers_threadsafe.get_header_for_height(first_allocated_header.height - 1)
+
         # If a reorg was allocated, do it all as one batch
         best_flushed_tip_height = 0xFFFFFFFF
         if reorg_was_allocated:
             best_flushed_tip_height = await self.index_blocks(
                 reorg_was_allocated,
-                first_allocated_header,
+                last_known_header,
                 last_allocated_header,
                 old_hashes,
                 new_hashes,
@@ -384,13 +353,13 @@ class Controller(ControllerBase):
             height = first_allocated_header.height
             stop_height = last_allocated_header.height
             while height <= stop_height:
-                first_allocated_header = self.headers_threadsafe.get_header_for_height(height)
-                last_allocated_header = first_allocated_header
+                last_known_header = self.headers_threadsafe.get_header_for_height(height - 1)
+                last_allocated_header = self.headers_threadsafe.get_header_for_height(height)
                 assert old_hashes is None
                 assert new_hashes is None
                 best_flushed_tip_height = await self.index_blocks(
                     False,
-                    first_allocated_header,
+                    last_known_header,
                     last_allocated_header,
                     None,
                     None,
@@ -461,12 +430,6 @@ class Controller(ControllerBase):
         self.db.delete_pushdata_rows(batched_pd_rows)
         self.db.delete_input_rows(batched_in_rows)
         self.db.delete_header_rows(batched_header_hashes)
-
-    async def request_mempool(self) -> None:
-        # NOTE: if the -rejectmempoolrequest=0 option is not set on the node, the node disconnects
-        self.logger.debug(f"Requesting mempool...")
-        assert self.bitcoin_p2p_client is not None
-        await self.bitcoin_p2p_client.send_message(self.serializer.mempool())
 
     async def start_jobs(self) -> None:
         self.db = self.storage.db
@@ -578,7 +541,7 @@ class Controller(ControllerBase):
         assert self.db is not None
         ipc_socket_client = IPCSocketClient()
         t0 = time.perf_counter()
-        unsorted_headers = [self.storage.get_header_for_hash(h) for h in blocks_batch_set]
+        unsorted_headers = [self.headers_threadsafe.get_header_for_hash(h) for h in blocks_batch_set]
 
         def get_height(header: Header) -> int:
             return cast(int, header.height)
@@ -593,9 +556,9 @@ class Controller(ControllerBase):
         expected_block_heights = [i + 1 for i in range(max_height - len(sorted_heights), max_height)]
         assert sorted_heights == expected_block_heights
 
-        block_headers: bitcoinx.Headers = self.storage.block_headers
+        block_headers: HeadersStore = self.storage.block_headers
         for header in sorted_headers:
-            block_headers.connect(header.raw)
+            block_headers.headers.connect(header.raw, check_work=False)
 
         self.storage.block_headers.flush()
 
@@ -633,49 +596,23 @@ class Controller(ControllerBase):
         self.total_time_connecting_headers += t1
         self.logger.debug(f"Total time connecting headers: {self.total_time_connecting_headers}")
 
-    def connect_conduit_headers(self, raw_header: bytes) -> bool:
-        """Two mmap files - one for "headers-first download" and the other for the
-        blocks we then download."""
-        try:
-            self.storage.headers.connect(raw_header)
-            self.storage.headers.flush()
-            return True
-        except MissingHeader as e:
-            GENESIS_BLOCK_HASH = os.environ["GENESIS_BLOCK_HASH"]
-            if str(e).find(GENESIS_BLOCK_HASH) != -1 or str(e).find(NULL_HASH) != -1:
-                self.logger.debug("skipping - prev_out == genesis block")
-                return True
-            else:
-                self.logger.exception("Caught exception")
-                raise
-
-    async def maybe_start_processing_mempool_txs(self) -> None:
+    async def ensure_mempool_relay_started(self) -> None:
+        """This can block while establishing a connection to the remote node(s). It will
+        also reconnect and / or reallocate the tx getdata request in the case of a disconnect"""
         if not self.ibd_signal_sent:
             self.logger.debug(
                 f"Initial block download mode completed. " f"Activating mempool tx processing..."
             )
-            await self.connect_session(self.peer)
+            await self.peer_manager.connect_all_peers(wait_for_n_peers=1)
             await self.zmq_socket_listeners.socket_is_post_ibd.send(b"is_ibd_signal")
             self.ibd_signal_sent = True
-            create_task(self.maintain_node_connection())
-            assert self.bitcoin_p2p_client is not None
-            await self.bitcoin_p2p_client.handshake("127.0.0.1", self.net_config.PORT)
-            await self.bitcoin_p2p_client.handshake_complete_event.wait()
-
-            request_mempool = int(os.environ.get('REQUEST_MEMPOOL', "0"))
-            if request_mempool:
-                await self.request_mempool()
             create_task(self.log_current_mempool_size_task_async())
 
-    async def long_poll_conduit_raw_chain_tip(
-        self,
-    ) -> tuple[bool, Header, Header, ChainHashes | None, ChainHashes | None]:
+    async def long_poll_conduit_raw_chain_tip(self) -> NewTipResult:
         if await self.sync_state.is_post_ibd_state():
-            await self.maybe_start_processing_mempool_txs()
+            self.tasks.append(create_task(self.ensure_mempool_relay_started()))
 
         OVERKILL_REORG_DEPTH = 500  # Virtually zero chance of a reorg more deep than this.
-        old_hashes = None
-        new_hashes = None
         ipc_sock_client = None
         while True:
             is_reorg = False
@@ -698,17 +635,17 @@ class Controller(ControllerBase):
                     start_height,
                     estimated_ideal_block_count,
                 )
-
                 headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
                 (
                     first_header_of_batch,
                     success,
                 ) = self.headers_threadsafe.connect_headers(BytesIO(headers_p2p_msg), lock=False)
                 if success:
-                    start_header = self.headers_threadsafe.get_header_for_hash(
-                        double_sha256(first_header_of_batch)
-                    )
+                    first_header = deserialized_header(first_header_of_batch, -1)
+                    last_known_header = self.headers_threadsafe.get_header_for_hash(first_header.prev_hash)
+
                     stop_header = self.sync_state.get_local_tip()
+                    new_tip_result = NewTipResult(is_reorg, last_known_header, stop_header, None, None, None)
                 else:
                     self.logger.debug(f"Potential reorg detected")
                     # This should mean there has been a reorg. The tip should always connect
@@ -726,26 +663,15 @@ class Controller(ControllerBase):
 
                     # Try again
                     headers_p2p_msg = headers_to_p2p_struct(result.headers_batch)
-                    (
-                        is_reorg,
-                        start_header,
-                        stop_header,
-                        old_hashes,
-                        new_hashes,
-                    ) = self.headers_threadsafe.connect_headers_reorg_safe(headers_p2p_msg)
+                    new_tip_result = self.headers_threadsafe.connect_headers_reorg_safe(BytesIO(headers_p2p_msg))
                     self.logger.error("Reorg confirmed")
 
-                if stop_header:
+                if new_tip_result and new_tip_result.stop_header:
                     self.logger.debug(
-                        f"Got new tip from ConduitRaw service for parsing at height: {stop_header.height}"
+                        f"Got new tip from ConduitRaw service for parsing at height: "
+                        f"{new_tip_result.stop_header.height}"
                     )
-                    return (
-                        is_reorg,
-                        start_header,
-                        stop_header,
-                        old_hashes,
-                        new_hashes,
-                    )
+                    return new_tip_result
                 else:
                     continue
             except socket.timeout:
@@ -854,7 +780,7 @@ class Controller(ControllerBase):
     async def index_blocks(
         self,
         is_reorg: bool,
-        start_header: bitcoinx.Header,
+        last_known_header: bitcoinx.Header,
         stop_header: bitcoinx.Header,
         old_hashes: ChainHashes | None,
         new_hashes: ChainHashes | None,
@@ -867,16 +793,16 @@ class Controller(ControllerBase):
             await self.load_temp_tables_for_reorg_handling(old_hashes, new_hashes)
 
         conduit_tip = self.headers_threadsafe.get_header_for_hash(stop_header.hash)
-        remaining = conduit_tip.height - (start_header.height - 1)
-        allocated_count = stop_header.height - start_header.height + 1
+        remaining = conduit_tip.height - last_known_header.height
+        allocated_count = stop_header.height - last_known_header.height
         self.logger.debug(
             f"Allocated {allocated_count} headers in main batch from height: "
-            f"{start_header.height} to height: {stop_header.height}"
+            f"{last_known_header.height + 1} to height: {stop_header.height}"
         )
         self.logger.info(f"ConduitRaw tip height: {conduit_tip.height}. (remaining={remaining})")
 
         # Allocate the "MainBatch" and get the full set of "WorkUnits" (blocks broken up)
-        main_batch = await self.sync_state.get_main_batch(start_header, stop_header)
+        main_batch = await self.sync_state.get_main_batch(last_known_header, stop_header)
         all_pending_block_hashes: set[bytes] = set()
 
         all_work_units = self.sync_state.get_work_units_all(is_reorg, all_pending_block_hashes, main_batch)
@@ -886,7 +812,7 @@ class Controller(ControllerBase):
         # Mark the block hashes we have allocated work for so we can auto-db-repair if needed
         self.db.update_allocated_state(
             reorg_was_allocated=is_reorg,
-            first_allocated=start_header,
+            first_allocated=last_known_header,
             last_allocated=stop_header,
             old_hashes=old_hashes,
             new_hashes=new_hashes,
@@ -909,7 +835,7 @@ class Controller(ControllerBase):
                 cbor2.dumps(
                     (
                         reorg_handling_complete,
-                        start_header.hash,
+                        last_known_header.hash,
                         stop_header.hash,
                     )
                 )
@@ -927,7 +853,7 @@ class Controller(ControllerBase):
                 cbor2.dumps(
                     (
                         reorg_handling_complete,
-                        start_header.hash,
+                        last_known_header.hash,
                         stop_header.hash,
                     )
                 )
@@ -950,20 +876,15 @@ class Controller(ControllerBase):
         while True:
             # ------------------------- Batch Start ------------------------- #
             # This queue is just a trigger to check the new tip and allocate another batch
-            (
-                is_reorg,
-                start_header,
-                stop_header,
-                old_hashes,
-                new_hashes,
-            ) = await self.long_poll_conduit_raw_chain_tip()
+            new_tip_result = await self.long_poll_conduit_raw_chain_tip()
 
-            if stop_header.height <= self.sync_state.get_local_block_tip_height():
+            if new_tip_result.stop_header.height <= self.sync_state.get_local_block_tip_height():
                 continue  # drain the queue until we hit relevant ones
 
             self.logger.debug(f"Controller Batch {batch_id} Start")
             best_flushed_tip_height = await self.index_blocks(
-                is_reorg, start_header, stop_header, old_hashes, new_hashes
+                new_tip_result.is_reorg, new_tip_result.last_known_header, new_tip_result.stop_header,
+                new_tip_result.old_chain, new_tip_result.new_chain
             )
             self.logger.info(
                 f"Controller Batch {batch_id} Complete. " f"New tip height: {best_flushed_tip_height}"

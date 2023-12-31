@@ -41,7 +41,6 @@ from conduit_lib.logging_client import (
     teardown_tcp_logging,
 )
 from conduit_lib.constants import CONDUIT_RAW_SERVICE_NAME
-from conduit_lib.networks import NetworkConfig
 from conduit_lib.logging_server import TCPLoggingServer
 from conduit_lib.utils import get_log_level
 
@@ -85,15 +84,7 @@ async def main() -> None:
 
     try:
         logger = logging.getLogger("main-task")
-        net_config = NetworkConfig(
-            os.environ["NETWORK"],
-            node_host=os.environ["NODE_HOST"],
-            node_port=int(os.environ["NODE_PORT"]),
-            node_rpc_host=os.environ["NODE_RPC_HOST"],
-            node_rpc_port=int(os.environ["NODE_RPC_PORT"]),
-        )
-        os.environ["GENESIS_BLOCK_HASH"] = net_config.GENESIS_BLOCK_HASH
-        controller = Controller(net_config=net_config, loop_type=loop_type)
+        controller = Controller(loop_type=loop_type)
         try:
             await controller.run()
         finally:

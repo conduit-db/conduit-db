@@ -12,7 +12,6 @@ https://github.com/electrumsv/simple-indexer/blob/master/simple_indexer/sqlite_d
 
 import asyncio
 import logging
-import os
 import time
 import typing
 import uuid
@@ -111,8 +110,6 @@ class ScyllaDBTipFilterQueries(TipFilterQueryAPI):
         self.session = db.session
 
     def setup(self) -> None:
-        if int(os.getenv("RESET_EXTERNAL_API_DATABASE_TABLES", "0")):
-            self.drop_tables()
         self.create_tables()
 
     def create_tables(self) -> None:

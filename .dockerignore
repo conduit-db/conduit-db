@@ -39,3 +39,4 @@ reference_server/
 **/test_lmdb/**
 **/raw_blocks/**
 **/merkle_trees/**
+peers.regtest.json

@@ -5,13 +5,12 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 from aiohttp import web
-from conduit_lib import LMDB_Database, NetworkConfig
 import logging
 import os
 from pathlib import Path
 
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
-
+from conduit_lib import LMDB_Database
+from conduit_p2p import HeadersStore, NetworkConfig
 from .constants import SERVER_HOST, SERVER_PORT
 from .server import get_aiohttp_app, ApplicationState
 
@@ -62,7 +61,7 @@ class AiohttpServer:
 
 async def main(
     lmdb: LMDB_Database,
-    headers_threadsafe: HeadersAPIThreadsafe,
+    headers_threadsafe: HeadersStore,
     net_config: NetworkConfig,
 ) -> None:
     app, app_state = get_aiohttp_app(lmdb, headers_threadsafe, net_config)

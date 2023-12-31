@@ -23,7 +23,7 @@ from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.ipc_sock_msg_types import REQUEST_MAP, BaseMsg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
 from conduit_lib.types import BlockMetadata, Slice, BlockHeaderRow
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
+from conduit_p2p import HeadersStore
 
 struct_be_Q = struct.Struct(">Q")
 logger = logging.getLogger("rs-server")
@@ -309,7 +309,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self,
         addr: tuple[str, int],
         handler: Type[ThreadedTCPRequestHandler],
-        headers_threadsafe_blocks: HeadersAPIThreadsafe,
+        headers_threadsafe_blocks: HeadersStore,
         lmdb: LMDB_Database,
         new_tip_event: threading.Event,
     ) -> None:
@@ -349,15 +349,14 @@ if __name__ == "__main__":
     # Port 0 means to select an arbitrary unused remote_port
     HOST, PORT = "127.0.0.1", 50000
 
-    from conduit_lib.store import setup_headers_store
-    from conduit_lib.networks import NetworkConfig
+    from conduit_p2p import NetworkConfig
 
     MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
     lmdb = LMDB_Database(lock=True)
-    net_config = NetworkConfig(network_type=REGTEST, node_host="127.0.0.1", node_port=18444)
-    block_headers = setup_headers_store(net_config, "test_headers.mmap")
+    net_config = NetworkConfig(network_type=REGTEST)
+    block_headers = HeadersStore("test_headers.mmap", net_config.NET)
     block_headers_lock = threading.RLock()
-    headers_threadsafe_blocks = HeadersAPIThreadsafe(block_headers, block_headers_lock)
+    headers_threadsafe_blocks = HeadersStore("test_headers.mmap", net_config.NET)
 
     server = ThreadedTCPServer(
         (HOST, PORT),

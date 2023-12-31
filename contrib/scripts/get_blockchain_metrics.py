@@ -9,8 +9,7 @@ import sys
 import bitcoinx
 
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.networks import NetworkConfig
-from conduit_lib.store import setup_headers_store
+from conduit_p2p import HeadersStore
 
 if len(sys.argv) != 5:
     print(f"{sys.argv[0]} <headers.mmap> <network> <node_host> <lmdb_dir>")
@@ -21,14 +20,13 @@ network = sys.argv[2]  # e.g. 'mainnet' / 'testnet' / 'regtest'
 node_host = sys.argv[3]  # e.g. 127.0.0.1:18444
 lmdb_dir = sys.argv[4]  # e.g. /mnt/data/lmdb_data
 
-net_config = NetworkConfig(network, node_host)
-headers = setup_headers_store(net_config, headers_path)
+headers = HeadersStore(headers_path, network).headers
 
 # Get ordered list of block hashes by height
 ordered_block_hashes = []
 
 chain: bitcoinx.Chain = headers.longest_chain()
-for height in range(1, chain.tip.height - 1):
+for height in range(1, chain.tip().height - 1):
     header: bitcoinx.Header = headers.header_at_height(chain, height)
     print(f"Height: {height}; Hash: {bitcoinx.hash_to_hex_str(header.hash)}")
     ordered_block_hashes.append((height, header.hash))

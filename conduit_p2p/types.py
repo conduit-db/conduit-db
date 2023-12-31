@@ -5,12 +5,9 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 import array
-import asyncio
 import enum
-from pathlib import Path
+from enum import IntEnum
 from typing import NamedTuple
-
-from conduit_lib.types import DataLocation
 
 
 class ExtendedP2PHeader(NamedTuple):
@@ -43,6 +40,7 @@ class BlockChunkData(NamedTuple):
     block_hash: bytes
     raw_block_chunk: bytes
     tx_offsets_for_chunk: "array.ArrayType[int]"
+    block_size: int
 
 
 class BlockDataMsg(NamedTuple):
@@ -50,10 +48,16 @@ class BlockDataMsg(NamedTuple):
     block_hash: bytes
     tx_offsets: "array.ArrayType[int]"
     block_size: int
-    # SMALL BLOCK
     small_block_data: bytes | None
-    # BIG BLOCK
-    big_block_filepath: Path | None = None
+
+
+class DataLocation(NamedTuple):
+    """This metadata must be persisted elsewhere.
+    For example, a key-value store such as LMDB"""
+
+    file_path: str
+    start_offset: int
+    end_offset: int
 
 
 class BigBlock(NamedTuple):
@@ -65,11 +69,34 @@ class BigBlock(NamedTuple):
 SmallBlocks = list[bytes]
 
 
-class BitcoinPeerInstance(NamedTuple):
-    reader: asyncio.StreamReader
-    writer: asyncio.StreamWriter
-    host: str
-    port: int
+class InvType(IntEnum):
+    TX = 1
+    BLOCK = 2
 
-    async def send_message(self, message: bytes) -> None:
-        self.writer.write(message)
+
+class BlockHeader(NamedTuple):
+    version: int
+    prev_block: bytes
+    merkle_root: bytes
+    timestamp: int
+    bits: int
+    nonce: int
+    raw: bytes
+    hash: bytes
+
+
+class BitcoinClientMode(IntEnum):
+    HIGH_LEVEL = 1
+    LOW_LEVEL = 2
+
+
+class Reject(NamedTuple):
+    message: str
+    ccode_translation: str
+    reason: str
+    item_hash: str
+
+
+class BroadcastResult(NamedTuple):
+    rejected: Reject | None
+    relaying_peer_ids: list[int]

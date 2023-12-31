@@ -28,9 +28,13 @@ All tests should continue working the same as they always have.
 import os
 import shutil
 from pathlib import Path
+import json
+import logging
+import requests
 
-from conduit_lib import wait_for_node, Deserializer, NetworkConfig, Serializer
+from conduit_lib import wait_for_node
 from conduit_lib.constants import REGTEST
+from conduit_p2p import NetworkConfig, Serializer, Deserializer
 from import_blocks import validate_inputs, submit_blocks
 from tests_functional.test_01_aiohttp_api_pre_and_post_reorg import REGTEST_TEST_BLOCKCHAIN
 from tests_functional.test_02_bitcoin_p2p_client import REGTEST_NODE_HOST, REGTEST_NODE_PORT
@@ -38,6 +42,30 @@ from tests_functional.test_02_bitcoin_p2p_client import REGTEST_NODE_HOST, REGTE
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 CORRUPTED_DATADIRS = MODULE_DIR.parent / "corrupted_datadirs"
 FUNCTIONAL_TEST_DATADIRS = MODULE_DIR.parent / "functional_test_datadirs"
+
+
+logger = logging.getLogger("conduit.p2p.conftest")
+
+
+def call_any(method_name: str, *args, rpcport: int=18332, rpchost: str="127.0.0.1", rpcuser:
+        str="rpcuser", rpcpassword: str="rpcpassword"):
+    """Send an RPC request to the specified bitcoin node"""
+    result = None
+    try:
+        if not args:
+            params = []
+        else:
+            params = [*args]
+        payload = json.dumps(
+            {"jsonrpc": "2.0", "method": f"{method_name}", "params": params, "id": 0})
+        result = requests.post(f"http://{rpcuser}:{rpcpassword}@{rpchost}:{rpcport}", data=payload,
+                               timeout=10.0)
+        result.raise_for_status()
+        return result
+    except requests.exceptions.HTTPError as e:
+        if result is not None:
+            logger.error(result.json()['error']['message'])
+        raise e
 
 
 def import_first_3_regtest_blocks(blockchain_dir: str):
@@ -48,6 +76,8 @@ def import_first_3_regtest_blocks(blockchain_dir: str):
         '52dee9409f757469fb1e465e24f881a589349b23fa8ffd6816e2048acbdd65a0'
     ]
     submit_blocks(header_hash_hexs, output_dir_path)
+    # Take the node out of IBD mode, otherwise it won't respond with headers or block invs
+    call_any('generate', 1)
 
 
 def bind_mount_corrupted_conduit_raw_database():
@@ -59,7 +89,7 @@ def bind_mount_corrupted_conduit_raw_database():
 
 
 if __name__ == '__main__':
-    net_config = NetworkConfig(REGTEST, REGTEST_NODE_HOST, REGTEST_NODE_PORT)
+    net_config = NetworkConfig(REGTEST)
     serializer = Serializer(net_config)
     deserializer = Deserializer(net_config)
     wait_for_node(node_host=REGTEST_NODE_HOST, node_port=REGTEST_NODE_PORT,

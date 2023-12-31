@@ -11,12 +11,11 @@ import os
 import socket
 import time
 
+from conduit_p2p import Deserializer, Serializer
 from . import DBInterface
 
 from .constants import MAX_BLOCKS_SYNCRONIZED_AHEAD
 from .ipc_sock_client import IPCSocketClient, ServiceUnavailableError
-from conduit_lib.deserializer import Deserializer
-from conduit_lib.serializer import Serializer
 
 
 def wait_for_node(
@@ -46,7 +45,7 @@ def wait_for_node(
 
             stream = io.BytesIO(response)
             message_header = deserializer.deserialize_message_header(stream)
-            if message_header["command"] == "version":
+            if message_header.command == "version":
                 is_available = True
                 break
         except ConnectionRefusedError:

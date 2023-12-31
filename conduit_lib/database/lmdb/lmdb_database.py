@@ -5,7 +5,7 @@
 # Licensed under the MIT License; see LICENCE for details.
 
 import asyncio
-from bitcoinx import hex_str_to_hash, double_sha256, hash_to_hex_str
+from bitcoinx import double_sha256, hash_to_hex_str
 import cbor2
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
@@ -170,9 +170,6 @@ class LMDB_Database:
             return self.blocks.get_block_delete_markers(block_hash)
 
     def check_block(self, block_hash: bytes) -> None:
-        if block_hash == hex_str_to_hash(os.environ["GENESIS_BLOCK_HASH"]):
-            return None
-
         block_num = self.get_block_num(block_hash)
 
         with self.global_lock:

@@ -1,3 +1,0 @@
-[submodule "conduit-db-external-api"]
-	path = conduit-db-external-api
-	url = https://github.com/conduit-db/conduit-db-external-api.git

@@ -21,15 +21,15 @@ from unittest.mock import MagicMock, patch
 from pytest_asyncio.plugin import FixtureFunction
 
 from conduit_lib import LMDB_Database, DBInterface
-from conduit_lib.bitcoin_p2p_types import BlockChunkData
 from conduit_lib.database.mysql.db import MySQLDatabase
 from conduit_lib.database.scylladb.db import ScyllaDB
-from conduit_lib.handlers import pack_block_chunk_message_for_worker
 from conduit_lib.types import TxMetadata, BlockHeaderRow, BlockMetadata
 from conduit_lib.utils import remove_readonly
+from conduit_p2p.types import BlockChunkData
 from conduit_raw.conduit_raw.aiohttp_api.handlers_restoration import (
     _get_tsc_merkle_proof,
 )
+from conduit_raw.conduit_raw.handlers import pack_block_chunk_message_for_worker
 from conduit_raw.conduit_raw.workers import MTreeCalculator
 from conduit_raw.conduit_raw.workers.merkle_tree import (
     process_merkle_tree_batch,
@@ -158,6 +158,7 @@ def test_preprocessor_whole_block_as_a_single_chunk(
             block_hash,
             slice_for_worker,
             tx_offsets_for_chunk,
+            len(full_block)
         )
         block_chunks.append(block_chunk_data)
     assert tx_offsets_all == TX_OFFSETS
@@ -259,6 +260,7 @@ def test_preprocessor_with_block_divided_into_four_chunks(
             block_hash,
             slice_for_worker,
             tx_offsets_for_chunk,
+            len(full_block)
         )
 
         packed_msg_for_zmq = pack_block_chunk_message_for_worker(block_chunk_data)

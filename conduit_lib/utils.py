@@ -10,21 +10,17 @@ from types import TracebackType
 import MySQLdb
 import bitcoinx
 from bitcoinx import (
-    read_le_uint64,
-    read_be_uint16,
     double_sha256,
     Network,
     sha256,
 )
 import stat
 import concurrent.futures
-import io
 import ipaddress
 import logging
 import math
 import os
 from pathlib import Path
-import socket
 import struct
 import time
 from typing import Any, cast, Callable, Coroutine, TypeVar, Type
@@ -41,7 +37,6 @@ from .constants import (
     REGTEST,
     MAINNET,
 )
-from .deserializer_types import NodeAddr
 
 MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -70,14 +65,6 @@ def pack_null_padded_ascii(string: str, num_bytes: int) -> bytes:
 
 def ipv4_to_mapped_ipv6(ipv4: str) -> bytes:
     return bytes(10) + bytes.fromhex("ffff") + ipaddress.IPv4Address(ipv4).packed
-
-
-def mapped_ipv6_to_ipv4(f: io.BytesIO) -> NodeAddr:
-    services = read_le_uint64(f.read)
-    reserved = f.read(12)
-    ipv4 = socket.inet_ntoa(f.read(4))
-    port = read_be_uint16(f.read)
-    return NodeAddr(services, ipv4, port)
 
 
 # NOTE(AustEcon) - This is untested and probably wrong - I've never used it
@@ -264,10 +251,6 @@ def create_task(coro: Coroutine[Any, Any, T1]) -> asyncio.Task[T1]:
     # this callback we reraise any encountered exception in the callback and ensure it is visible.
     task.add_done_callback(asyncio_future_callback)
     return task
-
-
-def bin_p2p_command_to_ascii(bin_command: bytes) -> str:
-    return bin_command.rstrip(bytes(1)).decode()
 
 
 def address_to_pushdata_hash(p2pkh_address: str, network: Network) -> bytes:

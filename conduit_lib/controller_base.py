@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 from conduit_lib import IPCSocketClient
 from conduit_lib.constants import MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_INDEX, CONDUIT_RAW_SERVICE_NAME, \
     MAX_BLOCK_PER_BATCH_COUNT_CONDUIT_RAW
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
+from conduit_p2p import HeadersStore
 
 
 class ControllerBase:
@@ -24,9 +24,7 @@ class ControllerBase:
     general_executor: ThreadPoolExecutor
     logger: logging.Logger
     estimated_moving_av_block_size_mb: float
-
-    def __init__(self) -> None:
-        self.headers_threadsafe: HeadersAPIThreadsafe
+    headers_threadsafe: HeadersStore
 
     def get_ideal_block_batch_count(self, target_bytes: int, service_type: str, tip_height: int) -> int:
         """If average batch size exceeds the target_bytes level then we will be at the point

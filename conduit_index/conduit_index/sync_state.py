@@ -8,9 +8,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import bitcoinx
-from bitcoinx import unpack_header, double_sha256
-from bitcoinx.networks import Header
-from concurrent.futures.thread import ThreadPoolExecutor
+from bitcoinx import unpack_header, double_sha256, Header
 import logging
 import threading
 import time
@@ -61,9 +59,6 @@ class SyncState:
         self.target_block_header_height: int | None = None
         self.local_block_tip_height: int = self.get_local_block_tip_height()
 
-        # Accounting and ack'ing for non-block msgs
-        self.incoming_msg_queue: asyncio.Queue[tuple[bytes, bytes]] = asyncio.Queue()
-
         # Accounting and ack'ing for block msgs
         self.blocks_batch_set = set[bytes]()  # usually a set of 500 hashes
         self.expected_blocks_tx_counts: dict[bytes, int] = {}  # blk_hash: total_tx_count
@@ -82,14 +77,12 @@ class SyncState:
         self.done_blocks_tx_parser_lock = threading.Lock()
         self.done_blocks_tx_parser_event = asyncio.Event()
 
-        self._batched_blocks_exec = ThreadPoolExecutor(1, "join-batched-blocks")
-
         self.total_time_allocating_work = 0.0
         self.is_post_ibd = False
-        self.conduit_best_tip: bitcoinx.Header | None = None
+        self.conduit_best_tip: Header | None = None
 
     # Conduit Best Tip
-    async def get_conduit_best_tip(self) -> bitcoinx.Header:
+    async def get_conduit_best_tip(self) -> Header:
         ipc_sock_client = None
         try:
             ipc_sock_client = await self.controller.loop.run_in_executor(
@@ -138,9 +131,6 @@ class SyncState:
             if local_tip.hash == conduit_best_tip.hash:
                 return True
         return False
-
-    def set_target_header_height(self, height: int) -> None:
-        self.target_header_height = height
 
     def get_work_units_all(
         self,
@@ -258,7 +248,7 @@ class SyncState:
 
         return remaining_work, work_for_this_batch
 
-    async def get_main_batch(self, start_header: bitcoinx.Header, stop_header: bitcoinx.Header) -> MainBatch:
+    async def get_main_batch(self, last_known_header: bitcoinx.Header, stop_header: bitcoinx.Header) -> MainBatch:
         """Must run in thread due to ipc_sock_client not being async"""
         ipc_sock_client_pool = None
         all_work_units: MainBatch = []
@@ -271,14 +261,14 @@ class SyncState:
                 )
                 ipc_sock_client_pool.append(ipc_sock_client)
 
-            with self.storage.headers_lock:
-                block_height_deficit = stop_header.height - (start_header.height - 1)
+            with self.headers_threadsafe.headers_lock:
+                block_height_deficit = stop_header.height - last_known_header.height
 
                 # May need to use block_hash not height to be more correct
                 block_headers: list[bitcoinx.Header] = []
                 for i in range(1, block_height_deficit + 1):
                     block_header = self.headers_threadsafe.get_header_for_height(
-                        start_header.height - 1 + i, lock=False
+                        last_known_header.height + i, lock=False
                     )
                     block_headers.append(block_header)
 

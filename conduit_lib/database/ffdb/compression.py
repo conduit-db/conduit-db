@@ -7,6 +7,7 @@ from typing import TypedDict
 
 import bitcoinx
 import pyzstd
+from bitcoinx import deserialized_header
 from pyzstd import CParameter, SeekableZstdFile
 
 from conduit_lib.types import DataLocation
@@ -211,7 +212,7 @@ def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
     total_tx_count = 0
     try:
         while True:
-            header = bitcoinx.Bitcoin.deserialized_header(stream.read(80), 0)
+            header = deserialized_header(stream.read(80), 0)
             # Parse header and all transactions in the raw block
             tx_count = bitcoinx.read_varint(stream.read)
             for i in range(tx_count):
