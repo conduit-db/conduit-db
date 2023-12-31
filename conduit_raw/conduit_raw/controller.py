@@ -361,14 +361,14 @@ class Controller(ControllerBase):
 
                 client = await client_manager.get_next_available_peer()
                 if header.hash in client.have_blocks and header.hash in client_manager.wanted_blocks:
-                    # self.logger.debug(f"Sending getdata for block_hash: {header.hex_str()}, "
-                    #                   f"block height: {header.height} (peer_id={client.id})")
+                    self.logger.debug(f"Sending getdata for block_hash: {header.hex_str()}, "
+                                      f"block height: {header.height} (peer_id={client.id})")
                     message = client.serializer.getdata(
                         [Inv(inv_type=InvType.BLOCK, inv_hash=header.hex_str())])
                     client.send_message(message)
                     break
                 else:
-                    # self.logger.debug(f"Block {header.height} not found in peer: {client.id}")
+                    self.logger.debug(f"Block {header.height} not found in peer: {client.id}")
                     not_tried_yet_count -= 1
                     if not_tried_yet_count == 0:
                         # When the blocks start getting bigger, it's probably

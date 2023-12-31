@@ -297,7 +297,6 @@ class BitcoinClientManager:
     async def close(self) -> None:
         self.closing = True
         # Force close all outstanding connections
-        # TODO: RuntimeError: Set changed size during iteration
         peers = []
         for peer in self._connection_pool:
             if not peer.closing:

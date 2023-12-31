@@ -194,14 +194,19 @@ class FlatFileDb:
 
         def _mutable_file_is_full() -> bool:
             assert self.mutable_file_path is not None
-            if self.use_compression:
-                file_size = uncompressed_file_size_zstd(str(self.mutable_file_path))
-            else:
-                file_size = os.path.getsize(self.mutable_file_path)
+            # Commented this out because it's possible that the file is currently being
+            # written to and I don't want to need to acquire a write lock just to check
+            # the uncompressed file size. It's not worth it. So instead, we will just
+            # go based on the compressed file size to determine when a new mutable
+            # file is needed.
+            # if self.use_compression:
+            #     file_size = uncompressed_file_size_zstd(str(self.mutable_file_path))
+            # else:
+            file_size = os.path.getsize(self.mutable_file_path)
             is_full = file_size >= self.MAX_DAT_FILE_SIZE
             return is_full
 
-        if _mutable_file_is_full() or force_new_file:
+        if force_new_file or _mutable_file_is_full():
             # If deletes and updates are allowed this needs to be more sophisticated
             # To ensure that the mutable file always has the highest number (no reuse of
             # lower mutable_file_num even if they get deleted)
