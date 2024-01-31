@@ -10,25 +10,6 @@ from enum import IntEnum
 from typing import NamedTuple
 
 
-class ExtendedP2PHeader(NamedTuple):
-    magic: bytes
-    command: bytes
-    payload_size: int
-    checksum: bytes
-    ext_command: bytes | None
-    ext_length: int | None
-
-    def is_extended(self) -> bool:
-        if self.ext_command:
-            return True
-        return False
-
-    def length(self) -> int:
-        if self.is_extended():
-            return 44
-        return 24
-
-
 class BlockType(enum.IntEnum):
     SMALL_BLOCK = 1 << 0  # fits in the network buffer -> write in batches periodically
     BIG_BLOCK = 1 << 1  # overflows network buffer -> use temp file to write to disc in chunks

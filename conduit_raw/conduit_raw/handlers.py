@@ -223,6 +223,7 @@ class IndexerHandlers(HandlersDefault):
             worker_id = self.big_blocks_worker_id_map[block_chunk_data.block_hash]
         packed_message = pack_block_chunk_message_for_worker(block_chunk_data)
         await self.send_to_worker_async(packed_message, worker_id)
+        await self.release_worker_id(worker_id)
 
     async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinClient) -> None:
         """Any blocks that exceed the size of the network buffer are instead written to file"""
@@ -256,6 +257,7 @@ class IndexerHandlers(HandlersDefault):
                 self.client_manager.mark_block_done(block_hash)
 
             del self.zstd_file_handle_cache[block_hash]
+            del self.big_blocks_worker_id_map[block_hash]
         else:
             # These are batched up to prevent HDD stutter
             async with self.batched_tx_offsets_lock:

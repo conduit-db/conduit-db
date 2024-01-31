@@ -20,12 +20,13 @@ from typing import BinaryIO, Type
 
 from fasteners import InterProcessReaderWriterLock
 from pyzstd import SeekableZstdFile, seekable_zstdfile
+from pyzstd.seekable_zstdfile import SeekableFormatError
 
 from conduit_lib.database.ffdb.compression import (
     uncompressed_file_size_zstd,
     write_to_file_zstd,
     CompressionStats,
-    open_seekable_writer_zstd,
+    open_seekable_writer_zstd, check_and_recover_zstd_file,
 )
 from conduit_lib.types import Slice, DataLocation
 
@@ -282,8 +283,14 @@ class FlatFileDb:
             read_handle = self.read_handles.get(read_path)
             if not read_handle:
                 self.maybe_evict_cached_read_handles()
-                read_handle = SeekableZstdFile(read_path, mode='rb')
-                self.read_handles[read_path] = read_handle
+                try:
+                    read_handle = SeekableZstdFile(read_path, mode='rb')
+                    self.read_handles[read_path] = read_handle
+                except SeekableFormatError:
+                    logger.error(f"Encountered a corrupted raw block file. Attempting recovery")
+                    check_and_recover_zstd_file(read_path)
+                    read_handle = SeekableZstdFile(read_path, mode='rb')
+                    self.read_handles[read_path] = read_handle
         else:
             read_handle = self.read_handles.get(read_path)
             if not read_handle:

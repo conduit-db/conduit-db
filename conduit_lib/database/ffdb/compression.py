@@ -9,6 +9,7 @@ import bitcoinx
 import pyzstd
 from bitcoinx import deserialized_header
 from pyzstd import CParameter, SeekableZstdFile
+from pyzstd.seekable_zstdfile import SeekableFormatError
 
 from conduit_lib.types import DataLocation
 
@@ -175,14 +176,19 @@ def check_and_recover_zstd_file(
     except pyzstd.ZstdError as e:
         logger.error(str(e))
 
+    # Test #1
     repairs_needed = reparse_and_remove_incomplete_blocks(Path(output_file_path))
+    # Test #2 - can still pass first test but have an un-flushed final frame.
+    if not repairs_needed:
+        try:
+            with SeekableZstdFile(input_file_path, 'rb') as file:
+                file.seek(0, os.SEEK_END)
+        except SeekableFormatError:
+            repairs_needed = True
     if not repairs_needed:
         logger.info(f"ZStandard archive passed all integrity checks")
         Path(output_file_path).unlink()
         return
-    logger.info(f"Re-checking the file...")
-    repairs_needed = reparse_and_remove_incomplete_blocks(Path(output_file_path))
-    assert repairs_needed is False
 
     # Keep a .bak copy just in case...
     shutil.move(src=input_file_path, dst=input_file_path + ".bak")
@@ -194,10 +200,23 @@ def check_and_recover_zstd_file(
                 if not data:
                     break
                 file_zstd.write(data)
+
+    logger.info(f"Re-checking the file...")
+    # Test #1
+    repairs_needed = reparse_and_remove_incomplete_blocks(Path(output_file_path))
+    # Test #2 - can still pass first test but have an un-flushed final frame.
+    if not repairs_needed:
+        try:
+            with SeekableZstdFile(input_file_path, 'rb') as file:
+                file.seek(0, os.SEEK_END)
+        except SeekableFormatError:
+            repairs_needed = True
+
     Path(output_file_path).unlink()
     # Need to remove this because it interferes with the
     # mutable file numbering system
     Path(input_file_path + ".bak").unlink()
+    assert repairs_needed is False
 
 
 def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
@@ -221,11 +240,10 @@ def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
 
             # Checkpoint for the offset
             okay_up_to_offset = stream.tell()
-            # logger.debug(f"Offset to: {okay_up_to_offset} okay.")
+            logger.debug(f"Offset to: {okay_up_to_offset} okay. (block height={header.height})")
             if okay_up_to_offset == file_size:
                 logger.info(f"File passed all integrity checks")
-                repairs_needed = False
-                return repairs_needed
+                return False
     except Exception:
         logger.error(
             f"The remainder of this file is corrupted most likely because the last zstandard "
@@ -235,7 +253,6 @@ def reparse_and_remove_incomplete_blocks(file_path: Path) -> bool:
         with open(file_path, 'ab') as file:
             file.seek(okay_up_to_offset, os.SEEK_SET)
             file.truncate()
-        repairs_needed = True
-        return repairs_needed
+        return True
     finally:
         stream.close()
