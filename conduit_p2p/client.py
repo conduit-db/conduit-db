@@ -156,6 +156,7 @@ class BitcoinClient:
         return header
 
     async def read_and_handle_payload(self, header: MessageHeader) -> None:
+        self.logger.debug(f"Start of read and handle payload")
         stream = BytesIO()
         if header.length < self.large_message_limit:
             payload = await self.read_small_payload(stream, header)
@@ -169,6 +170,7 @@ class BitcoinClient:
             # tx, cmpctblock, blocktxn, getblocktxn can be large
             payload = await self.read_small_payload(stream, header)
             await self.message_queue.put((header.command, payload))
+        self.logger.debug(f"End of read and handle payload")
 
     async def _session(self) -> None:
         """raises `ConnectionResetError` on disconnect

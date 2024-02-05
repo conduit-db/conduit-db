@@ -93,6 +93,10 @@ class IndexerHandlers(HandlersDefault):
         self.zstd_file_handle_cache: dict[bytes, tuple[SeekableZstdFile, CompressionStats, Path]] = {}
         self.controller.tasks.append(create_task(self.blocks_flush_task_async()))
 
+    async def on_addr(self, message: bytes, peer: 'BitcoinClient') -> None:
+        # Suppress peer discovery
+        pass
+
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
         assert self.controller.lmdb
         await asyncio.get_running_loop().run_in_executor(
@@ -182,6 +186,7 @@ class IndexerHandlers(HandlersDefault):
         """These block chunks are sized to the nearest whole transaction.
         This allows parallel processing. The transaction offsets are also provided for quick
         random access"""
+        self.logger.debug(f"on_block_chunk: {hash_to_hex_str(block_chunk_data.block_hash)}")
         block_hash = block_chunk_data.block_hash
 
         # Raw Block Writing Work
@@ -257,7 +262,6 @@ class IndexerHandlers(HandlersDefault):
                 self.client_manager.mark_block_done(block_hash)
 
             del self.zstd_file_handle_cache[block_hash]
-            del self.big_blocks_worker_id_map[block_hash]
         else:
             # These are batched up to prevent HDD stutter
             async with self.batched_tx_offsets_lock:
