@@ -191,6 +191,8 @@ class BitcoinClient:
             self.logger.error(f"Bitcoin node disconnected")
         except ValueError as e:
             self.logger.error(f"Misbehaving node. Reason:{e}. Disconnecting")
+        except Exception:
+            self.logger.exception(f"Unexpected exception in BitcoinClient session")
         finally:
             await self.close()
 

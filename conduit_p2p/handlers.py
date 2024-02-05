@@ -76,7 +76,7 @@ class HandlersDefault(abc.ABC):
                 host_str = f"{address.node_addr.ip}:{address.node_addr.port}"
                 if host_str not in self.client_manager.addresses:
                     client = self.client_manager.add_client(host_str)
-                    if client:
+                    if client and len(self.client_manager.get_connected_peers()) < self.client_manager.max_peers:
                         await self.client_manager.connect_client(client)
                     new_addresses += 1
             self.logger.debug("Received %s new addresses (peer_id=%s)", new_addresses, peer.id)

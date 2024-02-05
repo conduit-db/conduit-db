@@ -93,8 +93,7 @@ class Controller(ControllerBase):
         self.peer_manager = BitcoinClientManager(message_handler, peers_list,
                 mode=BitcoinClientMode.HIGH_LEVEL, relay_transactions=False,
                 use_persisted_peers=True, last_known_height=self.headers_threadsafe_blocks.tip().height,
-                concurrency=3
-        )
+                concurrency=1)
         self.lmdb = self.storage.lmdb
         self.ipc_sock_client: IPCSocketClient | None = None
         self.ipc_sock_server: ThreadedTCPServer | None = None
@@ -143,7 +142,7 @@ class Controller(ControllerBase):
         self.running = True
         await self.setup()
         wait_for_db()
-        await self.peer_manager.connect_all_peers(wait_for_n_peers=3)
+        await self.peer_manager.connect_all_peers(wait_for_n_peers=1)
 
         await self.database_integrity_check()
 
@@ -305,6 +304,7 @@ class Controller(ControllerBase):
     async def headers_sync_task(self) -> None:
         # No need for reorg-awareness
         client = await self.peer_manager.get_next_available_peer()
+        last_known_header = self.headers_threadsafe.tip()
         while self.headers_threadsafe.tip().height < client.remote_start_height:
             message = await get_max_headers(client, self.headers_threadsafe)
             if message:
@@ -314,7 +314,7 @@ class Controller(ControllerBase):
             else:
                 self.logger.debug(f"No headers returned (peer_id={client.id})")
 
-        new_tip = NewTipResult(is_reorg=False, last_known_header=self.headers_threadsafe.get_header_for_height(0),
+        new_tip = NewTipResult(is_reorg=False, last_known_header=last_known_header,
             stop_header=self.headers_threadsafe.tip(), old_chain=None, new_chain=None, reorg_info=None)
         self.logger.info(f"Finished initial headers download, height: {new_tip.stop_header.height}")
         await self.new_headers_queue.put(new_tip)
@@ -361,14 +361,14 @@ class Controller(ControllerBase):
 
                 client = await client_manager.get_next_available_peer()
                 if header.hash in client.have_blocks and header.hash in client_manager.wanted_blocks:
-                    # self.logger.debug(f"Sending getdata for block_hash: {header.hex_str()}, "
-                    #                   f"block height: {header.height} (peer_id={client.id})")
+                    self.logger.debug(f"Sending getdata for block_hash: {header.hex_str()}, "
+                                      f"block height: {header.height} (peer_id={client.id})")
                     message = client.serializer.getdata(
                         [Inv(inv_type=InvType.BLOCK, inv_hash=header.hex_str())])
                     client.send_message(message)
                     break
                 else:
-                    # self.logger.debug(f"Block {header.height} not found in peer: {client.id}")
+                    self.logger.debug(f"Block {header.height} not found in peer: {client.id}")
                     not_tried_yet_count -= 1
                     if not_tried_yet_count == 0:
                         # When the blocks start getting bigger, it's probably
@@ -393,14 +393,14 @@ class Controller(ControllerBase):
                 start_locator_hash = new_tip.last_known_header.hash
                 stop_locator_hash = ZERO_HASH
                 stop_height = new_tip.stop_header.height
-                last_known_height = new_tip.last_known_header.height  # can be zero
+                last_known_height = new_tip.last_known_header.height
             else:
                 # This probably looks over-complicated but during IBD the headers tip will
                 # be way ahead of the indexed block tip, so we need a way of iterating
                 # our way to the tip independent of new_headers_queue events.
                 done_blocks_tip = self.headers_threadsafe_blocks.tip()
                 remainder = self.headers_threadsafe.tip().height - done_blocks_tip.height
-                last_known_height = done_blocks_tip.height  # can be zero
+                last_known_height = done_blocks_tip.height
                 start_locator_hash = self.headers_threadsafe.get_header_for_height(last_known_height).hash
 
                 if done_blocks_tip.height > 2016:

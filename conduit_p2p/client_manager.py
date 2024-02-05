@@ -49,7 +49,8 @@ class BitcoinClientManager:
             use_persisted_peers: bool = True,
             last_known_height: int = 0,
             concurrency: int = 1,
-            wait_for_n_peers: int = 1
+            wait_for_n_peers: int = 1,
+            max_peers: int = 10
     ) -> None:
         self.closing: bool = False
         self._logger = logging.getLogger("conduit.p2p.client.pool")
@@ -69,6 +70,7 @@ class BitcoinClientManager:
         self.last_known_height = last_known_height
         self.concurrency = concurrency
         self.wait_for_n_peers = wait_for_n_peers
+        self.max_peers = max_peers
         self.peers_dir = Path(os.getenv('CONDUIT_P2P_PEERS_DIR', Path(os.getcwd())))
         self.peers_filepath = self.peers_dir / f'peers.{self.net_config.NET}.json'
         if use_persisted_peers:
@@ -297,7 +299,6 @@ class BitcoinClientManager:
     async def close(self) -> None:
         self.closing = True
         # Force close all outstanding connections
-        # TODO: RuntimeError: Set changed size during iteration
         peers = []
         for peer in self._connection_pool:
             if not peer.closing:

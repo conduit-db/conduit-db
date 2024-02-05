@@ -93,6 +93,10 @@ class IndexerHandlers(HandlersDefault):
         self.zstd_file_handle_cache: dict[bytes, tuple[SeekableZstdFile, CompressionStats, Path]] = {}
         self.controller.tasks.append(create_task(self.blocks_flush_task_async()))
 
+    async def on_addr(self, message: bytes, peer: 'BitcoinClient') -> None:
+        # Suppress peer discovery
+        pass
+
     async def _lmdb_put_big_block_in_thread(self, big_block: BigBlock) -> None:
         assert self.controller.lmdb
         await asyncio.get_running_loop().run_in_executor(
@@ -182,6 +186,7 @@ class IndexerHandlers(HandlersDefault):
         """These block chunks are sized to the nearest whole transaction.
         This allows parallel processing. The transaction offsets are also provided for quick
         random access"""
+        self.logger.debug(f"on_block_chunk: {hash_to_hex_str(block_chunk_data.block_hash)}")
         block_hash = block_chunk_data.block_hash
 
         # Raw Block Writing Work
@@ -223,19 +228,21 @@ class IndexerHandlers(HandlersDefault):
             worker_id = self.big_blocks_worker_id_map[block_chunk_data.block_hash]
         packed_message = pack_block_chunk_message_for_worker(block_chunk_data)
         await self.send_to_worker_async(packed_message, worker_id)
+        await self.release_worker_id(worker_id)
 
     async def on_block(self, block_data_msg: BlockDataMsg, peer: BitcoinClient) -> None:
         """Any blocks that exceed the size of the network buffer are instead written to file"""
         block_hash = block_data_msg.block_hash
-        # if block_data_msg.block_type == BlockType.SMALL_BLOCK:
-        #     self.logger.debug("Received small block with block_hash: %s (peer_id=%s)",
-        #         hash_to_hex_str(block_hash), peer.id)
-        # else:
-        #     self.logger.debug("Received all big block chunks for block_hash: %s (peer_id=%s)",
-        #         hash_to_hex_str(block_hash), peer.id)
+        if block_data_msg.block_type == BlockType.SMALL_BLOCK:
+            self.logger.debug("Received small block with block_hash: %s (peer_id=%s)",
+                hash_to_hex_str(block_hash), peer.id)
+        else:
+            self.logger.debug("Received all big block chunks for block_hash: %s (peer_id=%s)",
+                hash_to_hex_str(block_hash), peer.id)
 
         if block_data_msg.block_type & BlockType.BIG_BLOCK:
             file_zstd, compression_stats, filepath = self.zstd_file_handle_cache[block_hash]
+            file_zstd.close()
             data_location = DataLocation(
                 str(filepath),
                 start_offset=0,
@@ -253,6 +260,7 @@ class IndexerHandlers(HandlersDefault):
             self.logger.debug(f"Acking for 1 loaded big block")
             if self.client_manager:
                 self.client_manager.mark_block_done(block_hash)
+
             del self.zstd_file_handle_cache[block_hash]
         else:
             # These are batched up to prevent HDD stutter

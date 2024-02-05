@@ -107,3 +107,16 @@ def test_check_and_recover_zstd_file():
     # Uncorrupted file
     filepath = MODULE_DIR / "data" / "data_00000000.dat.zst"
     check_and_recover_zstd_file(str(filepath))
+
+
+def test_check_and_recover_zstd_file2():
+    # Uncorrupted file
+    filepath = MODULE_DIR / "data" / "data_00024504.dat.zst"
+    check_and_recover_zstd_file(str(filepath))
+    size = uncompressed_file_size_zstd(str(filepath))
+    DEFAULT_LARGE_MESSAGE_LIMIT = 32 * 1024 * 1024  # 32MB
+    assert size > DEFAULT_LARGE_MESSAGE_LIMIT
+
+    compressed_size = os.path.getsize(str(filepath))
+    print(compressed_size)
+

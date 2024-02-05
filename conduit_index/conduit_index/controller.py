@@ -530,8 +530,6 @@ class Controller(ControllerBase):
 
         # This cache can get quite large if too many blocks with too many transactions are
         # allocated all at once
-        self.logger.debug(f"Total blocks in global tx hashes cache: {total_blocks_count}")
-        self.logger.debug(f"Total tx hashes count in global tx hashes cache: {total_hashes_count}")
         self.global_tx_counts_dict = {}
         t_diff = time.time() - t0
         self.logger.debug(f"Sanity checks took: {t_diff} seconds")
