@@ -16,17 +16,13 @@ from pathlib import Path
 import bitcoinx
 from bitcoinx import double_sha256
 
-from conduit_lib import NetworkConfig
 from conduit_lib.constants import REGTEST
 from conduit_lib.database.lmdb.types import MerkleTreeRow
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.ipc_sock_client import IPCSocketClient
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
 from conduit_lib.types import BlockSliceRequestType, Slice, TxLocation
-from conduit_raw.conduit_raw.sock_server.ipc_sock_server import (
-    ThreadedTCPServer,
-    ThreadedTCPRequestHandler,
-)
+from conduit_p2p import HeadersStore
+from conduit_raw.conduit_raw.ipc_sock_server import ThreadedTCPServer, ThreadedTCPRequestHandler
 from tests.conftest import TEST_RAW_BLOCK_413567, TEST_RAW_BLOCK_400000
 from tests.data.block413567_offsets import TX_OFFSETS
 
@@ -36,13 +32,8 @@ DATADIR_SSD = os.environ["DATADIR_SSD"] = str(MODULE_DIR / "test_datadir_ssd")
 
 
 def ipc_sock_server_thread(lmdb: LMDB_Database) -> None:
-    from conduit_lib.store import setup_headers_store
-
     HOST, PORT = "127.0.0.1", 34586
-    net_config = NetworkConfig(network_type=REGTEST, node_host="127.0.0.1", node_port=18444)
-    block_headers = setup_headers_store(net_config, MODULE_DIR / "test_headers.mmap")
-    block_headers_lock = threading.RLock()
-    headers_threadsafe_blocks = HeadersAPIThreadsafe(block_headers, block_headers_lock)
+    headers_threadsafe_blocks = HeadersStore(str(MODULE_DIR / "test_headers.mmap"), REGTEST)
     ipc_sock_server = ThreadedTCPServer(
         addr=(HOST, PORT),
         handler=ThreadedTCPRequestHandler,

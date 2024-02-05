@@ -3,7 +3,11 @@ import os
 from pathlib import Path
 
 from conduit_lib.database.ffdb.compression import write_to_file_zstd, \
-    CompressionStats, open_seekable_reader_zstd, uncompressed_file_size_zstd, CompressionBlockInfo
+    CompressionStats, open_seekable_reader_zstd, uncompressed_file_size_zstd, CompressionBlockInfo, \
+    check_and_recover_zstd_file
+
+
+MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def test_compression() -> None:
@@ -97,3 +101,22 @@ def test_compression_stats_json_serialization():
                        '    "max_window_size": 10485760,'
                        '    "zstandard_level": 3'
                        '}'))
+
+
+def test_check_and_recover_zstd_file():
+    # Uncorrupted file
+    filepath = MODULE_DIR / "data" / "data_00000000.dat.zst"
+    check_and_recover_zstd_file(str(filepath))
+
+
+def test_check_and_recover_zstd_file2():
+    # Uncorrupted file
+    filepath = MODULE_DIR / "data" / "data_00024504.dat.zst"
+    check_and_recover_zstd_file(str(filepath))
+    size = uncompressed_file_size_zstd(str(filepath))
+    DEFAULT_LARGE_MESSAGE_LIMIT = 32 * 1024 * 1024  # 32MB
+    assert size > DEFAULT_LARGE_MESSAGE_LIMIT
+
+    compressed_size = os.path.getsize(str(filepath))
+    print(compressed_size)
+

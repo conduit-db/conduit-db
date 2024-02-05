@@ -23,17 +23,17 @@ from typing import AsyncIterator, Optional, Any, cast
 import zmq
 import zmq.asyncio
 
-from conduit_lib import NetworkConfig, DBInterface
+from conduit_lib import DBInterface
 from conduit_lib.database.db_interface.tip_filter_types import OutboundDataFlag, OutboundDataRow
 from conduit_lib.database.db_interface.types import PushdataRowParsed
 from conduit_lib.database.lmdb.lmdb_database import LMDB_Database
-from conduit_lib.headers_api_threadsafe import HeadersAPIThreadsafe
 from conduit_lib.utils import (
     create_task,
     network_str_to_bitcoinx_network,
     future_callback,
 )
 from conduit_lib.zmq_sockets import bind_async_zmq_socket
+from conduit_p2p import HeadersStore, NetworkConfig
 
 from .constants import (
     REFERENCE_SERVER_SCHEME,
@@ -65,7 +65,7 @@ class ApplicationState(object):
         app: web.Application,
         loop: asyncio.AbstractEventLoop,
         lmdb: LMDB_Database,
-        headers_threadsafe: HeadersAPIThreadsafe,
+        headers_threadsafe: HeadersStore,
         net_config: NetworkConfig,
     ) -> None:
         self.pushdata_notification_can_send_event: dict[bytes, asyncio.Event] = {}
@@ -86,7 +86,7 @@ class ApplicationState(object):
 
         self.zmq_context = zmq.asyncio.Context.instance()
         ZMQ_BIND_HOST = os.getenv("ZMQ_BIND_HOST", "127.0.0.1")
-        self._reorg_event_socket = bind_async_zmq_socket(
+        self.reorg_event_socket = bind_async_zmq_socket(
             self.zmq_context,
             f"tcp://{ZMQ_BIND_HOST}:51495",
             zmq.SocketType.PULL,
@@ -152,8 +152,10 @@ class ApplicationState(object):
         """
 
         while not self._exit_event.is_set():
-            cbor_msg = cast(bytes, await self._reorg_event_socket.recv())
-            reorg_handling_complete, start_hash, stop_hash = cast(tuple[bool, bytes, bytes], cbor2.loads(cbor_msg))
+            cbor_msg = cast(bytes, await self.reorg_event_socket.recv())
+            reorg_handling_complete, start_hash, stop_hash = cast(
+                tuple[bool, bytes, bytes], cbor2.loads(cbor_msg)
+            )
             self.logger.debug(
                 f"Reorg event received. "
                 f"reorg_handling_complete: {reorg_handling_complete} "
@@ -470,7 +472,7 @@ async def client_session_ctx(app: web.Application) -> AsyncIterator[None]:
 
 def get_aiohttp_app(
     lmdb: LMDB_Database,
-    headers_threadsafe: HeadersAPIThreadsafe,
+    headers_threadsafe: HeadersStore,
     net_config: NetworkConfig,
 ) -> tuple[web.Application, ApplicationState]:
     loop = asyncio.get_event_loop()
@@ -488,47 +490,20 @@ def get_aiohttp_app(
             web.get("/error", handlers_restoration.error),
             web.view("/ws", ReferenceServerWebSocket),
             web.get("/api/v1/chain/tips", handlers_headers.get_chain_tips),
-            web.get(
-                "/api/v1/chain/header/byHeight",
-                handlers_headers.get_headers_by_height,
-            ),
+            web.get("/api/v1/chain/header/byHeight", handlers_headers.get_headers_by_height),
             web.get("/api/v1/chain/header/{hash}", handlers_headers.get_header),
             # These need to be registered before "/transaction/{txid}" to avoid clashes.
-            web.post(
-                "/api/v1/transaction/filter",
-                handlers_tip_filter.indexer_post_transaction_filter,
-            ),
-            web.post(
-                "/api/v1/transaction/filter:delete",
-                handlers_tip_filter.indexer_post_transaction_filter_delete,
-            ),
+            web.post("/api/v1/transaction/filter", handlers_tip_filter.indexer_post_transaction_filter),
+            web.post("/api/v1/transaction/filter:delete", handlers_tip_filter.indexer_post_transaction_filter_delete),
             # ----- RESTORATION API BEGIN ----- #
-            web.get(
-                "/api/v1/transaction/{txid}",
-                handlers_restoration.get_transaction,
-            ),
-            web.get(
-                "/api/v1/merkle-proof/{txid}",
-                handlers_restoration.get_tsc_merkle_proof,
-            ),
-            web.post(
-                "/api/v1/restoration/search",
-                handlers_restoration.get_pushdata_filter_matches,
-            ),
-            web.post(
-                "/api/v1/restoration/search_p2pkh",
-                handlers_restoration.get_p2pkh_address_filter_matches,
-            ),
+            web.get("/api/v1/transaction/{txid}", handlers_restoration.get_transaction),
+            web.get("/api/v1/merkle-proof/{txid}", handlers_restoration.get_tsc_merkle_proof),
+            web.post("/api/v1/restoration/search", handlers_restoration.get_pushdata_filter_matches),
+            web.post("/api/v1/restoration/search_p2pkh", handlers_restoration.get_p2pkh_address_filter_matches),
             # ----- RESTORATION API END ----- #
             web.post("/api/v1/output-spend", handlers_tip_filter.get_output_spends),
-            web.post(
-                "/api/v1/output-spend/notifications",
-                handlers_tip_filter.post_output_spend_notifications_register,
-            ),
-            web.post(
-                "/api/v1/output-spend/notifications:unregister",
-                handlers_tip_filter.post_output_spend_notifications_unregister,
-            ),
+            web.post("/api/v1/output-spend/notifications", handlers_tip_filter.post_output_spend_notifications_register),
+            web.post("/api/v1/output-spend/notifications:unregister", handlers_tip_filter.post_output_spend_notifications_unregister),
         ]
     )
     return app, app_state

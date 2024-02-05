@@ -126,13 +126,13 @@ async def get_chain_tips(request: web.Request) -> web.Response:
     chain: Chain
     tips = []
     for chain in headers_threadsafe.headers.chains():
-        if chain.tip.hash == headers_threadsafe.headers.longest_chain().tip.hash:
+        if chain.tip().hash == headers_threadsafe.headers.longest_chain().tip().hash:
             state = HeaderTipState.LONGEST_CHAIN
         else:
             state = HeaderTipState.STALE
             if longest_chain:
                 continue  # skip other STALE chains if `longest_chain` query param == 1
-        tip_header: Header = chain.tip
+        tip_header: Header = chain.tip()
         tip_header_json = HeaderJSONType(
             hash=hash_to_hex_str(tip_header.hash),
             version=tip_header.version,
@@ -144,7 +144,7 @@ async def get_chain_tips(request: web.Request) -> web.Response:
             transactionCount=0,
             work=tip_header.work(),
         )
-        chain_work = headers_threadsafe.chain_work_for_chain_and_heigth(chain, tip_header.height)
+        chain_work = headers_threadsafe.chain_work_for_chain_and_height(chain, tip_header.height)
         chainWork: int
         height: int
         confirmations: int

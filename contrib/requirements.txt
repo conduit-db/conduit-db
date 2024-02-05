@@ -1,5 +1,5 @@
 lmdb
-bitcoinx==0.7.1
+bitcoinx==0.8
 requests>=2.21.0
 dnspython~=1.16.0
 mysqlclient
@@ -10,8 +10,6 @@ fasteners
 refcuckoo
 scylla-driver
 lz4
-python-snappy
-scales
 redis
 psutil
 pyzstd

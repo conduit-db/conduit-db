@@ -11,7 +11,7 @@ from queue import Queue
 from typing import TypedDict, NamedTuple
 
 import bitcoinx
-from bitcoinx import hex_str_to_hash, Header, hash_to_hex_str
+from bitcoinx import hex_str_to_hash, hash_to_hex_str
 
 from conduit_lib.constants import MAX_UINT32
 
@@ -283,14 +283,6 @@ def tsc_merkle_proof_json_to_binary(
             response += hash_type_node
             response += bitcoinx.hex_str_to_hash(node)
     return response
-
-
-class HeaderSpan(NamedTuple):
-    """Used to allocate which continguous set of raw blocks to pre-fetch and process"""
-
-    is_reorg: bool
-    start_header: Header
-    stop_header: Header
 
 
 ChainHashes = list[bytes]

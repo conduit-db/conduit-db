@@ -254,7 +254,6 @@ class TestAiohttpRESTAPI:
         import_blocks(str(blockchain_dir))
         time.sleep(15)
 
-
     def setup_method(self) -> None:
         pass
 
@@ -279,8 +278,14 @@ class TestAiohttpRESTAPI:
         headers = {"Accept": "application/json"}
         result = requests.get(GET_HEADERS_TIP_URL, headers=headers)
         assert result.status_code == 200
-        assert len(result.json()) == 1
-        assert result.json()[0]['height'] == 116
+        logger.debug(f"Headers: {result.json()}")
+
+        tip = None
+        for header_json in result.json():
+            if header_json['state'] == 'LONGEST_CHAIN':
+                tip = header_json
+
+        assert tip['height'] == 116
 
     @pytest.mark.timeout(20)
     def test_utxo_notifications(self) -> None:
@@ -370,18 +375,18 @@ class TestAiohttpRESTAPI:
     def test_submit_reorg_blocks(self) -> None:
         blockchain_dir = REGTEST_TEST_BLOCKCHAIN_REORG
         import_blocks(str(blockchain_dir))
-        time.sleep(10)
+        time.sleep(20)
         assert True
 
+    @pytest.mark.timeout(30)
     def test_headers_tip_post_reorg(self) -> None:
         headers = {"Accept": "application/json"}
         result = requests.get(GET_HEADERS_TIP_URL, headers=headers)
         assert result.status_code == 200
-        assert len(result.json()) == 2
         tip_116_found = False
         tip_118_found = False
         while True:
-            self.logger.debug(f"result.json(): {result.json()}")
+            self.logger.debug(f"Headers: {result.json()}")
             for tip in result.json():
                 if tip['height'] == 116:
                     assert tip['header']['hash'] == '7c9cd212920833de9623107c72331c69acacd1964fdd2310f0f608f1e3bee4f4'

@@ -169,8 +169,8 @@ async def _get_tsc_merkle_proof_async(
         rawtx_hex = await get_rawtransaction_from_node_rpc(
             app_state,
             hash_to_hex_str(tx_hash),
-            rpchost=app_state.net_config.node_rpc_host,
-            rpcport=app_state.net_config.node_rpc_port,
+            rpchost=os.environ['NODE_RPC_HOST'],
+            rpcport=int(os.environ['NODE_RPC_PORT']),
         )
         rawtx = bytes.fromhex(rawtx_hex)
 
@@ -324,8 +324,8 @@ async def get_transaction(request: web.Request) -> web.Response:
     rawtx = await get_rawtransaction_from_node_rpc(
         app_state,
         txid,
-        rpchost=app_state.net_config.node_rpc_host,
-        rpcport=app_state.net_config.node_rpc_port,
+        rpchost=os.environ['NODE_RPC_HOST'],
+        rpcport=int(os.environ['NODE_RPC_PORT']),
     )
     # logger.debug(f"Sending rawtx for tx_hash: {hash_to_hex_str(double_sha256(bytes.fromhex(rawtx)))}")
     if accept_type == "application/octet-stream":

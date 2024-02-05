@@ -9,7 +9,6 @@ import logging
 import os
 import socket
 import time
-from pathlib import Path
 from types import TracebackType
 from typing import cast, Iterator, Type, Any
 
@@ -18,7 +17,6 @@ from bitcoinx import MissingHeader
 
 from conduit_lib.basic_socket_io import send_msg, recv_msg
 from conduit_lib import ipc_sock_msg_types, ipc_sock_commands
-from conduit_lib.constants import REGTEST
 from conduit_lib.ipc_sock_msg_types import BlockMetadataBatchedResponse
 from conduit_lib.types import BlockSliceRequestType, ChainHashes, BlockHeaderRow
 
@@ -275,64 +273,3 @@ class IPCSocketClient:
         except ConnectionResetError:
             self.wait_for_connection()
             return self.delete_blocks_when_safe(header_rows, tip_hash)  # recurse
-
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    from conduit_lib.store import setup_headers_store
-    from conduit_lib.networks import NetworkConfig
-
-    MODULE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-    storage_path = MODULE_DIR / "test_lmdb"
-    net_config = NetworkConfig(
-        network_type=REGTEST,
-        node_host="127.0.0.1",
-        node_port=18444,
-        node_rpc_host="127.0.0.1",
-        node_rpc_port=18332,
-    )
-    block_headers = setup_headers_store(
-        net_config, "../conduit_raw/conduit_raw/sock_server/test_headers.mmap"
-    )
-
-    block_hash = block_headers.longest_chain().tip.hash
-    block_hashes = [block_hash, block_hash, block_hash]
-
-    # Short-lived connection
-    client = IPCSocketClient()
-    result = client.ping()
-    print(result)
-
-    # result = client.stop()
-    # print(result)
-
-    # result = client.chain_tip()
-    # print(result)
-
-    # result = client.block_number_batched(block_hashes)
-    # print(result)
-
-    # block_requests = [
-    #     (1, 0, 0),
-    #     (2, 0, 0),
-    #     (3, 0, 0)
-    # ]
-    # result = client.block_batched(block_requests, batch_id=1)
-    # mtree_row = client.merkle_tree_row(block_hash, level=0)
-
-    # for tx_offsets_array in client.transaction_offsets_batched(block_hashes):
-    #     print(tx_offsets_array)
-
-    # result = client.block_metadata_batched(block_hashes)
-    # print(result)
-
-    # result = client.headers_batched(start_height=0, batch_size=2000)
-    # print(result)
-
-    client.close()
-
-    # # Long-lived connection
-    # client = IPCSocketClient()
-    #
-    # while True:
-    #     client.ping()
